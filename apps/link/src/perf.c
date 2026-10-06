@@ -279,11 +279,20 @@ static int cmd_client(const struct shell *sh, size_t argc, char **argv)
 		struct qam_hdr h = {.mod = mod, .fec = fec, .ncw = ncw, .full = ncw == 0,
 				    .pair = window == 2};
 
-		shell_print(sh, "client to 0x%02x: %s, %s, %s, %u x %u B per transmission, %u ms%s",
-			    dst, mod_names[mod], fec_names[fec],
-			    ncw == 0 ? "full frames" : "whole units", window,
-			    (unsigned int)qam_hdr_payload_bytes(&h), duration,
-			    duration == 0 ? " (until stopped)" : "");
+		struct mac_cfg mc;
+
+		link_mac_get_cfg(&mc);
+		if (mc.phy == MAC_PHY_OFDM) {
+			shell_print(sh, "client to 0x%02x: OFDM %s, rs, %u B per frame, %u ms%s", dst,
+				    mod_names[mod], (unsigned int)link_mac_frame_bytes(mod),
+				    duration, duration == 0 ? " (until stopped)" : "");
+		} else {
+			shell_print(sh, "client to 0x%02x: %s, %s, %s, %u x %u B per transmission, %u ms%s",
+				    dst, mod_names[mod], fec_names[fec],
+				    ncw == 0 ? "full frames" : "whole units", window,
+				    (unsigned int)qam_hdr_payload_bytes(&h), duration,
+				    duration == 0 ? " (until stopped)" : "");
+		}
 	}
 	report_start(sh, ROLE_CLIENT, interval);
 	return 0;
@@ -339,7 +348,20 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 			    s.pair_a_us_sum / s.pair_n, s.pair_b_us_sum / s.pair_n,
 			    s.pair_us_sum / s.pair_n);
 	}
-	if (s.decode_n > 0) {
+	{
+		struct esp_sdr_debug d;
+
+		esp_sdr_debug_get(&d);
+		shell_print(sh, "engine: %u transmissions, rx gain re-forced %u times (%u us each)",
+			    d.dac_sessions, d.gain_refreshed, d.gain_apply_us);
+	}
+	if (s.decode_n > 0 && c.phy == MAC_PHY_OFDM) {
+		shell_print(sh, "decode stages avg us (OFDM): search %llu, channel+header %llu, "
+			    "payload %llu, fec %llu; engine window %u us",
+			    s.prof_us[0] / s.decode_n, s.prof_us[1] / s.decode_n,
+			    s.prof_us[4] / s.decode_n, s.prof_us[5] / s.decode_n,
+			    s.window_engine_us);
+	} else if (s.decode_n > 0) {
 		shell_print(sh, "decode stages avg us: search %llu, fine %llu, train %llu, header %llu, "
 			    "payload %llu, fec %llu; engine sense %u window %u us",
 			    s.prof_us[0] / s.decode_n, s.prof_us[1] / s.decode_n,
@@ -404,7 +426,7 @@ static int cmd_set(const struct shell *sh, size_t argc, char **argv)
 	char *end;
 
 	if (argc != 3) {
-		shell_print(sh, "keys: freq txgain rxgain avg bw cbw txlpf txlpf2 amp air ackair acktimeout turn retune cca "
+		shell_print(sh, "keys: phy (0 qam, 1 ofdm) freq txgain rxgain avg bw cbw txlpf txlpf2 amp air ackair acktimeout turn retune cca "
 				"difs cwmin cwmax retries addr");
 		return argc == 1 ? 0 : -EINVAL;
 	}
@@ -424,6 +446,8 @@ static int cmd_set(const struct shell *sh, size_t argc, char **argv)
 		c.tx_lpf_a = (int)v;
 	} else if (strcmp(argv[1], "txlpf2") == 0) {
 		c.tx_lpf_b = (int)v;
+	} else if (strcmp(argv[1], "phy") == 0) {
+		c.phy = (int)v;
 	} else if (strcmp(argv[1], "avg") == 0) {
 		c.avg = (int)v;
 	} else if (strcmp(argv[1], "cbw") == 0) {
@@ -465,7 +489,8 @@ static int cmd_set(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-static uint32_t bench_ram[4096];
+/* Internal RAM read speed: 4096 reads over 1024 words. */
+static uint32_t bench_ram[1024];
 static ESP_SDR_HIGH_RAM uint32_t bench_high[1024];
 
 static int cmd_bench(const struct shell *sh, size_t argc, char **argv)
@@ -496,7 +521,7 @@ static int cmd_bench(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "4096 bank reads: %u cycles (%u)", t1 - t0, acc);
 	t0 = k_cycle_get_32();
 	for (int i = 0; i < 4096; i++) {
-		acc += ((volatile uint32_t *)bench_ram)[i];
+		acc += ((volatile uint32_t *)bench_ram)[i & 1023];
 	}
 	t1 = k_cycle_get_32();
 	shell_print(sh, "4096 ram reads: %u cycles", t1 - t0);
@@ -511,7 +536,7 @@ static int cmd_bench(const struct shell *sh, size_t argc, char **argv)
 
 		t0 = k_cycle_get_32();
 		for (int i = 0; i < 4096; i++) {
-			acc += ((volatile uint32_t *)bench_ram)[i];
+			acc += ((volatile uint32_t *)bench_ram)[i & 1023];
 		}
 		t1 = k_cycle_get_32();
 		arch_irq_unlock(key);

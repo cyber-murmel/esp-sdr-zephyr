@@ -180,7 +180,7 @@ unsigned int qam_ncw_max(enum qam_mod mod, enum qam_fec fec)
 	return ncw;
 }
 
-static uint16_t crc16(const uint8_t *p, size_t n)
+uint16_t qam_crc16(const uint8_t *p, size_t n)
 {
 	uint16_t crc = 0xffff;
 
@@ -225,14 +225,14 @@ static void hdr_pack(const struct qam_hdr *h, uint8_t b[QAM_HDR_BYTES])
 	b[3] = h->ncw;
 	b[4] = (uint8_t)h->seq;
 	b[5] = (uint8_t)(h->seq >> 8);
-	crc = crc16(b, 6);
+	crc = qam_crc16(b, 6);
 	b[6] = (uint8_t)crc;
 	b[7] = (uint8_t)(crc >> 8);
 }
 
 static bool hdr_unpack(const uint8_t b[QAM_HDR_BYTES], struct qam_hdr *h)
 {
-	if (crc16(b, 6) != (uint16_t)(b[6] | (b[7] << 8))) {
+	if (qam_crc16(b, 6) != (uint16_t)(b[6] | (b[7] << 8))) {
 		return false;
 	}
 	h->pair = b[0] >> 7;

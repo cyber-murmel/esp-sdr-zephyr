@@ -40,6 +40,12 @@ static inline unsigned int modnn(unsigned int x)
 	return x;
 }
 
+/* x mod RS_N for x < 2 RS_N: the sum of two indices, without modnn()'s loop. */
+static inline unsigned int mod2(unsigned int x)
+{
+	return x >= RS_N ? x - RS_N : x;
+}
+
 static uint8_t gf_mul(uint8_t a, uint8_t b)
 {
 	if (a == 0 || b == 0) {
@@ -136,7 +142,7 @@ void rs_encode(uint8_t *cw)
 	}
 }
 
-int rs_decode(uint8_t *cw)
+RS_HOT int rs_decode(uint8_t *cw)
 {
 	uint8_t rem[RS_NROOTS], s[RS_NROOTS];
 	uint8_t lambda[RS_NROOTS + 1], b[RS_NROOTS + 1], t[RS_NROOTS + 1];
@@ -160,7 +166,7 @@ int rs_decode(uint8_t *cw)
 		unsigned int acc = rem[0];
 
 		for (unsigned int j = 1; j < RS_NROOTS; j++) {
-			acc = rem[j] ^ (acc == 0 ? 0 : alpha_to[modnn(index_of[acc] + FCR + i)]);
+			acc = rem[j] ^ (acc == 0 ? 0 : alpha_to[mod2(index_of[acc] + mod2(FCR + i))]);
 		}
 		s[i] = index_of[acc];
 	}
@@ -177,7 +183,7 @@ int rs_decode(uint8_t *cw)
 
 		for (int i = 0; i < r; i++) {
 			if (lambda[i] != 0 && s[r - i - 1] != A0) {
-				discr ^= alpha_to[modnn(index_of[lambda[i]] + s[r - i - 1])];
+				discr ^= alpha_to[mod2(index_of[lambda[i]] + s[r - i - 1])];
 			}
 		}
 		discr = index_of[discr];
@@ -186,16 +192,20 @@ int rs_decode(uint8_t *cw)
 			b[0] = A0;
 			continue;
 		}
-		t[0] = lambda[0];
-		for (int i = 0; i < RS_NROOTS; i++) {
-			t[i + 1] = b[i] != A0 ? lambda[i + 1] ^ alpha_to[modnn(discr + b[i])]
-					      : lambda[i + 1];
+		/* lambda and b have degree below r: the coefficients above stay as they are. */
+		int top = r < RS_NROOTS ? r : RS_NROOTS;
+
+		memcpy(t, lambda, RS_NROOTS + 1);
+		for (int i = 0; i < top; i++) {
+			if (b[i] != A0) {
+				t[i + 1] = lambda[i + 1] ^ alpha_to[mod2(discr + b[i])];
+			}
 		}
 		if (2 * el <= r - 1) {
 			el = r - el;
 			for (int i = 0; i <= RS_NROOTS; i++) {
 				b[i] = lambda[i] == 0 ? A0
-						      : (uint8_t)modnn(index_of[lambda[i]] - discr + RS_N);
+						      : (uint8_t)mod2(index_of[lambda[i]] + RS_N - discr);
 			}
 		} else {
 			memmove(&b[1], b, RS_NROOTS);
@@ -223,7 +233,7 @@ int rs_decode(uint8_t *cw)
 
 		for (int j = deg_lambda; j > 0; j--) {
 			if (reg[j] != A0) {
-				reg[j] = (uint8_t)modnn(reg[j] + j);
+				reg[j] = (uint8_t)mod2(reg[j] + j);
 				q ^= alpha_to[reg[j]];
 			}
 		}
@@ -247,7 +257,7 @@ int rs_decode(uint8_t *cw)
 
 		for (int j = i; j >= 0; j--) {
 			if (s[i - j] != A0 && lambda[j] != A0) {
-				tmp ^= alpha_to[modnn(s[i - j] + lambda[j])];
+				tmp ^= alpha_to[mod2(s[i - j] + lambda[j])];
 			}
 		}
 		omega[i] = index_of[tmp];

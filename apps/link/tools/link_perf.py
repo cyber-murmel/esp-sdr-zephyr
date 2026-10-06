@@ -30,7 +30,7 @@ import time
 import serial
 
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-OFDM_KEYS = ("bw", "ch", "cp", "mod", "amp", "syms", "rxdiv")
+OFDM_KEYS = ("bw", "ch", "cp", "mod", "amp", "syms", "rxdiv", "fs", "pilots", "smooth")
 
 
 class Board:
@@ -140,7 +140,7 @@ def ofdm(args):
                 if "no frame layout" in line or "keys:" in line:
                     sys.exit(f"{b.sn}: {line}")
     for line in rx.cmd("ofdm show", 0.5):
-        if line.startswith(("bpsk", "qpsk", "frame")):
+        if line.startswith(("bpsk", "qpsk", "16qam", "64qam", "frame")):
             print(line)
     # Long enough for the captures and their decoding (a few ms each), with margin.
     seconds = 2.0 + args.n * 0.02

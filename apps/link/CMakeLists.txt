@@ -15,6 +15,7 @@ target_sources(app PRIVATE
   src/rs.c
   src/hamming.c
   src/ofdm.c
+  src/ofdm_frame.c
   src/ofdm_test.c)
 target_compile_definitions(app PRIVATE QAM_SPS=${CONFIG_APP_SPS})
 # Per-sample and per-byte loops of the modem and the codec. Zephyr's ISO C

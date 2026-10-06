@@ -105,17 +105,22 @@ config APP_RX2_PRIORITY
 	default 6
 
 config APP_OFDM_BW_KHZ
-	int "OFDM test: occupied bandwidth (kHz)"
-	default 16000
+	int "OFDM: occupied bandwidth (kHz)"
+	default 26000
 
 config APP_OFDM_CHANNELS
-	int "OFDM test: subcarriers"
-	default 52
+	int "OFDM: subcarriers"
+	default 84
+
+config APP_OFDM_FS_MHZ
+	int "OFDM: transmit sample rate (MS/s, 80 or 40)"
+	range 40 80
+	default 40
 
 config APP_OFDM_RX_DIV
-	int "OFDM test: receive at 80 MS/s divided by this (1 or 2)"
+	int "OFDM: receive at the transmit rate divided by this (1 or 2, at least 40 MS/s)"
 	range 1 2
-	default 2
+	default 1
 
 config APP_OFDM_ESP_DSP
 	bool "OFDM FFT: the esp-dsp ESP32-S3 kernel (modules/lib/esp-dsp)"

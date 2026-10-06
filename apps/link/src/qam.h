@@ -268,6 +268,9 @@ void qam_rx_data(const struct qam_rx *rx, const struct qam_hdr *hdr, uint8_t *ou
 /* Mean power of @p n receive words in raw units squared, DC removed. */
 float qam_rx_power(const uint32_t *words, size_t n);
 
+/* CRC-16-CCITT (0xffff start), as in the frame headers. */
+uint16_t qam_crc16(const uint8_t *p, size_t n);
+
 uint32_t qam_crc32(const uint8_t *p, size_t n);
 
 #endif /* LINK_QAM_H_ */

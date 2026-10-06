@@ -16,6 +16,8 @@
 
 #include <zephyr/kernel.h>
 
+#include <esp_sdr/esp_sdr.h>
+
 #include "qam.h"
 
 #define MAC_ADDR_BROADCAST 0xffU
@@ -25,8 +27,16 @@ enum mac_type {
 	MAC_ACK,
 };
 
+/* PHY of the frames (with OFDM the ACKs are header-only OFDM frames). */
+enum mac_phy {
+	MAC_PHY_QAM,
+	MAC_PHY_OFDM,
+};
+
 struct mac_cfg {
 	uint32_t freq_mhz;
+	/* enum mac_phy; both ends alike, and for OFDM the same "ofdm set" settings. */
+	int phy;
 	/* Transmit power step, receive gain index (ESP_SDR_RX_GAIN_AUTO for AGC). */
 	int tx_gain;
 	int rx_gain;
@@ -152,5 +162,17 @@ void link_mac_pause(bool pause);
  */
 int link_mac_dump_take(const uint32_t **words, size_t *n, bool decoded, k_timeout_t timeout);
 void link_mac_dump_release(void);
+
+/* User bytes per data frame at @p mod with the current PHY settings, 0 if none fit. */
+size_t link_mac_frame_bytes(enum qam_mod mod);
+
+struct ofdm_ctx;
+
+/* The OFDM context the MAC and the "ofdm" shell test share, set up (ofdm_test.c). */
+struct ofdm_ctx *link_ofdm(void);
+
+/* Its transmit and receive rates. */
+enum esp_sdr_rate link_ofdm_tx_rate(void);
+enum esp_sdr_rate link_ofdm_rx_rate(void);
 
 #endif /* LINK_MAC_H_ */
