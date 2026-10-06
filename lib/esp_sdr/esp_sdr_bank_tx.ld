@@ -1,9 +1,9 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * Capture bank (SRAM bank 2, MAC_DUMP_USAGE bit 2) plus the transmit bank for
- * DAC ping-pong (SRAM bank 1, bit 1), used instead of esp_sdr_bank.ld with
- * CONFIG_ESP_SDR_TX_DAC. While the dump engine owns a bank the CPUs cannot
+ * Capture bank (SRAM bank 2, MAC_DUMP_USAGE bit 2) plus a second bank for
+ * DAC ping-pong and captures (SRAM bank 1, bit 1), used instead of
+ * esp_sdr_bank.ld with CONFIG_ESP_SDR_BANK1. While the dump engine owns a bank the CPUs cannot
  * reach any of it, so nothing else may live in either. Lowering _heap_sentry
  * keeps the libc malloc arena below both.
  */

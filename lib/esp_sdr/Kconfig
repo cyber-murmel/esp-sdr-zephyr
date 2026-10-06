@@ -13,12 +13,33 @@ config ESP_SDR
 
 if ESP_SDR
 
-config ESP_SDR_MANUAL_GAIN
-	bool "Manual RX gain"
+config ESP_SDR_RFTEST
+	bool "Espressif RF test library (fixed RX gain, TX power steps)"
 	default y
 	help
-	  Links force_rx_gain() from Espressif's librftest.a, fetched with
-	  "west blobs fetch esp-sdr-zephyr". Without it only the hardware AGC works.
+	  Links force_rx_gain(), force_tx_gain() and force_txon_mode() from
+	  Espressif's librftest.a, fetched with "west blobs fetch
+	  esp-sdr-zephyr". Without it the receiver runs on the hardware AGC
+	  only and transmit keeps the PHY's own power setting.
+
+config ESP_SDR_RX_DECIM
+	bool "Decimated capture"
+	default y
+	help
+	  esp_sdr_rx_capture_decimated(): a full capture filtered and
+	  decimated by a third order CIC, for narrow band streams.
+	  esp_sdr_rx_capture_folded(): the same capture folded (decimated in
+	  frequency, aliasing the whole band down) instead of filtered, for a
+	  wideband power/occupancy survey. Apps that work at the native rate
+	  can leave it out.
+
+config ESP_SDR_BANK1
+	bool "Reserve a second dump bank"
+	help
+	  Reserves SRAM bank 1 (0x3fcc0000) next to the capture bank, for
+	  two-bank loop playback (esp_sdr_tx_loop_*()) and for captures into
+	  either bank (esp_sdr_rx_capture_bank()). Costs another 64 KiB of
+	  internal RAM.
 
 config ESP_SDR_TX
 	bool "Transmit backend interface"
@@ -30,7 +51,8 @@ config ESP_SDR_TX
 config ESP_SDR_TX_DAC
 	bool "DAC transmit backend"
 	default y
-	depends on ESP_SDR_TX && ESP_SPIRAM && ESP_SDR_MANUAL_GAIN
+	depends on ESP_SDR_TX && ESP_SPIRAM && ESP_SDR_RFTEST
+	select ESP_SDR_BANK1
 	help
 	  Default backend: buffers input samples in PSRAM and interpolates
 	  them to the 40 MS/s DAC rate in a player thread.

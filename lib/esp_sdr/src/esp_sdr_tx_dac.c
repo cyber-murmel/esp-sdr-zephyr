@@ -23,7 +23,7 @@
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_tx.h>
 
-#include "esp_sdr_dac.h"
+#include "esp_sdr_priv.h"
 
 LOG_MODULE_DECLARE(esp_sdr, CONFIG_ESP_SDR_LOG_LEVEL);
 
@@ -92,7 +92,7 @@ static int dac_start(uint64_t freq_hz, uint32_t rate_hz)
 	return 0;
 }
 
-static int dac_write(const struct esp_sdr_tx_sample *samples, size_t count)
+static int dac_write(const struct esp_sdr_iq16 *samples, size_t count)
 {
 	uint32_t w = (uint32_t)atomic_get(&ring_w);
 	int32_t late = (int32_t)((uint32_t)atomic_get(&filled_in) - w);
@@ -459,7 +459,7 @@ static unsigned int wait_until_locked(uint32_t t)
 static bool loop_start(uint64_t out)
 {
 	size_t words;
-	uint32_t *bank = esp_sdr_dac_buf(0, &words);
+	uint32_t *bank = sdr_dac_buf(0, &words);
 	uint64_t t;
 	int64_t d;
 	unsigned int key;
@@ -475,7 +475,7 @@ static bool loop_start(uint64_t out)
 		return false;
 	}
 	key = wait_until_locked(ccount() + (uint32_t)d);
-	esp_sdr_dac_loop(0, BLOCK_WORDS);
+	sdr_dac_loop(0, BLOCK_WORDS);
 	loop_t0 = ccount();
 	irq_unlock(key);
 	played_out += LOOP_STEP;
@@ -506,7 +506,7 @@ static void leader(void)
 	while (!atomic_get(&stop_req)) {
 		size_t words;
 		int b = (int)((k + 1U) & 1U);
-		uint32_t *bank = esp_sdr_dac_buf(b, &words);
+		uint32_t *bank = sdr_dac_buf(b, &words);
 		uint64_t s = (k + 1U) * LOOP_STEP;
 		uint32_t t_sw = loop_t0 + (uint32_t)(s * cyc_per_sample);
 		uint32_t zeros;
@@ -523,7 +523,7 @@ static void leader(void)
 			uint64_t played_to = out_base + s;
 			uint64_t next;
 
-			esp_sdr_dac_halt();
+			sdr_dac_halt();
 			stats.errors++;
 			stats.restarts++;
 			do {
@@ -538,17 +538,17 @@ static void leader(void)
 		{
 			unsigned int key = wait_until_locked(t_sw);
 
-			esp_sdr_dac_select(b);
+			sdr_dac_select(b);
 			irq_unlock(key);
 		}
-		if (stats.bursts > 0U) {
+		if (stats.switches > 0U) {
 			uint32_t d = k_cyc_to_us_floor32(k_cycle_get_32() - sw_t);
 
-			stats.burst_us_sum += d;
-			stats.burst_us_max = MAX(stats.burst_us_max, d);
+			stats.switch_us_sum += d;
+			stats.switch_us_max = MAX(stats.switch_us_max, d);
 		}
 		sw_t = k_cycle_get_32();
-		stats.bursts++;
+		stats.switches++;
 		/* Input ran out in this block (not counted again while idle). */
 		if (zeros > 0U && zeros < BLOCK_WORDS) {
 			stats.underruns++;
@@ -564,7 +564,7 @@ static void leader(void)
 		unsigned int key = wait_until_locked(loop_t0 +
 						     (uint32_t)((k + 1U) * LOOP_STEP * cyc_per_sample));
 
-		esp_sdr_dac_halt();
+		sdr_dac_halt();
 		irq_unlock(key);
 	}
 	half_job.n = 0;
@@ -619,7 +619,7 @@ static void player(void *p1, void *p2, void *p3)
 		while (!atomic_get(&stop_req) && (uint32_t)atomic_get(&ring_w) - ring_r < prebuf) {
 			k_sleep(K_MSEC(1));
 		}
-		if (atomic_get(&stop_req) || esp_sdr_dac_begin(DAC_RATE) != 0) {
+		if (atomic_get(&stop_req) || sdr_dac_begin(DAC_RATE) != 0) {
 			k_sem_give(&done_sem);
 			continue;
 		}
@@ -644,12 +644,12 @@ static void player(void *p1, void *p2, void *p3)
 		for (int f = 0; f < NFILL; f++) {
 			k_sem_take(&ready_sem[f], K_FOREVER);
 		}
-		esp_sdr_dac_end();
+		sdr_dac_end();
 		k_sem_give(&done_sem);
 	}
 }
 
-K_THREAD_DEFINE(esp_sdr_tx_dac_tid, CONFIG_ESP_SDR_TX_DAC_STACK_SIZE, player, NULL, NULL, NULL,
+K_THREAD_DEFINE(esp_sdr_dac_player, CONFIG_ESP_SDR_TX_DAC_STACK_SIZE, player, NULL, NULL, NULL,
 		CONFIG_ESP_SDR_TX_DAC_PRIORITY, 0, 0);
 
 /* The fill loop needs little stack; internal RAM is tight. */
@@ -704,7 +704,7 @@ static int fillers_init(void)
 		k_thread_create(&filler_threads[s], filler_stacks[s],
 				K_THREAD_STACK_SIZEOF(filler_stacks[s]), filler, (void *)(intptr_t)s,
 				NULL, NULL, CONFIG_ESP_SDR_TX_DAC_FILLER_PRIORITY, 0, K_FOREVER);
-		k_thread_name_set(&filler_threads[s], s == 0 ? "tx_fill0" : "tx_fill1");
+		k_thread_name_set(&filler_threads[s], s == 0 ? "dac_fill0" : "dac_fill1");
 #if defined(CONFIG_SCHED_CPU_MASK)
 		if (arch_num_cpus() > 1) {
 			/* Filler 0 leads, the helper takes the other CPU. */

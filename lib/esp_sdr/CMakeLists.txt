@@ -10,20 +10,24 @@ if(NOT EXISTS ${ESP_SDR_UPSTREAM_DIR}/main/common/rx_tuning.h)
 endif()
 
 zephyr_library()
-zephyr_library_sources(src/esp_sdr_esp32s3.c)
-zephyr_library_sources_ifdef(CONFIG_ESP_SDR_TX src/esp_sdr_tx.c)
+zephyr_library_sources(
+  src/esp_sdr.c
+  src/esp_sdr_rx.c
+  src/esp_sdr_tx.c
+)
+zephyr_library_sources_ifdef(CONFIG_ESP_SDR_TX src/esp_sdr_tx_stream.c)
 zephyr_library_sources_ifdef(CONFIG_ESP_SDR_TX_DAC src/esp_sdr_tx_dac.c)
 zephyr_library_sources_ifdef(CONFIG_ESP_SDR_TX_DAC_SIMD src/esp_sdr_pie.S)
 zephyr_library_include_directories(${ESP_SDR_UPSTREAM_DIR}/main/common)
 
-# The DAC backend ping-pongs between the capture bank and a second one.
-if(CONFIG_ESP_SDR_TX_DAC)
+# Two banks: loop playback ping-pongs between them, captures may use either.
+if(CONFIG_ESP_SDR_BANK1)
   zephyr_linker_sources(SECTIONS esp_sdr_bank_tx.ld)
 else()
   zephyr_linker_sources(SECTIONS esp_sdr_bank.ld)
 endif()
 
-if(CONFIG_ESP_SDR_MANUAL_GAIN)
+if(CONFIG_ESP_SDR_RFTEST)
   # Espressif RF test library, fetched with "west blobs fetch esp-sdr-zephyr".
   set(esp_sdr_rftest ${ZEPHYR_CURRENT_MODULE_DIR}/zephyr/blobs/lib/esp32s3/librftest.a)
   zephyr_blobs_verify(FILES ${esp_sdr_rftest} REQUIRED)
