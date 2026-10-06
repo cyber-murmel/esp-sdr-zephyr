@@ -33,7 +33,9 @@ west flash
 ```
 
 See [apps/sdr_stream/README.rst](apps/sdr_stream/README.rst) for the host
-setup, DFU updates and the tools.
+setup, DFU updates and the tools, and
+[docs/hardware-quirks.md](docs/hardware-quirks.md) for the radio, engine and
+toolchain peculiarities and how the code handles them.
 
 ## The library
 

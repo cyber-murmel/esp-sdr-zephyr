@@ -19,7 +19,7 @@ manifest:
     # the CDC-NCM NTB aggregation the USB stream relies on.
     - name: zephyr
       remote: cyber-murmel
-      revision: esp32s3-smp
+      revision: 7127a8f5cd41620fb8c2941279a790c2ef7a6e3e # esp-sdr branch
       import:
         name-allowlist:
           - mcuboot
@@ -36,7 +36,7 @@ manifest:
     # VITA 49 packet library, extended to VITA 49.2, with a Zephyr module.
     - name: libvrt
       remote: cyber-murmel
-      revision: zephyr
+      revision: 6ee1471079b969d843aa2f7dbc6ac74c086168a2 # esp-sdr branch
       path: modules/lib/libvrt
     # Upstream ESP-IDF firmware: only its header-only receiver helpers are used.
     - name: esp-sdr
