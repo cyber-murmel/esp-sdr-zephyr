@@ -33,15 +33,39 @@ static unsigned int gain_max(void)
 	return max <= AGC_GAIN_MAX_VALID ? max : 0U;
 }
 
+/* When gain_apply() last ran (k_uptime_get()). */
+static int64_t gain_applied_ms;
+
 static void gain_apply(void)
 {
 #if defined(CONFIG_ESP_SDR_RFTEST)
 	bool manual = gain_index >= 0;
 	unsigned int index = manual ? MIN((unsigned int)gain_index, gain_max())
 				    : MIN(AGC_DEFAULT_INDEX, gain_max());
+	uint32_t t0 = k_cycle_get_32();
 
 	/* Releasing the force (manual false) hands control back to the AGC. */
 	force_rx_gain(manual, index, 0);
+	sdr_dbg.gain_apply_us = k_cyc_to_us_ceil32(k_cycle_get_32() - t0);
+	gain_applied_ms = k_uptime_get();
+#endif
+}
+
+/*
+ * A forced gain is occasionally lost (measured, cause unknown: after some
+ * thousand transmissions; the AGC then takes over and, with nothing on air,
+ * raises the noise floor by up to 30 dB, until the next turnaround forces it
+ * again). Re-forced at a capture when the last time is more than 20 ms ago.
+ */
+#define GAIN_REFRESH_MS 20
+
+static void gain_refresh(void)
+{
+#if defined(CONFIG_ESP_SDR_RFTEST)
+	if (gain_index >= 0 && k_uptime_get() - gain_applied_ms > GAIN_REFRESH_MS) {
+		sdr_dbg.gain_refreshed++;
+		gain_apply();
+	}
 #endif
 }
 
@@ -225,6 +249,7 @@ static int capture_locked(enum esp_sdr_rate rate, size_t count, volatile uint32_
 	words[0] = SENTINEL;
 	words[count - 1] = SENTINEL;
 
+	gain_refresh();
 	saved = REG_READ(SENSITIVE_INTERNAL_SRAM_USAGE_3_REG);
 	*t0 = k_cycle_get_64();
 	start = (uint32_t)*t0;
@@ -584,4 +609,9 @@ void esp_sdr_bbtop_write(unsigned int reg, unsigned int val)
 	rom_chip_i2c_writeReg(BBTOP_BLOCK, BBTOP_HOST, reg, val);
 	regi2c_exit_critical();
 	k_mutex_unlock(&sdr_lock);
+}
+
+void esp_sdr_debug_get(struct esp_sdr_debug *d)
+{
+	*d = sdr_dbg;
 }

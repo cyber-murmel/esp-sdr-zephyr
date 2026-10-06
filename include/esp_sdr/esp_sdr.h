@@ -108,6 +108,14 @@ int esp_sdr_set_freq_offset(int32_t khz);
  */
 int esp_sdr_set_channel_bw(unsigned int cbw);
 
+/** Radio housekeeping counters, for diagnosis. */
+struct esp_sdr_debug {
+	/* Transmit sessions; forced RX gain re-applied at captures, and the last one's time. */
+	uint32_t dac_sessions, gain_refreshed, gain_apply_us;
+};
+
+void esp_sdr_debug_get(struct esp_sdr_debug *d);
+
 /**
  * @brief Read or write a register of the analog baseband (I2C block 0x67), for characterization.
  *

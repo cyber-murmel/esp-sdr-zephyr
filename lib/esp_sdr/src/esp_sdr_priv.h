@@ -53,6 +53,9 @@
 
 #define SENTINEL 0xa5a0055aU
 
+/* Housekeeping counters (esp_sdr_debug_get()). */
+extern struct esp_sdr_debug sdr_dbg;
+
 /* BBTOP analog baseband: I/Q low-pass capacitor codes in registers 4 and 5. */
 #define BBTOP_BLOCK    0x67U
 #define BBTOP_HOST     0U

@@ -222,6 +222,8 @@ out:
 	return ret;
 }
 
+struct esp_sdr_debug sdr_dbg;
+
 static enum esp_sdr_rate dac_rate;
 static uint32_t dac_usage, dac_saved;
 
@@ -296,6 +298,7 @@ void sdr_dac_end(void)
 {
 	REG_WRITE(DAC_TRIG_REG, 0);
 	REG_WRITE(DUMP_CTRL_REG, 0);
+	sdr_dbg.dac_sessions++;
 	REG_WRITE(SENSITIVE_INTERNAL_SRAM_USAGE_3_REG, dac_saved);
 	sdr_rx_resume();
 	k_mutex_unlock(&sdr_lock);
