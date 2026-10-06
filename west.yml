@@ -11,6 +11,8 @@ manifest:
       url-base: https://github.com/cyber-murmel
     - name: espargos
       url-base: https://github.com/ESPARGOS
+    - name: espressif
+      url-base: https://github.com/espressif
 
   projects:
     # Zephyr with ESP32-S3 SMP (zephyrproject-rtos/zephyr#120082, rebased) and
@@ -41,3 +43,8 @@ manifest:
       remote: espargos
       revision: 1fe55351036337359bcac1ccca6db04c32fde4f8
       path: modules/lib/esp-sdr
+    # Espressif DSP library: only the ESP32-S3 FFT kernel (apps/link OFDM).
+    - name: esp-dsp
+      remote: espressif
+      revision: 3c8ac0fdfec83740b783e200862c8d0c056de0ad
+      path: modules/lib/esp-dsp

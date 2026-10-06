@@ -11,10 +11,12 @@ like [example-application](https://github.com/zephyrproject-rtos/example-applica
 | Path | What |
 |------|------|
 | `lib/esp_sdr/` | The `esp_sdr` library (`CONFIG_ESP_SDR`): capture, tuning, gain, TX backends |
-| `include/esp_sdr/` | Its API: [esp_sdr.h](include/esp_sdr/esp_sdr.h), [esp_sdr_tx.h](include/esp_sdr/esp_sdr_tx.h) |
-| `apps/rx_capture/` | Minimal capture survey on the console |
-| `apps/rx_stream/` | VITA 49.2 RX and TX over USB (CDC-NCM, UDP/IPv6), DFU, host tools |
-| `scripts/esdr-update.sh` | DFU update and confirm of a running rx_stream board |
+| `include/esp_sdr/` | Its API: [esp_sdr.h](include/esp_sdr/esp_sdr.h) (shared), [esp_sdr_rx.h](include/esp_sdr/esp_sdr_rx.h), [esp_sdr_tx.h](include/esp_sdr/esp_sdr_tx.h) |
+| `apps/capture/` | Minimal capture survey on the console |
+| `apps/sdr_stream/` | VITA 49.2 RX and TX over USB (CDC-NCM, UDP/IPv6), DFU, host tools |
+| `apps/link/` | QAM packet link at 80 MS/s (RS/Hamming, CSMA/CA, iperf style test) |
+| `apps/common/` | Shared by the apps: USB with DFU, watchdogs, crash records, thread pinning |
+| `scripts/esp-sdr-update.sh` | DFU update and confirm of a running sdr_stream board |
 | `zephyr/module.yml` | Module definition and the `librftest.a` blob |
 | `west.yml` | The workspace: Zephyr, hal_espressif, libvrt, upstream esp-sdr |
 
@@ -26,30 +28,38 @@ cd esp-sdr-ws
 west update
 west blobs fetch hal_espressif
 west blobs fetch esp-sdr-zephyr
-west build --sysbuild -b xiao_esp32s3/esp32s3/procpu esp-sdr-zephyr/apps/rx_stream
+west build --sysbuild -b xiao_esp32s3/esp32s3/procpu esp-sdr-zephyr/apps/sdr_stream
 west flash
 ```
 
-See [apps/rx_stream/README.rst](apps/rx_stream/README.rst) for the host
+See [apps/sdr_stream/README.rst](apps/sdr_stream/README.rst) for the host
 setup, DFU updates and the tools.
 
 ## The library
 
 - ESP32-S3 only (tested on the Seeed XIAO ESP32S3), SMP or single core.
 - Capture: bursts of 256 to 16380 complex samples at 80, 40 or 16 MS/s from
-  100 to 6000 MHz (5/6 LO mode at 1842 to 2209 MHz), analog low-pass filter
-  by bandwidth or raw code, and a CIC decimated capture (16 MS/s / m).
-- Gain: hardware AGC or a fixed gain index (`esp_sdr_set_gain()`, 0 to
-  `esp_sdr_gain_max()`, not dB). The fixed gain uses `force_rx_gain()` from
+  100 to 6000 MHz (5/6 LO mode at 1842 to 2209 MHz), into either dump bank
+  (`CONFIG_ESP_SDR_BANK1`), analog low-pass filter by bandwidth or raw code,
+  and optionally (`CONFIG_ESP_SDR_RX_DECIM`) a CIC decimated capture
+  (16 MS/s / m).
+- Gain: hardware AGC or a fixed gain index (`esp_sdr_rx_set_gain()`, 0 to
+  `esp_sdr_rx_gain_max()`, not dB). The fixed gain uses `force_rx_gain()` from
   Espressif's `librftest.a` (Apache-2.0, the esp-phy-lib commit matching the
   hal_espressif `libphy`), a module blob: `west blobs fetch esp-sdr-zephyr`,
-  or `CONFIG_ESP_SDR_MANUAL_GAIN=n` for AGC only.
-- Transmit: `esp_sdr_play()` and `esp_sdr_sweep()` play samples through the
+  or `CONFIG_ESP_SDR_RFTEST=n` for AGC only (that also drops the TX
+  power steps).
+- Transmit: `esp_sdr_tx_play()` and `esp_sdr_tx_sweep()` play samples through the
   Wi-Fi DAC at 40 or 80 MS/s, with an 18 step power ladder
-  (`esp_sdr_set_tx_gain()`). `CONFIG_ESP_SDR_TX_DAC` (needs PSRAM) streams
+  (`esp_sdr_tx_set_gain()`). `CONFIG_ESP_SDR_TX_DAC` (needs PSRAM) streams
   arbitrary I/Q at 40 MS/s / n: a PSRAM ring, linear interpolation with the
   S3 vector unit, and the DAC in loop mode over two SRAM banks, so playback
-  is gapless and locked to real time.
+  is gapless and locked to real time. `esp_sdr_tx_loop_*()` plays prepared
+  banks in a loop directly.
+- Front end: `esp_sdr_set_turnaround()` shortens the TX/RX switch (3 ms by
+  default, 50 us works for packets), `esp_sdr_set_channel_bw()` passes the
+  PHY's channel bandwidth mode (2 is its 40 MHz mode, wider analog filters),
+  `esp_sdr_tx_set_lpf()` sets the TX low-pass codes.
 
 Enable it with:
 
