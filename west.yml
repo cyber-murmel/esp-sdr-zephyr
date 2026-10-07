@@ -20,6 +20,7 @@ manifest:
     - name: zephyr
       remote: cyber-murmel
       revision: 7127a8f5cd41620fb8c2941279a790c2ef7a6e3e # esp-sdr branch
+      path: modules/zephyr
       import:
         name-allowlist:
           - mcuboot
@@ -29,7 +30,7 @@ manifest:
     # revision Zephyr's own manifest pins.
     - name: hal_espressif
       remote: cyber-murmel
-      revision: esp32s3-smp
+      revision: 54d64a1289e8d0cddccef6359a385ffb4c68b213 # esp-sdr branch
       path: modules/hal/espressif
       groups:
         - hal

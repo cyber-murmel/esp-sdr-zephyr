@@ -82,6 +82,8 @@ static int dac_start(uint64_t freq_hz, uint32_t rate_hz)
 	in_rate = rate_hz;
 	interp = fs / rate_hz;
 	atomic_set(&ring_w, 0);
+	atomic_set(&filled_in, 0);
+	atomic_set(&late_in, 0);
 	ring_r = 0;
 	stats = (struct esp_sdr_tx_dac_stats){.interp = interp};
 	atomic_set(&stop_req, 0);
@@ -176,9 +178,18 @@ static int32_t pie_vec[24] __aligned(16) = {
  */
 #define HOT IRAM_ATTR __attribute__((optimize("O3")))
 
+/* Buffers and stacks in the SRAM above the capture bank, or in the DRAM image. */
+#if defined(CONFIG_ESP_SDR_TX_DAC_HIGH_RAM)
+#define DAC_RAM   ESP_SDR_HIGH_RAM
+#define DAC_STACK ESP_SDR_HIGH_RAM
+#else
+#define DAC_RAM
+#define DAC_STACK __kstackmem
+#endif
+
 /* Input for the block being filled, copied from the PSRAM ring. */
 #define STAGE_WORDS 512U
-static uint32_t stage[STAGE_WORDS];
+static uint32_t stage[STAGE_WORDS] DAC_RAM;
 /* Where fill() reads input index i: src[(i - src_base) & src_mask]. */
 static const uint32_t *src;
 static uint32_t src_base, src_mask;
@@ -649,19 +660,20 @@ static void player(void *p1, void *p2, void *p3)
 	}
 }
 
-K_THREAD_DEFINE(esp_sdr_dac_player, CONFIG_ESP_SDR_TX_DAC_STACK_SIZE, player, NULL, NULL, NULL,
-		CONFIG_ESP_SDR_TX_DAC_PRIORITY, 0, 0);
+static Z_KERNEL_STACK_DEFINE_IN(player_stack, CONFIG_ESP_SDR_TX_DAC_STACK_SIZE, DAC_STACK);
+static struct k_thread player_thread;
 
 /* The fill loop needs little stack; internal RAM is tight. */
 #define FILLER_STACK_SIZE 1536
-static K_THREAD_STACK_ARRAY_DEFINE(filler_stacks, NFILL, FILLER_STACK_SIZE);
+static Z_KERNEL_STACK_ARRAY_DEFINE_IN(filler_stacks, NFILL, FILLER_STACK_SIZE, DAC_STACK);
 static struct k_thread filler_threads[NFILL];
 
 #if defined(CONFIG_ESP_SDR_TX_DAC_SIMD)
 /* Vector ramp against the scalar one: odd alignment, both slopes, full scale. */
 static bool pie_selftest(void)
 {
-	static uint32_t got[203] __aligned(16), want[203];
+	/* Scratch in the transmit bank, idle at boot. */
+	uint32_t *got = __esp_sdr_bank1_start, *want = __esp_sdr_bank1_start + 256;
 	static const int32_t cases[][4] = {
 		{-512 << I_FRAC, 511 << Q_FRAC, 5 << (I_FRAC - 2), -(7 << (Q_FRAC - 3))},
 		{511 << I_FRAC, -512 << Q_FRAC, -(1022 << I_FRAC) / 200, (1022 << Q_FRAC) / 200},
@@ -698,11 +710,14 @@ static int fillers_init(void)
 #endif
 	k_sem_init(&half_sem, 0, 1);
 	k_sem_init(&half_done_sem, 0, 1);
+	k_thread_create(&player_thread, player_stack, K_KERNEL_STACK_SIZEOF(player_stack), player,
+			NULL, NULL, NULL, CONFIG_ESP_SDR_TX_DAC_PRIORITY, 0, K_NO_WAIT);
+	k_thread_name_set(&player_thread, "esp_sdr_dac_player");
 	for (int s = 0; s < NFILL; s++) {
 		k_sem_init(&job_sem[s], 0, 1);
 		k_sem_init(&ready_sem[s], 0, 1);
 		k_thread_create(&filler_threads[s], filler_stacks[s],
-				K_THREAD_STACK_SIZEOF(filler_stacks[s]), filler, (void *)(intptr_t)s,
+				K_KERNEL_STACK_SIZEOF(filler_stacks[s]), filler, (void *)(intptr_t)s,
 				NULL, NULL, CONFIG_ESP_SDR_TX_DAC_FILLER_PRIORITY, 0, K_FOREVER);
 		k_thread_name_set(&filler_threads[s], s == 0 ? "dac_fill0" : "dac_fill1");
 #if defined(CONFIG_SCHED_CPU_MASK)
@@ -726,6 +741,13 @@ const struct esp_sdr_tx_backend esp_sdr_tx_dac_backend = {
 	.write = dac_write,
 	.stop = dac_stop,
 };
+
+uint32_t esp_sdr_tx_dac_queued(void)
+{
+	int32_t q = (int32_t)((uint32_t)atomic_get(&ring_w) - (uint32_t)atomic_get(&filled_in));
+
+	return q > 0 ? (uint32_t)q : 0U;
+}
 
 void esp_sdr_tx_dac_get_stats(struct esp_sdr_tx_dac_stats *out)
 {

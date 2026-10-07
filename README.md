@@ -13,8 +13,10 @@ like [example-application](https://github.com/zephyrproject-rtos/example-applica
 | `lib/esp_sdr/` | The `esp_sdr` library (`CONFIG_ESP_SDR`): capture, tuning, gain, TX backends |
 | `include/esp_sdr/` | Its API: [esp_sdr.h](include/esp_sdr/esp_sdr.h) (shared), [esp_sdr_rx.h](include/esp_sdr/esp_sdr_rx.h), [esp_sdr_tx.h](include/esp_sdr/esp_sdr_tx.h) |
 | `apps/capture/` | Minimal capture survey on the console |
-| `apps/sdr_stream/` | VITA 49.2 RX and TX over USB (CDC-NCM, UDP/IPv6), DFU, host tools |
+| `apps/sdr_stream/` | VITA 49.2 RX and TX over USB (CDC-NCM, UDP/IPv6), host tools |
+| `apps/osmosdr/` | HackRF style USB SDR for osmosdr / GNU Radio: gapless decimated RX, TX, vendor bulk protocol |
 | `apps/link/` | QAM packet link at 80 MS/s (RS/Hamming, CSMA/CA, iperf style test) |
+| `apps/osmosdr/` | HackRF style USB SDR for osmosdr / GNU Radio: gapless decimated RX, TX, vendor bulk protocol |
 | `apps/common/` | Shared by the apps: USB with DFU, watchdogs, crash records, thread pinning |
 | `scripts/esp-sdr-update.sh` | DFU update and confirm of a running sdr_stream board |
 | `zephyr/module.yml` | Module definition and the `librftest.a` blob |
@@ -28,13 +30,13 @@ cd esp-sdr-ws
 west update
 west blobs fetch hal_espressif
 west blobs fetch esp-sdr-zephyr
-west build --sysbuild -b xiao_esp32s3/esp32s3/procpu esp-sdr-zephyr/apps/sdr_stream
+west build --sysbuild -b xiao_esp32s3/esp32s3/procpu esp-sdr-zephyr/apps/osmosdr
 west flash
 ```
 
-See [apps/sdr_stream/README.rst](apps/sdr_stream/README.rst) for the host
+See [apps/osmosdr/README.rst](apps/osmosdr/README.rst) for the host
 setup, DFU updates and the tools, and
-[docs/hardware-quirks.md](docs/hardware-quirks.md) for the radio, engine and
+[doc/hardware-quirks.md](doc/hardware-quirks.md) for the radio, engine and
 toolchain peculiarities and how the code handles them.
 
 ## The library
@@ -90,11 +92,11 @@ with `ESP_SDR_HIGH_RAM` (not zeroed at boot).
 
 `west.yml` pins forks where this work needs changes not yet upstream:
 
-- Zephyr `esp32s3-smp`: ESP32-S3 SMP (zephyrproject-rtos/zephyr#120082,
+- [Zephyr `esp-sdr`](https://github.com/cyber-murmel/zephyr/tree/esp-sdr): ESP32-S3 SMP (zephyrproject-rtos/zephyr#120082,
   rebased) and CDC-NCM NTB aggregation.
-- hal_espressif `esp32s3-smp`: the HAL side of the SMP port.
-- libvrt `zephyr`: VITA 49.2 support and a Zephyr module.
-- esp-sdr (upstream, unmodified): the receiver helper headers.
+- [hal_espressif `esp-sdr`](https://github.com/cyber-murmel/hal_espressif/tree/esp-sdr): the HAL side of the SMP port.
+- [libvrt `esp-sdr`](https://github.com/cyber-murmel/libvrt/tree/esp-sdr): VITA 49.2 support and a Zephyr module.
+- [esp-sdr (upstream, unmodified)](https://github.com/ESPARGOS/esp-sdr): the receiver helper headers.
 
 ## License
 

@@ -291,6 +291,13 @@ extern const struct esp_sdr_tx_backend esp_sdr_tx_dac_backend;
 
 /** Copy the DAC backend statistics into @p stats. */
 void esp_sdr_tx_dac_get_stats(struct esp_sdr_tx_dac_stats *stats);
+
+/**
+ * @return Input samples written but not yet interpolated for the DAC: what a
+ * writer adds to the latency. Keep it below the ring size
+ * (CONFIG_ESP_SDR_TX_DAC_RING_SAMPLES), or new input overwrites old.
+ */
+uint32_t esp_sdr_tx_dac_queued(void);
 #endif
 
 #ifdef __cplusplus

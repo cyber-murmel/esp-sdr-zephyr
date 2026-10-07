@@ -59,14 +59,16 @@ static void gain_apply(void)
  */
 #define GAIN_REFRESH_MS 20
 
-static void gain_refresh(void)
+bool sdr_rx_gain_refresh(void)
 {
 #if defined(CONFIG_ESP_SDR_RFTEST)
 	if (gain_index >= 0 && k_uptime_get() - gain_applied_ms > GAIN_REFRESH_MS) {
 		sdr_dbg.gain_refreshed++;
 		gain_apply();
+		return true;
 	}
 #endif
+	return false;
 }
 
 static void lpf_apply(void);
@@ -249,7 +251,7 @@ static int capture_locked(enum esp_sdr_rate rate, size_t count, volatile uint32_
 	words[0] = SENTINEL;
 	words[count - 1] = SENTINEL;
 
-	gain_refresh();
+	(void)sdr_rx_gain_refresh();
 	saved = REG_READ(SENSITIVE_INTERNAL_SRAM_USAGE_3_REG);
 	*t0 = k_cycle_get_64();
 	start = (uint32_t)*t0;

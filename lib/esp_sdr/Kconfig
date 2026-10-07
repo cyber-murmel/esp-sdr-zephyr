@@ -41,6 +41,16 @@ config ESP_SDR_BANK1
 	  either bank (esp_sdr_rx_capture_bank()). Costs another 64 KiB of
 	  internal RAM.
 
+config ESP_SDR_RING
+	bool "Continuous ring receive"
+	select ESP_SDR_BANK1
+	help
+	  esp_sdr_ring_run(): the dump engine in circular mode, rotated
+	  through SRAM banks 0 to 2, and a two-stage decimating FIR on the
+	  vector unit: gapless I/Q at 16 MS/s divided by 64 to 1024. Reserves
+	  SRAM bank 0 (0x3fcb0000) besides banks 1 and 2, another 64 KiB of
+	  internal RAM: the whole DRAM image must end below 0x3fcb0000.
+
 config ESP_SDR_TX
 	bool "Transmit backend interface"
 	help
@@ -74,6 +84,13 @@ config ESP_SDR_TX_DAC_SIMD
 	  Four DAC words per instruction group (src/esp_sdr_pie.S). The
 	  vector registers are not saved by Zephyr, so only the filler
 	  threads may use them, with the scheduler locked meanwhile.
+
+config ESP_SDR_TX_DAC_HIGH_RAM
+	bool "Backend buffers and thread stacks above the capture bank"
+	help
+	  Puts the input staging buffer and the player and filler stacks
+	  (about 7 KiB) in ESP_SDR_HIGH_RAM instead of the DRAM image, for
+	  apps whose image must end below the ring banks.
 
 config ESP_SDR_TX_DAC_STACK_SIZE
 	int "Player and filler thread stack size"

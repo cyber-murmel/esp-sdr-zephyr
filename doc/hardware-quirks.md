@@ -115,6 +115,13 @@ The capture and DAC playback use the Wi-Fi MAC's undocumented dump engine
   count). A looped frame must fit twice into one window so that a whole copy
   is always present. That caps the bytes per received window: what matters
   is the payload bits per captured sample.
+- **Circular capture.** With `DUMP_CTRL` 0x24000 the engine writes a
+  16384-pair ring continuously and exposes its write index at 0x60033d60;
+  switching the bank select while it runs splits the stream into gapless
+  units. `lib/esp_sdr/src/esp_sdr_ring.c` (from upstream) rotates through
+  banks 0 to 2 and proves continuity with sentinel windows: the switch must
+  come within 2000 pairs (125 us at 16 MS/s) of its threshold, and a bank
+  must be filtered before the engine comes round to it again.
 - **Loop playback wraps only while the trigger is held.** `sdr_dac_loop()`
   holds the trigger bit; pulsing it plays one pass. Retriggered bursts
   (`esp_sdr_tx_play_for()`) leave a hole of about 1.35 us each.
@@ -133,6 +140,15 @@ The capture and DAC playback use the Wi-Fi MAC's undocumented dump engine
   QAM transmit context and OFDM receive context, with about 128 bytes left.
   "high buffers beyond user DRAM" means it is full. Large buffers that are
   not timing critical go to PSRAM (`EXT_RAM_BSS_ATTR`).
+- **The high region reaches 0x3fce9704.** Zephyr's `user_dram_end`
+  (0x3fce4f00) only protects MCUboot's loader while the image loads; the
+  ROM's download-mode buffers above it are free at runtime, so NOLOAD
+  buffers can use the whole range (`DRAM_USER_END`, about 38 KiB).
+- **Three banks for the ring** move the DRAM limit to 0x3fcb0000.
+  `apps/osmosdr` fits by trimming the network stack (only the Wi-Fi driver
+  needs it), and putting sample blocks, filter buffers, thread stacks and
+  the DAC backend's buffers (`CONFIG_ESP_SDR_TX_DAC_HIGH_RAM`) in the high
+  region. The Wi-Fi driver needs about 15.5 KiB of kernel heap.
 - **Not zeroed at boot.** Neither `.esp_sdr_high` nor PSRAM `.bss` is
   cleared. `apps/link` clears what needs it at init (`link_mac_init()`).
 - **PSRAM is slow for strided or per-sample work.** RS units and payload
@@ -164,6 +180,15 @@ The capture and DAC playback use the Wi-Fi MAC's undocumented dump engine
   flash it is still 1.76 times faster than the same algorithm in C from IRAM
   (85.7 against 150.6 us for 256 points). The S3 mask ROM has the twiddle
   table, but no FFT code.
+- **A CPU with interrupts masked for seconds.** The ring runs on CPU 1
+  under `arch_irq_lock()`: on SMP, `irq_lock()` takes a global lock and
+  would stall the other CPU. Nothing may be pinned to that CPU meanwhile,
+  no flash writes may happen (code from flash would stall), and the vector
+  registers it uses are not part of any thread context.
+- **The ring filter's budget** at 16 MS/s is 15 cycles per pair (240 MHz):
+  unpack 3.0, the fs/4 mix 1.6, stage 1 4.5, stage 2 2.6 (decimation 64),
+  the app's packing about 1. The multiply-accumulate chain on the single
+  `accx` accumulator, not the instruction count, limits stage 1.
 - **RS(255,223) decoding cost.** About 49 us for a clean codeword, 220 us
   with 2 errors and 400 us with 10. With many corrections, RS decoding
   dominates a receiver.
@@ -178,5 +203,8 @@ The capture and DAC playback use the Wi-Fi MAC's undocumented dump engine
 - Update over USB DFU with `scripts/esp-sdr-update.sh <serial> <zephyr.signed.bin>`.
   The signed image grows in steps of 64 KiB (flash MMU page alignment), so
   its size is no evidence of a new build.
+- Host udev rules match USB product IDs: a build with a new PID cannot be
+  opened (or DFU-detached) until the rule covers it. The apps share
+  2fe3:0005; `scripts/esp-sdr-update.sh` detaches whatever PID runs.
 - A shell port serves one process: a host tool holding it (such as a running
   `link_perf.py run`) makes another tool's open of the same board fail.

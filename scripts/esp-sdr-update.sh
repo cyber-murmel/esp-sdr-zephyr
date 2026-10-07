@@ -14,14 +14,15 @@ ok=0
 for try in 1 2 3; do
   # Detach unless a failed try left the board in DFU mode.
   if [ "$(cat /sys/bus/usb/devices/$port/idProduct 2>/dev/null)" != ffff ]; then
-    timeout 15 dfu-util -S $sn -d 2fe3:0005 -e >/dev/null 2>&1
+    pid=$(cat /sys/bus/usb/devices/$port/idProduct 2>/dev/null)
+    timeout 15 dfu-util -S $sn -d 2fe3:${pid:-0005} -e >/dev/null 2>&1
   fi
   dfu=0; for i in $(seq 75); do [ "$(cat /sys/bus/usb/devices/$port/idProduct 2>/dev/null)" = ffff ] && { dfu=1; break; }; sleep 0.2; done
   [ $dfu = 1 ] || { echo "$sn: no DFU mode (try $try)"; continue; }
   if ! timeout 60 dfu-util -d 2fe3:ffff -p $port -a slot1_image -D "$img" 2>&1 | grep -q 'Download done'; then
     echo "$sn: download $try failed"; continue
   fi
-  for i in $(seq 35); do sleep 1; [ "$(cat /sys/bus/usb/devices/$port/idProduct 2>/dev/null)" = 0005 ] && ls /dev/serial/by-id/ 2>/dev/null | grep -q "^usb-Zephyr_Project_ESP-SDR.*_${sn}-if00$" && { ok=1; break; }; done
+  for i in $(seq 35); do sleep 1; p=$(cat /sys/bus/usb/devices/$port/idProduct 2>/dev/null); [ -n "$p" ] && [ "$p" != ffff ] && ls /dev/serial/by-id/ 2>/dev/null | grep -q "^usb-Zephyr_Project_ESP-SDR.*_${sn}-if00$" && { ok=1; break; }; done
   [ $ok = 1 ] && break
 done
 [ $ok = 1 ] || { echo "$sn: update failed"; exit 1; }

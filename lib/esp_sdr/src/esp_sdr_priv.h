@@ -129,6 +129,8 @@ extern bool sdr_turn_retune;
  * transmission, or to TX, at the current gains; lock held.
  */
 void sdr_rx_prepare(void);
+/* Re-force a fixed receive gain last applied more than 20 ms ago; lock held. Returns whether it did. */
+bool sdr_rx_gain_refresh(void);
 void sdr_rx_resume(void);
 void sdr_tx_prepare(void);
 

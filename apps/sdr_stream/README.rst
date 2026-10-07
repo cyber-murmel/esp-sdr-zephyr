@@ -69,13 +69,6 @@ over DFU instead:
 
    esp-sdr-zephyr/scripts/esp-sdr-update.sh <usb serial> build/sdr_stream/zephyr/zephyr.signed.bin
 
-The script detaches the app into DFU, downloads the image, waits for MCUboot
-to test-boot it and confirms it on the shell (``mcuboot confirm``). An image
-that is never confirmed is reset by a watchdog after about 30 s and MCUboot
-reverts to the previous one, so a broken update never needs a replug.
-``CONFIG_APP_USB_START_DELAY_MS`` keeps USB-Serial-JTAG alive for a few
-seconds after reset for recovery builds.
-
 Receiving
 *********
 
