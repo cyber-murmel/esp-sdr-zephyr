@@ -1,0 +1,9 @@
+# Copyright (c) 2024 Nordic Semiconductor ASA
+# SPDX-License-Identifier: Apache-2.0
+
+board:
+  name: custom_plank
+  full_name: Custom Plank
+  vendor: vendor
+  socs:
+    - name: nrf52840
