@@ -1,0 +1,92 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+config ESP_SDR
+	bool "ESP-SDR raw I/Q receiver"
+	depends on SOC_SERIES_ESP32S3
+	depends on WIFI_ESP32
+	# The bank and heap limits assume no APPCPU image in SRAM.
+	depends on !SOC_ENABLE_APPCPU
+	help
+	  Burst capture of raw baseband I/Q samples from the Wi-Fi receiver,
+	  ported from ESPARGOS esp-sdr. Reserves one 64 KiB SRAM bank for the
+	  capture engine.
+
+if ESP_SDR
+
+config ESP_SDR_MANUAL_GAIN
+	bool "Manual RX gain"
+	default y
+	help
+	  Links force_rx_gain() from Espressif's librftest.a, fetched with
+	  "west blobs fetch esp-sdr-zephyr". Without it only the hardware AGC works.
+
+config ESP_SDR_TX
+	bool "Transmit backend interface"
+	help
+	  esp_sdr_tx_*() front end with a stub backend that consumes and
+	  counts samples. A real backend registers with
+	  esp_sdr_tx_set_backend().
+
+config ESP_SDR_TX_DAC
+	bool "DAC transmit backend"
+	default y
+	depends on ESP_SDR_TX && ESP_SPIRAM && ESP_SDR_MANUAL_GAIN
+	help
+	  Default backend: buffers input samples in PSRAM and interpolates
+	  them to the 40 MS/s DAC rate in a player thread.
+
+if ESP_SDR_TX_DAC
+
+config ESP_SDR_TX_DAC_RING_SAMPLES
+	int "Input ring size in samples (PSRAM, 4 bytes each, power of two)"
+	default 262144
+
+config ESP_SDR_TX_DAC_PREBUF_MS
+	int "Input buffered before playback starts, in ms"
+	default 20
+
+config ESP_SDR_TX_DAC_SIMD
+	bool "Interpolate with the ESP32-S3 vector unit"
+	default y
+	help
+	  Four DAC words per instruction group (src/esp_sdr_pie.S). The
+	  vector registers are not saved by Zephyr, so only the filler
+	  threads may use them, with the scheduler locked meanwhile.
+
+config ESP_SDR_TX_DAC_STACK_SIZE
+	int "Player and filler thread stack size"
+	default 2048
+
+config ESP_SDR_TX_DAC_PRIORITY
+	int "Player thread priority"
+	default 8
+	help
+	  Below the network and transmit receive threads, above the fillers:
+	  it only copies ready blocks and restarts the DAC.
+
+config ESP_SDR_TX_DAC_FILLER_PRIORITY
+	int "Filler thread priority"
+	default 5
+	help
+	  The leader fills one block per bank pass and sleeps until its switch
+	  time, so it can sit above the application threads: any thread that
+	  preempts it on its CPU for longer than the block tail (51 us) makes
+	  the DAC restart.
+
+config ESP_SDR_TX_DAC_LEADER_CPU
+	int "CPU of the leading filler"
+	range 0 1
+	default 1
+	help
+	  The leader fills every block when the vector unit is available, the
+	  other filler only helps the C fallback. Put the leader on the CPU
+	  that is idle while transmitting: a transmit session holds the radio,
+	  so receive capture waits and its processing CPU is free.
+
+endif # ESP_SDR_TX_DAC
+
+module = ESP_SDR
+module-str = esp_sdr
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # ESP_SDR
