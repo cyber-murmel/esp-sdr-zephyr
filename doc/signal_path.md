@@ -1,7 +1,7 @@
 # sdr_stream RX and TX signal path: antenna pin to/from host sample
 
 RX (antenna in -> host sample) and TX (host sample -> antenna out) for `apps/sdr_stream`. The
-two columns share one physical antenna pin and USB link (`sdr_lock` makes RX/TX mutually
+two columns share one physical antenna pin and USB link (`esp_sdr_lock` makes RX/TX mutually
 exclusive); drawn as separate columns to keep each one readable.
 
 ![mermaid](signal_path.svg)
@@ -66,7 +66,7 @@ RF out`"]
 </details>
 
 ## Notes
-- RX and TX share one physical RF front end / antenna pin: `sdr_lock` makes them mutually
+- RX and TX share one physical RF front end / antenna pin: `esp_sdr_lock` makes them mutually
   exclusive in time, with `esp_sdr_set_turnaround()` controlling the settle (and optional retune)
   delay when switching direction.
 - RX: the capture engine writes raw I/Q words directly into the selected DRAM bank; the CPU does

@@ -10,17 +10,21 @@ like [example-application](https://github.com/zephyrproject-rtos/example-applica
 
 | Path | What |
 |------|------|
-| `lib/esp_sdr/` | The `esp_sdr` library (`CONFIG_ESP_SDR`): capture, tuning, gain, TX backends |
-| `include/esp_sdr/` | Its API: [esp_sdr.h](include/esp_sdr/esp_sdr.h) (shared), [esp_sdr_rx.h](include/esp_sdr/esp_sdr_rx.h), [esp_sdr_tx.h](include/esp_sdr/esp_sdr_tx.h) |
+| `lib/esp_sdr/` | The `esp_sdr` library (`CONFIG_ESP_SDR`): capture, tuning, gain, TX backends, continuous ring receive |
+| `lib/ieee802154/` | IEEE 802.15.4 on the library (`CONFIG_ESP_SDR_IEEE802154`): software O-QPSK PHY and a Zephyr radio driver, see [doc/ieee802154.md](doc/ieee802154.md) |
+| `include/esp_sdr/` | The API: [esp_sdr.h](include/esp_sdr/esp_sdr.h) (shared), [esp_sdr_rx.h](include/esp_sdr/esp_sdr_rx.h), [esp_sdr_tx.h](include/esp_sdr/esp_sdr_tx.h), [esp_sdr_ring.h](include/esp_sdr/esp_sdr_ring.h); 802.15.4: [ieee154_phy.h](include/esp_sdr/ieee154_phy.h), [ieee154_esp_sdr.h](include/esp_sdr/ieee154_esp_sdr.h) |
 | `apps/capture/` | Minimal capture survey on the console |
 | `apps/sdr_stream/` | VITA 49.2 RX and TX over USB (CDC-NCM, UDP/IPv6), host tools |
 | `apps/osmosdr/` | HackRF style USB SDR for osmosdr / GNU Radio: gapless decimated RX, TX, vendor bulk protocol |
-| `apps/link/` | QAM packet link at 80 MS/s (RS/Hamming, CSMA/CA, iperf style test) |
-| `apps/osmosdr/` | HackRF style USB SDR for osmosdr / GNU Radio: gapless decimated RX, TX, vendor bulk protocol |
+| `apps/link/` | Packet link at 80 or 40 MS/s: single carrier QAM or OFDM (RS/Hamming, CSMA/CA, iperf style test) |
+| `apps/wpan/` | `wpan` shell: 802.15.4 test frames and counters on any Zephyr radio, the software radio (S3) or a native one (C6) |
 | `apps/common/` | Shared by the apps: USB with DFU, watchdogs, crash records, thread pinning |
-| `scripts/esp-sdr-update.sh` | DFU update and confirm of a running sdr_stream board |
+| `tests/unit/` | Unit tests on the host (ztest, `native_sim`): `scripts/run-unit-tests.sh`; the 802.15.4 PHY and driver error rate tables: `scripts/unit-tables.sh`; all test tiers in [doc/testing.md](doc/testing.md) |
+| `tests/integration/` | ztest on one real board: the radio API's contract |
+| `tests/regression/` | pytest on two real boards: 802.15.4 frames between the C6 and the S3 software radio |
+| `scripts/west_commands/dfu.py` | `west dfu`: DFU update, health check and confirm of a running board |
 | `zephyr/module.yml` | Module definition and the `librftest.a` blob |
-| `west.yml` | The workspace: Zephyr, hal_espressif, libvrt, upstream esp-sdr |
+| `west.yml` | The workspace: Zephyr, hal_espressif, libvrt, upstream esp-sdr, esp-dsp |
 
 ## Getting started
 
@@ -36,12 +40,18 @@ west flash
 
 See [apps/osmosdr/README.rst](apps/osmosdr/README.rst) for the host
 setup, DFU updates and the tools, and
-[doc/hardware-quirks.md](doc/hardware-quirks.md) for the radio, engine and
-toolchain peculiarities and how the code handles them.
+[doc/hardware-quirks.md](doc/hardware-quirks.md) for the radio, engine, memory
+layout and toolchain peculiarities and how the code handles them.
 
 ## The library
 
-- ESP32-S3 only (tested on the Seeed XIAO ESP32S3), SMP or single core.
+- ESP32-S3 (tested on the Seeed XIAO ESP32S3), SMP or single core. The
+  ESP32-C6 (Seeed XIAO ESP32C6) has receive capture only: 80 MS/s bursts
+  into SRAM block 2 (0x40840000), analog filter and fixed gain; no transmit
+  (its RF test library has no DAC playback), no ring and no 40 or 16 MS/s
+  rates; the CIC decimated and folded captures work at 80 MS/s. Of the
+  apps, `capture` and `wpan` (native radio) run on it; the others
+  need the S3's USB OTG port, PSRAM or transmit.
 - Capture: bursts of 256 to 16380 complex samples at 80, 40 or 16 MS/s from
   100 to 6000 MHz (5/6 LO mode at 1842 to 2209 MHz), into either dump bank
   (`CONFIG_ESP_SDR_BANK1`), analog low-pass filter by bandwidth or raw code,
@@ -77,16 +87,6 @@ CONFIG_ESP_SDR=y
 The Wi-Fi driver brings the radio up at boot; `esp_sdr_init()` then switches
 it to promiscuous mode on channel 1 and prepares the receiver. Do not scan,
 connect or start an access point while capturing: those retune the radio.
-
-### Memory
-
-The capture engine reads and writes only fixed SRAM banks, and while it owns a
-bank the CPUs cannot reach any of it. The library reserves bank 2
-(0x3fcd0000) for capture, and with `CONFIG_ESP_SDR_TX_DAC` bank 1
-(0x3fcc0000) as the second DAC bank, through linker snippets that also lower
-`_heap_sentry`. The link fails if the image grows into a bank. The SRAM
-between bank 2 and the bootloader's loader segment is available for buffers
-with `ESP_SDR_HIGH_RAM` (not zeroed at boot).
 
 ## Dependencies
 

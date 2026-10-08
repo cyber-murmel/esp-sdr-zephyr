@@ -26,7 +26,7 @@ and comparing the AGC force register (`0x6001c02c`) does not detect it:
 **How it is handled.** The library re-forces the gain at a capture when the
 last force is more than 20 ms old (`gain_refresh()` in
 `lib/esp_sdr/src/esp_sdr_rx.c`, `GAIN_REFRESH_MS`). Each re-force costs 14 to
-51 us. `esp_sdr_debug_get()` counts them, and `link status` prints them on
+51 us. `esp_sdr_get_stats()` counts them, and `link status` prints them on
 its engine line. A turnaround back to receive also forces the gain.
 
 When debugging this kind of fault: any `link set` in `apps/link` re-applies
@@ -122,7 +122,20 @@ The capture and DAC playback use the Wi-Fi MAC's undocumented dump engine
   banks 0 to 2 and proves continuity with sentinel windows: the switch must
   come within 2000 pairs (125 us at 16 MS/s) of its threshold, and a bank
   must be filtered before the engine comes round to it again.
-- **Loop playback wraps only while the trigger is held.** `sdr_dac_loop()`
+- **The Wi-Fi MAC interrupt must not run inside the ring.** The ring masks
+  interrupts on its CPU and opens short windows for the kernel timer and
+  IPIs (`irq_window()`). CPU interrupt line 0 is the Wi-Fi MAC's
+  (`ETS_WMAC_INUM`), and it fires for every packet the Wi-Fi receiver decodes
+  at the tuned frequency, hundreds of times a second on busy air. Its handler
+  is far longer than a window, so the ring abandoned units until the run
+  failed: the receive path then lost whole frames, in bursts that came and
+  went with the neighbours' traffic and flipped with unrelated code changes.
+  `esp_sdr_ring_run()` now disables line 0 on its CPU for the run and serves
+  the interrupt afterwards. `ring irq windows` and `lines` in `wpan status`
+  show how many windows ran and which lines were pending (0x40 is the tick
+  timer; 0x41 would be the MAC). With the fix, abandoned units stay at 0 even
+  with the C6 sending back to back.
+- **Loop playback wraps only while the trigger is held.** `esp_sdr_dac_loop()`
   holds the trigger bit; pulsing it plays one pass. Retriggered bursts
   (`esp_sdr_tx_play_for()`) leave a hole of about 1.35 us each.
 - **Turnaround.** The default TX/RX switch with a retune takes about 3 ms.
@@ -135,7 +148,18 @@ The capture and DAC playback use the Wi-Fi MAC's undocumented dump engine
 
 ## Memory
 
-- **Internal RAM is the scarce resource.** Besides the two banks, the region
+On the S3 the engine's 64 KiB banks and the `ESP_SDR_HIGH_RAM` region sit at
+the top of internal DRAM, laid out by the linker snippets
+`lib/esp_sdr/esp_sdr_bank*.ld` (picked in `lib/esp_sdr/CMakeLists.txt`). Bank 2
+(0x3fcd0000) is always the capture bank. `CONFIG_ESP_SDR_BANK1`, which
+`ESP_SDR_TX_DAC` and `ESP_SDR_RING` select, adds bank 1 (0x3fcc0000) as the
+second DAC and capture bank, and the ring takes banks 0 to 2 (from
+0x3fcb0000). Each snippet lowers `_heap_sentry` to its lowest bank, so the libc
+heap stays below it, and fails the link if the DRAM image grows into a bank
+(see "A bank is off limits" above). The SRAM between the capture bank and the
+bootloader's loader segment is what `ESP_SDR_HIGH_RAM` places buffers in.
+
+- **Internal RAM is the scarce resource.** Besides the banks, the region
   above the capture bank (`.esp_sdr_high`, `ESP_SDR_HIGH_RAM`) holds `apps/link`'s
   QAM transmit context and OFDM receive context, with about 128 bytes left.
   "high buffers beyond user DRAM" means it is full. Large buffers that are
@@ -200,11 +224,11 @@ The capture and DAC playback use the Wi-Fi MAC's undocumented dump engine
   cached-source mismatch.
 - Kconfig values passed with `-D` stay in the CMake cache. An old override
   (for example `-Dlink_CONFIG_APP_SPS=8`) persists until set again.
-- Update over USB DFU with `scripts/esp-sdr-update.sh <serial> <zephyr.signed.bin>`.
+- Update over USB DFU with `west dfu -d <build dir> [-s <usb serial>]`.
   The signed image grows in steps of 64 KiB (flash MMU page alignment), so
   its size is no evidence of a new build.
 - Host udev rules match USB product IDs: a build with a new PID cannot be
   opened (or DFU-detached) until the rule covers it. The apps share
-  2fe3:0005; `scripts/esp-sdr-update.sh` detaches whatever PID runs.
+  2fe3:0005; `west dfu` detaches whatever PID runs.
 - A shell port serves one process: a host tool holding it (such as a running
   `link_perf.py run`) makes another tool's open of the same board fail.
