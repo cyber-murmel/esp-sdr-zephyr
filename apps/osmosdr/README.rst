@@ -32,7 +32,7 @@ Building and flashing
 .. code-block:: console
 
    west build --sysbuild -b xiao_esp32s3/esp32s3/procpu esp-sdr-zephyr/apps/osmosdr
-   esp-sdr-zephyr/scripts/esp-sdr-update.sh <usb serial> build/osmosdr/zephyr/zephyr.signed.bin
+   west dfu -s <usb serial>
 
 The app uses the same USB IDs as the other apps (2fe3:0005, host udev rules
 as in ``apps/sdr_stream/README.rst``); hosts find it by its vendor
@@ -49,10 +49,12 @@ over DFU instead:
 
 .. code-block:: console
 
-   esp-sdr-zephyr/scripts/esp-sdr-update.sh <usb serial> build/osmosdr/zephyr/zephyr.signed.bin
+   west dfu -s <usb serial>
 
-The script detaches the app into DFU, downloads the image, waits for MCUboot
-to test-boot it and confirms it on the shell (``mcuboot confirm``). An image
+``west dfu`` (``scripts/west_commands/dfu.py``, build directory ``build`` unless
+``-d`` names another, ``-s`` needed with several boards) detaches the app into
+DFU, downloads the image, waits for MCUboot to test-boot it, checks that its
+shell keeps answering and only then confirms it (``mcuboot confirm``). An image
 that is never confirmed is reset by a watchdog after about 30 s and MCUboot
 reverts to the previous one, so a broken update never needs a replug.
 ``CONFIG_APP_USB_START_DELAY_MS`` keeps USB-Serial-JTAG alive for a few

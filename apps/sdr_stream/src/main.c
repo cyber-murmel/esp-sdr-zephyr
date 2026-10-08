@@ -27,9 +27,9 @@ LOG_MODULE_REGISTER(sdr_stream, LOG_LEVEL_INF);
 #define PROCESS_STACK_SIZE 3072
 
 /* Bursts live above the capture bank: frees low DRAM for the USB buffers. */
-K_MEM_SLAB_DEFINE_IN_SECT(burst_slab, Z_GENERIC_SECTION(.esp_sdr_high), sizeof(struct rx_burst),
+K_MEM_SLAB_DEFINE_IN_SECT(burst_slab, Z_GENERIC_SECTION(.esp_sdr_high), sizeof(struct vrt_rx_burst),
 			  CONFIG_APP_RX_BURSTS, 4);
-K_MSGQ_DEFINE(burst_q, sizeof(struct rx_burst *), CONFIG_APP_RX_BURSTS, 4);
+K_MSGQ_DEFINE(burst_q, sizeof(struct vrt_rx_burst *), CONFIG_APP_RX_BURSTS, 4);
 
 K_THREAD_STACK_DEFINE(capture_stack, CAPTURE_STACK_SIZE);
 K_THREAD_STACK_DEFINE(process_stack, PROCESS_STACK_SIZE);
@@ -40,13 +40,13 @@ static atomic_t stalls;
 /* Decimation factor, 1 = raw bursts at the capture rate. */
 static atomic_t rx_decim = ATOMIC_INIT(1);
 /* Algorithm used when rx_decim > 1. */
-static atomic_t rx_mode = ATOMIC_INIT(RX_DECIM_CIC);
+static atomic_t rx_mode = ATOMIC_INIT(VRT_RX_DECIM_CIC);
 
 /* Decimated bursts must fit the burst buffer. */
-BUILD_ASSERT(ESP_SDR_SAMPLES_MAX / RX_DECIM_MIN <= CONFIG_APP_RX_BURST_SAMPLES + 3U);
+BUILD_ASSERT(ESP_SDR_SAMPLES_MAX / VRT_RX_DECIM_MIN <= CONFIG_APP_RX_BURST_SAMPLES + 3U);
 BUILD_ASSERT(sizeof(struct esp_sdr_iq16) == sizeof(struct esp_sdr_iq16));
 
-int rx_set_rate(uint32_t hz)
+int vrt_rx_set_rate(uint32_t hz)
 {
 	uint32_t fs = esp_sdr_rx_rate_hz(CONFIG_APP_RX_RATE), m;
 
@@ -54,30 +54,30 @@ int rx_set_rate(uint32_t hz)
 		return -EINVAL;
 	}
 	m = fs / hz;
-	if (m != 1U && (m < RX_DECIM_MIN || m > ESP_SDR_RX_DECIM_MAX)) {
+	if (m != 1U && (m < VRT_RX_DECIM_MIN || m > ESP_SDR_RX_DECIM_MAX)) {
 		return -EINVAL;
 	}
 	atomic_set(&rx_decim, (atomic_val_t)m);
 	return 0;
 }
 
-uint32_t rx_get_rate(void)
+uint32_t vrt_rx_get_rate(void)
 {
 	return esp_sdr_rx_rate_hz(CONFIG_APP_RX_RATE) / (uint32_t)atomic_get(&rx_decim);
 }
 
-int rx_set_mode(enum rx_decim_mode mode)
+int vrt_rx_set_decim(enum vrt_rx_decim mode)
 {
-	if (mode != RX_DECIM_CIC && mode != RX_DECIM_FOLD) {
+	if (mode != VRT_RX_DECIM_CIC && mode != VRT_RX_DECIM_FOLD) {
 		return -EINVAL;
 	}
 	atomic_set(&rx_mode, (atomic_val_t)mode);
 	return 0;
 }
 
-enum rx_decim_mode rx_get_mode(void)
+enum vrt_rx_decim vrt_rx_get_decim(void)
 {
-	return (enum rx_decim_mode)atomic_get(&rx_mode);
+	return (enum vrt_rx_decim)atomic_get(&rx_mode);
 }
 
 static void capture(void *p1, void *p2, void *p3)
@@ -100,7 +100,7 @@ static void capture(void *p1, void *p2, void *p3)
 	}
 
 	for (;;) {
-		struct rx_burst *b;
+		struct vrt_rx_burst *b;
 
 		if (k_mem_slab_alloc(&burst_slab, (void **)&b, K_NO_WAIT) != 0) {
 			/* Process side is behind: wait, which also lets it run on one CPU. */
@@ -111,11 +111,11 @@ static void capture(void *p1, void *p2, void *p3)
 
 		if (m > 1U) {
 			/* Whole bank, decimated on the capture core while it still holds the bank. */
-			enum rx_decim_mode mode = (enum rx_decim_mode)atomic_get(&rx_mode);
+			enum vrt_rx_decim mode = (enum vrt_rx_decim)atomic_get(&rx_mode);
 			size_t n;
 			uint64_t first;
 
-			if (mode == RX_DECIM_FOLD) {
+			if (mode == VRT_RX_DECIM_FOLD) {
 				ret = esp_sdr_rx_capture_folded(rate, ESP_SDR_SAMPLES_MAX / m * m,
 								 m, (struct esp_sdr_iq16 *)b->iq,
 								 ARRAY_SIZE(b->iq), &n, &first);
@@ -173,7 +173,7 @@ static void process(void *p1, void *p2, void *p3)
 	ARG_UNUSED(p3);
 
 	for (;;) {
-		struct rx_burst *b;
+		struct vrt_rx_burst *b;
 		uint64_t sum = 0;
 		int64_t now;
 
@@ -222,7 +222,7 @@ int main(void)
 	 * the controller interrupt lands on the CPU that allocates it.
 	 */
 	if (arch_num_cpus() > 1) {
-		app_pin_system_threads(CONFIG_APP_NET_CPU);
+		app_cpu_pin_system_threads(CONFIG_APP_NET_CPU);
 	}
 #endif
 	if (app_usb_init() != 0) {
@@ -258,7 +258,7 @@ int main(void)
 		k_thread_cpu_pin(&process_thread, PROCESS_CPU);
 #if CONFIG_APP_NET_CPU >= 0
 		/* Again for the threads started since (usbd, UDC). */
-		app_pin_system_threads(CONFIG_APP_NET_CPU);
+		app_cpu_pin_system_threads(CONFIG_APP_NET_CPU);
 #endif
 	}
 #endif

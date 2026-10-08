@@ -6,7 +6,7 @@
  * through carrier offset, optional multipath, noise and 10 bit quantization,
  * and decodes it; or decodes a real capture (link_perf.py dump).
  *
- *   cc -O2 -Wall -Isrc src/ofdm.c src/ofdm_frame.c src/qam.c src/rs.c src/hamming.c \
+ *   cc -O2 -Wall -Isrc -I../../include src/ofdm.c src/ofdm_frame.c src/qam.c src/rs.c src/hamming.c \
  *      tools/ofdm_sim.c -lm -o /tmp/ofdm_sim
  *   BW=16 CH=52 MOD=64qam /tmp/ofdm_sim [capture.bin]
  *

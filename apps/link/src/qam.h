@@ -23,6 +23,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Receive and transmit words: esp_sdr_rx_i/q(), esp_sdr_tx_word(). */
+#include <esp_sdr/esp_sdr.h>
+
 #include "rs.h"
 
 /* Samples per symbol at 80 MS/s (even): 4 is 20 Mbaud, 6 is 13.3 Mbaud. */
@@ -113,23 +116,6 @@ size_t qam_hdr_payload_bytes(const struct qam_hdr *h);
 
 /* User data bytes of a full frame at @p mod and @p fec. */
 size_t qam_full_payload_bytes(enum qam_mod mod, enum qam_fec fec);
-
-/* Transmit words: I in bits 9:0, Q in 19:10 (esp_sdr_tx_word()). */
-static inline uint32_t qam_tx_word(int i, int q)
-{
-	return ((uint32_t)i & 0x3ffU) | (((uint32_t)q & 0x3ffU) << 10);
-}
-
-/* Receive words: Q in bits 9:0, I in 19:10 (esp_sdr_rx_i/q()). */
-static inline int qam_rx_i(uint32_t w)
-{
-	return (int32_t)(w << 12) >> 22;
-}
-
-static inline int qam_rx_q(uint32_t w)
-{
-	return (int32_t)(w << 22) >> 22;
-}
 
 /* Symbol spaced equalizer length (odd). */
 #ifndef QAM_EQ_TAPS

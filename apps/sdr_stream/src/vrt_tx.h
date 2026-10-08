@@ -21,6 +21,9 @@ struct vrt_tx_stats {
 
 /* Open the UDP port and start the receive thread. */
 int vrt_tx_init(void);
-void vrt_tx_get(struct vrt_tx_stats *stats, uint64_t *freq_hz, uint32_t *rate_hz);
+/* Packet and sample counters. */
+void vrt_tx_get_stats(struct vrt_tx_stats *stats);
+/* The transmit frequency and sample rate in use. */
+void vrt_tx_get_settings(uint64_t *freq_hz, uint32_t *rate_hz);
 
 #endif /* SDR_STREAM_VRT_TX_H_ */

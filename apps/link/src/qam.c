@@ -566,7 +566,7 @@ QAM_HOT static void shape(struct qam_tx *tx, size_t nsym, uint32_t *out)
 				i = i > 511 ? 511 : (i < -511 ? -511 : i);
 				qv = qv > 511 ? 511 : (qv < -511 ? -511 : qv);
 			}
-			out[s * QAM_SPS + ph] = qam_tx_word(i, qv);
+			out[s * QAM_SPS + ph] = esp_sdr_tx_word(i, qv);
 		}
 	}
 }
@@ -611,7 +611,7 @@ QAM_HOT float qam_rx_power(const uint32_t *words, size_t n)
 		size_t j1 = MIN_SZ(n, j0 + 1024);
 
 		for (size_t j = j0; j < j1; j++) {
-			int i = qam_rx_i(words[j]), q = qam_rx_q(words[j]);
+			int i = esp_sdr_rx_i(words[j]), q = esp_sdr_rx_q(words[j]);
 
 			si += i;
 			sq += q;
@@ -668,7 +668,7 @@ static inline struct cf sample(const struct rxs *r, int n)
 {
 	uint32_t w = r->w[n];
 
-	return (struct cf){(float)qam_rx_i(w) - r->dcfi, (float)qam_rx_q(w) - r->dcfq};
+	return (struct cf){(float)esp_sdr_rx_i(w) - r->dcfi, (float)esp_sdr_rx_q(w) - r->dcfq};
 }
 
 /* Cubic Lagrange interpolation between samples ip and ip + 1, mu in [0, 1). */
@@ -790,8 +790,8 @@ QAM_HOT static int search(const uint32_t *w, int dci, int dcq, int imin, int ima
 
 	for (int m = 0; m < h; m++) {
 		uint32_t wa = p[m * step], wb = p[m * step + lag];
-		int ai = qam_rx_i(wa) - dci, aq = qam_rx_q(wa) - dcq;
-		int bi = qam_rx_i(wb) - dci, bq = qam_rx_q(wb) - dcq;
+		int ai = esp_sdr_rx_i(wa) - dci, aq = esp_sdr_rx_q(wa) - dcq;
+		int bi = esp_sdr_rx_i(wb) - dci, bq = esp_sdr_rx_q(wb) - dcq;
 
 		pr += ai * bi + aq * bq;
 		pi += aq * bi - ai * bq;
@@ -815,9 +815,9 @@ QAM_HOT static int search(const uint32_t *w, int dci, int dcq, int imin, int ima
 		}
 		/* Slide: drop m = i, add m = i + h. */
 		uint32_t wa = p[0], wb = p[lag], wc = p[2 * lag];
-		int ai = qam_rx_i(wa) - dci, aq = qam_rx_q(wa) - dcq;
-		int bi = qam_rx_i(wb) - dci, bq = qam_rx_q(wb) - dcq;
-		int ci = qam_rx_i(wc) - dci, cq = qam_rx_q(wc) - dcq;
+		int ai = esp_sdr_rx_i(wa) - dci, aq = esp_sdr_rx_q(wa) - dcq;
+		int bi = esp_sdr_rx_i(wb) - dci, bq = esp_sdr_rx_q(wb) - dcq;
+		int ci = esp_sdr_rx_i(wc) - dci, cq = esp_sdr_rx_q(wc) - dcq;
 		int eb = bi * bi + bq * bq;
 
 		pr += bi * ci + bq * cq - (ai * bi + aq * bq);
@@ -1124,8 +1124,8 @@ static void dc_estimate(struct rxs *r, int *dci, int *dcq)
 	int32_t si = 0, sq = 0, cnt = 0;
 
 	for (int m = 0; m < r->n; m += SEARCH_STEP) {
-		si += qam_rx_i(r->w[m]);
-		sq += qam_rx_q(r->w[m]);
+		si += esp_sdr_rx_i(r->w[m]);
+		sq += esp_sdr_rx_q(r->w[m]);
 		cnt++;
 	}
 	r->dcfi = (float)si / (float)cnt;

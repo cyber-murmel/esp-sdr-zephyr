@@ -107,7 +107,7 @@ static void send(const struct vrt_packet *p)
 	stats.bytes += (uint32_t)words * sizeof(uint32_t);
 }
 
-static void send_context(const struct rx_burst *b, unsigned int bits, bool changed)
+static void send_context(const struct vrt_rx_burst *b, unsigned int bits, bool changed)
 {
 	struct vrt_packet p;
 	struct vrt_data_packet_payload_format *fmt = &p.if_context.data_packet_payload_format;
@@ -143,7 +143,7 @@ static void send_context(const struct rx_burst *b, unsigned int bits, bool chang
 	context_ms = k_uptime_get();
 }
 
-void vrt_rx_burst(const struct rx_burst *b)
+void vrt_rx_burst(const struct vrt_rx_burst *b)
 {
 	unsigned int bits = (unsigned int)atomic_get(&rx_bits);
 	uint32_t per_packet = (uint32_t)iq_samples_per_words(bits, SAMPLES_PER_PACKET);

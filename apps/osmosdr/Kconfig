@@ -7,13 +7,15 @@ config APP_FREQ_MHZ
 	range 100 6000
 	default 2450
 
-config APP_BANDWIDTH_MHZ
-	int "Analog low-pass bandwidth in MHz at boot (0: PHY calibrated)"
+config APP_RX_BW_MHZ
+	int "Receive filter bandwidth in MHz at boot (0: widest, -1: the PHY's setting)"
+	range -1 69
 	default 13
 	help
-	  Two-sided, 13 to 69 MHz. The ring samples at 16 MS/s: the narrowest
-	  setting keeps the most of what lies beyond +-8 MHz from aliasing
-	  into the stream.
+	  Two-sided, 13 to 69 MHz, as in apps/link (1 to 12 fail the build). The ring samples at
+	  16 MS/s: the narrowest setting keeps the most of what lies beyond
+	  +-8 MHz from aliasing into the stream. The host can change it
+	  (SET_BANDWIDTH, where 0 selects the PHY's setting).
 
 config APP_CBW
 	int "PHY channel bandwidth mode (0: 20 MHz, 2: 40 MHz)"

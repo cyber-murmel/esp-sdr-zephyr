@@ -45,7 +45,7 @@ static void find_system_thread(const struct k_thread *thread, void *user_data)
 #endif
 
 /* Pinning only takes while a thread is not runnable: retry until it waits. */
-void app_pin_system_threads(int cpu)
+void app_cpu_pin_system_threads(int cpu)
 {
 #if defined(CONFIG_SCHED_CPU_MASK)
 	struct system_threads found = {0};

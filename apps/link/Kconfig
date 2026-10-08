@@ -43,7 +43,8 @@ config APP_RX_BW_MHZ
 	range -1 69
 	default 0
 	help
-	  The PHY's own setting is about 22 MHz wide, narrower than the
+	  Otherwise 13 to 69 MHz (1 to 12 fail the build). The PHY's own
+	  setting is about 22 MHz wide, narrower than the
 	  27 MHz the 20 Mbaud signal occupies.
 
 config APP_AMP

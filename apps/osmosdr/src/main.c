@@ -19,7 +19,7 @@ LOG_MODULE_REGISTER(osmosdr, LOG_LEVEL_INF);
 int main(void)
 {
 	/* Before USB starts: its controller interrupt lands on the CPU that allocates it. */
-	app_pin_system_threads(0);
+	app_cpu_pin_system_threads(0);
 	if (app_usb_init() != 0) {
 		LOG_ERR("usb init failed");
 	}
@@ -29,6 +29,6 @@ int main(void)
 	}
 	/* Again for the threads started since (usbd, UDC). */
 	k_sleep(K_MSEC(500));
-	app_pin_system_threads(0);
+	app_cpu_pin_system_threads(0);
 	return 0;
 }

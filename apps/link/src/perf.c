@@ -425,62 +425,71 @@ static int cmd_set(const struct shell *sh, size_t argc, char **argv)
 	long v;
 	char *end;
 
-	if (argc != 3) {
-		shell_print(sh, "keys: phy (0 qam, 1 ofdm) freq txgain rxgain avg bw cbw txlpf txlpf2 amp air ackair acktimeout turn retune cca "
-				"difs cwmin cwmax retries addr");
+	if (argc == 1 || (argc - 1U) % 2U != 0U) {
+		shell_print(sh, "usage: set <key> <value> [<key> <value> ...], applied together; keys:");
+		shell_print(sh, "  phy (0 qam, 1 ofdm) freq txgain rxgain (auto|<index>) avg bw cbw txlpf "
+				"txlpf2 amp air ackair acktimeout turn retune cca difs cwmin cwmax retries addr");
 		return argc == 1 ? 0 : -EINVAL;
 	}
-	v = strtol(argv[2], &end, 0);
-	if (*end != '\0') {
-		shell_error(sh, "bad value %s", argv[2]);
-		return -EINVAL;
-	}
 	link_mac_get_cfg(&c);
-	if (strcmp(argv[1], "freq") == 0) {
-		c.freq_mhz = (uint32_t)v;
-	} else if (strcmp(argv[1], "txgain") == 0) {
-		c.tx_gain = (int)v;
-	} else if (strcmp(argv[1], "rxgain") == 0) {
-		c.rx_gain = (int)v;
-	} else if (strcmp(argv[1], "txlpf") == 0) {
-		c.tx_lpf_a = (int)v;
-	} else if (strcmp(argv[1], "txlpf2") == 0) {
-		c.tx_lpf_b = (int)v;
-	} else if (strcmp(argv[1], "phy") == 0) {
-		c.phy = (int)v;
-	} else if (strcmp(argv[1], "avg") == 0) {
-		c.avg = (int)v;
-	} else if (strcmp(argv[1], "cbw") == 0) {
-		c.cbw = (int)v;
-	} else if (strcmp(argv[1], "bw") == 0) {
-		c.bw_mhz = (int)v;
-	} else if (strcmp(argv[1], "amp") == 0) {
-		c.amp = (int)v;
-	} else if (strcmp(argv[1], "air") == 0) {
-		c.data_air_us = (uint32_t)v;
-	} else if (strcmp(argv[1], "ackair") == 0) {
-		c.ack_air_us = (uint32_t)v;
-	} else if (strcmp(argv[1], "acktimeout") == 0) {
-		c.ack_timeout_us = (uint32_t)v;
-	} else if (strcmp(argv[1], "turn") == 0) {
-		c.turn_us = (uint32_t)v;
-	} else if (strcmp(argv[1], "retune") == 0) {
-		c.turn_retune = v != 0;
-	} else if (strcmp(argv[1], "cca") == 0) {
-		c.cca_db = (int)v;
-	} else if (strcmp(argv[1], "difs") == 0) {
-		c.difs = (uint8_t)v;
-	} else if (strcmp(argv[1], "cwmin") == 0) {
-		c.cw_min = (uint16_t)v;
-	} else if (strcmp(argv[1], "cwmax") == 0) {
-		c.cw_max = (uint16_t)v;
-	} else if (strcmp(argv[1], "retries") == 0) {
-		c.retries = (uint8_t)v;
-	} else if (strcmp(argv[1], "addr") == 0 && v >= 0 && v < MAC_ADDR_BROADCAST) {
-		c.addr = (uint8_t)v;
-	} else {
-		shell_error(sh, "unknown key %s", argv[1]);
-		return -EINVAL;
+	for (size_t a = 1; a + 1U < argc; a += 2U) {
+		const char *key = argv[a], *val = argv[a + 1U];
+
+		if (strcmp(key, "rxgain") == 0 && strcmp(val, "auto") == 0) {
+			v = -1; /* the hardware AGC */
+		} else {
+			v = strtol(val, &end, 0);
+			if (*val == '\0' || *end != '\0') {
+				shell_error(sh, "bad value %s for %s", val, key);
+				return -EINVAL;
+			}
+		}
+		if (strcmp(key, "freq") == 0) {
+			c.freq_mhz = (uint32_t)v;
+		} else if (strcmp(key, "txgain") == 0) {
+			c.tx_gain = (int)v;
+		} else if (strcmp(key, "rxgain") == 0) {
+			c.rx_gain = (int)v;
+		} else if (strcmp(key, "txlpf") == 0) {
+			c.tx_lpf_a = (int)v;
+		} else if (strcmp(key, "txlpf2") == 0) {
+			c.tx_lpf_b = (int)v;
+		} else if (strcmp(key, "phy") == 0) {
+			c.phy = (int)v;
+		} else if (strcmp(key, "avg") == 0) {
+			c.avg = (int)v;
+		} else if (strcmp(key, "cbw") == 0) {
+			c.cbw = (int)v;
+		} else if (strcmp(key, "bw") == 0) {
+			c.bw_mhz = (int)v;
+		} else if (strcmp(key, "amp") == 0) {
+			c.amp = (int)v;
+		} else if (strcmp(key, "air") == 0) {
+			c.data_air_us = (uint32_t)v;
+		} else if (strcmp(key, "ackair") == 0) {
+			c.ack_air_us = (uint32_t)v;
+		} else if (strcmp(key, "acktimeout") == 0) {
+			c.ack_timeout_us = (uint32_t)v;
+		} else if (strcmp(key, "turn") == 0) {
+			c.turn_us = (uint32_t)v;
+		} else if (strcmp(key, "retune") == 0) {
+			c.turn_retune = v != 0;
+		} else if (strcmp(key, "cca") == 0) {
+			c.cca_db = (int)v;
+		} else if (strcmp(key, "difs") == 0) {
+			c.difs = (uint8_t)v;
+		} else if (strcmp(key, "cwmin") == 0) {
+			c.cw_min = (uint16_t)v;
+		} else if (strcmp(key, "cwmax") == 0) {
+			c.cw_max = (uint16_t)v;
+		} else if (strcmp(key, "retries") == 0) {
+			c.retries = (uint8_t)v;
+		} else if (strcmp(key, "addr") == 0 && v >= 0 && v < MAC_ADDR_BROADCAST) {
+			c.addr = (uint8_t)v;
+		} else {
+			shell_error(sh, "unknown key %s", key);
+			return -EINVAL;
+		}
 	}
 	if (link_mac_set_cfg(&c) != 0) {
 		shell_error(sh, "rejected");
@@ -694,7 +703,8 @@ SHELL_STATIC_SUBCMD_SET_CREATE(link_cmds,
 	SHELL_CMD(status, NULL, "Settings, counters, timing", cmd_status),
 	SHELL_CMD(cal, NULL, "Measure the noise floor again", cmd_cal),
 	SHELL_CMD(clear, NULL, "Zero the counters", cmd_clear),
-	SHELL_CMD_ARG(set, NULL, "<key> <value>", cmd_set, 1, 2),
+	SHELL_CMD_ARG(set, NULL, "[<key> <value> ...]: settings, applied together (no arguments: the keys)",
+		      cmd_set, 1, 16),
 	SHELL_CMD(mem, NULL, "System heap use", cmd_mem),
 	SHELL_CMD_ARG(reg, NULL, "Analog baseband registers (I2C 0x67): dump | <reg> <value>",
 		      cmd_reg, 1, 2),

@@ -17,7 +17,7 @@ LOG_MODULE_REGISTER(link, LOG_LEVEL_INF);
 
 int main(void)
 {
-	app_pin_system_threads(CONFIG_APP_NET_CPU);
+	app_cpu_pin_system_threads(CONFIG_APP_NET_CPU);
 	if (app_usb_init() != 0) {
 		LOG_ERR("usb init failed");
 	}
@@ -27,6 +27,6 @@ int main(void)
 	}
 	/* Again for the threads started since (usbd, UDC). */
 	k_sleep(K_MSEC(500));
-	app_pin_system_threads(CONFIG_APP_NET_CPU);
+	app_cpu_pin_system_threads(CONFIG_APP_NET_CPU);
 	return 0;
 }

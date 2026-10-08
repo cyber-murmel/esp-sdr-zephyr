@@ -67,7 +67,7 @@ over DFU instead:
 
 .. code-block:: console
 
-   esp-sdr-zephyr/scripts/esp-sdr-update.sh <usb serial> build/sdr_stream/zephyr/zephyr.signed.bin
+   west dfu -s <usb serial>
 
 Receiving
 *********
@@ -89,10 +89,11 @@ USB full speed limits the receive stream to about 1 MB/s: 0.24 MS/s raw at
 limited by the CIC on the capture CPU (about 30 % of the time covered at
 200 kS/s).
 
-The shell is on the CDC-ACM port (``/dev/ttyACM*``): ``sdr gain
-[auto|<index>]``, ``sdr freq [<MHz>]``, ``sdr tx``, ``sdr txgain``, ``sdr
-tonetx``, ``sdr sweep``, ``sdr mem``, ``net iface``, ``mcuboot``, ``kernel
-reboot cold``.
+The shell is on the CDC-ACM port (``/dev/ttyACM*``): ``sdr status``
+(settings, transmit path state and counters), ``sdr set <key> <value> ...``
+(``freq <MHz>``, ``rxgain auto|<index>``, ``decim cic|fold``, ``txgain
+<step>``; ``sdr set`` lists them), ``sdr tonetx``, ``sdr sweep``, ``sdr mem``,
+``net iface``, ``mcuboot``, ``kernel reboot cold``.
 
 Transmit path
 *************
@@ -102,7 +103,7 @@ The board accepts VITA 49.2 packets on UDP port 4992:
 - Command packets to the transmit stream ID set the TX RF frequency (whole
   MHz, it is the receiver's LO too), sample rate (40 MS/s divided by an
   integer of at least 2), gain (stage 1 is the power step, 0 weakest, see
-  ``sdr txgain``) and payload format. Errors are answered with execution
+  ``sdr set txgain``) and payload format. Errors are answered with execution
   acknowledges, query-state requests return the settings.
 - Signal data packets are placed by their timestamps; missing packets become
   zero filled holes. TX starts with the first data packet and stops 500 ms
@@ -111,7 +112,7 @@ The board accepts VITA 49.2 packets on UDP port 4992:
 The DAC backend keeps a 256k sample ring in PSRAM and interpolates each block
 into one of two SRAM banks while the DAC plays the other. The DAC runs in
 loop mode, so playback is gapless and locked to real time; the bank switches
-on a precomputed cycle of the leader's CPU. Measured on air (``sdr tx``):
+on a precomputed cycle of the leader's CPU. Measured on air (``sdr status``):
 100 % at 16 bit / 200 kS/s, 12 bit / 250 kS/s and 8 bit / 400 kS/s, which is
 also where USB full speed tops out.
 

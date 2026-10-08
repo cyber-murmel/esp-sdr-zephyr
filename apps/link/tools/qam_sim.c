@@ -3,7 +3,7 @@
  *
  * Host check of the link PHY and RS codec (no Zephyr):
  *
- *   cc -O2 -Isrc src/qam.c src/rs.c tools/qam_sim.c -lm -o /tmp/qam_sim
+ *   cc -O2 -Isrc -I../../include src/qam.c src/rs.c src/hamming.c tools/qam_sim.c -lm -o /tmp/qam_sim
  *   /tmp/qam_sim            simulated channel sweep
  *   /tmp/qam_sim file.bin   decode raw receive words (little endian u32)
  *

@@ -140,7 +140,7 @@ struct ofdm_ctx *link_ofdm(void)
 	return &ctx;
 }
 
-static int cmd_show(const struct shell *sh, size_t argc, char **argv)
+static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
@@ -428,7 +428,7 @@ static int cmd_bench(const struct shell *sh, size_t argc, char **argv)
 }
 
 SHELL_STATIC_SUBCMD_SET_CREATE(ofdm_cmds,
-	SHELL_CMD(show, NULL, "Frame layout", cmd_show),
+	SHELL_CMD(status, NULL, "Frame layout and settings", cmd_status),
 	SHELL_CMD_ARG(set, NULL, "<bw|ch|cp|mod|amp|syms|rxdiv|fs|pilots|smooth> <value> ...", cmd_set,
 		      3, 16),
 	SHELL_CMD_ARG(tx, NULL, "Loop the test frame: [-t <s>]", cmd_tx, 1, 2),

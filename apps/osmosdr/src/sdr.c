@@ -4,8 +4,9 @@
  * The SDR behind the USB function: settings from the vendor requests, the
  * receive stream and the throughput tests.
  *
- * Receive: a worker thread pinned to CPU 1 runs esp_sdr_ring_run(), which
- * masks that CPU's interrupts for the whole run; its sink packs the
+ * Receive: a cooperative worker thread pinned to CPU 1 runs
+ * esp_sdr_ring_run(), which masks that CPU's interrupts except for short
+ * windows in which pending ones run; its sink packs the
  * decimated samples into blocks (fine tuning NCO, 8 or 16 bit items). A
  * thread on CPU 0 hands full blocks to bulk IN. Blocks are used strictly in
  * order: prod (filled) >= sub (queued on USB) >= done (completed). With no
@@ -72,9 +73,13 @@ static struct sdr_settings want = {
 	.dgain = ESDR_DGAIN_DEFAULT,
 	.freq_hz = (uint64_t)CONFIG_APP_FREQ_MHZ * 1000000U,
 	.rate_hz = ESP_SDR_RING_RATE_HZ / ESP_SDR_RING_DECIM_MIN,
-	.bandwidth_hz = CONFIG_APP_BANDWIDTH_MHZ * 1000000U,
+	/* Set in sdr_init() from CONFIG_APP_RX_BW_MHZ. */
 };
 static uint32_t want_gen;
+
+/* Kconfig cannot express the gap: 1 to 12 MHz is below esp_sdr_rx_bandwidth_range(). */
+BUILD_ASSERT(CONFIG_APP_RX_BW_MHZ <= 0 || CONFIG_APP_RX_BW_MHZ >= 13,
+	     "CONFIG_APP_RX_BW_MHZ: -1, 0 or 13 to 69");
 
 /* What the radio runs with (worker thread only). */
 static struct sdr_settings cur;
@@ -520,7 +525,7 @@ void usb_sdr_link(bool up)
 	k_sem_give(&usb_wake);
 }
 
-/* ---- receive sink (CPU 1, interrupts masked) ---- */
+/* ---- receive sink (CPU 1, interrupts masked between the ring's windows) ---- */
 
 static inline void block_close(void)
 {
@@ -639,11 +644,21 @@ static void sink_nco(const int16_t *i, const int16_t *q, size_t m)
 }
 
 /* Runs inside the ring loop: every cycle here comes off the filter's margin. */
+/* The settings generation the running ring was started for. */
+static uint32_t run_gen;
+
 static void sink(void *user, const int16_t *i, const int16_t *q, size_t n,
 			  uint64_t index)
 {
 	ARG_UNUSED(user);
 
+	/*
+	 * esp_sdr_ring_run() clears a stop requested just before it starts: a
+	 * change that slipped in there ends the run from here instead.
+	 */
+	if (*(volatile uint32_t *)&want_gen != run_gen) {
+		esp_sdr_ring_stop();
+	}
 	index += snk.base;
 	if (index != snk.expect) {
 		/* Ring input lost: the block in progress ends before the hole. */
@@ -732,7 +747,9 @@ static int radio_apply(const struct sdr_settings *s, bool force)
 		}
 	}
 	if (force || s->bandwidth_hz != cur.bandwidth_hz) {
-		ret = esp_sdr_rx_set_bandwidth(s->bandwidth_hz / 1000000U);
+		/* 0 is the PHY's own setting (ESDR_REQ_SET_BANDWIDTH). */
+		ret = s->bandwidth_hz == 0U ? esp_sdr_rx_set_lpf(ESP_SDR_RX_LPF_AUTO)
+					    : esp_sdr_rx_set_bandwidth(s->bandwidth_hz / 1000000U);
 		if (ret != 0) {
 			LOG_ERR("bandwidth %u Hz: %d", s->bandwidth_hz, ret);
 		}
@@ -895,6 +912,7 @@ static void rx_thread_fn(void *a, void *b, void *c)
 			continue;
 		}
 		stats.ring_runs++;
+		run_gen = gen;
 		ret = esp_sdr_ring_run(&cfg, &rst);
 		end_cycles = k_cycle_get_64();
 		stats.rx_ring_lost_pairs += rst.lost_pairs;
@@ -976,9 +994,19 @@ int sdr_init(void)
 		return ret;
 	}
 	(void)esp_sdr_set_channel_bw(CONFIG_APP_CBW);
+	{
+		/* Kconfig as in apps/link (0 widest, -1 the PHY's); the protocol's 0 is the PHY's. */
+		uint32_t bw_min, bw_max;
+
+		esp_sdr_rx_bandwidth_range(&bw_min, &bw_max);
+		want.bandwidth_hz = CONFIG_APP_RX_BW_MHZ < 0
+					    ? 0U
+					    : (CONFIG_APP_RX_BW_MHZ == 0 ? bw_max : (uint32_t)CONFIG_APP_RX_BW_MHZ) *
+						      1000000U;
+	}
 
 	k_thread_create(&rx_thread, sdr_rx_stack, K_KERNEL_STACK_SIZEOF(sdr_rx_stack), rx_thread_fn, NULL,
-			NULL, NULL, K_PRIO_PREEMPT(4), K_FP_REGS, K_FOREVER);
+			NULL, NULL, K_PRIO_COOP(2), K_FP_REGS, K_FOREVER);
 	k_thread_create(&usb_thread, sdr_usb_stack, K_KERNEL_STACK_SIZEOF(sdr_usb_stack), usb_thread_fn,
 			NULL, NULL, NULL, K_PRIO_PREEMPT(3), 0, K_FOREVER);
 	k_thread_name_set(&rx_thread, "sdr_radio");

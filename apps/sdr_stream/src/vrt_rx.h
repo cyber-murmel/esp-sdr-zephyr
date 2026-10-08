@@ -10,7 +10,7 @@
 #include <esp_sdr/esp_sdr.h>
 
 /* One captured burst, handed from the capture core to the stream core. */
-struct rx_burst {
+struct vrt_rx_burst {
 	uint32_t seq;
 	uint32_t count;
 	uint64_t timestamp_ns;
@@ -22,20 +22,23 @@ struct rx_burst {
 };
 
 /* Smallest decimation: a decimated burst (16380 / m - 3 samples) must fit a burst. */
-#define RX_DECIM_MIN 16U
+#define VRT_RX_DECIM_MIN 16U
 
-/* Receive stream rate: the capture rate (raw) or capture rate / m, RX_DECIM_MIN..160. */
-int rx_set_rate(uint32_t hz);
-uint32_t rx_get_rate(void);
+/*
+ * Receive stream rate and decimation, implemented by the capture side
+ * (main.c): the capture rate (raw) or capture rate / m, VRT_RX_DECIM_MIN..160.
+ */
+int vrt_rx_set_rate(uint32_t hz);
+uint32_t vrt_rx_get_rate(void);
 
-/* Decimation algorithm applied at rx_set_rate()'s factor, m > 1. */
-enum rx_decim_mode {
-	RX_DECIM_CIC,  /* low-pass + decimate: a clean narrowband signal, out-of-band dropped */
-	RX_DECIM_FOLD, /* fold (decimate in frequency): full-band power estimate, aliased */
+/* Decimation algorithm applied at vrt_rx_set_rate()'s factor, m > 1. */
+enum vrt_rx_decim {
+	VRT_RX_DECIM_CIC,  /* low-pass + decimate: a clean narrowband signal, out-of-band dropped */
+	VRT_RX_DECIM_FOLD, /* fold (decimate in frequency): full-band power estimate, aliased */
 };
 
-int rx_set_mode(enum rx_decim_mode mode);
-enum rx_decim_mode rx_get_mode(void);
+int vrt_rx_set_decim(enum vrt_rx_decim mode);
+enum vrt_rx_decim vrt_rx_get_decim(void);
 
 /* Signal data item size: 8, 12 or 16 bits (see iq_pack.h). */
 int vrt_rx_set_bits(unsigned int bits);
@@ -43,7 +46,7 @@ unsigned int vrt_rx_get_bits(void);
 
 int vrt_rx_init(void);
 /* Called on the process core for every burst. */
-void vrt_rx_burst(const struct rx_burst *b);
+void vrt_rx_burst(const struct vrt_rx_burst *b);
 /* Called once per second after the statistics line. */
 void vrt_rx_report(void);
 

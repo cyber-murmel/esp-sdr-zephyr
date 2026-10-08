@@ -128,6 +128,10 @@ USBD_CONFIGURATION_DEFINE(dfu_fs_config, 0, CONFIG_SAMPLE_USBD_MAX_POWER, &dfu_c
 
 static void msg_cb(struct usbd_context *const ctx, const struct usbd_msg *const msg);
 
+__weak void app_usb_dfu_prepare(void)
+{
+}
+
 static void switch_to_dfu_mode(struct usbd_context *const ctx)
 {
 	int err;
@@ -177,6 +181,7 @@ static void msg_cb(struct usbd_context *const ctx, const struct usbd_msg *const 
 
 #if defined(CONFIG_APP_USB_DFU)
 	if (msg->type == USBD_MSG_DFU_APP_DETACH) {
+		app_usb_dfu_prepare();
 		switch_to_dfu_mode(ctx);
 	}
 	if (msg->type == USBD_MSG_DFU_DOWNLOAD_COMPLETED) {

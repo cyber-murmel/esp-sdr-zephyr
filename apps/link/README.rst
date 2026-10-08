@@ -136,15 +136,15 @@ Build with sysbuild (MCUboot, USB DFU) and flash each board once:
    west build --sysbuild -b xiao_esp32s3/esp32s3/procpu esp-sdr-zephyr/apps/link
    west flash
 
-Later updates go over USB DFU with ``scripts/esp-sdr-update.sh <serial>
-<zephyr.signed.bin>``.
+Later updates go over USB DFU with ``west dfu -d <build dir> [-s <usb serial>]``
+(see ``apps/osmosdr/README.rst``).
 
 On the shell (``/dev/serial/by-id/usb-Zephyr_Project_ESP-SDR_Link_*``):
 
 .. code-block:: console
 
    link status                       # address, settings, counters, timing
-   link set txgain 4                 # also rxgain, bw, cbw, amp, air, turn, ...
+   link set txgain 4 rxgain 32       # several at once; also bw, cbw, amp, air, turn, ...
    link server                       # on the receiving board
    link client 0x00 -t 10 -m 256qam -f rs -w 2
 

@@ -43,129 +43,8 @@ static int cmd_mem(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-static int cmd_gain(const struct shell *sh, size_t argc, char **argv)
-{
-	int gain;
-
-	if (argc > 1) {
-		int index = strcmp(argv[1], "auto") == 0 ? ESP_SDR_RX_GAIN_AUTO
-							 : (int)strtol(argv[1], NULL, 0);
-		int ret = esp_sdr_rx_set_gain(index);
-
-		if (ret != 0) {
-			shell_error(sh, "gain %s: %d", argv[1], ret);
-			return ret;
-		}
-	}
-	gain = esp_sdr_rx_get_gain();
-	if (gain < 0) {
-		shell_print(sh, "gain auto (max %d)", esp_sdr_rx_gain_max());
-	} else {
-		shell_print(sh, "gain %d (max %d)", gain, esp_sdr_rx_gain_max());
-	}
-	return 0;
-}
-
-static int cmd_freq(const struct shell *sh, size_t argc, char **argv)
-{
-	if (argc > 1) {
-		int ret = esp_sdr_set_freq((uint32_t)strtoul(argv[1], NULL, 0));
-
-		if (ret != 0) {
-			shell_error(sh, "freq %s: %d", argv[1], ret);
-			return ret;
-		}
-	}
-	shell_print(sh, "freq %u MHz", esp_sdr_get_freq());
-	return 0;
-}
-
-static int cmd_rxmode(const struct shell *sh, size_t argc, char **argv)
-{
-	if (argc > 1) {
-		enum rx_decim_mode mode;
-		int ret;
-
-		if (strcmp(argv[1], "cic") == 0) {
-			mode = RX_DECIM_CIC;
-		} else if (strcmp(argv[1], "fold") == 0) {
-			mode = RX_DECIM_FOLD;
-		} else {
-			shell_error(sh, "rxmode must be cic or fold");
-			return -EINVAL;
-		}
-		ret = rx_set_mode(mode);
-		if (ret != 0) {
-			shell_error(sh, "rxmode %s: %d", argv[1], ret);
-			return ret;
-		}
-	}
-	shell_print(sh, "rxmode %s (applies while the stream rate is decimated below the capture "
-			"rate)", rx_get_mode() == RX_DECIM_FOLD ? "fold" : "cic");
-	return 0;
-}
-
 #if defined(CONFIG_APP_TX)
-static int cmd_txgain(const struct shell *sh, size_t argc, char **argv)
-{
-	if (argc > 1) {
-		int ret = esp_sdr_tx_set_gain((int)strtol(argv[1], NULL, 0));
 
-		if (ret != 0) {
-			shell_error(sh, "txgain %s: %d", argv[1], ret);
-			return ret;
-		}
-	}
-	shell_print(sh, "txgain %d (max %d, vendor target power %d)", esp_sdr_tx_get_gain(),
-		    esp_sdr_tx_gain_max(), esp_sdr_tx_gain_power(esp_sdr_tx_get_gain()));
-	return 0;
-}
-
-static int cmd_tx(const struct shell *sh, size_t argc, char **argv)
-{
-	struct esp_sdr_tx_stats bs;
-	struct vrt_tx_stats st;
-	uint64_t freq;
-	uint32_t rate;
-
-	ARG_UNUSED(argc);
-	ARG_UNUSED(argv);
-	vrt_tx_get(&st, &freq, &rate);
-	esp_sdr_tx_get_stats(&bs);
-	shell_print(sh, "tx %s, backend %s, %llu Hz, %u S/s",
-		    esp_sdr_tx_active() ? "active" : "idle", esp_sdr_tx_get_backend()->name,
-		    (unsigned long long)freq, rate);
-	shell_print(sh,
-		    "packets %u data, %u commands, %u acks, %u gaps, %u underruns, %u bad, "
-		    "%u errors; samples %u hole-filled, %u late",
-		    st.data, st.commands, st.acks, st.gaps, st.underruns, st.bad, st.errors, st.holes,
-		    st.late);
-	shell_print(sh, "backend %llu samples in %u writes, %u errors",
-		    (unsigned long long)bs.samples, bs.writes, bs.errors);
-#if defined(CONFIG_ESP_SDR_TX_DAC)
-	struct esp_sdr_tx_dac_stats ds;
-
-	esp_sdr_tx_dac_get_stats(&ds);
-	shell_print(sh,
-		    "dac x%u: %llu played, %llu dropped (%.0f %% on air), %u switches, %u underruns, "
-		    "%u overruns, %u errors, %u ms",
-		    ds.interp, (unsigned long long)ds.played, (unsigned long long)ds.dropped,
-		    ds.played + ds.dropped ? 100.0 * ds.played / (ds.played + ds.dropped) : 0.0,
-		    ds.switches, ds.underruns, ds.overruns, ds.errors, ds.elapsed_us / 1000U);
-	shell_print(sh, "dac interpolator: %s", ds.simd ? "vector (PIE)" : "C");
-	shell_print(sh, "dac loop: %u switches, %u us mean apart, %u us max; slack min %d us, "
-		    "%u restarts",
-		    ds.switches, ds.switches > 1U ? ds.switch_us_sum / (ds.switches - 1U) : 0U,
-		    ds.switch_us_max, ds.slack_us_min, ds.restarts);
-	shell_print(sh, "dac leader: fill max %u us, woke late max %u us, switch-to-fill max %u us",
-		    ds.fill_us_max, ds.wake_late_us_max, ds.idle_us_max);
-	for (int f = 0; f < 2; f++) {
-		shell_print(sh, "dac filler %d: %u blocks, %u ms filling, cpu %u", f,
-			    ds.fill_blocks[f], ds.fill_us[f] / 1000U, ds.fill_cpu[f]);
-	}
-#endif
-	return 0;
-}
 
 /*
  * Transmit synthesis. The DAC runs at its own rate (40 or 80 MS/s, never the
@@ -524,8 +403,6 @@ static int cmd_fskrx(const struct shell *sh, size_t argc, char **argv)
 }
 
 #define SDR_TX_CMD                                                                                \
-	SHELL_CMD(tx, NULL, "transmit path status", cmd_tx),                                     \
-	SHELL_CMD_ARG(txgain, NULL, "[<step>] transmit power step, 0 weakest", cmd_txgain, 1, 1),     \
 	SHELL_CMD_ARG(fm, NULL, "<fm_hz> <dev_hz> [amp] play one FM sine burst", cmd_fm, 3, 1),   \
 	SHELL_CMD_ARG(tonetx, NULL, "[hz] [ms] [amp] [rate 0|1] tone at 80|40 MS/s, default +1 MHz",\
 		      cmd_tonetx, 1, 4),                                                          \
@@ -540,17 +417,188 @@ static int cmd_fskrx(const struct shell *sh, size_t argc, char **argv)
 #define SDR_TX_CMD
 #endif
 
+static int parse_long(const struct shell *sh, const char *s, long min, long max, long *out)
+{
+	char *end;
+	long v = strtol(s, &end, 0);
+
+	if (*s == '\0' || *end != '\0' || v < min || v > max) {
+		shell_error(sh, "bad value: %s (%ld to %ld)", s, min, max);
+		return -EINVAL;
+	}
+	*out = v;
+	return 0;
+}
+
+static int set_freq(const struct shell *sh, const char *value)
+{
+	long mhz;
+
+	if (parse_long(sh, value, ESP_SDR_FREQ_MIN_MHZ, ESP_SDR_FREQ_MAX_MHZ, &mhz) != 0) {
+		return -EINVAL;
+	}
+	return esp_sdr_set_freq((uint32_t)mhz);
+}
+
+static int set_rxgain(const struct shell *sh, const char *value)
+{
+	long g = ESP_SDR_RX_GAIN_AUTO;
+
+	if (strcmp(value, "auto") != 0 &&
+	    parse_long(sh, value, ESP_SDR_RX_GAIN_AUTO, esp_sdr_rx_gain_max(), &g) != 0) {
+		return -EINVAL;
+	}
+	return esp_sdr_rx_set_gain((int)g);
+}
+
+static int set_decim(const struct shell *sh, const char *value)
+{
+	if (strcmp(value, "cic") == 0) {
+		return vrt_rx_set_decim(VRT_RX_DECIM_CIC);
+	}
+	if (strcmp(value, "fold") == 0) {
+		return vrt_rx_set_decim(VRT_RX_DECIM_FOLD);
+	}
+	shell_error(sh, "decim: cic or fold");
+	return -EINVAL;
+}
+
+#if defined(CONFIG_APP_TX)
+static int set_txgain(const struct shell *sh, const char *value)
+{
+	long step;
+
+	if (parse_long(sh, value, 0, esp_sdr_tx_gain_max(), &step) != 0) {
+		return -EINVAL;
+	}
+	return esp_sdr_tx_set_gain((int)step);
+}
+
+static void print_tx_status(const struct shell *sh)
+{
+	struct esp_sdr_tx_stats bs;
+	struct vrt_tx_stats st;
+	uint64_t freq;
+	uint32_t rate;
+
+	vrt_tx_get_stats(&st);
+	vrt_tx_get_settings(&freq, &rate);
+	esp_sdr_tx_get_stats(&bs);
+	shell_print(sh, "tx %s, backend %s, %llu Hz, %u S/s",
+		    esp_sdr_tx_active() ? "active" : "idle", esp_sdr_tx_get_backend()->name,
+		    (unsigned long long)freq, rate);
+	shell_print(sh,
+		    "packets %u data, %u commands, %u acks, %u gaps, %u underruns, %u bad, "
+		    "%u errors; samples %u hole-filled, %u late",
+		    st.data, st.commands, st.acks, st.gaps, st.underruns, st.bad, st.errors, st.holes,
+		    st.late);
+	shell_print(sh, "backend %llu samples in %u writes, %u errors",
+		    (unsigned long long)bs.samples, bs.writes, bs.errors);
+#if defined(CONFIG_ESP_SDR_TX_DAC)
+	struct esp_sdr_tx_dac_stats ds;
+
+	esp_sdr_tx_dac_get_stats(&ds);
+	shell_print(sh,
+		    "dac x%u: %llu played, %llu dropped (%.0f %% on air), %u switches, %u underruns, "
+		    "%u overruns, %u errors, %u ms",
+		    ds.interp, (unsigned long long)ds.played, (unsigned long long)ds.dropped,
+		    ds.played + ds.dropped ? 100.0 * ds.played / (ds.played + ds.dropped) : 0.0,
+		    ds.switches, ds.underruns, ds.overruns, ds.errors, ds.elapsed_us / 1000U);
+	shell_print(sh, "dac interpolator: %s", ds.simd ? "vector (PIE)" : "C");
+	shell_print(sh, "dac loop: %u switches, %u us mean apart, %u us max; slack min %d us, "
+		    "%u restarts",
+		    ds.switches, ds.switches > 1U ? ds.switch_us_sum / (ds.switches - 1U) : 0U,
+		    ds.switch_us_max, ds.slack_us_min, ds.restarts);
+	shell_print(sh, "dac leader: fill max %u us, woke late max %u us, switch-to-fill max %u us",
+		    ds.fill_us_max, ds.wake_late_us_max, ds.idle_us_max);
+	for (int f = 0; f < 2; f++) {
+		shell_print(sh, "dac filler %d: %u blocks, %u ms filling, cpu %u", f,
+			    ds.fill_blocks[f], ds.fill_us[f] / 1000U, ds.fill_cpu[f]);
+	}
+#endif
+}
+
+#endif
+
+static const struct setting {
+	const char *key, *help;
+	int (*set)(const struct shell *sh, const char *value);
+} settings[] = {
+	{"freq", "<MHz>: LO, shared by receive and transmit", set_freq},
+	{"rxgain", "auto|<index>: hardware AGC or a fixed gain index", set_rxgain},
+	{"decim", "cic|fold: decimation below the capture rate (fold: full-band power)", set_decim},
+#if defined(CONFIG_APP_TX)
+	{"txgain", "<step>: transmit power step, 0 weakest", set_txgain},
+#endif
+};
+
+/* set [<key> <value> ...]: settings, applied in order; without arguments the keys. */
+static int cmd_set(const struct shell *sh, size_t argc, char **argv)
+{
+	if (argc == 1) {
+		ARRAY_FOR_EACH(settings, k) {
+			shell_print(sh, "  %-7s %s", settings[k].key, settings[k].help);
+		}
+		return 0;
+	}
+	if ((argc - 1U) % 2U != 0U) {
+		shell_error(sh, "usage: set <key> <value> [<key> <value> ...]");
+		return -EINVAL;
+	}
+	for (size_t a = 1; a + 1U < argc; a += 2U) {
+		const struct setting *st = NULL;
+		int ret;
+
+		ARRAY_FOR_EACH(settings, k) {
+			if (strcmp(argv[a], settings[k].key) == 0) {
+				st = &settings[k];
+			}
+		}
+		if (st == NULL) {
+			shell_error(sh, "unknown key %s (sdr set lists them)", argv[a]);
+			return -EINVAL;
+		}
+		ret = st->set(sh, argv[a + 1U]);
+		shell_print(sh, "%s %s: %d", argv[a], argv[a + 1U], ret);
+		if (ret != 0) {
+			return ret;
+		}
+	}
+	return 0;
+}
+
+/* status: receive settings, and the transmit path's state and counters. */
+static int cmd_status(const struct shell *sh, size_t argc, char **argv)
+{
+	int gain = esp_sdr_rx_get_gain();
+	const char *decim = vrt_rx_get_decim() == VRT_RX_DECIM_FOLD ? "fold" : "cic";
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	if (gain < 0) {
+		shell_print(sh, "rx: freq %u MHz, rxgain auto (max %d), decim %s, %u S/s, %u bit",
+			    esp_sdr_get_freq(), esp_sdr_rx_gain_max(), decim, vrt_rx_get_rate(),
+			    vrt_rx_get_bits());
+	} else {
+		shell_print(sh, "rx: freq %u MHz, rxgain %d (max %d), decim %s, %u S/s, %u bit",
+			    esp_sdr_get_freq(), gain, esp_sdr_rx_gain_max(), decim, vrt_rx_get_rate(),
+			    vrt_rx_get_bits());
+	}
+#if defined(CONFIG_APP_TX)
+	shell_print(sh, "txgain %d (max %d, vendor target power %d)", esp_sdr_tx_get_gain(),
+		    esp_sdr_tx_gain_max(), esp_sdr_tx_gain_power(esp_sdr_tx_get_gain()));
+	print_tx_status(sh);
+#endif
+	return 0;
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(sdr_cmds,
+			       SHELL_CMD(status, NULL, "settings, transmit path state and counters",
+					 cmd_status),
+			       SHELL_CMD_ARG(set, NULL,
+					     "[<key> <value> ...]: settings (without arguments: the keys)",
+					     cmd_set, 1, 8),
 			       SHELL_CMD(mem, NULL, "system heap use", cmd_mem),
-			       SHELL_CMD_ARG(gain, NULL,
-					     "[auto|<index>] hardware AGC or fixed gain index",
-					     cmd_gain, 1, 1),
-			       SHELL_CMD_ARG(freq, NULL, "[<MHz>] receive frequency", cmd_freq, 1,
-					     1),
-			       SHELL_CMD_ARG(rxmode, NULL,
-					     "[cic|fold] decimation algorithm below the capture "
-					     "rate (fold = full-band power estimate)",
-					     cmd_rxmode, 1, 1),
 			       SDR_TX_CMD SHELL_SUBCMD_SET_END);
 
 SHELL_CMD_REGISTER(sdr, &sdr_cmds, "ESP-SDR radio", NULL);

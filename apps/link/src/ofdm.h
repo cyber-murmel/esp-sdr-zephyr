@@ -25,6 +25,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Receive and transmit words: esp_sdr_rx_i/q(), esp_sdr_tx_word(). */
+#include <esp_sdr/esp_sdr.h>
+
 #define OFDM_NFFT_MIN 16U
 #define OFDM_NFFT_MAX 512U
 /* Shortest cyclic prefix as a fraction of the FFT size (cp_div at most this). */
@@ -178,23 +181,6 @@ static inline size_t ofdm_hdr_rsamples(const struct ofdm_ctx *ctx)
 
 /* Test payload: whitened bits, a function of @p seed (packed, MSB first). */
 void ofdm_test_bits(uint8_t *bits, size_t nbits, uint32_t seed);
-
-/* Transmit words: I in bits 9:0, Q in 19:10 (esp_sdr_tx_word()). */
-static inline uint32_t ofdm_tx_word(int i, int q)
-{
-	return ((uint32_t)i & 0x3ffU) | (((uint32_t)q & 0x3ffU) << 10);
-}
-
-/* Receive words: Q in bits 9:0, I in 19:10 (esp_sdr_rx_i/q()). */
-static inline int ofdm_rx_i(uint32_t w)
-{
-	return (int32_t)(w << 12) >> 22;
-}
-
-static inline int ofdm_rx_q(uint32_t w)
-{
-	return (int32_t)(w << 22) >> 22;
-}
 
 /*
  * Build one frame into @p out (ctx->len words): cfg.hdr_bits header bits from

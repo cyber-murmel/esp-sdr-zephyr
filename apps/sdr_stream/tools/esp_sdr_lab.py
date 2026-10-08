@@ -368,6 +368,15 @@ def tone_power_dbfs(bs, offset_hz):
     return float(10 * np.log10(s[k - 3:k + 4].sum() / ref)), s
 
 
+def sdr_set(board, key, value):
+    """sdr set <key> <value>, exiting if the board refuses it; returns the board's answer line."""
+    out = board.cmd(f"sdr set {key} {value}")
+    m = re.search(rf"^{re.escape(key)} {re.escape(str(value))}: (-?\d+)", out, re.M)
+    if not m or int(m.group(1)) != 0:
+        sys.exit(f"{board.serial}: sdr set {key} {value} failed: {out.strip()[-200:]!r}")
+    return m.group(0)
+
+
 def cmd_power(a, tx, rx, rec):
     rows = []
     rec.take()
@@ -375,7 +384,8 @@ def cmd_power(a, tx, rx, rec):
     time.sleep(a.ms / 1000)
     windows = [(t0 + 0.02, time.monotonic() - 0.02, "off")]
     for step in a.steps:
-        out = tx.cmd(f"sdr txgain {step}")
+        sdr_set(tx, "txgain", step)
+        out = tx.cmd("sdr status")
         m = re.search(r"vendor target power (-?\d+)", out)
         t0 = time.monotonic()
         tx_tone(tx, a.offset, a.ms, a.amp)
@@ -418,7 +428,7 @@ def burst_peak(iq, dc_hz=60e3):
 
 
 def cmd_chirp(a, tx, rx, rec):
-    print(tx.cmd(f"sdr txgain {a.txgain}").strip().splitlines()[-2])
+    print(sdr_set(tx, "txgain", a.txgain))
     rec.take()
     out = tx.cmd(f"sdr sweep {a.f0} {a.f1} {a.ms} {a.amp}", timeout=a.ms / 1000 + 5,
                  expect=r"sweep: .*\n|error")
@@ -664,7 +674,7 @@ def cmd_txstream(a, tx, rx, rec, tx_peer, tx_iface):
         f = np.array([h[1] for h in hits])
         print(f"  peak frequency {np.median(f) / 1e3:+.1f} kHz median, {f.min() / 1e3:+.1f} .. "
               f"{f.max() / 1e3:+.1f} kHz")
-    out = tx.cmd("sdr tx", timeout=2)
+    out = tx.cmd("sdr status", timeout=2)
     for line in out.splitlines():
         if line.startswith(("tx ", "packets", "backend", "dac")):
             print("board A: " + line.strip())
@@ -725,7 +735,7 @@ def cmd_link(a, tx, rx, rec, tx_peer, tx_iface):
           f"{a.rx_rate} S/s")
     if not bs:
         return False
-    out = tx.cmd("sdr tx", timeout=2)
+    out = tx.cmd("sdr status", timeout=2)
     for line in out.splitlines():
         if line.startswith(("packets", "dac")):
             print("board A: " + line.strip())
@@ -765,7 +775,7 @@ def cmd_sweep(a, tx, rec):
     offsets = [int(round(x)) for x in np.arange(a.start, a.stop + a.step / 2, a.step)]
     results = {}
     for gain in a.gains:
-        print(tx.cmd(f"sdr txgain {gain}").strip().splitlines()[-2])
+        print(sdr_set(tx, "txgain", gain))
         rec.take()
         t0 = time.monotonic()
         time.sleep(a.ms / 1000)
@@ -888,7 +898,7 @@ def main():
     tx_peer = learn_peer(tx_iface) if a.cmd in ("txstream", "link") else None
     tx, rx = Board(a.tx), Board(a.rx)
     for b in (tx, rx):
-        print(f"{b.serial}: " + b.cmd(f"sdr freq {a.lo}").strip().splitlines()[-2])
+        print(f"{b.serial}: " + sdr_set(b, "freq", a.lo))
     rec = Recorder(iface_for_serial(a.rx))
     rec.start()
     time.sleep(0.5)
@@ -897,7 +907,8 @@ def main():
             r = vita_rx_control(rec, gain=a.rx_gain)
             print(f"VITA 49.2 rx control: gain {a.rx_gain} -> executed {r['executed']}, "
                   f"errors {r['errors']}, state {r}")
-            print(f"{rx.serial} shell: " + rx.cmd("sdr gain").strip().splitlines()[-2])
+            status = rx.cmd("sdr status").splitlines()
+            print(f"{rx.serial} shell: " + next((l for l in status if l.startswith("rx:")), "?"))
         if a.cmd == "rxgain":
             ok = a.rx_gain is not None
         else:

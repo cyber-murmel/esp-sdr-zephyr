@@ -3,7 +3,7 @@
 """Drive the sdr_stream VITA 49.2 transmit path and check it.
 
 Sends control, query-state and signal data packets to the board, checks the
-acknowledges, then compares the board's own counters (shell "sdr tx").
+acknowledges, then compares the board's own counters (shell "sdr status").
 
 Usage: vrt_tx.py [--iface esdr0] [--device ADDR] [--freq MHZ] [--rate HZ]
                  [--tone HZ] [--seconds N] [--shell /dev/serial/by-id/...]
@@ -118,7 +118,7 @@ def shell_tx_stats(path):
     s.dtr = True
     time.sleep(0.4)
     s.read(65536)
-    s.write(b"sdr tx\r\n")
+    s.write(b"sdr status\r\n")
     time.sleep(1.0)
     out = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", s.read(65536).decode(errors="replace"))
     s.close()
@@ -126,7 +126,7 @@ def shell_tx_stats(path):
                   r"(\d+) bad, (\d+) errors", out)
     b = re.search(r"backend (\d+) samples", out)
     if not m or not b:
-        raise RuntimeError("no 'sdr tx' output:\n" + out)
+        raise RuntimeError("no 'sdr status' output:\n" + out)
     keys = ["data", "commands", "acks", "gaps", "underruns", "bad", "errors"]
     st = dict(zip(keys, map(int, m.groups())))
     st["samples"] = int(b.group(1))

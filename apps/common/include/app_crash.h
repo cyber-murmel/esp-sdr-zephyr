@@ -27,4 +27,20 @@ void app_crash_note_watchdog(void);
 /* The record from before this boot, if any. */
 bool app_crash_last(struct app_crash *out);
 
+/*
+ * What a double exception left in RTC memory (no fatal handler runs for it).
+ * The layout is fixed: app_crash_dx.S stores the fields by offset.
+ */
+struct app_crash_dx {
+	uint32_t magic;
+	uint32_t depc, exccause, excvaddr, epc1, ps;
+	/* Stack pointer. */
+	uint32_t a1;
+	/* CPU (PRID). */
+	uint32_t prid;
+};
+
+/* The double exception from before this boot, if any. */
+bool app_crash_dx_last(struct app_crash_dx *out);
+
 #endif /* APP_CRASH_H_ */

@@ -245,7 +245,7 @@ static void send_ack(const struct sockaddr *to, socklen_t to_len, bool query,
 			int gain = esp_sdr_rx_get_gain();
 
 			ack.if_context.rf_reference_frequency = esp_sdr_get_freq() * 1e6;
-			ack.if_context.sample_rate = rx_get_rate();
+			ack.if_context.sample_rate = vrt_rx_get_rate();
 			/* Uncalibrated: stage 1 carries the PHY gain table index, not dB. */
 			ack.if_context.has.gain = gain >= 0;
 			ack.if_context.gain.stage1 = (float)gain;
@@ -292,7 +292,7 @@ static void handle_rx_command(const struct sockaddr *from, socklen_t from_len)
 	struct vrt_ack_responses errors = {0};
 	const struct vrt_if_context *c = &pkt.if_context;
 	uint32_t mhz = esp_sdr_get_freq();
-	uint32_t rate = rx_get_rate();
+	uint32_t rate = vrt_rx_get_rate();
 	int gain = esp_sdr_rx_get_gain();
 	int bits = 0;
 	bool any_error = false, executed = false;
@@ -334,7 +334,7 @@ static void handle_rx_command(const struct sockaddr *from, socklen_t from_len)
 		uint32_t fs = esp_sdr_rx_rate_hz(CONFIG_APP_RX_RATE);
 
 		if (r < 1.0 || r > fs || r != floor(r) || fs % (uint32_t)r != 0U ||
-		    (fs / (uint32_t)r != 1U && (fs / (uint32_t)r < RX_DECIM_MIN ||
+		    (fs / (uint32_t)r != 1U && (fs / (uint32_t)r < VRT_RX_DECIM_MIN ||
 						 fs / (uint32_t)r > ESP_SDR_RX_DECIM_MAX))) {
 			errors.has.sample_rate = true;
 			errors.sample_rate = VRT_WEF_PARAMETER_OUT_OF_RANGE;
@@ -351,7 +351,7 @@ static void handle_rx_command(const struct sockaddr *from, socklen_t from_len)
 		if (c->has.gain && !errors.has.gain && esp_sdr_rx_set_gain(gain) != 0) {
 			stats.errors++;
 		}
-		if (rate != rx_get_rate() && rx_set_rate(rate) != 0) {
+		if (rate != vrt_rx_get_rate() && vrt_rx_set_rate(rate) != 0) {
 			stats.errors++;
 		}
 		if (bits > 0 && vrt_rx_set_bits((unsigned int)bits) != 0) {
@@ -529,9 +529,13 @@ int vrt_tx_init(void)
 	return 0;
 }
 
-void vrt_tx_get(struct vrt_tx_stats *out, uint64_t *freq_hz, uint32_t *rate_hz)
+void vrt_tx_get_stats(struct vrt_tx_stats *out)
 {
 	*out = stats;
+}
+
+void vrt_tx_get_settings(uint64_t *freq_hz, uint32_t *rate_hz)
+{
 	*freq_hz = tx_freq_hz;
 	*rate_hz = tx_rate_hz;
 }

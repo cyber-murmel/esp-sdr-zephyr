@@ -139,7 +139,7 @@ def ofdm(args):
             for line in b.cmd("ofdm set " + " ".join(f"{k} {v}" for k, _, v in frame), 0.5):
                 if "no frame layout" in line or "keys:" in line:
                     sys.exit(f"{b.sn}: {line}")
-    for line in rx.cmd("ofdm show", 0.5):
+    for line in rx.cmd("ofdm status", 0.5):
         if line.startswith(("bpsk", "qpsk", "16qam", "64qam", "frame")):
             print(line)
     # Long enough for the captures and their decoding (a few ms each), with margin.

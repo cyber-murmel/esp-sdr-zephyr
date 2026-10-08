@@ -294,7 +294,7 @@ OFDM_HOT static void emit(const struct ofdm_ctx *ctx, struct ofdm_txbuf *tb, flo
 			vi = vi > 511 ? 511 : (vi < -511 ? -511 : vi);
 			vq = vq > 511 ? 511 : (vq < -511 ? -511 : vq);
 		}
-		out[i] = ofdm_tx_word(vi, vq);
+		out[i] = esp_sdr_tx_word(vi, vq);
 	}
 	tb->clipped += clipped;
 }
@@ -382,8 +382,8 @@ OFDM_HOT static void sc_scan(struct ofdm_ctx *ctx, const uint32_t *w, int t0, in
 	b->t = b->start = -1;
 	for (int m = 0; m < L; m += st) {
 		uint32_t wa = w[t0 + m], wb = w[t0 + m + L];
-		int ai = ofdm_rx_i(wa) - dci, aq = ofdm_rx_q(wa) - dcq;
-		int bi = ofdm_rx_i(wb) - dci, bq = ofdm_rx_q(wb) - dcq;
+		int ai = esp_sdr_rx_i(wa) - dci, aq = esp_sdr_rx_q(wa) - dcq;
+		int bi = esp_sdr_rx_i(wb) - dci, bq = esp_sdr_rx_q(wb) - dcq;
 
 		pr += ai * bi + aq * bq;
 		pi += ai * bq - aq * bi;
@@ -419,9 +419,9 @@ OFDM_HOT static void sc_scan(struct ofdm_ctx *ctx, const uint32_t *w, int t0, in
 		}
 		{
 			uint32_t wa = w[t], wb = w[t + L], wc = w[t + 2 * L];
-			int ai = ofdm_rx_i(wa) - dci, aq = ofdm_rx_q(wa) - dcq;
-			int bi = ofdm_rx_i(wb) - dci, bq = ofdm_rx_q(wb) - dcq;
-			int ci = ofdm_rx_i(wc) - dci, cq = ofdm_rx_q(wc) - dcq;
+			int ai = esp_sdr_rx_i(wa) - dci, aq = esp_sdr_rx_q(wa) - dcq;
+			int bi = esp_sdr_rx_i(wb) - dci, bq = esp_sdr_rx_q(wb) - dcq;
+			int ci = esp_sdr_rx_i(wc) - dci, cq = esp_sdr_rx_q(wc) - dcq;
 			int eb = bi * bi + bq * bq;
 
 			pr += (bi * ci + bq * cq) - (ai * bi + aq * bq);
@@ -528,7 +528,7 @@ OFDM_HOT static void take_slot(const struct ofdm_ctx *ctx, struct ofdm_worker *w
 
 	for (unsigned int i = 0; i < n; i++) {
 		uint32_t v = x[i];
-		float xr = (float)(ofdm_rx_i(v) - dci), xq = (float)(ofdm_rx_q(v) - dcq);
+		float xr = (float)(esp_sdr_rx_i(v) - dci), xq = (float)(esp_sdr_rx_q(v) - dcq);
 		float rr = r[i].re, ri = r[i].im;
 
 		b[i].re = xr * rr - xq * ri;
@@ -772,8 +772,8 @@ int ofdm_rx_begin_period(struct ofdm_ctx *ctx, const uint32_t *words, size_t n, 
 		tmax = per + (int)ctx->rcp;
 	}
 	for (size_t k = 0; k < n; k += 4) {
-		si += ofdm_rx_i(words[k]);
-		sq += ofdm_rx_q(words[k]);
+		si += esp_sdr_rx_i(words[k]);
+		sq += esp_sdr_rx_q(words[k]);
 		cnt++;
 	}
 	rx->dci = (si + (si >= 0 ? cnt / 2 : -cnt / 2)) / cnt;

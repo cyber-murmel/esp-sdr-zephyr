@@ -80,6 +80,10 @@ static struct mac_cfg cfg = {
 	.retries = 7,
 };
 
+/* Kconfig cannot express the gap: 1 to 12 MHz is below esp_sdr_rx_bandwidth_range(). */
+BUILD_ASSERT(CONFIG_APP_RX_BW_MHZ <= 0 || CONFIG_APP_RX_BW_MHZ >= 13,
+	     "CONFIG_APP_RX_BW_MHZ: -1, 0 or 13 to 69");
+
 /* Pulse tables and frame buffers: above the capture bank, outside the libc heap. */
 static ESP_SDR_HIGH_RAM struct qam_tx qam_tx_ctx;
 /* ACKs are built while the data context may be busy; they are short, PSRAM will do. */

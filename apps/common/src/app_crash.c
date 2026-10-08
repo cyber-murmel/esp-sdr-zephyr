@@ -6,6 +6,7 @@
  * lost, so the next boot reports it instead.
  */
 
+#include <stddef.h>
 #include <string.h>
 
 #include <zephyr/arch/cpu.h>
@@ -27,6 +28,14 @@
 #define BSA_A0       0x28
 
 static RTC_NOINIT_ATTR struct app_crash record;
+
+/* Written by the double exception breadcrumb (app_crash_dx.S). */
+#define DX_MAGIC     0x44584331U /* "DXC1": not reported yet */
+#define DX_REPORTED  0x44584330U
+RTC_NOINIT_ATTR struct app_crash_dx app_crash_dx_record;
+BUILD_ASSERT(offsetof(struct app_crash_dx, depc) == 4 && offsetof(struct app_crash_dx, prid) == 28,
+	     "app_crash_dx.S stores by these offsets");
+static bool have_dx;
 static struct app_crash last;
 static bool have_last;
 
@@ -76,8 +85,21 @@ bool app_crash_last(struct app_crash *out)
 	return have_last;
 }
 
+bool app_crash_dx_last(struct app_crash_dx *out)
+{
+	if (have_dx) {
+		*out = app_crash_dx_record;
+	}
+	return have_dx;
+}
+
 static int app_crash_init(void)
 {
+	/* The values stay in RTC memory; only the magic marks them as old. */
+	if (app_crash_dx_record.magic == DX_MAGIC) {
+		have_dx = true;
+		app_crash_dx_record.magic = DX_REPORTED;
+	}
 	if (record.magic == MAGIC) {
 		last = record;
 		have_last = true;

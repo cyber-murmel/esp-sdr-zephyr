@@ -13,6 +13,6 @@
  * interrupt lands on the CPU that allocates it) and again after. No-op
  * without CONFIG_SCHED_CPU_MASK or on one CPU.
  */
-void app_pin_system_threads(int cpu);
+void app_cpu_pin_system_threads(int cpu);
 
 #endif /* APP_CPU_H_ */
