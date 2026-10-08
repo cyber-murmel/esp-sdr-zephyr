@@ -3,6 +3,7 @@
 manifest:
   self:
     path: esp-sdr-zephyr
+    west-commands: scripts/west-commands.yml
 
   remotes:
     - name: zephyrproject-rtos
