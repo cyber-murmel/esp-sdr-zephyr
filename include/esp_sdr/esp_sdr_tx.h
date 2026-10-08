@@ -31,6 +31,11 @@
 extern "C" {
 #endif
 
+/**
+ * @addtogroup esp_sdr_tx
+ * @{
+ */
+
 #if defined(CONFIG_SOC_SERIES_ESP32S3)
 /**
  * @brief Select a transmit power step, picked up by the next transmission.
@@ -118,6 +123,10 @@ int esp_sdr_tx_play(enum esp_sdr_rate rate, const uint32_t *words, size_t count)
  * whole number of signal periods. Holds the radio lock throughout, so
  * captures wait.
  *
+ * @param rate Transmit sample rate.
+ * @param words Complex samples built with esp_sdr_tx_word().
+ * @param count Complex samples, ESP_SDR_SAMPLES_MIN to ESP_SDR_SAMPLES_MAX.
+ * @param duration_ms 0 to ESP_SDR_TX_PLAY_MAX_MS.
  * @param bursts If not NULL, set to the number of bursts played.
  * @retval 0 on success.
  * @retval -EINVAL for an unsupported rate, count or duration.
@@ -338,6 +347,8 @@ int esp_sdr_tx_dac_play_gen(esp_sdr_tx_dac_gen_t gen, void *user, uint64_t sampl
  */
 uint32_t esp_sdr_tx_dac_queued(void);
 #endif
+
+/** @} */
 
 #ifdef __cplusplus
 }

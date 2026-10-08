@@ -24,6 +24,11 @@
 extern "C" {
 #endif
 
+/**
+ * @addtogroup esp_sdr_ring
+ * @{
+ */
+
 /** Ring sample rate; outputs come at this rate divided by the decimation. */
 #define ESP_SDR_RING_RATE_HZ 16000000U
 
@@ -159,6 +164,8 @@ void esp_sdr_ring_stop(void);
 
 /** @return Whether esp_sdr_ring_run() is running. */
 bool esp_sdr_ring_active(void);
+
+/** @} */
 
 #ifdef __cplusplus
 }

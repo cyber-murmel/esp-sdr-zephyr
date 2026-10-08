@@ -78,6 +78,8 @@ pkgs.mkShell {
     (zephyr-nix.pythonEnv.override {
       extraPackages = ps: with ps; [
         jsonschema
+        # Markdown pages in the Sphinx docs (doc/).
+        myst-parser
       ];
     })
   ];

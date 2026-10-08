@@ -38,16 +38,16 @@ Two XIAO ESP32S3 boards cabled through a 30 dB attenuator, TX step 4, RX
 gain 32, widest receive filter (``bw 0``), PHY in its 40 MHz mode
 (``cbw 2``), 50 us TX/RX turnaround, 5 s per run. MER is about 31.5 dB.
 
-========  =========  ==============  ==============
-Mod       FEC        pairs (``-w 2``)  single (``-w 1``)
-========  =========  ==============  ==============
-64-QAM    RS         1.29 Mbit/s     1.19 Mbit/s
-64-QAM    Hamming    1.41 Mbit/s     1.28 Mbit/s
-64-QAM    none       1.54 Mbit/s     1.40 Mbit/s
-256-QAM   RS         1.69 Mbit/s     1.47 Mbit/s
-256-QAM   Hamming    1.44 Mbit/s     1.35 Mbit/s
-256-QAM   none       0.89 Mbit/s     0.60 Mbit/s
-========  =========  ==============  ==============
+=======  =======  ================  =================
+Mod      FEC      pairs (``-w 2``)  single (``-w 1``)
+=======  =======  ================  =================
+64-QAM   RS       1.29 Mbit/s       1.19 Mbit/s
+64-QAM   Hamming  1.41 Mbit/s       1.28 Mbit/s
+64-QAM   none     1.54 Mbit/s       1.40 Mbit/s
+256-QAM  RS       1.69 Mbit/s       1.47 Mbit/s
+256-QAM  Hamming  1.44 Mbit/s       1.35 Mbit/s
+256-QAM  none     0.89 Mbit/s       0.60 Mbit/s
+=======  =======  ================  =================
 
 The link is bound by the receiver's decode time (about 2.3 us per symbol
 per CPU), not by airtime. The MER ceiling of about 31 dB, the same with

@@ -122,7 +122,7 @@ Host tools
 ``tools/esp_sdr_lab.py`` drives two boards (by USB serial) and records the
 receiver:
 
-.. code-block:: console
+.. code-block:: shell
 
    # tone or chirp from A to B, decimated capture at B, cs16 + json on a real time axis
    python3 esp_sdr_lab.py link --signal chirp --offset 0 --span 80000 --tx-rate 250000 \

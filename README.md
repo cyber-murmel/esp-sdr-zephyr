@@ -22,6 +22,7 @@ like [example-application](https://github.com/zephyrproject-rtos/example-applica
 | `tests/unit/` | Unit tests on the host (ztest, `native_sim`): `scripts/run-unit-tests.sh`; the 802.15.4 PHY and driver error rate tables: `scripts/unit-tables.sh`; all test tiers in [doc/testing.md](doc/testing.md) |
 | `tests/integration/` | ztest on one real board: the radio API's contract |
 | `tests/regression/` | pytest on two real boards: 802.15.4 frames between the C6 and the S3 software radio |
+| `doc/` | Guides (Markdown) and the documentation build: Doxygen API reference of `include/`, Sphinx site, see [Documentation](#documentation) |
 | `scripts/west_commands/dfu.py` | `west dfu`: DFU update, health check and confirm of a running board |
 | `zephyr/module.yml` | Module definition and the `librftest.a` blob |
 | `west.yml` | The workspace: Zephyr, hal_espressif, libvrt, upstream esp-sdr, esp-dsp |
@@ -87,6 +88,26 @@ CONFIG_ESP_SDR=y
 The Wi-Fi driver brings the radio up at boot; `esp_sdr_init()` then switches
 it to promiscuous mode on channel 1 and prepares the receiver. Do not scan,
 connect or start an access point while capturing: those retune the radio.
+
+## Documentation
+
+`doc/` builds the documentation as Zephyr's
+[example-application](https://github.com/zephyrproject-rtos/example-application)
+does: Doxygen for the API reference of everything under `include/`, Sphinx for
+the site (this README, the guides in `doc/` and the apps' READMEs), with the
+API reference linked in. In the nix shell:
+
+```
+cd esp-sdr-zephyr/doc
+doxygen
+make html
+```
+
+The site is in `doc/_build_sphinx/html` (open `index.html`), the API reference
+in its `doxygen/` folder. Both treat warnings as errors in CI
+(`.github/workflows/docs.yml`, which also publishes to GitHub Pages);
+`SPHINXOPTS=-W make html` does the same locally. Outside the shell,
+`pip install -r doc/requirements.txt` and a Doxygen install give the same tools.
 
 ## Dependencies
 

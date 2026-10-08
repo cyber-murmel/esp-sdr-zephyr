@@ -3,3 +3,4 @@ zephyr/blobs/lib/
 build*/
 twister-out/
 __pycache__/
+/doc/_build*/

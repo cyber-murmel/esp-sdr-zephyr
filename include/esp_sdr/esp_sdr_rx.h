@@ -22,6 +22,11 @@
 extern "C" {
 #endif
 
+/**
+ * @addtogroup esp_sdr_rx
+ * @{
+ */
+
 /** Gain index that selects the hardware AGC. */
 #define ESP_SDR_RX_GAIN_AUTO (-1)
 
@@ -76,7 +81,12 @@ int esp_sdr_rx_gain_max(void);
  */
 int esp_sdr_rx_set_bandwidth(uint32_t mhz);
 
-/** @return Supported bandwidth range in MHz through @p min and @p max. */
+/**
+ * @brief Supported bandwidth range in MHz.
+ *
+ * @param min Set to the narrowest setting.
+ * @param max Set to the widest setting.
+ */
 void esp_sdr_rx_bandwidth_range(uint32_t *min, uint32_t *max);
 
 /**
@@ -112,8 +122,11 @@ int esp_sdr_rx_capture(enum esp_sdr_rate rate, size_t count, struct esp_sdr_rx_b
 /**
  * @brief Capture one burst and convert it to I/Q (raw units, -512 to 511) under the radio lock.
  *
+ * @param rate Native sample rate.
+ * @param count Complex samples, ESP_SDR_SAMPLES_MIN to ESP_SDR_SAMPLES_MAX.
+ * @param out Output samples, @p count of them.
  * @param first_ns Set to the arming time (k_cycle_get_64() clock, ns).
- * @retval Like esp_sdr_rx_capture().
+ * @return Like esp_sdr_rx_capture().
  */
 int esp_sdr_rx_capture_iq(enum esp_sdr_rate rate, size_t count, struct esp_sdr_iq16 *out,
 			  uint64_t *first_ns);
@@ -125,8 +138,11 @@ int esp_sdr_rx_capture_iq(enum esp_sdr_rate rate, size_t count, struct esp_sdr_i
  * the next is captured into the other bank. Bank 0 is the one
  * esp_sdr_rx_capture() uses.
  *
+ * @param rate Native sample rate.
+ * @param count Complex samples, ESP_SDR_SAMPLES_MIN to ESP_SDR_SAMPLES_MAX.
  * @param bank 0 to ESP_SDR_BANKS - 1.
- * @retval -EINVAL also for a bank that does not exist.
+ * @param burst Filled with the result.
+ * @return Like esp_sdr_rx_capture(); -EINVAL also for a bank that does not exist.
  */
 int esp_sdr_rx_capture_bank(enum esp_sdr_rate rate, size_t count, int bank,
 			    struct esp_sdr_rx_burst *burst);
@@ -141,6 +157,9 @@ int esp_sdr_rx_capture_bank(enum esp_sdr_rate rate, size_t count, int bank,
  * towards the band edge: -2.7 dB at a quarter of the output rate, -9.3 dB at
  * 0.45 of it. Needs CONFIG_ESP_SDR_RX_DECIM.
  *
+ * @param rate Native sample rate.
+ * @param count Complex samples, ESP_SDR_SAMPLES_MIN to ESP_SDR_SAMPLES_MAX.
+ * @param m Decimation factor, ESP_SDR_RX_DECIM_MIN to ESP_SDR_RX_DECIM_MAX.
  * @param out Output samples, full scale +-32767.
  * @param max_out Capacity of @p out.
  * @param n_out Set to the number of samples written.
@@ -168,6 +187,8 @@ int esp_sdr_rx_capture_decimated(enum esp_sdr_rate rate, size_t count, unsigned 
  * since two sources that land in the same fold group add instead of one of
  * them surviving cleanly. Needs CONFIG_ESP_SDR_RX_DECIM.
  *
+ * @param rate Native sample rate.
+ * @param count Complex samples, ESP_SDR_SAMPLES_MIN to ESP_SDR_SAMPLES_MAX.
  * @param n Fold factor, ESP_SDR_RX_FOLD_MIN to ESP_SDR_RX_FOLD_MAX.
  * @param out Output samples, full scale +-511 (raw 10-bit, averaged not summed).
  * @param max_out Capacity of @p out.
@@ -220,6 +241,8 @@ size_t esp_sdr_rx_pack_iq8(const uint32_t *words, size_t count, uint8_t *out);
  * @return Bytes written, ceil(20 * count / 8).
  */
 size_t esp_sdr_rx_pack_iq10(const uint32_t *words, size_t count, uint8_t *out);
+
+/** @} */
 
 #ifdef __cplusplus
 }

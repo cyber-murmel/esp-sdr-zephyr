@@ -23,6 +23,11 @@
 extern "C" {
 #endif
 
+/**
+ * @addtogroup esp_sdr_radio
+ * @{
+ */
+
 /** Software tuning limits in MHz; PLL lock is not guaranteed across the range. */
 #define ESP_SDR_FREQ_MIN_MHZ 100U
 #define ESP_SDR_FREQ_MAX_MHZ 6000U
@@ -140,6 +145,8 @@ void esp_sdr_bbtop_write(unsigned int reg, unsigned int val);
  * @retval -EINVAL for more than 3000 us.
  */
 int esp_sdr_set_turnaround(uint32_t settle_us, bool retune);
+
+/** @} */
 
 #ifdef __cplusplus
 }

@@ -18,6 +18,11 @@
 extern "C" {
 #endif
 
+/**
+ * @addtogroup ieee154_esp_sdr
+ * @{
+ */
+
 /** Driver counters, ieee154_esp_sdr_get_stats(). */
 struct ieee154_esp_sdr_stats {
 	/** Receive captures processed, and failed captures. */
@@ -149,6 +154,8 @@ size_t ieee154_esp_sdr_get_stall(uint32_t *pc, uint32_t *ls, size_t max);
 
 /** Copy the driver counters into @p stats. */
 void ieee154_esp_sdr_get_stats(struct ieee154_esp_sdr_stats *stats);
+
+/** @} */
 
 #ifdef __cplusplus
 }

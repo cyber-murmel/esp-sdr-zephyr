@@ -20,6 +20,11 @@
 extern "C" {
 #endif
 
+/**
+ * @addtogroup ieee154_phy
+ * @{
+ */
+
 /** Longest PSDU, FCS included. */
 #define IEEE154_PHY_PSDU_MAX 127
 
@@ -57,6 +62,8 @@ size_t ieee154_phy_modulate(const uint8_t *psdu, uint8_t len, int16_t amp, int16
 
 /** Append the little-endian CRC-16 FCS to buf[0..n-1]; returns n + 2. */
 size_t ieee154_phy_append_fcs(uint8_t *buf, size_t n);
+
+/** @} */
 
 #ifdef __cplusplus
 }
