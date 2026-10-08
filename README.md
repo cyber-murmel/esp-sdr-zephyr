@@ -19,7 +19,7 @@ like [example-application](https://github.com/zephyrproject-rtos/example-applica
 | `apps/link/` | Packet link at 80 or 40 MS/s: single carrier QAM or OFDM (RS/Hamming, CSMA/CA, iperf style test) |
 | `apps/wpan/` | `wpan` shell: 802.15.4 test frames and counters on any Zephyr radio, the software radio (S3) or a native one (C6) |
 | `apps/common/` | Shared by the apps: USB with DFU, watchdogs, crash records, thread pinning |
-| `tests/unit/` | Unit tests on the host (ztest, `native_sim`): `scripts/run-unit-tests.sh`; the 802.15.4 PHY and driver error rate tables: `scripts/unit-tables.sh`; all test tiers in [doc/testing.md](doc/testing.md) |
+| `tests/unit/` | Unit tests on the host (ztest, `native_sim`): `scripts/run-unit-tests.sh`; the 802.15.4 PHY and driver error rate tables: `scripts/unit-tables.sh`; all test tiers and CI (`.github/workflows/build.yml`) in [doc/testing.md](doc/testing.md) |
 | `tests/integration/` | ztest on one real board: the radio API's contract |
 | `tests/regression/` | pytest on two real boards: 802.15.4 frames between the C6 and the S3 software radio |
 | `doc/` | Guides (Markdown) and the documentation build: Doxygen API reference of `include/`, Sphinx site, see [Documentation](#documentation) |

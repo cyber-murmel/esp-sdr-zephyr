@@ -10,6 +10,15 @@ end to end under twister (that one is deployed by hand, see below). Four tiers:
 | Regression | `tests/regression/` | two real boards | pytest through twister's multi-board harness. `ieee802154_link`: the C6 native radio and the S3 software radio exchange `apps/wpan` test frames both ways on channels 11, 15, 20 and 25, plus ACK requests. Guards against the two bugs that only ever showed as lost frames between real boards (`doc/hardware-quirks.md`). |
 | Smoke | `apps/*/sample.yaml` | build, and one board | Every app builds for its boards; `apps/capture` also boots on the S3 and the C6 and must print `esp-sdr rx: ready` (console harness). |
 
+## Continuous integration
+
+`.github/workflows/build.yml` runs on every push and pull request. It builds every app and test
+for each board it allows (`xiao_esp32s3/esp32s3/procpu` and `xiao_esp32c6/esp32c6/hpcore`, one job
+each) and builds and runs the unit tests on `native_sim` and `native_sim/native/64`. A GitHub
+runner has no boards, so the integration and regression tests and the console smoke test are only
+built there; run them on the desk as below. The twister reports of each job are kept as
+artifacts.
+
 ## Unit tests
 
 ```
