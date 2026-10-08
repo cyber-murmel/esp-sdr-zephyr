@@ -69,14 +69,14 @@ static int cmd_gain(const struct shell *sh, size_t argc, char **argv)
 static int cmd_freq(const struct shell *sh, size_t argc, char **argv)
 {
 	if (argc > 1) {
-		int ret = esp_sdr_set_frequency((uint32_t)strtoul(argv[1], NULL, 0));
+		int ret = esp_sdr_set_freq((uint32_t)strtoul(argv[1], NULL, 0));
 
 		if (ret != 0) {
 			shell_error(sh, "freq %s: %d", argv[1], ret);
 			return ret;
 		}
 	}
-	shell_print(sh, "freq %u MHz", esp_sdr_get_frequency());
+	shell_print(sh, "freq %u MHz", esp_sdr_get_freq());
 	return 0;
 }
 
@@ -213,7 +213,7 @@ static int cmd_fm(const struct shell *sh, size_t argc, char **argv)
 		return ret;
 	}
 	shell_print(sh, "played %u samples at %u MS/s, %u MHz, fm %.1f Hz dev %.1f Hz amp %ld",
-		    TX_BUF_SAMPLES, (unsigned int)(fs / 1e6), esp_sdr_get_frequency(), fm_hz, dev_hz,
+		    TX_BUF_SAMPLES, (unsigned int)(fs / 1e6), esp_sdr_get_freq(), fm_hz, dev_hz,
 		    amp);
 	return 0;
 }
@@ -283,7 +283,7 @@ static int cmd_tonetx(const struct shell *sh, size_t argc, char **argv)
 	}
 	shell_print(sh,
 		    "tonetx: %u MHz %+.0f Hz, %u MS/s, period %u, amp %ld, txgain %d, %u bursts in %u ms",
-		    esp_sdr_get_frequency(), (double)cycles * fs / (double)n, (unsigned int)(fs / 1e6),
+		    esp_sdr_get_freq(), (double)cycles * fs / (double)n, (unsigned int)(fs / 1e6),
 		    (unsigned int)n, amp, esp_sdr_tx_get_gain(), bursts, ms);
 	return 0;
 }

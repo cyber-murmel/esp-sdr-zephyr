@@ -137,10 +137,21 @@ static int capture_step(const struct survey_step *step)
 	uint32_t rate = esp_sdr_rx_rate_hz(step->rate);
 	int ret;
 
-	ret = esp_sdr_set_frequency(step->mhz);
-	if (ret == 0) {
-		ret = step->bandwidth_mhz ? esp_sdr_rx_set_bandwidth(step->bandwidth_mhz)
-					  : esp_sdr_rx_set_lpf(ESP_SDR_RX_LPF_AUTO);
+	/* The C6 dump engine only runs at 80 MS/s. */
+	if (rate == 0U) {
+		printf("esp-sdr rx: %u MHz, rate %d not supported, skipped\n", step->mhz,
+		       (int)step->rate);
+		return 0;
+	}
+	ret = esp_sdr_set_freq(step->mhz);
+	if (ret == 0 && step->bandwidth_mhz) {
+		uint32_t min, max;
+
+		/* The analog filter range differs between chips. */
+		esp_sdr_rx_bandwidth_range(&min, &max);
+		ret = esp_sdr_rx_set_bandwidth(CLAMP(step->bandwidth_mhz, min, max));
+	} else if (ret == 0) {
+		ret = esp_sdr_rx_set_lpf(ESP_SDR_RX_LPF_AUTO);
 	}
 	if (ret == 0) {
 		ret = esp_sdr_rx_capture(step->rate, SAMPLES, &b);

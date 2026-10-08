@@ -59,14 +59,18 @@ static uint32_t ring_r, in_base;
 static uint32_t in_rate, interp;
 static struct esp_sdr_tx_dac_stats stats;
 
+/* Generator session (esp_sdr_tx_dac_play_gen()): fill() calls it instead of interpolating. */
+static esp_sdr_tx_dac_gen_t gen_fn;
+static void *gen_user;
+static uint64_t gen_total;
+/* Set by the player when a session could not start. */
+static int sess_err;
+
 static int dac_start(uint64_t freq_hz, uint32_t rate_hz)
 {
 	uint32_t fs = esp_sdr_tx_rate_hz(DAC_RATE);
 	int ret;
 
-	if (atomic_get(&running)) {
-		return -EBUSY;
-	}
 	/* Integer interpolation factor of at least 2. */
 	if (rate_hz == 0U || fs % rate_hz != 0U || fs / rate_hz < 2U) {
 		return -EINVAL;
@@ -75,8 +79,12 @@ static int dac_start(uint64_t freq_hz, uint32_t rate_hz)
 	if (freq_hz % 1000000U != 0U) {
 		return -EINVAL;
 	}
-	ret = esp_sdr_set_frequency((uint32_t)(freq_hz / 1000000U));
+	if (!atomic_cas(&running, 0, 1)) {
+		return -EBUSY;
+	}
+	ret = esp_sdr_set_freq((uint32_t)(freq_hz / 1000000U));
 	if (ret != 0) {
+		atomic_set(&running, 0);
 		return ret;
 	}
 	in_rate = rate_hz;
@@ -87,7 +95,6 @@ static int dac_start(uint64_t freq_hz, uint32_t rate_hz)
 	ring_r = 0;
 	stats = (struct esp_sdr_tx_dac_stats){.interp = interp};
 	atomic_set(&stop_req, 0);
-	atomic_set(&running, 1);
 	k_sem_give(&start_sem);
 	LOG_INF("tx dac: %llu Hz, %u S/s in, x%u to %u S/s", (unsigned long long)freq_hz, rate_hz,
 		interp, fs);
@@ -115,7 +122,8 @@ static int dac_write(const struct esp_sdr_iq16 *samples, size_t count)
 
 static int dac_stop(void)
 {
-	if (!atomic_get(&running)) {
+	/* A generator session ends by itself; its caller waits for it. */
+	if (!atomic_get(&running) || gen_fn != NULL) {
 		return 0;
 	}
 	atomic_set(&stop_req, 1);
@@ -247,6 +255,11 @@ scalar:
  */
 HOT static void fill(uint32_t *dst, uint64_t out, uint32_t n)
 {
+	if (gen_fn != NULL) {
+		gen_fn(gen_user, dst, out, n);
+		return;
+	}
+
 	const uint32_t L = interp;
 	const uint32_t *in = src;
 	const uint32_t mask = src_mask;
@@ -372,6 +385,16 @@ static void timed_fill(int f, uint32_t *bank, uint64_t s, uint32_t n, uint32_t d
  */
 static uint32_t fill_block(uint32_t *bank, uint64_t s, uint32_t n)
 {
+	if (gen_fn != NULL) {
+		uint64_t first = out_base + s;
+		uint32_t data = first < gen_total ? (uint32_t)MIN(gen_total - first, (uint64_t)n)
+						  : 0U;
+
+		timed_fill(0, bank, s, n, data);
+		barrier_dmem_fence_full();
+		return n - data;
+	}
+
 	uint32_t w = (uint32_t)atomic_get(&ring_w);
 	uint64_t have = w - in_base >= 2U ? (uint64_t)(w - in_base - 1U) * interp : 0U;
 	uint64_t first = out_base + s;
@@ -470,7 +493,7 @@ static unsigned int wait_until_locked(uint32_t t)
 static bool loop_start(uint64_t out)
 {
 	size_t words;
-	uint32_t *bank = sdr_dac_buf(0, &words);
+	uint32_t *bank = esp_sdr_dac_buf(0, &words);
 	uint64_t t;
 	int64_t d;
 	unsigned int key;
@@ -482,11 +505,14 @@ static bool loop_start(uint64_t out)
 	/* Real time on the 64-bit clock, to this core's CCOUNT for the spin. */
 	t = sess_t0 + out * cyc_per_sample;
 	d = (int64_t)(t - k_cycle_get_64());
+	if (out == 0U) {
+		stats.start_margin_us = (int32_t)(d / (int64_t)k_us_to_cyc_ceil64(1));
+	}
 	if (d < (int64_t)k_us_to_cyc_ceil64(10)) {
 		return false;
 	}
 	key = wait_until_locked(ccount() + (uint32_t)d);
-	sdr_dac_loop(0, BLOCK_WORDS);
+	esp_sdr_dac_loop(0, BLOCK_WORDS);
 	loop_t0 = ccount();
 	irq_unlock(key);
 	played_out += LOOP_STEP;
@@ -497,6 +523,18 @@ static bool loop_start(uint64_t out)
 static uint64_t restart_point(void)
 {
 	return ROUND_UP(out_now() + (uint64_t)esp_sdr_tx_rate_hz(DAC_RATE) / 1000U, 4U);
+}
+
+/*
+ * A generator waveform restarted mid-way would radiate the middle of a
+ * frame: end it instead (the restart plays one block of silence, and
+ * esp_sdr_tx_dac_play_gen() reports -EIO).
+ */
+static void gen_abort(void)
+{
+	if (gen_fn != NULL) {
+		gen_total = 0;
+	}
 }
 
 /* Filler 0 leads: fills each block into the idle bank and switches on time. */
@@ -511,13 +549,16 @@ static void leader(void)
 	if (!loop_start(0)) {
 		do {
 			stats.restarts++;
+			gen_abort();
 		} while (!loop_start(restart_point()));
 	}
 	sw_t = k_cycle_get_32();
-	while (!atomic_get(&stop_req)) {
+	/* A generator session ends once its last sample is in the running block. */
+	while (!atomic_get(&stop_req) &&
+	       !(gen_fn != NULL && out_base + (k + 1U) * LOOP_STEP >= gen_total)) {
 		size_t words;
 		int b = (int)((k + 1U) & 1U);
-		uint32_t *bank = sdr_dac_buf(b, &words);
+		uint32_t *bank = esp_sdr_dac_buf(b, &words);
 		uint64_t s = (k + 1U) * LOOP_STEP;
 		uint32_t t_sw = loop_t0 + (uint32_t)(s * cyc_per_sample);
 		uint32_t zeros;
@@ -534,9 +575,10 @@ static void leader(void)
 			uint64_t played_to = out_base + s;
 			uint64_t next;
 
-			sdr_dac_halt();
+			esp_sdr_dac_halt();
 			stats.errors++;
 			stats.restarts++;
+			gen_abort();
 			do {
 				next = restart_point();
 				dropped_out += next - played_to;
@@ -549,7 +591,7 @@ static void leader(void)
 		{
 			unsigned int key = wait_until_locked(t_sw);
 
-			sdr_dac_select(b);
+			esp_sdr_dac_select(b);
 			irq_unlock(key);
 		}
 		if (stats.switches > 0U) {
@@ -570,12 +612,16 @@ static void leader(void)
 		stats.dropped = dropped_out / interp + (uint64_t)atomic_get(&late_in);
 		k++;
 	}
-	/* Let the running block play out, then stop. */
+	/* Let the running block play out (a generator: up to its last sample), then stop. */
 	{
-		unsigned int key = wait_until_locked(loop_t0 +
-						     (uint32_t)((k + 1U) * LOOP_STEP * cyc_per_sample));
+		uint64_t end = (k + 1U) * LOOP_STEP;
 
-		sdr_dac_halt();
+		if (gen_fn != NULL && gen_total > out_base && gen_total - out_base < end) {
+			end = gen_total - out_base;
+		}
+		unsigned int key = wait_until_locked(loop_t0 + (uint32_t)(end * cyc_per_sample));
+
+		esp_sdr_dac_halt();
 		irq_unlock(key);
 	}
 	half_job.n = 0;
@@ -625,12 +671,14 @@ static void player(void *p1, void *p2, void *p3)
 		uint32_t prebuf;
 
 		k_sem_take(&start_sem, K_FOREVER);
-		prebuf = MAX(in_rate / 1000U * CONFIG_ESP_SDR_TX_DAC_PREBUF_MS,
-			     2U * BLOCK_WORDS / interp + 4U);
+		prebuf = gen_fn != NULL ? 0U
+					: MAX(in_rate / 1000U * CONFIG_ESP_SDR_TX_DAC_PREBUF_MS,
+					      2U * BLOCK_WORDS / interp + 4U);
 		while (!atomic_get(&stop_req) && (uint32_t)atomic_get(&ring_w) - ring_r < prebuf) {
 			k_sleep(K_MSEC(1));
 		}
-		if (atomic_get(&stop_req) || sdr_dac_begin(DAC_RATE) != 0) {
+		if (atomic_get(&stop_req) || esp_sdr_dac_begin(DAC_RATE) != 0) {
+			sess_err = -EIO;
 			k_sem_give(&done_sem);
 			continue;
 		}
@@ -646,7 +694,7 @@ static void player(void *p1, void *p2, void *p3)
 		for (int f = 0; f < NFILL; f++) {
 			k_sem_give(&job_sem[f]);
 		}
-		while (!atomic_get(&stop_req)) {
+		while (gen_fn == NULL && !atomic_get(&stop_req)) {
 			k_sleep(K_MSEC(5));
 			/* The leader puts sess_t0 a little ahead at the start. */
 			stats.elapsed_us = (uint32_t)k_cyc_to_us_floor64(
@@ -655,7 +703,7 @@ static void player(void *p1, void *p2, void *p3)
 		for (int f = 0; f < NFILL; f++) {
 			k_sem_take(&ready_sem[f], K_FOREVER);
 		}
-		sdr_dac_end();
+		esp_sdr_dac_end();
 		k_sem_give(&done_sem);
 	}
 }
@@ -741,6 +789,29 @@ const struct esp_sdr_tx_backend esp_sdr_tx_dac_backend = {
 	.write = dac_write,
 	.stop = dac_stop,
 };
+
+int esp_sdr_tx_dac_play_gen(esp_sdr_tx_dac_gen_t gen, void *user, uint64_t samples)
+{
+	if (gen == NULL || samples == 0U) {
+		return -EINVAL;
+	}
+	if (!atomic_cas(&running, 0, 1)) {
+		return -EBUSY;
+	}
+	gen_fn = gen;
+	gen_user = user;
+	gen_total = samples;
+	in_rate = esp_sdr_tx_rate_hz(DAC_RATE);
+	interp = 1U;
+	stats = (struct esp_sdr_tx_dac_stats){.interp = 1U};
+	sess_err = 0;
+	atomic_set(&stop_req, 0);
+	k_sem_give(&start_sem);
+	k_sem_take(&done_sem, K_FOREVER);
+	gen_fn = NULL;
+	atomic_set(&running, 0);
+	return sess_err != 0 || stats.restarts != 0U ? -EIO : 0;
+}
 
 uint32_t esp_sdr_tx_dac_queued(void)
 {

@@ -713,7 +713,7 @@ static int radio_apply(const struct sdr_settings *s, bool force)
 	int ret = 0;
 
 	if (force || mhz != cur_lo_mhz || khz != cur_lo_khz) {
-		ret = esp_sdr_set_frequency(mhz);
+		ret = esp_sdr_set_freq(mhz);
 		if (ret == 0 && (force || khz != cur_lo_khz)) {
 			ret = esp_sdr_set_freq_offset(khz);
 		}

@@ -16,13 +16,13 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 {
 	struct sdr_settings s;
 	struct esdr_stats st;
-	struct esp_sdr_debug d;
+	struct esp_sdr_stats d;
 
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
 	sdr_get_settings(&s);
 	sdr_get_stats(&st);
-	esp_sdr_debug_get(&d);
+	esp_sdr_get_stats(&d);
 	shell_print(sh, "mode %u, %u bit, %u Hz at %llu Hz, gain %u, digital %u dB, bw %u Hz, "
 		    "corr %d ppb, opt 0x%x",
 		    s.mode, s.bits, s.rate_hz, (unsigned long long)s.freq_hz, s.rx_gain,

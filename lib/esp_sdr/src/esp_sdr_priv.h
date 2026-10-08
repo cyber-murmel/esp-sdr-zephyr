@@ -18,8 +18,10 @@
 
 #include <esp_sdr/esp_sdr.h>
 
-#include <soc/sensitive_reg.h>
 #include <soc/soc.h>
+
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
+#include <soc/sensitive_reg.h>
 
 /* Undocumented Wi-Fi MAC dump engine; layout from upstream. */
 #define DUMP_CTRL_REG     0x60033d5cU
@@ -50,11 +52,9 @@
 #define DUMP_BANK0_ADDR 0x3fcb0000U
 #define DUMP_BANK_SIZE  0x10000U
 #define DUMP_BANKS      3U /* bank 3 also holds ROM data */
-
-#define SENTINEL 0xa5a0055aU
-
-/* Housekeeping counters (esp_sdr_debug_get()). */
-extern struct esp_sdr_debug sdr_dbg;
+#define DUMP_USAGE_REG  SENSITIVE_INTERNAL_SRAM_USAGE_3_REG
+#define DUMP_USAGE_M    SENSITIVE_INTERNAL_SRAM_MAC_DUMP_USAGE_M
+#define DUMP_USAGE_S    SENSITIVE_INTERNAL_SRAM_MAC_DUMP_USAGE_S
 
 /* BBTOP analog baseband: I/Q low-pass capacitor codes in registers 4 and 5. */
 #define BBTOP_BLOCK    0x67U
@@ -67,6 +67,59 @@ extern struct esp_sdr_debug sdr_dbg;
 #define AGC_GAIN_MAX       GENMASK(14, 8)
 /* Larger maxima on the S3 point at uncalibrated table slots. */
 #define AGC_GAIN_MAX_VALID 82U
+
+#elif defined(CONFIG_SOC_SERIES_ESP32C6)
+
+/*
+ * C6 dump engine (upstream families/c5_c6_c61 and ring_capture.c): same
+ * control bits as the S3 at another address, raw source 15, 80 MS/s only.
+ */
+#define DUMP_CTRL_REG     0x600a9004U
+#define DUMP_CTRL_RUN     BIT(31)
+#define DUMP_CTRL_TRIGGER BIT(19)
+#define DUMP_CTRL_DONE    BIT(18)
+#define DUMP_CTRL_COUNT   GENMASK(13, 0)
+#define DUMP_MODE_REG     0x600a9008U
+#define DUMP_MODE_SOURCE  GENMASK(18, 15)
+#define DUMP_SOURCE_IQ    15U
+#define DUMP_CONFIG_REG   0x600a9014U
+#define DUMP_CONFIG_LANES GENMASK(24, 0)
+#define DUMP_CONFIG_IQ    (BIT(6) | (2U << 12) | (3U << 18))
+/* Clock forces from the C6 rftest_init/phy_set_clk_conf. */
+#define DUMP_CLK_FORCE0_REG 0x600a9804U
+#define DUMP_CLK_FORCE1_REG 0x600a980cU
+#define DUMP_CLK_FORCE2_REG 0x600a9814U
+#define DUMP_CLK_FORCE2     GENMASK(18, 0)
+#define DUMP_GATE_REG       0x600a20b4U
+#define DUMP_GATE_BIT       BIT(0)
+#define DUMP_TIMEOUT_US     20000U
+
+/* 128 KiB SRAM blocks; the engine writes the one selected one-hot in bits 11:8. */
+#define DUMP_BANK0_ADDR 0x40800000U
+#define DUMP_BANK_SIZE  0x20000U
+#define DUMP_BANKS      3U
+#define DUMP_USAGE_REG  0x60095004U
+#define DUMP_USAGE_M    GENMASK(11, 8)
+#define DUMP_USAGE_S    8U
+
+#define BBTOP_BLOCK    0x67U
+#define BBTOP_HOST     1U
+#define BBTOP_LPF_REG  4U
+#define BBTOP_LPF_DCAP GENMASK(5, 0)
+
+#define AGC_FORCE_REG      0x600a702cU
+#define AGC_GAIN_MAX       GENMASK(14, 8)
+#define AGC_GAIN_MAX_VALID 79U
+
+#else
+#error "esp_sdr: unsupported SoC"
+#endif
+
+#define SENTINEL 0xa5a0055aU
+
+/* Housekeeping counters (esp_sdr_get_stats()). */
+extern struct esp_sdr_stats esp_sdr_counters;
+
 /* Index upstream passes while the hardware AGC is in charge. */
 #define AGC_DEFAULT_INDEX  40U
 
@@ -74,6 +127,7 @@ extern struct esp_sdr_debug sdr_dbg;
 #define CAL_CHANNEL_MHZ 2412U
 
 /* ROM and PHY library entry points. */
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
 extern void rom_pbus_workmode(void);
 extern void rom_pbus_xpd_rx_on(unsigned int en);
 extern void rom_pbus_xpd_tx_off(void);
@@ -82,9 +136,30 @@ extern void rom_set_rxclk_en(unsigned int en);
 extern void set_chanfreq(unsigned int mhz, unsigned int bw);
 extern void set_rf_freq_offset(unsigned int mode, unsigned int mhz, int khz);
 extern void stop_tx_tone(unsigned int en);
+#define phy_pbus_workmode   rom_pbus_workmode
+#define phy_pbus_xpd_rx_on  rom_pbus_xpd_rx_on
+#define phy_pbus_xpd_tx_off rom_pbus_xpd_tx_off
+#define phy_set_rxclk_en    rom_set_rxclk_en
+#define phy_stop_tx_tone    stop_tx_tone
+#else
+extern void pbus_workmode(void);
+extern void ram_pbus_xpd_rx_on(unsigned int en);
+extern void rom_pbus_xpd_tx_off(void);
+extern void set_rxclk_en(unsigned int en);
+extern void ram_stop_tx_tone(unsigned int en);
+/* libphy: channel setup on a Wi-Fi channel, then direct PLL programming. */
+extern void chip_v7_set_chan(unsigned int mhz, unsigned int mode);
+extern void phy_set_freq(unsigned int mhz, int khz);
+#define phy_pbus_workmode   pbus_workmode
+#define phy_pbus_xpd_rx_on  ram_pbus_xpd_rx_on
+#define phy_pbus_xpd_tx_off rom_pbus_xpd_tx_off
+#define phy_set_rxclk_en    set_rxclk_en
+#define phy_stop_tx_tone    ram_stop_tx_tone
+#endif
 #if defined(CONFIG_ESP_SDR_RFTEST)
 /* librftest.a: force, index, bt (0 selects the Wi-Fi AGC). */
 extern void force_rx_gain(unsigned int force, unsigned int index, unsigned int bt);
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
 /*
  * librftest.a: gain memory index, baseband gain code, digital gain. Writes
  * gain memory slot 0 (the one force_txon_mode(1, 0, 0) selects) and turns
@@ -93,6 +168,7 @@ extern void force_rx_gain(unsigned int force, unsigned int index, unsigned int b
 extern void force_tx_gain(unsigned int gain, unsigned int bb, int dig);
 /* librftest.a: en sets the front end's force-TX-on bit (0x60006000 bit 1). */
 extern void force_txon_mode(unsigned int en, unsigned int mode, unsigned int ofs);
+#endif
 #endif
 
 /*
@@ -107,70 +183,70 @@ extern uint32_t __esp_sdr_bank_start[];
 /* Second bank, only linked with CONFIG_ESP_SDR_BANK1 (esp_sdr_bank_tx.ld). */
 extern uint32_t __esp_sdr_bank1_start[];
 
-/* Radio state, guarded by sdr_lock (esp_sdr.c). */
-extern struct k_mutex sdr_lock;
-extern bool sdr_ready;
-extern uint32_t sdr_freq_mhz;
-extern int32_t sdr_fofs_khz;
+/* Radio state, guarded by esp_sdr_lock (esp_sdr.c). */
+extern struct k_mutex esp_sdr_lock;
+extern bool esp_sdr_ready;
+extern uint32_t esp_sdr_freq_mhz;
+extern int32_t esp_sdr_fofs_khz;
 
-/* Tune the LO to sdr_freq_mhz (plus offset). */
-void sdr_tune(void);
+/* Tune the LO to esp_sdr_freq_mhz (plus offset). */
+void esp_sdr_tune(void);
 /* Back to the resting RX-ready state after a tuning change; lock held. */
-int sdr_retune(void);
+int esp_sdr_retune(void);
 /* MAC_DUMP_USAGE one-hot bits of the capture bank. */
-int sdr_bank_usage(uint32_t *usage);
+int esp_sdr_bank_usage(uint32_t *usage);
 /* Settling after a retune (PLL lock), and the TX/RX turnaround (esp_sdr_set_turnaround()). */
 #define SDR_RETUNE_SETTLE_US 3000U
-extern uint32_t sdr_turn_settle_us;
-extern bool sdr_turn_retune;
+extern uint32_t esp_sdr_turn_settle_us;
+extern bool esp_sdr_turn_retune;
 
 /*
  * Front end to RX (the resting state) after a retune, back to RX after a
  * transmission, or to TX, at the current gains; lock held.
  */
-void sdr_rx_prepare(void);
+void esp_sdr_rx_prepare(void);
 /* Re-force a fixed receive gain last applied more than 20 ms ago; lock held. Returns whether it did. */
-bool sdr_rx_gain_refresh(void);
-void sdr_rx_resume(void);
-void sdr_tx_prepare(void);
+bool esp_sdr_rx_gain_refresh(void);
+void esp_sdr_rx_resume(void);
+void esp_sdr_tx_prepare(void);
 
 /* Take the receiver lock and switch the front end to TX at the current step. */
-int sdr_dac_begin(enum esp_sdr_rate rate);
+int esp_sdr_dac_begin(enum esp_sdr_rate rate);
 
 /*
  * Two DAC banks: 0 is the capture bank (SRAM bank 2), 1 the transmit bank
  * (SRAM bank 1, reserved by esp_sdr_bank_tx.ld). The engine owns the bank it
  * plays, the CPUs the other one: fill that one with plain stores, then
- * sdr_dac_start() it once the previous burst is done.
+ * esp_sdr_dac_start() it once the previous burst is done.
  */
 #define ESP_SDR_DAC_BANKS 2
 
 /* Bank idx and its size in words. */
-uint32_t *sdr_dac_buf(int idx, size_t *words);
+uint32_t *esp_sdr_dac_buf(int idx, size_t *words);
 
 /* Hand bank idx to the engine and play its first count words; returns at once. */
-void sdr_dac_start(int idx, size_t count);
+void esp_sdr_dac_start(int idx, size_t count);
 
 /* Wait for the burst started last; false on timeout. */
-bool sdr_dac_wait(void);
+bool esp_sdr_dac_wait(void);
 
 /*
  * Loop mode: with the trigger bit held the engine replays the first count
  * words of the selected bank back to back, gapless, at exactly the DAC rate
- * (stores to other banks do not slow it), until sdr_dac_halt(). It reads
- * whichever bank is selected at the moment, so sdr_dac_select() switches
+ * (stores to other banks do not slow it), until esp_sdr_dac_halt(). It reads
+ * whichever bank is selected at the moment, so esp_sdr_dac_select() switches
  * mid-pass at the current offset. Call with interrupts locked to timestamp
  * the start: sample s plays s DAC periods after the call.
  */
-void sdr_dac_loop(int idx, size_t count);
+void esp_sdr_dac_loop(int idx, size_t count);
 
 /* Hand bank idx to the engine (the CPUs keep every other one). */
-void sdr_dac_select(int idx);
+void esp_sdr_dac_select(int idx);
 
 /* Stop the engine at once. */
-void sdr_dac_halt(void);
+void esp_sdr_dac_halt(void);
 
 /* Back to RX and release the lock. */
-void sdr_dac_end(void);
+void esp_sdr_dac_end(void);
 
 #endif /* ESP_SDR_PRIV_H_ */

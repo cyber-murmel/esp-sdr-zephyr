@@ -44,8 +44,8 @@ static const struct {
 static int tx_gain_index = TX_GAIN_DEFAULT_INDEX;
 
 /*
- * Mirror of sdr_rx_prepare() for esp_sdr_tx_play(): swap the analog front end from
- * RX to TX before arming the DAC trigger, sdr_rx_resume() afterwards; the
+ * Mirror of esp_sdr_rx_prepare() for esp_sdr_tx_play(): swap the analog front end from
+ * RX to TX before arming the DAC trigger, esp_sdr_rx_resume() afterwards; the
  * module's resting state is always RX-ready.
  */
 /* Ladder step 0 (weakest) .. TX_GAIN_INDEX_MAX into gain memory slot 0. */
@@ -59,10 +59,10 @@ static void tx_gain_apply(int step)
 #endif
 }
 
-void sdr_tx_prepare(void)
+void esp_sdr_tx_prepare(void)
 {
-	if (sdr_turn_retune) {
-		sdr_tune();
+	if (esp_sdr_turn_retune) {
+		esp_sdr_tune();
 	}
 	rom_pbus_workmode();
 	rom_pbus_xpd_rx_on(0);
@@ -72,7 +72,7 @@ void sdr_tx_prepare(void)
 	/* Without a frame in flight the MAC never enables TX on its own. */
 	force_txon_mode(1, 0, 0);
 #endif
-	k_busy_wait(sdr_turn_settle_us);
+	k_busy_wait(esp_sdr_turn_settle_us);
 }
 
 int esp_sdr_tx_set_gain(int index)
@@ -83,10 +83,10 @@ int esp_sdr_tx_set_gain(int index)
 	if (index < 0 || index > TX_GAIN_INDEX_MAX) {
 		return -EINVAL;
 	}
-	k_mutex_lock(&sdr_lock, K_FOREVER);
-	/* Picked up by sdr_tx_prepare() on the next esp_sdr_tx_play(); no immediate effect. */
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+	/* Picked up by esp_sdr_tx_prepare() on the next esp_sdr_tx_play(); no immediate effect. */
 	tx_gain_index = index;
-	k_mutex_unlock(&sdr_lock);
+	k_mutex_unlock(&esp_sdr_lock);
 	return 0;
 }
 
@@ -111,8 +111,8 @@ int esp_sdr_tx_gain_power(int index)
 /*
  * DAC-side trigger (dactrig() in librftest.a, minus its ramp-fill): plays
  * `words` out of the shared capture bank through the TX DAC. Swaps the
- * analog front end to TX for the duration (sdr_tx_prepare()) and always leaves
- * it back in its resting RX-ready state (sdr_rx_resume()) before returning.
+ * analog front end to TX for the duration (esp_sdr_tx_prepare()) and always leaves
+ * it back in its resting RX-ready state (esp_sdr_rx_resume()) before returning.
  * Caller is still responsible for RF safety (dummy load / attenuated link).
  */
 uint32_t esp_sdr_tx_rate_hz(enum esp_sdr_rate rate)
@@ -171,12 +171,12 @@ int esp_sdr_tx_play_for(enum esp_sdr_rate rate, const uint32_t *words, size_t co
 
 	if (esp_sdr_tx_rate_hz(rate) == 0U || count < ESP_SDR_SAMPLES_MIN ||
 	    count > ESP_SDR_SAMPLES_MAX || duration_ms > ESP_SDR_TX_PLAY_MAX_MS ||
-	    sdr_bank_usage(&usage) != 0) {
+	    esp_sdr_bank_usage(&usage) != 0) {
 		return -EINVAL;
 	}
 
-	k_mutex_lock(&sdr_lock, K_FOREVER);
-	if (!sdr_ready) {
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+	if (!esp_sdr_ready) {
 		ret = -EAGAIN;
 		goto out;
 	}
@@ -195,7 +195,7 @@ int esp_sdr_tx_play_for(enum esp_sdr_rate rate, const uint32_t *words, size_t co
 	/* Front end and bank switch once, then retrigger back to back: the
 	 * switch costs ~6 ms, a burst is at most ~1 ms.
 	 */
-	sdr_tx_prepare();
+	esp_sdr_tx_prepare();
 	saved = REG_READ(SENSITIVE_INTERNAL_SRAM_USAGE_3_REG);
 	REG_WRITE(SENSITIVE_INTERNAL_SRAM_USAGE_3_REG,
 		  (saved & ~SENSITIVE_INTERNAL_SRAM_MAC_DUMP_USAGE_M) | usage);
@@ -209,7 +209,7 @@ int esp_sdr_tx_play_for(enum esp_sdr_rate rate, const uint32_t *words, size_t co
 	REG_WRITE(DAC_TRIG_REG, 0);
 	REG_WRITE(DUMP_CTRL_REG, 0); /* dactrig() also clears the ADC-side register */
 	REG_WRITE(SENSITIVE_INTERNAL_SRAM_USAGE_3_REG, saved);
-	sdr_rx_resume(); /* back to the module's resting state */
+	esp_sdr_rx_resume(); /* back to the module's resting state */
 
 	if (!done) {
 		ret = -ETIMEDOUT;
@@ -218,32 +218,31 @@ int esp_sdr_tx_play_for(enum esp_sdr_rate rate, const uint32_t *words, size_t co
 		*bursts = n;
 	}
 out:
-	k_mutex_unlock(&sdr_lock);
+	k_mutex_unlock(&esp_sdr_lock);
 	return ret;
 }
 
-struct esp_sdr_debug sdr_dbg;
 
 static enum esp_sdr_rate dac_rate;
 static uint32_t dac_usage, dac_saved;
 
-int sdr_dac_begin(enum esp_sdr_rate rate)
+int esp_sdr_dac_begin(enum esp_sdr_rate rate)
 {
-	if (esp_sdr_tx_rate_hz(rate) == 0U || sdr_bank_usage(&dac_usage) != 0) {
+	if (esp_sdr_tx_rate_hz(rate) == 0U || esp_sdr_bank_usage(&dac_usage) != 0) {
 		return -EINVAL;
 	}
-	k_mutex_lock(&sdr_lock, K_FOREVER);
-	if (!sdr_ready) {
-		k_mutex_unlock(&sdr_lock);
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+	if (!esp_sdr_ready) {
+		k_mutex_unlock(&esp_sdr_lock);
 		return -EAGAIN;
 	}
 	dac_rate = rate;
-	sdr_tx_prepare();
+	esp_sdr_tx_prepare();
 	dac_saved = REG_READ(SENSITIVE_INTERNAL_SRAM_USAGE_3_REG);
 	return 0;
 }
 
-uint32_t *sdr_dac_buf(int idx, size_t *words)
+uint32_t *esp_sdr_dac_buf(int idx, size_t *words)
 {
 	*words = DUMP_BANK_SIZE / sizeof(uint32_t);
 #if defined(CONFIG_ESP_SDR_BANK1)
@@ -254,7 +253,7 @@ uint32_t *sdr_dac_buf(int idx, size_t *words)
 	return (uint32_t *)__esp_sdr_bank_start;
 }
 
-void sdr_dac_start(int idx, size_t count)
+void esp_sdr_dac_start(int idx, size_t count)
 {
 	/* One-hot: the engine gets this bank, the CPUs keep every other one. */
 	uint32_t usage = idx == 0 ? dac_usage : BIT(1) << SENSITIVE_INTERNAL_SRAM_MAC_DUMP_USAGE_S;
@@ -264,12 +263,12 @@ void sdr_dac_start(int idx, size_t count)
 	dac_trigger(dac_rate, count);
 }
 
-bool sdr_dac_wait(void)
+bool esp_sdr_dac_wait(void)
 {
 	return dac_wait_done();
 }
 
-IRAM_ATTR void sdr_dac_select(int idx)
+IRAM_ATTR void esp_sdr_dac_select(int idx)
 {
 	uint32_t usage = idx == 0 ? dac_usage : BIT(1) << SENSITIVE_INTERNAL_SRAM_MAC_DUMP_USAGE_S;
 
@@ -277,31 +276,31 @@ IRAM_ATTR void sdr_dac_select(int idx)
 		  (dac_saved & ~SENSITIVE_INTERNAL_SRAM_MAC_DUMP_USAGE_M) | usage);
 }
 
-void sdr_dac_loop(int idx, size_t count)
+void esp_sdr_dac_loop(int idx, size_t count)
 {
 	uint32_t ctrl = DUMP_CTRL_RUN | (dac_rate == ESP_SDR_RATE_80MSPS ? DAC_CTRL_80MSPS : 0U) |
 			FIELD_PREP(DUMP_CTRL_COUNT, count);
 
-	sdr_dac_select(idx);
+	esp_sdr_dac_select(idx);
 	REG_WRITE(DAC_TRIG_REG, 0);
 	REG_WRITE(DAC_TRIG_REG, ctrl);
 	/* Held, not pulsed: the engine wraps instead of stopping after one pass. */
 	REG_WRITE(DAC_TRIG_REG, ctrl | DUMP_CTRL_TRIGGER);
 }
 
-IRAM_ATTR void sdr_dac_halt(void)
+IRAM_ATTR void esp_sdr_dac_halt(void)
 {
 	REG_WRITE(DAC_TRIG_REG, 0);
 }
 
-void sdr_dac_end(void)
+void esp_sdr_dac_end(void)
 {
 	REG_WRITE(DAC_TRIG_REG, 0);
 	REG_WRITE(DUMP_CTRL_REG, 0);
-	sdr_dbg.dac_sessions++;
+	esp_sdr_counters.dac_sessions++;
 	REG_WRITE(SENSITIVE_INTERNAL_SRAM_USAGE_3_REG, dac_saved);
-	sdr_rx_resume();
-	k_mutex_unlock(&sdr_lock);
+	esp_sdr_rx_resume();
+	k_mutex_unlock(&esp_sdr_lock);
 }
 
 int esp_sdr_tx_play(enum esp_sdr_rate rate, const uint32_t *words, size_t count)
@@ -357,16 +356,16 @@ int esp_sdr_tx_sweep(enum esp_sdr_rate rate, float f0_hz, float f1_hz, uint32_t 
 
 	if (fs == 0.0 || duration_ms == 0U || duration_ms > ESP_SDR_TX_PLAY_MAX_MS ||
 	    (double)fabsf(f0_hz) >= fs / 2 || (double)fabsf(f1_hz) >= fs / 2 || amp < 1 ||
-	    amp > 511 || sdr_bank_usage(&usage) != 0) {
+	    amp > 511 || esp_sdr_bank_usage(&usage) != 0) {
 		return -EINVAL;
 	}
 
-	k_mutex_lock(&sdr_lock, K_FOREVER);
-	if (!sdr_ready) {
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+	if (!esp_sdr_ready) {
 		ret = -EAGAIN;
 		goto out;
 	}
-	sdr_tx_prepare();
+	esp_sdr_tx_prepare();
 	saved = REG_READ(SENSITIVE_INTERNAL_SRAM_USAGE_3_REG);
 
 	start = k_cycle_get_64();
@@ -394,18 +393,18 @@ int esp_sdr_tx_sweep(enum esp_sdr_rate rate, float f0_hz, float f1_hz, uint32_t 
 	REG_WRITE(DAC_TRIG_REG, 0);
 	REG_WRITE(DUMP_CTRL_REG, 0);
 	REG_WRITE(SENSITIVE_INTERNAL_SRAM_USAGE_3_REG, saved);
-	sdr_rx_resume();
+	esp_sdr_rx_resume();
 	if (stats != NULL) {
 		*stats = st;
 	}
 out:
-	k_mutex_unlock(&sdr_lock);
+	k_mutex_unlock(&esp_sdr_lock);
 	return ret;
 }
 
 int esp_sdr_tx_loop_begin(enum esp_sdr_rate rate)
 {
-	return sdr_dac_begin(rate);
+	return esp_sdr_dac_begin(rate);
 }
 
 uint32_t *esp_sdr_tx_loop_buf(int bank, size_t *words)
@@ -413,7 +412,7 @@ uint32_t *esp_sdr_tx_loop_buf(int bank, size_t *words)
 	if (bank < 0 || bank >= ESP_SDR_BANKS) {
 		return NULL;
 	}
-	return sdr_dac_buf(bank, words);
+	return esp_sdr_dac_buf(bank, words);
 }
 
 int esp_sdr_tx_loop_start(int bank, size_t count)
@@ -422,16 +421,16 @@ int esp_sdr_tx_loop_start(int bank, size_t count)
 	    count > ESP_SDR_SAMPLES_MAX) {
 		return -EINVAL;
 	}
-	sdr_dac_loop(bank, count);
+	esp_sdr_dac_loop(bank, count);
 	return 0;
 }
 
 void esp_sdr_tx_loop_halt(void)
 {
-	sdr_dac_halt();
+	esp_sdr_dac_halt();
 }
 
 void esp_sdr_tx_loop_end(void)
 {
-	sdr_dac_end();
+	esp_sdr_dac_end();
 }

@@ -46,8 +46,9 @@ extern "C" {
 
 /**
  * Native dump engine rates; values are the upstream protocol rate indices.
- * Receive supports all three (esp_sdr_rx_rate_hz()), the DAC only 80 and 40
- * MS/s (esp_sdr_tx_rate_hz()).
+ * The S3 receives at all three (esp_sdr_rx_rate_hz()), the C6 at 80 MS/s only
+ * (the others return 0); the DAC runs at 80 and 40 MS/s (esp_sdr_tx_rate_hz(),
+ * S3 only).
  */
 enum esp_sdr_rate {
 	ESP_SDR_RATE_80MSPS = 0,
@@ -81,10 +82,10 @@ int esp_sdr_init(void);
  * @retval -EINVAL if out of range.
  * @retval -EAGAIN if esp_sdr_init() has not run.
  */
-int esp_sdr_set_frequency(uint32_t mhz);
+int esp_sdr_set_freq(uint32_t mhz);
 
 /** @return Current LO frequency in MHz. */
-uint32_t esp_sdr_get_frequency(void);
+uint32_t esp_sdr_get_freq(void);
 
 /**
  * @brief Set a PLL offset in kHz and retune.
@@ -109,12 +110,13 @@ int esp_sdr_set_freq_offset(int32_t khz);
 int esp_sdr_set_channel_bw(unsigned int cbw);
 
 /** Radio housekeeping counters, for diagnosis. */
-struct esp_sdr_debug {
-	/* Transmit sessions; forced RX gain re-applied at captures, and the last one's time. */
+struct esp_sdr_stats {
+	/** Transmit sessions; forced RX gain re-applied at captures, and the last one's time. */
 	uint32_t dac_sessions, gain_refreshed, gain_apply_us;
 };
 
-void esp_sdr_debug_get(struct esp_sdr_debug *d);
+/** Copy the radio housekeeping counters into @p stats. */
+void esp_sdr_get_stats(struct esp_sdr_stats *stats);
 
 /**
  * @brief Read or write a register of the analog baseband (I2C block 0x67), for characterization.

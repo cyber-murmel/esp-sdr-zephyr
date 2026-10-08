@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * Stage 2 of the ring's decimating FIR (esp_sdr_ring.c): the job layout of
- * upstream's s3_fir_split (esp_sdr_ring_fir.S), with each multiply-accumulate
+ * upstream's s3_fir_split (esp_sdr_ring_fir_split in esp_sdr_ring_fir.S), with each multiply-accumulate
  * also loading the next data vector: two instructions per 8 taps instead of
  * three. Needs an even number of tap groups; reads one vector past each
  * window (the window buffers have room for it).

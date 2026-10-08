@@ -8,12 +8,12 @@
 /*
  * ESP32-S3 PIE kernels for the IQS decimating FIR (split I / Q arrays).
  *
- * void s3_unpack_iq10_split(const uint32_t *src, int16_t *di, int16_t *dq, unsigned groups8);
+ * void esp_sdr_ring_unpack_iq10(const uint32_t *src, int16_t *di, int16_t *dq, unsigned groups8);
  *   src: ring words (I bits 0..9, Q bits 10..19), any 4-byte alignment; reads up
  *        to 16 bytes past the last word. di, dq: 16-byte aligned. Writes
  *        I << 6 and Q << 6 as int16, 8 samples per group.
  *
- * void s3_fir_split(const fir_job_t *job);
+ * void esp_sdr_ring_fir_split(const fir_job_t *job);
  *   job: +0 xi, +4 xq (16-byte aligned window starts), +8 h (16-byte aligned,
  *        taps in window order), +12 groups (taps / 8), +16 nout, +20 step
  *        (bytes between successive windows, multiple of 16), +24 shift,
@@ -22,9 +22,9 @@
  */
     .section .iram1.s3_firdot, "ax"
     .align  4
-    .global s3_unpack_iq10_split
-    .type   s3_unpack_iq10_split, @function
-s3_unpack_iq10_split:
+    .global esp_sdr_ring_unpack_iq10
+    .type   esp_sdr_ring_unpack_iq10, @function
+esp_sdr_ring_unpack_iq10:
     entry   a1, 32
     movi    a6, 1023
     slli    a6, a6, 6               /* 0x0000ffc0 */
@@ -65,12 +65,12 @@ s3_unpack_iq10_split:
     ee.vst.128.ip q5, a4, 16
 .Lsplit_end:
     retw.n
-    .size   s3_unpack_iq10_split, . - s3_unpack_iq10_split
+    .size   esp_sdr_ring_unpack_iq10, . - esp_sdr_ring_unpack_iq10
 
     .align  4
-    .global s3_fir_split
-    .type   s3_fir_split, @function
-s3_fir_split:
+    .global esp_sdr_ring_fir_split
+    .type   esp_sdr_ring_fir_split, @function
+esp_sdr_ring_fir_split:
     entry   a1, 32
     l32i    a3, a2, 16              /* nout */
     beqz    a3, .Lfs_done
@@ -110,17 +110,17 @@ s3_fir_split:
     bnez    a3, .Lfs_out
 .Lfs_done:
     retw.n
-    .size   s3_fir_split, . - s3_fir_split
+    .size   esp_sdr_ring_fir_split, . - esp_sdr_ring_fir_split
 
 /*
- * void s3_fir8_l32(const fir_job_t *job): stage-1 special case, 32 taps,
+ * void esp_sdr_ring_fir8_l32(const fir_job_t *job): stage-1 special case, 32 taps,
  * step 8 samples (16 bytes). Taps live in q4..q7 for the whole call; each
  * window is 4 vectors, loads fused into the multiply-accumulates.
  */
     .align  4
-    .global s3_fir8_l32
-    .type   s3_fir8_l32, @function
-s3_fir8_l32:
+    .global esp_sdr_ring_fir8_l32
+    .type   esp_sdr_ring_fir8_l32, @function
+esp_sdr_ring_fir8_l32:
     entry   a1, 32
     l32i    a3, a2, 16              /* nout */
     beqz    a3, .Lf8_done
@@ -160,19 +160,19 @@ s3_fir8_l32:
 .Lf8_end:
 .Lf8_done:
     retw.n
-    .size   s3_fir8_l32, . - s3_fir8_l32
+    .size   esp_sdr_ring_fir8_l32, . - esp_sdr_ring_fir8_l32
 
 
 /*
- * void s3_rot_fs4(int16_t *wi, int16_t *wq, unsigned groups8, const int16_t *masks);
+ * void esp_sdr_ring_rot_fs4(int16_t *wi, int16_t *wq, unsigned groups8, const int16_t *masks);
  * In place: z[n] *= j^n (shift by +fs/4), n = 0 at wi[0] (callers keep wi 8-aligned
  * to the stream index). masks: m1 = {1,0,-1,0,..}, m2 = {0,-1,0,1,..}, m3 = -m2,
  * 16 bytes each, 16-byte aligned.  I' = I*m1 + Q*m2, Q' = Q*m1 + I*m3.
  */
     .align  4
-    .global s3_rot_fs4
-    .type   s3_rot_fs4, @function
-s3_rot_fs4:
+    .global esp_sdr_ring_rot_fs4
+    .type   esp_sdr_ring_rot_fs4, @function
+esp_sdr_ring_rot_fs4:
     entry   a1, 32
     ee.vld.128.ip q4, a5, 16
     ee.vld.128.ip q5, a5, 16
@@ -193,4 +193,4 @@ s3_rot_fs4:
     ee.vst.128.ip q3, a7, 16
 .Lrot_end:
     retw.n
-    .size   s3_rot_fs4, . - s3_rot_fs4
+    .size   esp_sdr_ring_rot_fs4, . - esp_sdr_ring_rot_fs4

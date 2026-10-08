@@ -6,7 +6,7 @@ ESP-SDR capture
 Overview
 ********
 
-Captures bursts of raw baseband I/Q samples from the ESP32-S3 Wi-Fi receiver
+Captures bursts of raw baseband I/Q samples from the ESP32-S3 or ESP32-C6 Wi-Fi receiver
 with the ``esp-sdr`` module and prints, for each step of a fixed survey:
 
 - tuning, sample rate, low-pass filter code and the measured capture rate,
@@ -24,7 +24,10 @@ repeats every 10 seconds.
 Requirements
 ************
 
-An ESP32-S3 board; tested on ``xiao_esp32s3``. Attach an antenna to see more
+An ESP32-S3 or ESP32-C6 board; tested on ``xiao_esp32s3`` and
+``xiao_esp32c6/esp32c6/hpcore``. The C6 captures at 80 MS/s only: the survey
+skips the 40 and 16 MS/s steps and clamps the filter bandwidths to its 12 to
+54 MHz range. Attach an antenna to see more
 than the receiver noise floor.
 
 Building and running

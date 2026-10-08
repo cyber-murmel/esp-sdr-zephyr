@@ -1,8 +1,9 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * ESP32-S3 radio core, ported from esp-sdr main/targets/esp32s3/receiver.c:
- * bring-up, the shared LO (both directions use it) and the dump bank.
+ * Radio core, ported from esp-sdr main/targets/esp32s3/receiver.c and
+ * main/targets/esp32c6/chip.h: bring-up, the shared LO (both directions use
+ * it) and the dump bank.
  */
 
 #include <errno.h>
@@ -25,35 +26,44 @@
 
 LOG_MODULE_REGISTER(esp_sdr, CONFIG_ESP_SDR_LOG_LEVEL);
 
-K_MUTEX_DEFINE(sdr_lock);
-bool sdr_ready;
-uint32_t sdr_freq_mhz = CAL_CHANNEL_MHZ;
-int32_t sdr_fofs_khz;
-uint32_t sdr_turn_settle_us = SDR_RETUNE_SETTLE_US;
+K_MUTEX_DEFINE(esp_sdr_lock);
+struct esp_sdr_stats esp_sdr_counters;
+bool esp_sdr_ready;
+uint32_t esp_sdr_freq_mhz = CAL_CHANNEL_MHZ;
+int32_t esp_sdr_fofs_khz;
+uint32_t esp_sdr_turn_settle_us = SDR_RETUNE_SETTLE_US;
 /* Channel bandwidth flag for the vendor tuning call, 0 = 20 MHz. */
 static unsigned int sdr_cbw;
-bool sdr_turn_retune = true;
+bool esp_sdr_turn_retune = true;
 
 static bool is_channel(uint32_t mhz)
 {
 	return (mhz >= 2412U && mhz <= 2472U && (mhz - 2412U) % 5U == 0U) || mhz == 2484U;
 }
 
-void sdr_tune(void)
+void esp_sdr_tune(void)
 {
-	rx_lo_plan_t plan = rx_lo_plan(sdr_freq_mhz);
-	bool channel = sdr_fofs_khz == 0 && is_channel(sdr_freq_mhz);
+	rx_lo_plan_t plan = rx_lo_plan(esp_sdr_freq_mhz);
+	bool channel = esp_sdr_fofs_khz == 0 && is_channel(esp_sdr_freq_mhz);
 
 	regi2c_enter_critical();
 	rx_lo_select(false);
 	regi2c_exit_critical();
-	set_chanfreq(channel ? sdr_freq_mhz : CAL_CHANNEL_MHZ, sdr_cbw);
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
+	set_chanfreq(channel ? esp_sdr_freq_mhz : CAL_CHANNEL_MHZ, sdr_cbw);
 	if (!channel) {
-		set_rf_freq_offset(0, plan.mhz, plan.offset_khz + sdr_fofs_khz);
+		set_rf_freq_offset(0, plan.mhz, plan.offset_khz + esp_sdr_fofs_khz);
 	}
+#else
+	/* The channel call goes through mhz2ieee and loses off-grid requests. */
+	chip_v7_set_chan(channel ? esp_sdr_freq_mhz : CAL_CHANNEL_MHZ, sdr_cbw);
+	if (!channel) {
+		phy_set_freq(plan.mhz, plan.offset_khz + esp_sdr_fofs_khz);
+	}
+#endif
 }
 
-int sdr_bank_usage(uint32_t *usage)
+int esp_sdr_bank_usage(uint32_t *usage)
 {
 	uintptr_t base = (uintptr_t)__esp_sdr_bank_start;
 	uintptr_t bank = (base - DUMP_BANK0_ADDR) / DUMP_BANK_SIZE;
@@ -61,7 +71,7 @@ int sdr_bank_usage(uint32_t *usage)
 	if (base < DUMP_BANK0_ADDR || base % DUMP_BANK_SIZE != 0U || bank >= DUMP_BANKS) {
 		return -ENOMEM;
 	}
-	*usage = BIT(bank) << SENSITIVE_INTERNAL_SRAM_MAC_DUMP_USAGE_S;
+	*usage = BIT(bank) << DUMP_USAGE_S;
 	return 0;
 }
 
@@ -74,13 +84,13 @@ int esp_sdr_init(void)
 	if (!device_is_ready(wifi)) {
 		return -ENODEV;
 	}
-	if (sdr_bank_usage(&usage) != 0) {
+	if (esp_sdr_bank_usage(&usage) != 0) {
 		LOG_ERR("capture bank %p is not a dump bank", (void *)__esp_sdr_bank_start);
 		return -ENOMEM;
 	}
 
-	k_mutex_lock(&sdr_lock, K_FOREVER);
-	if (sdr_ready) {
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+	if (esp_sdr_ready) {
 		goto out;
 	}
 	/* The driver already applies its Kconfig power-save mode at boot. */
@@ -97,50 +107,50 @@ int esp_sdr_init(void)
 		ret = -EIO;
 		goto out;
 	}
-	sdr_rx_prepare();
-	sdr_ready = true;
+	esp_sdr_rx_prepare();
+	esp_sdr_ready = true;
 	LOG_INF("receiver ready, bank %p", (void *)__esp_sdr_bank_start);
 out:
-	k_mutex_unlock(&sdr_lock);
+	k_mutex_unlock(&esp_sdr_lock);
 	return ret;
 }
 
-int sdr_retune(void)
+int esp_sdr_retune(void)
 {
-	if (!sdr_ready) {
+	if (!esp_sdr_ready) {
 		return -EAGAIN;
 	}
-	sdr_rx_prepare();
+	esp_sdr_rx_prepare();
 	return 0;
 }
 
-int esp_sdr_set_frequency(uint32_t mhz)
+int esp_sdr_set_freq(uint32_t mhz)
 {
 	int ret;
 
 	if (!rx_frequency_valid(mhz)) {
 		return -EINVAL;
 	}
-	k_mutex_lock(&sdr_lock, K_FOREVER);
-	sdr_freq_mhz = mhz;
-	ret = sdr_retune();
-	k_mutex_unlock(&sdr_lock);
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+	esp_sdr_freq_mhz = mhz;
+	ret = esp_sdr_retune();
+	k_mutex_unlock(&esp_sdr_lock);
 	return ret;
 }
 
-uint32_t esp_sdr_get_frequency(void)
+uint32_t esp_sdr_get_freq(void)
 {
-	return sdr_freq_mhz;
+	return esp_sdr_freq_mhz;
 }
 
 int esp_sdr_set_freq_offset(int32_t khz)
 {
 	int ret;
 
-	k_mutex_lock(&sdr_lock, K_FOREVER);
-	sdr_fofs_khz = khz;
-	ret = sdr_retune();
-	k_mutex_unlock(&sdr_lock);
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+	esp_sdr_fofs_khz = khz;
+	ret = esp_sdr_retune();
+	k_mutex_unlock(&esp_sdr_lock);
 	return ret;
 }
 
@@ -149,10 +159,10 @@ int esp_sdr_set_turnaround(uint32_t settle_us, bool retune)
 	if (settle_us > SDR_RETUNE_SETTLE_US) {
 		return -EINVAL;
 	}
-	k_mutex_lock(&sdr_lock, K_FOREVER);
-	sdr_turn_settle_us = settle_us;
-	sdr_turn_retune = retune;
-	k_mutex_unlock(&sdr_lock);
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+	esp_sdr_turn_settle_us = settle_us;
+	esp_sdr_turn_retune = retune;
+	k_mutex_unlock(&esp_sdr_lock);
 	return 0;
 }
 
@@ -163,9 +173,14 @@ int esp_sdr_set_channel_bw(unsigned int cbw)
 	if (cbw > 2U) {
 		return -EINVAL;
 	}
-	k_mutex_lock(&sdr_lock, K_FOREVER);
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
 	sdr_cbw = cbw;
-	ret = sdr_retune();
-	k_mutex_unlock(&sdr_lock);
+	ret = esp_sdr_retune();
+	k_mutex_unlock(&esp_sdr_lock);
 	return ret;
+}
+
+void esp_sdr_get_stats(struct esp_sdr_stats *stats)
+{
+	*stats = esp_sdr_counters;
 }

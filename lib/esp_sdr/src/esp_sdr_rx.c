@@ -33,8 +33,10 @@ static unsigned int gain_max(void)
 	return max <= AGC_GAIN_MAX_VALID ? max : 0U;
 }
 
+#if defined(CONFIG_ESP_SDR_RFTEST)
 /* When gain_apply() last ran (k_uptime_get()). */
 static int64_t gain_applied_ms;
+#endif
 
 static void gain_apply(void)
 {
@@ -46,7 +48,7 @@ static void gain_apply(void)
 
 	/* Releasing the force (manual false) hands control back to the AGC. */
 	force_rx_gain(manual, index, 0);
-	sdr_dbg.gain_apply_us = k_cyc_to_us_ceil32(k_cycle_get_32() - t0);
+	esp_sdr_counters.gain_apply_us = k_cyc_to_us_ceil32(k_cycle_get_32() - t0);
 	gain_applied_ms = k_uptime_get();
 #endif
 }
@@ -59,11 +61,11 @@ static void gain_apply(void)
  */
 #define GAIN_REFRESH_MS 20
 
-bool sdr_rx_gain_refresh(void)
+bool esp_sdr_rx_gain_refresh(void)
 {
 #if defined(CONFIG_ESP_SDR_RFTEST)
 	if (gain_index >= 0 && k_uptime_get() - gain_applied_ms > GAIN_REFRESH_MS) {
-		sdr_dbg.gain_refreshed++;
+		esp_sdr_counters.gain_refreshed++;
 		gain_apply();
 		return true;
 	}
@@ -76,33 +78,33 @@ static void lpf_apply(void);
 static void rx_front_end(bool retune, uint32_t settle_us)
 {
 	if (retune) {
-		sdr_tune();
+		esp_sdr_tune();
 	}
-	stop_tx_tone(1);
-#if defined(CONFIG_ESP_SDR_RFTEST)
+	phy_stop_tx_tone(1);
+#if defined(CONFIG_ESP_SDR_RFTEST) && defined(CONFIG_SOC_SERIES_ESP32S3)
 	force_txon_mode(0, 0, 0);
 #endif
-	rom_pbus_workmode();
-	rom_pbus_xpd_tx_off();
-	rom_pbus_xpd_rx_on(1);
-	rom_set_rxclk_en(1);
+	phy_pbus_workmode();
+	phy_pbus_xpd_tx_off();
+	phy_pbus_xpd_rx_on(1);
+	phy_set_rxclk_en(1);
 	gain_apply();
 	/* The 5/6 LO divider is selected after RX setup, as upstream. */
 	regi2c_enter_critical();
-	rx_lo_select(rx_lo_plan(sdr_freq_mhz).alternate);
+	rx_lo_select(rx_lo_plan(esp_sdr_freq_mhz).alternate);
 	regi2c_exit_critical();
 	lpf_apply();
 	k_busy_wait(settle_us);
 }
 
-void sdr_rx_prepare(void)
+void esp_sdr_rx_prepare(void)
 {
 	rx_front_end(true, SDR_RETUNE_SETTLE_US);
 }
 
-void sdr_rx_resume(void)
+void esp_sdr_rx_resume(void)
 {
-	rx_front_end(sdr_turn_retune, sdr_turn_settle_us);
+	rx_front_end(esp_sdr_turn_retune, esp_sdr_turn_settle_us);
 }
 
 /*
@@ -155,15 +157,15 @@ int esp_sdr_rx_set_gain(int index)
 	if (index >= 0 && !IS_ENABLED(CONFIG_ESP_SDR_RFTEST)) {
 		return -ENOTSUP;
 	}
-	k_mutex_lock(&sdr_lock, K_FOREVER);
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
 	if (index > (int)gain_max()) {
 		ret = -EINVAL;
 	} else {
 		/* As upstream: a forced index alone can leave stale RX state. */
 		gain_index = index;
-		ret = sdr_retune();
+		ret = esp_sdr_retune();
 	}
-	k_mutex_unlock(&sdr_lock);
+	k_mutex_unlock(&esp_sdr_lock);
 	return ret;
 }
 
@@ -196,12 +198,12 @@ int esp_sdr_rx_set_lpf(int code)
 	if (code < ESP_SDR_RX_LPF_AUTO || code > ESP_SDR_RX_LPF_MAX) {
 		return -EINVAL;
 	}
-	k_mutex_lock(&sdr_lock, K_FOREVER);
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
 	lpf_code = code;
-	if (sdr_ready) {
+	if (esp_sdr_ready) {
 		lpf_apply();
 	}
-	k_mutex_unlock(&sdr_lock);
+	k_mutex_unlock(&esp_sdr_lock);
 	return 0;
 }
 
@@ -215,15 +217,18 @@ uint32_t esp_sdr_rx_rate_hz(enum esp_sdr_rate rate)
 	switch (rate) {
 	case ESP_SDR_RATE_80MSPS:
 		return 80000000U;
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
 	case ESP_SDR_RATE_40MSPS:
 		return 40000000U;
 	case ESP_SDR_RATE_16MSPS:
 		return 16000000U;
+#endif
 	default:
 		return 0U;
 	}
 }
 
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
 static uint32_t rate_bits(enum esp_sdr_rate rate)
 {
 	switch (rate) {
@@ -235,8 +240,44 @@ static uint32_t rate_bits(enum esp_sdr_rate rate)
 		return 0U;
 	}
 }
+#endif
 
-/* One capture into the bank; caller holds sdr_lock. t0 is the cycle count at arming. */
+/* Point the engine at the receive I/Q; returns the saved bank usage. */
+static uint32_t dump_arm(uint32_t usage)
+{
+	uint32_t saved = REG_READ(DUMP_USAGE_REG);
+
+	REG_WRITE(DUMP_CTRL_REG, 0);
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
+	REG_WRITE(DUMP_CONFIG_REG, DUMP_CONFIG_IQ);
+	REG_WRITE(DUMP_USAGE_REG, (saved & ~DUMP_USAGE_M) | usage);
+#else
+	REG_WRITE(DUMP_CLK_FORCE0_REG, UINT32_MAX);
+	REG_WRITE(DUMP_CLK_FORCE2_REG, DUMP_CLK_FORCE2);
+	REG_WRITE(DUMP_CLK_FORCE1_REG, UINT32_MAX);
+	REG_WRITE(DUMP_CONFIG_REG, (REG_READ(DUMP_CONFIG_REG) & ~DUMP_CONFIG_LANES) | DUMP_CONFIG_IQ);
+	REG_WRITE(DUMP_MODE_REG, (REG_READ(DUMP_MODE_REG) & ~DUMP_MODE_SOURCE) |
+					 FIELD_PREP(DUMP_MODE_SOURCE, DUMP_SOURCE_IQ));
+	REG_CLR_BIT(DUMP_GATE_REG, DUMP_GATE_BIT);
+	REG_WRITE(DUMP_USAGE_REG, (saved & ~DUMP_USAGE_M) | usage);
+	/* The bank switch must land before the engine starts writing. */
+	__asm__ volatile("fence rw, rw" ::: "memory");
+	(void)REG_READ(DUMP_USAGE_REG);
+#endif
+	return saved;
+}
+
+static void dump_disarm(uint32_t saved)
+{
+	REG_WRITE(DUMP_CTRL_REG, 0);
+	REG_WRITE(DUMP_USAGE_REG, saved);
+#if !defined(CONFIG_SOC_SERIES_ESP32S3)
+	__asm__ volatile("fence rw, rw" ::: "memory");
+	(void)REG_READ(DUMP_USAGE_REG);
+#endif
+}
+
+/* One capture into the bank; caller holds esp_sdr_lock. t0 is the cycle count at arming. */
 static int capture_locked(enum esp_sdr_rate rate, size_t count, volatile uint32_t *words,
 			  uint32_t usage, uint32_t *elapsed_us, uint64_t *t0)
 {
@@ -251,16 +292,19 @@ static int capture_locked(enum esp_sdr_rate rate, size_t count, volatile uint32_
 	words[0] = SENTINEL;
 	words[count - 1] = SENTINEL;
 
-	(void)sdr_rx_gain_refresh();
-	saved = REG_READ(SENSITIVE_INTERNAL_SRAM_USAGE_3_REG);
+	(void)esp_sdr_rx_gain_refresh();
 	*t0 = k_cycle_get_64();
 	start = (uint32_t)*t0;
-	REG_WRITE(DUMP_CTRL_REG, 0);
-	REG_WRITE(DUMP_CONFIG_REG, DUMP_CONFIG_IQ);
-	REG_WRITE(SENSITIVE_INTERNAL_SRAM_USAGE_3_REG,
-		  (saved & ~SENSITIVE_INTERNAL_SRAM_MAC_DUMP_USAGE_M) | usage);
+	saved = dump_arm(usage);
 
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
 	ctrl = DUMP_CTRL_RUN | rate_bits(rate) | FIELD_PREP(DUMP_CTRL_COUNT, count);
+#else
+	ARG_UNUSED(rate);
+	ctrl = DUMP_CTRL_RUN | FIELD_PREP(DUMP_CTRL_COUNT, count);
+	/* As upstream: clear a stale done flag before running. */
+	REG_WRITE(DUMP_CTRL_REG, FIELD_PREP(DUMP_CTRL_COUNT, count) | DUMP_CTRL_DONE);
+#endif
 	REG_WRITE(DUMP_CTRL_REG, ctrl);
 	REG_WRITE(DUMP_CTRL_REG, ctrl | DUMP_CTRL_TRIGGER);
 	REG_WRITE(DUMP_CTRL_REG, ctrl);
@@ -269,8 +313,7 @@ static int capture_locked(enum esp_sdr_rate rate, size_t count, volatile uint32_
 		elapsed = k_cyc_to_us_floor32(k_cycle_get_32() - start);
 	} while (!done && elapsed < DUMP_TIMEOUT_US);
 
-	REG_WRITE(DUMP_CTRL_REG, 0);
-	REG_WRITE(SENSITIVE_INTERNAL_SRAM_USAGE_3_REG, saved);
+	dump_disarm(saved);
 
 	if (!done) {
 		return -ETIMEDOUT;
@@ -289,19 +332,19 @@ int esp_sdr_rx_capture(enum esp_sdr_rate rate, size_t count, struct esp_sdr_rx_b
 	int ret;
 
 	if (esp_sdr_rx_rate_hz(rate) == 0U || count < ESP_SDR_SAMPLES_MIN ||
-	    count > ESP_SDR_SAMPLES_MAX || sdr_bank_usage(&usage) != 0) {
+	    count > ESP_SDR_SAMPLES_MAX || esp_sdr_bank_usage(&usage) != 0) {
 		return -EINVAL;
 	}
 
-	k_mutex_lock(&sdr_lock, K_FOREVER);
-	ret = sdr_ready ? capture_locked(rate, count, __esp_sdr_bank_start, usage, &elapsed, &t0)
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+	ret = esp_sdr_ready ? capture_locked(rate, count, __esp_sdr_bank_start, usage, &elapsed, &t0)
 			: -EAGAIN;
 	if (ret == 0) {
 		burst->words = __esp_sdr_bank_start;
 		burst->count = count;
 		burst->elapsed_us = elapsed;
 	}
-	k_mutex_unlock(&sdr_lock);
+	k_mutex_unlock(&esp_sdr_lock);
 	return ret;
 }
 
@@ -313,11 +356,11 @@ int esp_sdr_rx_capture_iq(enum esp_sdr_rate rate, size_t count, struct esp_sdr_i
 	int ret;
 
 	if (esp_sdr_rx_rate_hz(rate) == 0U || count < ESP_SDR_SAMPLES_MIN ||
-	    count > ESP_SDR_SAMPLES_MAX || sdr_bank_usage(&usage) != 0) {
+	    count > ESP_SDR_SAMPLES_MAX || esp_sdr_bank_usage(&usage) != 0) {
 		return -EINVAL;
 	}
-	k_mutex_lock(&sdr_lock, K_FOREVER);
-	ret = sdr_ready ? capture_locked(rate, count, __esp_sdr_bank_start, usage, &elapsed, &t0)
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+	ret = esp_sdr_ready ? capture_locked(rate, count, __esp_sdr_bank_start, usage, &elapsed, &t0)
 			: -EAGAIN;
 	if (ret == 0) {
 		const uint32_t *w = __esp_sdr_bank_start;
@@ -329,7 +372,7 @@ int esp_sdr_rx_capture_iq(enum esp_sdr_rate rate, size_t count, struct esp_sdr_i
 		}
 		*first_ns = k_cyc_to_ns_floor64(t0);
 	}
-	k_mutex_unlock(&sdr_lock);
+	k_mutex_unlock(&esp_sdr_lock);
 	return ret;
 }
 
@@ -353,16 +396,16 @@ int esp_sdr_rx_capture_bank(enum esp_sdr_rate rate, size_t count, int bank,
 #else
 	words = NULL;
 #endif
-	usage = BIT(1) << SENSITIVE_INTERNAL_SRAM_MAC_DUMP_USAGE_S;
+	usage = BIT(1) << DUMP_USAGE_S;
 
-	k_mutex_lock(&sdr_lock, K_FOREVER);
-	ret = sdr_ready ? capture_locked(rate, count, words, usage, &elapsed, &t0) : -EAGAIN;
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+	ret = esp_sdr_ready ? capture_locked(rate, count, words, usage, &elapsed, &t0) : -EAGAIN;
 	if (ret == 0) {
 		burst->words = words;
 		burst->count = count;
 		burst->elapsed_us = elapsed;
 	}
-	k_mutex_unlock(&sdr_lock);
+	k_mutex_unlock(&esp_sdr_lock);
 	return ret;
 }
 
@@ -427,12 +470,12 @@ int esp_sdr_rx_capture_decimated(enum esp_sdr_rate rate, size_t count, unsigned 
 
 	if (esp_sdr_rx_rate_hz(rate) == 0U || count < ESP_SDR_SAMPLES_MIN ||
 	    count > ESP_SDR_SAMPLES_MAX || m < ESP_SDR_RX_DECIM_MIN || m > ESP_SDR_RX_DECIM_MAX ||
-	    count / m <= CIC_STAGES || sdr_bank_usage(&usage) != 0) {
+	    count / m <= CIC_STAGES || esp_sdr_bank_usage(&usage) != 0) {
 		return -EINVAL;
 	}
 
-	k_mutex_lock(&sdr_lock, K_FOREVER);
-	ret = sdr_ready ? capture_locked(rate, count, __esp_sdr_bank_start, usage, &elapsed, &t0)
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+	ret = esp_sdr_ready ? capture_locked(rate, count, __esp_sdr_bank_start, usage, &elapsed, &t0)
 			: -EAGAIN;
 	if (ret == 0) {
 		/* Still under the lock: a transmit session would overwrite the bank. */
@@ -442,7 +485,7 @@ int esp_sdr_rx_capture_decimated(enum esp_sdr_rate rate, size_t count, unsigned 
 			    ((uint64_t)(CIC_STAGES + 1U) * m - 1U - (3U * (m - 1U)) / 2U) *
 				    NSEC_PER_SEC / esp_sdr_rx_rate_hz(rate);
 	}
-	k_mutex_unlock(&sdr_lock);
+	k_mutex_unlock(&esp_sdr_lock);
 	return ret;
 }
 /*
@@ -485,19 +528,19 @@ int esp_sdr_rx_capture_folded(enum esp_sdr_rate rate, size_t count, unsigned int
 
 	if (esp_sdr_rx_rate_hz(rate) == 0U || count < ESP_SDR_SAMPLES_MIN ||
 	    count > ESP_SDR_SAMPLES_MAX || n < ESP_SDR_RX_FOLD_MIN || n > ESP_SDR_RX_FOLD_MAX ||
-	    count / n == 0U || sdr_bank_usage(&usage) != 0) {
+	    count / n == 0U || esp_sdr_bank_usage(&usage) != 0) {
 		return -EINVAL;
 	}
 
-	k_mutex_lock(&sdr_lock, K_FOREVER);
-	ret = sdr_ready ? capture_locked(rate, count, __esp_sdr_bank_start, usage, &elapsed, &t0)
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+	ret = esp_sdr_ready ? capture_locked(rate, count, __esp_sdr_bank_start, usage, &elapsed, &t0)
 			: -EAGAIN;
 	if (ret == 0) {
 		/* Still under the lock: a transmit session would overwrite the bank. */
 		*n_out = fold(__esp_sdr_bank_start, count, n, out, max_out);
 		*first_ns = k_cyc_to_ns_floor64(t0);
 	}
-	k_mutex_unlock(&sdr_lock);
+	k_mutex_unlock(&esp_sdr_lock);
 	return ret;
 }
 #endif /* CONFIG_ESP_SDR_RX_DECIM */
@@ -532,6 +575,7 @@ size_t esp_sdr_rx_pack_iq10(const uint32_t *words, size_t count, uint8_t *out)
 	return (count * 20U + 7U) / 8U;
 }
 
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
 /* TX baseband low-pass codes, inferred from the vendor PHY: 0x67 regs 0x0c/0x0d and 0x0e/0x0f. */
 #define BBTOP_TX_LPF_A 0x0cU
 #define BBTOP_TX_LPF_B 0x0eU
@@ -582,38 +626,43 @@ int esp_sdr_tx_set_lpf(int code_a, int code_b)
 	    code_b < ESP_SDR_RX_LPF_AUTO || code_b > ESP_SDR_RX_LPF_MAX) {
 		return -EINVAL;
 	}
-	k_mutex_lock(&sdr_lock, K_FOREVER);
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
 	tx_lpf[0] = code_a;
 	tx_lpf[1] = code_b;
-	if (sdr_ready) {
+	if (esp_sdr_ready) {
 		tx_lpf_apply();
 	}
-	k_mutex_unlock(&sdr_lock);
+	k_mutex_unlock(&esp_sdr_lock);
 	return 0;
 }
+
+#else
+int esp_sdr_tx_set_lpf(int code_a, int code_b)
+{
+	ARG_UNUSED(code_a);
+	ARG_UNUSED(code_b);
+	return -ENOTSUP;
+}
+#endif
 
 int esp_sdr_bbtop_read(unsigned int reg)
 {
 	int v;
 
-	k_mutex_lock(&sdr_lock, K_FOREVER);
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
 	regi2c_enter_critical();
 	v = (int)rom_chip_i2c_readReg(BBTOP_BLOCK, BBTOP_HOST, reg);
 	regi2c_exit_critical();
-	k_mutex_unlock(&sdr_lock);
+	k_mutex_unlock(&esp_sdr_lock);
 	return v;
 }
 
 void esp_sdr_bbtop_write(unsigned int reg, unsigned int val)
 {
-	k_mutex_lock(&sdr_lock, K_FOREVER);
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
 	regi2c_enter_critical();
 	rom_chip_i2c_writeReg(BBTOP_BLOCK, BBTOP_HOST, reg, val);
 	regi2c_exit_critical();
-	k_mutex_unlock(&sdr_lock);
+	k_mutex_unlock(&esp_sdr_lock);
 }
 
-void esp_sdr_debug_get(struct esp_sdr_debug *d)
-{
-	*d = sdr_dbg;
-}

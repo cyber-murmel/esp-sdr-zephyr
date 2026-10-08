@@ -232,7 +232,7 @@ static void apply_cfg(void)
 
 	ret = esp_sdr_set_channel_bw((unsigned int)cfg.cbw);
 	if (ret == 0) {
-		ret = esp_sdr_set_frequency(cfg.freq_mhz);
+		ret = esp_sdr_set_freq(cfg.freq_mhz);
 	}
 	if (ret == 0) {
 		ret = esp_sdr_rx_set_gain(cfg.rx_gain);

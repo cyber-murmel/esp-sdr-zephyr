@@ -70,6 +70,33 @@ BUILD_ASSERT(2U * LATE_LIMIT + 64U < END_GUARD && LATE_LIMIT + 64U < START_GUARD
 
 extern uint32_t __esp_sdr_bank0_start[];
 
+#if defined(CONFIG_SMP)
+#include <esp_mp_stall.h>
+#include <soc/system_reg.h>
+
+/*
+ * A flash operation on the other CPU parks this one with an IPI (cache off)
+ * and panics if it is not acknowledged: the run keeps interrupts masked, so
+ * answer it from the poll loop. The run usually fails late afterwards.
+ */
+static ALWAYS_INLINE bool stall_poll(void)
+{
+	uint32_t reg = arch_curr_cpu()->id == 0 ? SYSTEM_CPU_INTR_FROM_CPU_2_REG
+						 : SYSTEM_CPU_INTR_FROM_CPU_3_REG;
+
+	if (REG_READ(reg) == 0U) {
+		return false;
+	}
+	esp_mp_stall_isr(NULL);
+	return true;
+}
+#else
+static ALWAYS_INLINE bool stall_poll(void)
+{
+	return false;
+}
+#endif
+
 static atomic_t stop_req;
 static atomic_t active;
 
@@ -202,11 +229,11 @@ struct fir_job {
 	int16_t *oi, *oq;
 };
 
-void s3_unpack_iq10_split(const uint32_t *src, int16_t *di, int16_t *dq, unsigned int groups8);
-void s3_fir_split(const struct fir_job *job);
-void s3_fir8_l32(const struct fir_job *job);
-void s3_rot_fs4(int16_t *wi, int16_t *wq, unsigned int groups8, const int16_t *masks);
-/* s3_fir_split with the data loads fused, for an even number of tap groups. */
+void esp_sdr_ring_unpack_iq10(const uint32_t *src, int16_t *di, int16_t *dq, unsigned int groups8);
+void esp_sdr_ring_fir_split(const struct fir_job *job);
+void esp_sdr_ring_fir8_l32(const struct fir_job *job);
+void esp_sdr_ring_rot_fs4(int16_t *wi, int16_t *wq, unsigned int groups8, const int16_t *masks);
+/* esp_sdr_ring_fir_split with the data loads fused, for an even number of tap groups. */
 void esp_sdr_ring_dot(const struct fir_job *job);
 
 #define FS1_L   32U
@@ -326,11 +353,11 @@ HOT static uint32_t fstage_run(struct fstage *s, int16_t *oi, int16_t *oq)
 		j = (struct fir_job){s->wi + off, s->wq + off, s->h, s->l / 8U, no,
 				     2U * s->d, s->shift, oi, oq};
 		if (s->d == 8U && s->l == FS1_L) {
-			s3_fir8_l32(&j);
+			esp_sdr_ring_fir8_l32(&j);
 		} else if ((j.groups & 1U) == 0U) {
 			esp_sdr_ring_dot(&j);
 		} else {
-			s3_fir_split(&j);
+			esp_sdr_ring_fir_split(&j);
 		}
 		s->next_end += (uint64_t)no * s->d;
 	}
@@ -405,16 +432,233 @@ static struct {
 	unsigned int q_len;
 	uint32_t slice_cost;
 	uint64_t fir_cycles, fir_pairs;
+	/* The interrupt key of the run, for the windows in irq_window(). */
+	unsigned int irq_key;
 } rs;
+
+/*
+ * Interrupts pending on this CPU run in a short window between polls. The
+ * kernel timer arms the comparator of whichever CPU sets the next timeout:
+ * if that is this one, masking it for the run would stall every timeout in
+ * the system (the other CPU idles with its comparator a counter wrap away).
+ * IPIs get through the same way. From a cooperative thread nothing preempts
+ * the run at the end of an interrupt.
+ */
+static ALWAYS_INLINE bool irq_window(uint32_t *lines)
+{
+	uint32_t pend, en;
+
+	__asm__ volatile("rsr.interrupt %0" : "=r"(pend));
+	__asm__ volatile("rsr.intenable %0" : "=r"(en));
+	if ((pend & en) == 0U) {
+		return false;
+	}
+	*lines = pend & en;
+	arch_irq_unlock(rs.irq_key);
+	(void)arch_irq_lock();
+	return true;
+}
+
+/*
+ * The Wi-Fi MAC interrupt (CPU line 0, reserved for it by the HAL) fires for
+ * any packet the receiver decodes, hundreds of times a second on busy air,
+ * and its handler is far too long for the ring's windows: units were
+ * abandoned until the run failed. The line stays disabled on this CPU for
+ * the run and the interrupt is served when it ends, as before the windows
+ * existed (the MAC does not need serving while the ring owns the radio).
+ */
+static bool wmac_was_enabled;
+
+static ALWAYS_INLINE void wmac_irq_hold(void)
+{
+	uint32_t en;
+
+	__asm__ volatile("rsr.intenable %0" : "=r"(en));
+	wmac_was_enabled = (en & BIT(ETS_WMAC_INUM)) != 0U;
+	en &= ~BIT(ETS_WMAC_INUM);
+	__asm__ volatile("wsr.intenable %0\n\trsync" : : "r"(en) : "memory");
+}
+
+static ALWAYS_INLINE void wmac_irq_release(void)
+{
+	uint32_t en;
+
+	/* Only our bit: a window's handler may have changed others. */
+	__asm__ volatile("rsr.intenable %0" : "=r"(en));
+	if (wmac_was_enabled) {
+		en |= BIT(ETS_WMAC_INUM);
+	}
+	__asm__ volatile("wsr.intenable %0\n\trsync" : : "r"(en) : "memory");
+}
 
 /* Per-stage cycles for esp_sdr_ring_bench(): unpack, stage 1, stage 2, sink. */
 static bool prof;
 static uint32_t prof_cyc[4];
 #define PROF(k, t) do { if (prof) { uint32_t t1_ = ccount(); prof_cyc[k] += t1_ - (t); (t) = t1_; } } while (0)
 
+#if defined(CONFIG_ESP_SDR_RING_BOX4)
+/* Boxcar-of-4 state (ESP_SDR_RING_DECIM_BOX4): partial sums and the pair phase. */
+static struct {
+	int32_t ai, aq;
+	uint32_t ph;
+} b4;
+
+static inline void b4_reset(void)
+{
+	b4.ai = 0;
+	b4.aq = 0;
+	b4.ph = 0;
+}
+
+/*
+ * ESP_SDR_RING_DECIM_BOX4: the -fs/4 mix as swaps and signs ((-j)^n, n the
+ * pair index, so phase 0 sits on the decimation grid), summed over 4 pairs.
+ * Summing costs about 14 cycles per pair, over the budget at 16 MS/s once a sink
+ * runs too: cfg->subsample takes only the phase-0 pairs for about 1 cycle.
+ */
+HOT static void box4_feed(const uint32_t *p, uint32_t a, uint32_t m)
+{
+	const uint32_t *w = p + a;
+	uint32_t k2 = 0;
+
+	if (rs.cfg->subsample) {
+		/* Phase-0 pairs only: there the -fs/4 mix is 1. Same full scale as the sums. */
+		while (m != 0U) {
+			uint32_t skip = (4U - b4.ph) & 3U;
+
+			if (skip >= m) {
+				b4.ph = (b4.ph + m) & 3U;
+				break;
+			}
+			w += skip;
+			m -= skip;
+			out_i[k2] = (int16_t)(esp_sdr_rx_i(*w) * 16);
+			out_q[k2] = (int16_t)(esp_sdr_rx_q(*w) * 16);
+			w++;
+			m--;
+			b4.ph = 1U;
+			if (++k2 == OUT_MAX) {
+				rs.cfg->sink(rs.cfg->user, out_i, out_q, k2, rs.out_index);
+				rs.out_index += k2;
+				rs.st->samples += k2;
+				k2 = 0;
+			}
+		}
+		if (k2 != 0U) {
+			rs.cfg->sink(rs.cfg->user, out_i, out_q, k2, rs.out_index);
+			rs.out_index += k2;
+			rs.st->samples += k2;
+		}
+		return;
+	}
+
+	while (m != 0U) {
+		/*
+		 * Vector unpack and rotation (the FIR path's kernels, lanes
+		 * swapped: lane i carries Q), then sums of 4 lanes. On the
+		 * decimation grid only, so lane 0 is pair phase 0.
+		 */
+		uint32_t g = MIN(m, FIR_CHUNK) / 8U;
+
+		/* The unpack reads 16 bytes ahead: never past the bank's end. */
+		if (g != 0U && (uint32_t)(w - p) + 8U * g + 4U > RING_PAIRS) {
+			g--;
+		}
+		if (b4.ph == 0U && g != 0U) {
+			uint32_t t = prof ? ccount() : 0U;
+
+			esp_sdr_ring_unpack_iq10(w, fs1_wi, fs1_wq, g);
+			if (fir_rot) {
+				esp_sdr_ring_rot_fs4(fs1_wi, fs1_wq, g, rot_masks);
+			}
+			PROF(0, t);
+			for (uint32_t k = 0; k < 2U * g; k++) {
+				const int16_t *li = &fs1_wi[4U * k], *lq = &fs1_wq[4U * k];
+				/* Lanes hold value << 6; the output scale is 4 x the sum. */
+				int32_t si = lq[0] + lq[1] + lq[2] + lq[3];
+				int32_t sq = li[0] + li[1] + li[2] + li[3];
+
+				out_i[k2] = (int16_t)(si >> 4);
+				out_q[k2] = (int16_t)(sq >> 4);
+				if (++k2 == OUT_MAX) {
+					rs.cfg->sink(rs.cfg->user, out_i, out_q, k2, rs.out_index);
+					rs.out_index += k2;
+					rs.st->samples += k2;
+					k2 = 0;
+				}
+			}
+			PROF(1, t);
+			w += 8U * g;
+			m -= 8U * g;
+			continue;
+		}
+		if (b4.ph == 0U && m >= 4U) {
+			int32_t i0 = esp_sdr_rx_i(w[0]), q0 = esp_sdr_rx_q(w[0]);
+			int32_t i1 = esp_sdr_rx_i(w[1]), q1 = esp_sdr_rx_q(w[1]);
+			int32_t i2 = esp_sdr_rx_i(w[2]), q2 = esp_sdr_rx_q(w[2]);
+			int32_t i3 = esp_sdr_rx_i(w[3]), q3 = esp_sdr_rx_q(w[3]);
+
+			if (fir_rot) {
+				/* (-j)^n: 1, -j, -1, j */
+				b4.ai = i0 + q1 - i2 - q3;
+				b4.aq = q0 - i1 - q2 + i3;
+			} else {
+				b4.ai = i0 + i1 + i2 + i3;
+				b4.aq = q0 + q1 + q2 + q3;
+			}
+			w += 4;
+			m -= 4U;
+			b4.ph = 4U;
+		} else {
+			int32_t i = esp_sdr_rx_i(*w), q = esp_sdr_rx_q(*w);
+
+			if (!fir_rot || b4.ph == 0U) {
+				b4.ai += i;
+				b4.aq += q;
+			} else if (b4.ph == 1U) {
+				b4.ai += q;
+				b4.aq -= i;
+			} else if (b4.ph == 2U) {
+				b4.ai -= i;
+				b4.aq -= q;
+			} else {
+				b4.ai -= q;
+				b4.aq += i;
+			}
+			w++;
+			m--;
+			b4.ph++;
+		}
+		if (b4.ph == 4U) {
+			/* 4 x 10 bit to +-8192 (ESP_SDR_RING_BOX4_FULL_SCALE). */
+			out_i[k2] = (int16_t)(b4.ai * 4);
+			out_q[k2] = (int16_t)(b4.aq * 4);
+			b4_reset();
+			if (++k2 == OUT_MAX) {
+				rs.cfg->sink(rs.cfg->user, out_i, out_q, k2, rs.out_index);
+				rs.out_index += k2;
+				rs.st->samples += k2;
+				k2 = 0;
+			}
+		}
+	}
+	if (k2 != 0U) {
+		rs.cfg->sink(rs.cfg->user, out_i, out_q, k2, rs.out_index);
+		rs.out_index += k2;
+		rs.st->samples += k2;
+	}
+}
+#endif /* CONFIG_ESP_SDR_RING_BOX4 */
+
 /* m contiguous ring pairs from position a (no wrap) through both stages. */
 HOT static void fir_feed(const uint32_t *p, uint32_t a, uint32_t m)
 {
+#if defined(CONFIG_ESP_SDR_RING_BOX4)
+	if (rs.log2d == 2U) {
+		box4_feed(p, a, m);
+		return;
+	}
+#endif
 	while (m != 0U) {
 		uint32_t take = MIN(m, FIR_CHUNK), done = 0, g, k2;
 		uint32_t t = prof ? ccount() : 0U;
@@ -428,9 +672,9 @@ HOT static void fir_feed(const uint32_t *p, uint32_t a, uint32_t m)
 			g = g != 0U ? g - 1U : 0U;
 		}
 		if (g != 0U) {
-			s3_unpack_iq10_split(p + a + done, fs1.wi + fs1.n, fs1.wq + fs1.n, g);
+			esp_sdr_ring_unpack_iq10(p + a + done, fs1.wi + fs1.n, fs1.wq + fs1.n, g);
 			if (fir_rot) {
-				s3_rot_fs4(fs1.wi + fs1.n, fs1.wq + fs1.n, g, rot_masks);
+				esp_sdr_ring_rot_fs4(fs1.wi + fs1.n, fs1.wq + fs1.n, g, rot_masks);
 			}
 			fs1.n += 8U * g;
 			done += 8U * g;
@@ -458,6 +702,13 @@ HOT static void fir_feed(const uint32_t *p, uint32_t a, uint32_t m)
 static void fir_setup(unsigned int d)
 {
 	uint32_t d2 = d / 8U, l2 = MIN((18U * d2 + 7U) & ~7U, FS2_LMAX);
+
+#if defined(CONFIG_ESP_SDR_RING_BOX4)
+	if (d == ESP_SDR_RING_DECIM_BOX4) {
+		b4_reset();
+		return;
+	}
+#endif
 
 	fstage_init(&fs1, 8U, FS1_L, 17U);
 	fstage_init(&fs2, d2, l2, 14U);
@@ -523,6 +774,12 @@ HOT static bool unit_begin(struct unit *u)
 	u->count -= (uint32_t)skip;
 	u->index += skip;
 	rs.out_index = u->index >> rs.log2d;
+#if defined(CONFIG_ESP_SDR_RING_BOX4)
+	if (rs.log2d == 2U) {
+		b4_reset();
+		return true;
+	}
+#endif
 	fstage_reset(&fs1, u->index);
 	fstage_reset(&fs2, u->index / 8U);
 	return true;
@@ -634,6 +891,15 @@ HOT static void ring_loop(void)
 
 		/* 1. Poll, with filter slices between polls. */
 		for (;;) {
+			if (stall_poll()) {
+				st->stalls++;
+			}
+			uint32_t lines;
+
+			if (irq_window(&lines)) {
+				st->irq_windows++;
+				st->irq_lines |= lines;
+			}
 			wi = write_index();
 			written = (wi - expected) & RING_MASK;
 			if (ccount() - epoch > max_age) {
@@ -733,8 +999,8 @@ HOT static void ring_loop(void)
 		if (stop) {
 			break;
 		}
-		/* The forced gain gets lost now and then (see sdr_rx_gain_refresh()). */
-		if (sdr_rx_gain_refresh()) {
+		/* The forced gain gets lost now and then (see esp_sdr_rx_gain_refresh()). */
+		if (esp_sdr_rx_gain_refresh()) {
 			st->gain_refreshed++;
 		}
 	}
@@ -756,7 +1022,9 @@ int esp_sdr_ring_run(const struct esp_sdr_ring_cfg *cfg, struct esp_sdr_ring_sta
 	while ((1U << l) < d) {
 		l++;
 	}
-	if (d < ESP_SDR_RING_DECIM_MIN || d > ESP_SDR_RING_DECIM_MAX || (1U << l) != d ||
+	if ((d < ESP_SDR_RING_DECIM_MIN &&
+	     !(IS_ENABLED(CONFIG_ESP_SDR_RING_BOX4) && d == ESP_SDR_RING_DECIM_BOX4)) ||
+	    d > ESP_SDR_RING_DECIM_MAX || (1U << l) != d ||
 	    cfg->sink == NULL) {
 		return -EINVAL;
 	}
@@ -764,9 +1032,9 @@ int esp_sdr_ring_run(const struct esp_sdr_ring_cfg *cfg, struct esp_sdr_ring_sta
 		return -ENOMEM;
 	}
 
-	k_mutex_lock(&sdr_lock, K_FOREVER);
-	if (!sdr_ready) {
-		k_mutex_unlock(&sdr_lock);
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+	if (!esp_sdr_ready) {
+		k_mutex_unlock(&esp_sdr_lock);
 		return -EAGAIN;
 	}
 	memset(stats, 0, sizeof(*stats));
@@ -784,13 +1052,16 @@ int esp_sdr_ring_run(const struct esp_sdr_ring_cfg *cfg, struct esp_sdr_ring_sta
 	pie_enable();
 	/* Local mask only: irq_lock() would take the global SMP lock for the run. */
 	key = arch_irq_lock();
+	rs.irq_key = key;
+	wmac_irq_hold();
 	ring_loop();
+	wmac_irq_release();
 	arch_irq_unlock(key);
 
 	stats->cycles_x100 =
 		rs.fir_pairs != 0U ? (uint32_t)(rs.fir_cycles * 100U / rs.fir_pairs) : 0U;
 	atomic_set(&active, 0);
-	k_mutex_unlock(&sdr_lock);
+	k_mutex_unlock(&esp_sdr_lock);
 	if (stats->status != ESP_SDR_RING_OK) {
 		ret = -EIO;
 	}
@@ -807,11 +1078,13 @@ int esp_sdr_ring_bench(const struct esp_sdr_ring_cfg *cfg, unsigned int units,
 	while ((1U << l) < d) {
 		l++;
 	}
-	if (d < ESP_SDR_RING_DECIM_MIN || d > ESP_SDR_RING_DECIM_MAX || (1U << l) != d ||
+	if ((d < ESP_SDR_RING_DECIM_MIN &&
+	     !(IS_ENABLED(CONFIG_ESP_SDR_RING_BOX4) && d == ESP_SDR_RING_DECIM_BOX4)) ||
+	    d > ESP_SDR_RING_DECIM_MAX || (1U << l) != d ||
 	    cfg->sink == NULL || units == 0U) {
 		return -EINVAL;
 	}
-	k_mutex_lock(&sdr_lock, K_FOREVER);
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
 	/* Noise-like words in bank 0, which the CPUs own outside a run. */
 	for (uint32_t k = 0, x = 1; k < RING_PAIRS; k++) {
 		x = x * 1664525U + 1013904223U;
@@ -837,7 +1110,7 @@ int esp_sdr_ring_bench(const struct esp_sdr_ring_cfg *cfg, unsigned int units,
 	total = ccount() - t0;
 	prof = false;
 	arch_irq_unlock(key);
-	k_mutex_unlock(&sdr_lock);
+	k_mutex_unlock(&esp_sdr_lock);
 
 	res->pairs = units * THRESHOLD;
 	res->cycles_x100 = (uint32_t)((uint64_t)total * 100U / res->pairs);

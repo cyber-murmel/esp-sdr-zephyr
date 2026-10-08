@@ -244,7 +244,7 @@ static void send_ack(const struct sockaddr *to, socklen_t to_len, bool query,
 		if (rx) {
 			int gain = esp_sdr_rx_get_gain();
 
-			ack.if_context.rf_reference_frequency = esp_sdr_get_frequency() * 1e6;
+			ack.if_context.rf_reference_frequency = esp_sdr_get_freq() * 1e6;
 			ack.if_context.sample_rate = rx_get_rate();
 			/* Uncalibrated: stage 1 carries the PHY gain table index, not dB. */
 			ack.if_context.has.gain = gain >= 0;
@@ -291,7 +291,7 @@ static void handle_rx_command(const struct sockaddr *from, socklen_t from_len)
 {
 	struct vrt_ack_responses errors = {0};
 	const struct vrt_if_context *c = &pkt.if_context;
-	uint32_t mhz = esp_sdr_get_frequency();
+	uint32_t mhz = esp_sdr_get_freq();
 	uint32_t rate = rx_get_rate();
 	int gain = esp_sdr_rx_get_gain();
 	int bits = 0;
@@ -345,7 +345,7 @@ static void handle_rx_command(const struct sockaddr *from, socklen_t from_len)
 	}
 
 	if (cmd.cam.action_mode == VRT_AM_EXECUTE && (!any_error || cmd.cam.permit_errors)) {
-		if (mhz != esp_sdr_get_frequency() && esp_sdr_set_frequency(mhz) != 0) {
+		if (mhz != esp_sdr_get_freq() && esp_sdr_set_freq(mhz) != 0) {
 			stats.errors++;
 		}
 		if (c->has.gain && !errors.has.gain && esp_sdr_rx_set_gain(gain) != 0) {

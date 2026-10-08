@@ -92,7 +92,7 @@ static void capture(void *p1, void *p2, void *p3)
 
 	ret = esp_sdr_init();
 	if (ret == 0) {
-		ret = esp_sdr_set_frequency(CONFIG_APP_FREQ_MHZ);
+		ret = esp_sdr_set_freq(CONFIG_APP_FREQ_MHZ);
 	}
 	if (ret != 0) {
 		LOG_ERR("radio setup failed (%d)", ret);
@@ -150,7 +150,7 @@ static void capture(void *p1, void *p2, void *p3)
 			continue;
 		}
 		b->seq = seq++;
-		b->freq_mhz = esp_sdr_get_frequency();
+		b->freq_mhz = esp_sdr_get_freq();
 		b->gain = esp_sdr_rx_get_gain();
 		atomic_set(&capture_cpu, arch_curr_cpu()->id);
 		k_msgq_put(&burst_q, &b, K_FOREVER);

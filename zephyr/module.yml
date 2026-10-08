@@ -13,3 +13,11 @@ blobs:
     url: https://github.com/espressif/esp-phy-lib/raw/e37ecdc9c1e93fefda5b1a99f09bd979046d0720/esp32s3/librftest.a
     description: "Espressif RF test library: manual RX gain (same esp-phy-lib commit as the hal libphy)"
     doc-url: https://github.com/espressif/esp-phy-lib
+  - path: lib/esp32c6/librftest.a
+    sha256: ad390d9ad3ec2a6b9dad2602b32f66bf3e22f25da54dcd879a467a725c6f1d0f
+    type: lib
+    version: '1.0'
+    license-path: zephyr/blobs/license.txt
+    url: https://github.com/espressif/esp-phy-lib/raw/e37ecdc9c1e93fefda5b1a99f09bd979046d0720/esp32c6/librftest.a
+    description: "Espressif RF test library: manual RX gain (same esp-phy-lib commit as the hal libphy)"
+    doc-url: https://github.com/espressif/esp-phy-lib

@@ -12,6 +12,10 @@
  * a low rate and hands them to a backend: the DAC backend
  * (CONFIG_ESP_SDR_TX_DAC) interpolates them to 40 MS/s and plays them
  * gapless, the stub backend only counts them.
+ *
+ * The one-shot, power and loop calls exist on the ESP32-S3 only, the streaming
+ * interface with CONFIG_ESP_SDR_TX; the ESP32-C6 has esp_sdr_tx_set_lpf()
+ * (returning -ENOTSUP) and esp_sdr_tx_word() only.
  */
 
 #ifndef ESP_SDR_ESP_SDR_TX_H_
@@ -27,6 +31,7 @@
 extern "C" {
 #endif
 
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
 /**
  * @brief Select a transmit power step, picked up by the next transmission.
  *
@@ -51,6 +56,7 @@ int esp_sdr_tx_gain_max(void);
  * dBm; measured 4.24 units per dB over the ladder), INT_MIN if out of range.
  */
 int esp_sdr_tx_gain_power(int index);
+#endif
 
 /**
  * @brief Select the TX baseband low-pass capacitor codes (experimental).
@@ -65,8 +71,10 @@ int esp_sdr_tx_gain_power(int index);
  */
 int esp_sdr_tx_set_lpf(int code_a, int code_b);
 
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
 /** @return DAC sample rate in Hz, or 0 if the DAC cannot run at @p rate. */
 uint32_t esp_sdr_tx_rate_hz(enum esp_sdr_rate rate);
+#endif
 
 /** @return Raw transmit word for esp_sdr_tx_play(): I in bits 9:0, Q in bits 19:10. */
 static inline uint32_t esp_sdr_tx_word(int16_t i, int16_t q)
@@ -74,6 +82,7 @@ static inline uint32_t esp_sdr_tx_word(int16_t i, int16_t q)
 	return ((uint32_t)i & 0x3ffU) | (((uint32_t)q & 0x3ffU) << 10);
 }
 
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
 /**
  * @brief Play one burst of complex samples out through the TX DAC.
  *
@@ -196,6 +205,7 @@ void esp_sdr_tx_loop_halt(void);
 void esp_sdr_tx_loop_end(void);
 
 /** @} */
+#endif /* CONFIG_SOC_SERIES_ESP32S3 */
 
 /** Streaming backend operations. All may sleep; called from one thread. */
 struct esp_sdr_tx_backend {
@@ -216,6 +226,7 @@ struct esp_sdr_tx_stats {
 	uint32_t errors;
 };
 
+#if defined(CONFIG_ESP_SDR_TX)
 /**
  * @brief Select the streaming backend; NULL restores the default (DAC if built, else the stub).
  *
@@ -254,6 +265,7 @@ void esp_sdr_tx_get_stats(struct esp_sdr_tx_stats *stats);
 
 /** Backend that consumes and counts samples, for tests. */
 extern const struct esp_sdr_tx_backend esp_sdr_tx_stub_backend;
+#endif /* CONFIG_ESP_SDR_TX */
 
 /** Statistics of the DAC backend since its last start. */
 struct esp_sdr_tx_dac_stats {
@@ -277,6 +289,8 @@ struct esp_sdr_tx_dac_stats {
 	uint32_t restarts;
 	/** Longest fill, latest wake-up for a switch, longest switch-to-fill gap, in us. */
 	uint32_t fill_us_max, wake_late_us_max, idle_us_max;
+	/** Time left before the due time after the session's first loop fill, in us. */
+	int32_t start_margin_us;
 };
 
 #if defined(CONFIG_ESP_SDR_TX_DAC)
@@ -291,6 +305,31 @@ extern const struct esp_sdr_tx_backend esp_sdr_tx_dac_backend;
 
 /** Copy the DAC backend statistics into @p stats. */
 void esp_sdr_tx_dac_get_stats(struct esp_sdr_tx_dac_stats *stats);
+
+/**
+ * Waveform source for esp_sdr_tx_dac_play_gen(): write @p n DAC words
+ * (esp_sdr_tx_word()) for output samples [@p index, @p index + n) at the
+ * 40 MS/s DAC rate. Runs in the filler, ahead of the air by up to two
+ * banks, with interrupts locked when the vector interpolator is built
+ * (CONFIG_ESP_SDR_TX_DAC_SIMD) and unlocked otherwise: table lookups and
+ * copies only, from IRAM.
+ */
+typedef void (*esp_sdr_tx_dac_gen_t)(void *user, uint32_t *dst, uint64_t index, uint32_t n);
+
+/**
+ * @brief Play @p samples generated DAC samples gapless at the current LO.
+ *
+ * Returns once the last sample has played, about 1.5 ms after the call plus
+ * the waveform's duration. Not while the backend streams.
+ *
+ * @retval 0 on success.
+ * @retval -EINVAL without a generator or samples.
+ * @retval -EBUSY while the backend streams or plays.
+ * @retval -EIO if the session could not start or was stopped, or a block was
+ *	   filled late: the waveform is cut off at that point (a late block
+ *	   ends the session with a block of silence, it is not resumed).
+ */
+int esp_sdr_tx_dac_play_gen(esp_sdr_tx_dac_gen_t gen, void *user, uint64_t samples);
 
 /**
  * @return Input samples written but not yet interpolated for the DAC: what a

@@ -2,14 +2,15 @@
 
 config ESP_SDR
 	bool "ESP-SDR raw I/Q receiver"
-	depends on SOC_SERIES_ESP32S3
+	depends on SOC_SERIES_ESP32S3 || SOC_SERIES_ESP32C6
 	depends on WIFI_ESP32
 	# The bank and heap limits assume no APPCPU image in SRAM.
 	depends on !SOC_ENABLE_APPCPU
 	help
 	  Burst capture of raw baseband I/Q samples from the Wi-Fi receiver,
-	  ported from ESPARGOS esp-sdr. Reserves one 64 KiB SRAM bank for the
-	  capture engine.
+	  ported from ESPARGOS esp-sdr. Reserves an SRAM bank for the capture
+	  engine (64 KiB on the S3, the 128 KiB block 2 on the C6). The ESP32-C6 captures at 80 MS/s only and has no
+	  transmit or ring support yet.
 
 if ESP_SDR
 
@@ -35,6 +36,7 @@ config ESP_SDR_RX_DECIM
 
 config ESP_SDR_BANK1
 	bool "Reserve a second dump bank"
+	depends on SOC_SERIES_ESP32S3
 	help
 	  Reserves SRAM bank 1 (0x3fcc0000) next to the capture bank, for
 	  two-bank loop playback (esp_sdr_tx_loop_*()) and for captures into
@@ -43,6 +45,7 @@ config ESP_SDR_BANK1
 
 config ESP_SDR_RING
 	bool "Continuous ring receive"
+	depends on SOC_SERIES_ESP32S3
 	select ESP_SDR_BANK1
 	help
 	  esp_sdr_ring_run(): the dump engine in circular mode, rotated
@@ -51,8 +54,18 @@ config ESP_SDR_RING
 	  SRAM bank 0 (0x3fcb0000) besides banks 1 and 2, another 64 KiB of
 	  internal RAM: the whole DRAM image must end below 0x3fcb0000.
 
+config ESP_SDR_RING_BOX4
+	bool "Ring decimation by 4 (boxcar, for 2 MHz wide signals)"
+	depends on ESP_SDR_RING
+	help
+	  ESP_SDR_RING_DECIM_BOX4: -fs/4 mix and a boxcar of 4 (or every 4th
+	  pair) instead of the FIR chain, for signals such as IEEE 802.15.4 at
+	  4 MS/s. About 1 KiB of IRAM, which on the S3 comes out of the same
+	  SRAM as the DRAM image: leave it out where that is tight.
+
 config ESP_SDR_TX
 	bool "Transmit backend interface"
+	depends on SOC_SERIES_ESP32S3
 	help
 	  esp_sdr_tx_*() front end with a stub backend that consumes and
 	  counts samples. A real backend registers with

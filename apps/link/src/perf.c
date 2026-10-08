@@ -349,9 +349,9 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 			    s.pair_us_sum / s.pair_n);
 	}
 	{
-		struct esp_sdr_debug d;
+		struct esp_sdr_stats d;
 
-		esp_sdr_debug_get(&d);
+		esp_sdr_get_stats(&d);
 		shell_print(sh, "engine: %u transmissions, rx gain re-forced %u times (%u us each)",
 			    d.dac_sessions, d.gain_refreshed, d.gain_apply_us);
 	}
