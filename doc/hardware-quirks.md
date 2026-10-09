@@ -32,6 +32,27 @@ its engine line. A turnaround back to receive also forces the gain.
 When debugging this kind of fault: any `link set` in `apps/link` re-applies
 the whole radio configuration, which hides it.
 
+### The C6 keeps the previous firmware's modem state across a chip reset
+
+**What happens.** A chip reset of the ESP32-C6 (through USB-Serial-JTAG, as
+esptool and every port open do) leaves its modem subsystem as the previous
+firmware left it. ESP-IDF resets it on a software restart
+(`esp_system_reset_modules_on_exit()`), a chip reset does not. After
+`apps/wpan` had run the C6's native 802.15.4 radio, `esp_sdr` on the next
+firmware received with a noise floor about 25 dB up (rms 40 to 50 instead of
+2 at fixed gain 40, the same at every gain index and frequency), and the
+vendor's channel tuning put the PLL MHz off (2404 instead of 2412 MHz in its
+fractional divider). A power cycle or a deep sleep cleared it.
+
+**How it shows up.** Tones from another board land at the wrong offset or
+not at all at Wi-Fi channel frequencies, and captures look like a much
+noisier receiver. `tests/regression/lo_tuning` failed its link check whenever
+it ran after `tests/regression/ieee802154_link`.
+
+**How it is handled.** On the C6 the library resets the modem subsystem at
+`PRE_KERNEL_1`, before the Wi-Fi driver brings the radio up, as ESP-IDF's
+restart path does (`esp_sdr_modem_reset()` in `lib/esp_sdr/src/esp_sdr.c`).
+
 ### 40 MHz mode widens the analog filters
 
 The PHY's channel bandwidth mode (`esp_sdr_set_channel_bw()`, the second

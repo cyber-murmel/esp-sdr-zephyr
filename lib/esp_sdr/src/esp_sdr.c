@@ -26,6 +26,27 @@
 
 LOG_MODULE_REGISTER(esp_sdr, CONFIG_ESP_SDR_LOG_LEVEL);
 
+#if defined(CONFIG_SOC_SERIES_ESP32C6)
+#include <zephyr/init.h>
+#include <hal/modem_lpcon_ll.h>
+#include <hal/modem_syscon_ll.h>
+
+/*
+ * A chip reset (USB-Serial-JTAG, esptool) leaves the C6's modem subsystem as
+ * the previous firmware left it; ESP-IDF resets it on a restart, a chip reset
+ * does not. After the native 802.15.4 radio had run, the receive floor stayed
+ * about 25 dB up and the vendor's channel tuning landed MHz off, until a power
+ * cycle or deep sleep. Reset it before the Wi-Fi driver brings the radio up.
+ */
+static int esp_sdr_modem_reset(void)
+{
+	modem_syscon_ll_reset_all(&MODEM_SYSCON);
+	modem_lpcon_ll_reset_all(&MODEM_LPCON);
+	return 0;
+}
+SYS_INIT(esp_sdr_modem_reset, PRE_KERNEL_1, 0);
+#endif
+
 K_MUTEX_DEFINE(esp_sdr_lock);
 struct esp_sdr_stats esp_sdr_counters;
 bool esp_sdr_ready;
