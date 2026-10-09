@@ -18,6 +18,7 @@ like [example-application](https://github.com/zephyrproject-rtos/example-applica
 | `apps/osmosdr/` | HackRF style USB SDR for osmosdr / GNU Radio: gapless decimated RX, TX, vendor bulk protocol |
 | `apps/link/` | Packet link at 80 or 40 MS/s: single carrier QAM or OFDM (RS/Hamming, CSMA/CA, iperf style test) |
 | `apps/wpan/` | `wpan` shell: 802.15.4 test frames and counters on any Zephyr radio, the software radio (S3) or a native one (C6) |
+| `apps/rfprobe/` | Bench probe: tune (plan or raw PLL), loop a tone, dump captures and analog registers; `tools/rfprobe.py` sweeps LO pairs, scans the PLL, diffs registers |
 | `apps/common/` | Shared by the apps: USB with DFU, watchdogs, crash records, thread pinning |
 | `tests/unit/` | Unit tests on the host (ztest, `native_sim`): `scripts/run-unit-tests.sh`; the 802.15.4 PHY and driver error rate tables: `scripts/unit-tables.sh`; all test tiers and CI (`.github/workflows/build.yml`) in [doc/testing.md](doc/testing.md) |
 | `tests/integration/` | ztest on one real board: the radio API's contract |

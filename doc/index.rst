@@ -25,6 +25,7 @@ The API reference of the library is generated with Doxygen:
    apps/osmosdr
    apps/link
    apps/wpan
+   apps/rfprobe
 
 .. toctree::
    :maxdepth: 1

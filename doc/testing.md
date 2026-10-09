@@ -178,4 +178,6 @@ is also checked with the boards 10 MHz apart, both ways round. The scenario chec
 
 Measuring tools, not pass/fail gates (the host tables are in the unit tests, above):
 
+- `apps/rfprobe` and its `tools/rfprobe.py`: LO pair sweeps with a tone between two boards, raw PLL
+  sweeps, PLL register scans, analog register dumps and diffs, the receive noise floor.
 - `apps/wpan/tools/interop.py` and `iq_dump.py`: two-board interop runs and raw captures.
