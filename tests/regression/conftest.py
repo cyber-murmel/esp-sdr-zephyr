@@ -1,4 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
+"""Fixtures shared by the two-board regression scenarios (tests/regression/*/pytest/).
+
+Twister runs pytest from its own working directory, the repository root when started by
+scripts/run-regression-tests.sh. With no pytest ini file in the tree, that makes the root
+pytest's rootdir, so this conftest one level above each scenario's pytest/ is loaded.
+"""
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest

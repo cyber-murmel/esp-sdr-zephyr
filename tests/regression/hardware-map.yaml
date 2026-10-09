@@ -8,8 +8,9 @@
 #     runner, puts the images on the boards.
 # flash_before: connect to the console only after the flash. The C6 resets when its port is
 #     opened, and the S3's port goes away and comes back during the DFU update.
-# serial: the S3's path carries the product string of the wpan firmware, which is the image
-#     twister puts on it before it opens the port.
+# serial: the S3's is the link scripts/twister-flash.py points at its port after flashing:
+#     each scenario puts its own image with its own USB product string on the S3, which
+#     changes its /dev/serial/by-id name.
 
 - id: 98:A3:16:8E:29:9C
   platform: xiao_esp32c6/esp32c6/hpcore
@@ -22,9 +23,9 @@
 
 - id: A4CB8FD1C700
   platform: xiao_esp32s3/esp32s3/procpu
-  product: ESP-SDR 802.15.4
+  product: ESP-SDR
   runner: esp32
-  serial: /dev/serial/by-id/usb-Zephyr_Project_ESP-SDR_802.15.4_A4CB8FD1C700-if00
+  serial: /tmp/esp-sdr-tty/A4CB8FD1C700
   connected: true
   flash_before: true
   flash_timeout: 300

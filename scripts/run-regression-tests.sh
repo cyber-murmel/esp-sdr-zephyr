@@ -3,7 +3,7 @@
 # Runs the two-board regression tests (tests/regression/) on the boards of
 # tests/regression/hardware-map.yaml: builds both images, puts them on the
 # boards (scripts/twister-flash.py: west dfu for the S3, west flash for the C6)
-# and runs the pytest scenario. A few minutes. See doc/testing.md.
+# and runs the pytest scenarios. A few minutes. See doc/testing.md.
 # Runs from the repository root: give relative paths (-O) from there.
 set -eu
 cd "$(dirname "$0")/.."

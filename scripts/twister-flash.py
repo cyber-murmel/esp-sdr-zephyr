@@ -10,14 +10,22 @@ board it flashes, with the build directory and the id of that board's hardware m
   the app owns the USB OTG port.
 - Anything else is flashed with `west flash`. The id is the serial number of the board's
   USB-Serial-JTAG (as in /dev/serial/by-id) or a /dev path.
+
+After a successful flash, LINK_DIR/<id> points at the board's serial port. The hardware
+map names the S3's port by that link: its /dev/serial/by-id name carries the USB product
+string, which differs between the images the scenarios put on it, and its by-path name
+changes with the USB socket.
 """
 
 import argparse
 import glob
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+LINK_DIR = Path("/tmp/esp-sdr-tty")
 
 
 def signed_image(build_dir):
@@ -39,6 +47,17 @@ def esp_port(board_id):
     return ports[0]
 
 
+def link_port(board_id):
+    """Points LINK_DIR/<board_id> at the board's port, whatever its product string."""
+    port = esp_port(board_id)
+    LINK_DIR.mkdir(exist_ok=True)
+    tmp = LINK_DIR / f".{board_id}.tmp"
+    tmp.unlink(missing_ok=True)
+    tmp.symlink_to(port)
+    os.replace(tmp, LINK_DIR / board_id)
+    print(f"{LINK_DIR / board_id} -> {port}", flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--build-dir", required=True, type=Path)
@@ -55,7 +74,10 @@ def main():
             cmd += ["--esp-device", esp_port(args.board_id)]
 
     print("+", " ".join(cmd), flush=True)
-    sys.exit(subprocess.run(cmd).returncode)
+    ret = subprocess.run(cmd).returncode
+    if ret == 0 and args.board_id and not args.board_id.startswith("/"):
+        link_port(args.board_id)
+    sys.exit(ret)
 
 
 if __name__ == "__main__":
