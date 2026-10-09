@@ -76,10 +76,10 @@ void esp_sdr_tx_prepare(void)
 	tx_gain_apply(tx_gain_index);
 	/*
 	 * esp_sdr_tune() leaves the 5/6 LO divider off; select it after the TX
-	 * setup, as rx_front_end() does for RX, or 1842..2209 MHz goes out at 6/5.
+	 * setup, as rx_front_end() does for RX, or the divider band goes out at 6/5.
 	 */
 	regi2c_enter_critical();
-	tx_lo_select(rx_lo_plan(esp_sdr_freq_mhz).alternate);
+	tx_lo_select(esp_sdr_lo_divided());
 	regi2c_exit_critical();
 #if defined(CONFIG_ESP_SDR_RFTEST)
 	/* Without a frame in flight the MAC never enables TX on its own. */

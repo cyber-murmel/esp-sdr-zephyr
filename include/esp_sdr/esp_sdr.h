@@ -30,9 +30,11 @@ extern "C" {
 
 /**
  * Software tuning limits in MHz. The PLL locks over a much narrower range
- * that differs between chips: measured from 1842 MHz (the start of the 5/6
- * LO divider band, 1842 to 2209 MHz) up to 2793 MHz on one ESP32-S3 and above
- * 2856 MHz on one ESP32-C6. Outside it the radio does not lock.
+ * that differs between chips; esp_sdr_set_freq() reports frequencies outside
+ * it with -ERANGE. Below 2210 MHz the LO goes through the 5/6 divider. Measured
+ * on one ESP32-S3: 1817 to 2793 MHz on air, 1828 to 2781 MHz without -ERANGE;
+ * on one ESP32-C6: 1774 MHz to at least 2856 MHz on air, 1784 to 2884 MHz
+ * without -ERANGE.
  */
 #define ESP_SDR_FREQ_MIN_MHZ 100U
 #define ESP_SDR_FREQ_MAX_MHZ 6000U
@@ -87,9 +89,16 @@ int esp_sdr_init(void);
 /**
  * @brief Tune the LO, shared by receive and transmit.
  *
+ * Below 2210 MHz the PLL runs at 6/5 of @p mhz behind the 5/6 LO divider.
+ * After tuning, the PLL calibration's VCO window check decides the return
+ * value. It errs on the safe side: on the chips measured, the PLL still
+ * locked about 12 MHz beyond either end of the window.
+ *
  * @param mhz Frequency in MHz, ESP_SDR_FREQ_MIN_MHZ to ESP_SDR_FREQ_MAX_MHZ.
  * @retval 0 on success.
  * @retval -EINVAL if out of range.
+ * @retval -ERANGE if the VCO ended outside its tuning window: tuned, but the
+ *         PLL may not lock there.
  * @retval -EAGAIN if esp_sdr_init() has not run.
  */
 int esp_sdr_set_freq(uint32_t mhz);
@@ -103,6 +112,7 @@ uint32_t esp_sdr_get_freq(void);
  * A non-zero offset forces direct PLL tuning, also on Wi-Fi channel frequencies.
  *
  * @retval 0 on success.
+ * @retval -ERANGE as for esp_sdr_set_freq().
  * @retval -EAGAIN if esp_sdr_init() has not run.
  */
 int esp_sdr_set_freq_offset(int32_t khz);

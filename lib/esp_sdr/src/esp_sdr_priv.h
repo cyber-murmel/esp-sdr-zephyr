@@ -191,6 +191,8 @@ extern int32_t esp_sdr_fofs_khz;
 
 /* Tune the LO to esp_sdr_freq_mhz (plus offset). */
 void esp_sdr_tune(void);
+/* The LO plan puts esp_sdr_freq_mhz behind the 5/6 divider (below 2210 MHz). */
+bool esp_sdr_lo_divided(void);
 /* Back to the resting RX-ready state after a tuning change; lock held. */
 int esp_sdr_retune(void);
 /* MAC_DUMP_USAGE one-hot bits of the capture bank. */

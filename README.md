@@ -54,12 +54,13 @@ layout and toolchain peculiarities and how the code handles them.
   apps, `capture` and `wpan` (native radio) run on it; the others
   need the S3's USB OTG port, PSRAM or transmit.
 - Tuning: the API takes 100 to 6000 MHz, but the PLL only locks over a range
-  that differs from chip to chip: measured 2180 to 2793 MHz on an S3 and 2128
-  to at least 2856 MHz on a C6. Requests from 1842 to 2209 MHz go through the
-  5/6 LO divider (PLL at 1.2 times the frequency), for receive and transmit,
-  so the usable range on those two boards starts at 1842 MHz and ends at 2793
-  MHz (S3) and above 2856 MHz (C6). Outside it the radio does not lock and
-  receives or sends nothing useful.
+  that differs from chip to chip. Below 2210 MHz the LO goes through the 5/6
+  divider (PLL at 1.2 times the frequency), for receive and transmit. After
+  tuning, `esp_sdr_set_freq()` returns `-ERANGE` when the PLL calibration
+  leaves the VCO outside its tuning window, which errs on the safe side by
+  about 12 MHz. Measured on one S3: 1817 to 2793 MHz on air, 1828 to 2781 MHz
+  without `-ERANGE`; on one C6: 1774 MHz to at least 2856 MHz on air, 1784 to
+  2884 MHz without `-ERANGE`.
 - Capture: bursts of 256 to 16380 complex samples at 80, 40 or 16 MS/s, into
   either dump bank (`CONFIG_ESP_SDR_BANK1`), analog low-pass filter by
   bandwidth or raw code, and optionally (`CONFIG_ESP_SDR_RX_DECIM`) a CIC

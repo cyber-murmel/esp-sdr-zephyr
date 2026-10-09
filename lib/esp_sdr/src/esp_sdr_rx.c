@@ -91,7 +91,7 @@ static void rx_front_end(bool retune, uint32_t settle_us)
 	gain_apply();
 	/* The 5/6 LO divider is selected after RX setup, as upstream. */
 	regi2c_enter_critical();
-	rx_lo_select(rx_lo_plan(esp_sdr_freq_mhz).alternate);
+	rx_lo_select(esp_sdr_lo_divided());
 	regi2c_exit_critical();
 	lpf_apply();
 	k_busy_wait(settle_us);

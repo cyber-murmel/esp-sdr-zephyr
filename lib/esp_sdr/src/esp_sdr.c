@@ -41,9 +41,44 @@ static bool is_channel(uint32_t mhz)
 	return (mhz >= 2412U && mhz <= 2472U && (mhz - 2412U) % 5U == 0U) || mhz == 2484U;
 }
 
+/*
+ * LO plan. Upstream's rx_lo_plan() uses the 5/6 divider from 1842 MHz only and
+ * tries the PLL directly below. The VCO does not reach below about 2130 MHz
+ * (ESP32-C6) to 2180 MHz (ESP32-S3), so below 2210 MHz the divider is always
+ * the better choice: it reaches down to the VCO's lower limit / 1.2.
+ */
+#define LO_DIVIDER_BELOW_MHZ 2210U
+
+bool esp_sdr_lo_divided(void)
+{
+	return esp_sdr_freq_mhz < LO_DIVIDER_BELOW_MHZ;
+}
+
+/*
+ * RF PLL status after the vendor calibration (both chips, I2C block 0x62):
+ * bits 3:2 compare the VCO with its tuning window, 0 inside it, 1 too slow,
+ * 2 too fast. Outside the window the PLL may still lock for about 12 MHz
+ * (measured on one S3 and one C6), so this errs on the safe side.
+ */
+#define RFPLL_BLOCK       0x62U
+#define RFPLL_STATUS_REG  12U
+#define RFPLL_STATUS_VCO  0x0cU
+
+static bool pll_in_window(void)
+{
+	unsigned int status;
+
+	regi2c_enter_critical();
+	status = rx_lo_read(RFPLL_BLOCK, RX_LO_HOST, RFPLL_STATUS_REG);
+	regi2c_exit_critical();
+	return (status & RFPLL_STATUS_VCO) == 0U;
+}
+
 void esp_sdr_tune(void)
 {
-	rx_lo_plan_t plan = rx_lo_plan(esp_sdr_freq_mhz);
+	bool divided = esp_sdr_lo_divided();
+	uint32_t pll_khz = esp_sdr_freq_mhz * (divided ? 1200U : 1000U);
+	rx_lo_plan_t plan = {pll_khz / 1000U, (int)(pll_khz % 1000U), divided};
 	bool channel = esp_sdr_fofs_khz == 0 && is_channel(esp_sdr_freq_mhz);
 
 	regi2c_enter_critical();
@@ -134,6 +169,9 @@ int esp_sdr_set_freq(uint32_t mhz)
 	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
 	esp_sdr_freq_mhz = mhz;
 	ret = esp_sdr_retune();
+	if (ret == 0 && !pll_in_window()) {
+		ret = -ERANGE;
+	}
 	k_mutex_unlock(&esp_sdr_lock);
 	return ret;
 }
@@ -150,6 +188,9 @@ int esp_sdr_set_freq_offset(int32_t khz)
 	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
 	esp_sdr_fofs_khz = khz;
 	ret = esp_sdr_retune();
+	if (ret == 0 && !pll_in_window()) {
+		ret = -ERANGE;
+	}
 	k_mutex_unlock(&esp_sdr_lock);
 	return ret;
 }
