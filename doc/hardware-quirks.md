@@ -253,3 +253,12 @@ bootloader's loader segment is what `ESP_SDR_HIGH_RAM` places buffers in.
   2fe3:0005; `west dfu` detaches whatever PID runs.
 - A shell port serves one process: a host tool holding it (such as a running
   `link_perf.py run`) makes another tool's open of the same board fail.
+- An S3 image that owns the USB OTG port must start it: `app_usb_init()`
+  (`apps/common`) starts the USB device and arms the trial watchdog. An image
+  that skips it never enumerates after a DFU update, and nothing reverts it
+  until a power cycle.
+- The S3's USB PHY stays with USB OTG across a software reset: the OTG driver
+  sets `RTC_CNTL_SW_HW_USB_PHY_SEL` and `RTC_CNTL_SW_USB_PHY_SEL` in
+  `RTC_CNTL_USB_CONF_REG`, which a reset keeps. An image put on by DFU that
+  uses USB-Serial-JTAG instead stays off the bus until a power cycle, unless
+  it clears both bits early in boot.
