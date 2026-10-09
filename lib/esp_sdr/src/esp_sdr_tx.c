@@ -17,7 +17,13 @@
 
 #include <esp_attr.h>
 
+/* Upstream helper, used unmodified. */
+#include "rx_lo.h"
+
 #include "esp_sdr_priv.h"
+
+/* One physical LO selector feeds both mixers; named for the transmit side. */
+#define tx_lo_select rx_lo_select
 
 LOG_MODULE_DECLARE(esp_sdr, CONFIG_ESP_SDR_LOG_LEVEL);
 
@@ -68,6 +74,13 @@ void esp_sdr_tx_prepare(void)
 	rom_pbus_xpd_rx_on(0);
 	rom_pbus_xpd_tx_on(1);
 	tx_gain_apply(tx_gain_index);
+	/*
+	 * esp_sdr_tune() leaves the 5/6 LO divider off; select it after the TX
+	 * setup, as rx_front_end() does for RX, or 1842..2209 MHz goes out at 6/5.
+	 */
+	regi2c_enter_critical();
+	tx_lo_select(rx_lo_plan(esp_sdr_freq_mhz).alternate);
+	regi2c_exit_critical();
 #if defined(CONFIG_ESP_SDR_RFTEST)
 	/* Without a frame in flight the MAC never enables TX on its own. */
 	force_txon_mode(1, 0, 0);
