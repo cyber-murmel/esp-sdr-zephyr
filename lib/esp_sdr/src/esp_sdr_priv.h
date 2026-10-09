@@ -134,7 +134,8 @@ extern void rom_pbus_xpd_tx_off(void);
 extern void rom_pbus_xpd_tx_on(unsigned int en);
 extern void rom_set_rxclk_en(unsigned int en);
 extern void set_chanfreq(unsigned int mhz, unsigned int bw);
-extern void set_rf_freq_offset(unsigned int mode, unsigned int mhz, int khz);
+/* xtal selects the crystal divisor: 1 = 26 MHz, 2 = 32 MHz, other = 40 MHz (0 on the XIAO). */
+extern void set_rf_freq_offset(unsigned int xtal, unsigned int mhz, int khz);
 extern void stop_tx_tone(unsigned int en);
 #define phy_pbus_workmode   rom_pbus_workmode
 #define phy_pbus_xpd_rx_on  rom_pbus_xpd_rx_on

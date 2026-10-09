@@ -51,8 +51,8 @@ extern "C" {
 #endif
 
 /**
- * Place a static buffer in the internal SRAM above the capture bank (about
- * 20 KiB, DMA capable). It is not zeroed at boot: buffers only.
+ * Place a static buffer in the internal SRAM above the capture bank (on the
+ * ESP32-S3 about 38 KiB, DMA capable). It is not zeroed at boot: buffers only.
  */
 #define ESP_SDR_HIGH_RAM __attribute__((section(".esp_sdr_high")))
 

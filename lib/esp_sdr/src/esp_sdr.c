@@ -77,9 +77,10 @@ bool esp_sdr_lo_divided(void)
 
 /*
  * RF PLL status after the vendor calibration (both chips, I2C block 0x62):
- * bits 3:2 compare the VCO with its tuning window, 0 inside it, 1 too slow,
- * 2 too fast. Outside the window the PLL may still lock for about 12 MHz
- * (measured on one S3 and one C6), so this errs on the safe side.
+ * bits 3:2 compare the requested frequency with the VCO's tuning window: 0
+ * inside it, 1 below it (capacitor code at its maximum), 2 above it (code 0).
+ * Outside the window the PLL may still lock for about 12 MHz (measured on one
+ * S3 and one C6), so this errs on the safe side.
  */
 #define RFPLL_BLOCK       0x62U
 #define RFPLL_STATUS_REG  12U
