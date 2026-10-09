@@ -31,6 +31,7 @@ The API reference of the library is generated with Doxygen:
    :caption: Guides
 
    hardware-quirks
+   undocumented-registers
    signal_path
    ieee802154
    testing
