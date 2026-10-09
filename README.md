@@ -53,11 +53,17 @@ layout and toolchain peculiarities and how the code handles them.
   rates; the CIC decimated and folded captures work at 80 MS/s. Of the
   apps, `capture` and `wpan` (native radio) run on it; the others
   need the S3's USB OTG port, PSRAM or transmit.
-- Capture: bursts of 256 to 16380 complex samples at 80, 40 or 16 MS/s from
-  100 to 6000 MHz (5/6 LO mode at 1842 to 2209 MHz), into either dump bank
-  (`CONFIG_ESP_SDR_BANK1`), analog low-pass filter by bandwidth or raw code,
-  and optionally (`CONFIG_ESP_SDR_RX_DECIM`) a CIC decimated capture
-  (16 MS/s / m).
+- Tuning: the API takes 100 to 6000 MHz, but the PLL only locks over a range
+  that differs from chip to chip: measured 2180 to 2793 MHz on an S3 and 2128
+  to at least 2856 MHz on a C6. Requests from 1842 to 2209 MHz go through the
+  5/6 LO divider (PLL at 1.2 times the frequency), for receive and transmit,
+  so the usable range on those two boards starts at 1842 MHz and ends at 2793
+  MHz (S3) and above 2856 MHz (C6). Outside it the radio does not lock and
+  receives or sends nothing useful.
+- Capture: bursts of 256 to 16380 complex samples at 80, 40 or 16 MS/s, into
+  either dump bank (`CONFIG_ESP_SDR_BANK1`), analog low-pass filter by
+  bandwidth or raw code, and optionally (`CONFIG_ESP_SDR_RX_DECIM`) a CIC
+  decimated capture (16 MS/s / m).
 - Gain: hardware AGC or a fixed gain index (`esp_sdr_rx_set_gain()`, 0 to
   `esp_sdr_rx_gain_max()`, not dB). The fixed gain uses `force_rx_gain()` from
   Espressif's `librftest.a` (Apache-2.0, the esp-phy-lib commit matching the

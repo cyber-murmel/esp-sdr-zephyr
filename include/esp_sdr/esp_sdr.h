@@ -28,7 +28,12 @@ extern "C" {
  * @{
  */
 
-/** Software tuning limits in MHz; PLL lock is not guaranteed across the range. */
+/**
+ * Software tuning limits in MHz. The PLL locks over a much narrower range
+ * that differs between chips: measured from 1842 MHz (the start of the 5/6
+ * LO divider band, 1842 to 2209 MHz) up to 2793 MHz on one ESP32-S3 and above
+ * 2856 MHz on one ESP32-C6. Outside it the radio does not lock.
+ */
 #define ESP_SDR_FREQ_MIN_MHZ 100U
 #define ESP_SDR_FREQ_MAX_MHZ 6000U
 
