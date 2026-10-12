@@ -162,6 +162,10 @@ int link_mac_bench_decode(enum qam_mod mod, struct qam_rx_info *info, uint32_t *
 /* Park the MAC thread (radio idle) for measurements. */
 void link_mac_pause(bool pause);
 
+/* Split the OFDM preamble search over both CPUs (default on with two). */
+void link_mac_scan_split(bool on);
+bool link_mac_scan_split_get(void);
+
 /*
  * Run @p fn(@p arg) on the paused MAC thread (link_mac_pause()) and wait for
  * it: the decoders need about 3.5 KB of stack, more than the shell has.

@@ -451,6 +451,11 @@ static struct {
 	uint32_t us;
 	/* Or the second half of an OFDM payload (ofdm set), or of its RS units. */
 	bool ofdm, fec;
+	/* Or a slice of the preamble search (ofdm_scan_async()). */
+	bool scan;
+	struct ofdm_ctx *sctx;
+	int s_t0, s_t1, s_st, s_dci, s_dcq;
+	struct ofdm_sc_best *s_best;
 	const uint32_t *words;
 	enum ofdm_mod mod;
 	float err;
@@ -474,6 +479,12 @@ static void rx2_loop(void *p1, void *p2, void *p3)
 
 		(void)k_sem_take(&rx2_req, K_FOREVER);
 		t0 = now_cyc();
+		if (rx2.scan) {
+			ofdm_sc_scan(rx2.sctx, rx2.words, rx2.s_t0, rx2.s_t1, rx2.s_st, rx2.s_dci,
+				     rx2.s_dcq, rx2.s_best);
+			k_sem_give(&rx2_done);
+			continue;
+		}
 		if (rx2.ofdm) {
 			struct ofdm_ctx *o = link_ofdm();
 			size_t off = (size_t)o->mid * o->cfg.channels * ofdm_mod_bits(rx2.mod) / 8U;
@@ -497,6 +508,27 @@ static void rx2_loop(void *p1, void *p2, void *p3)
 		rx2.us = cyc_us(now_cyc() - t0);
 		k_sem_give(&rx2_done);
 	}
+}
+
+static void scan_async(struct ofdm_ctx *ctx, const uint32_t *w, int t0, int t1, int st, int dci,
+		       int dcq, struct ofdm_sc_best *b)
+{
+	rx2.scan = true;
+	rx2.sctx = ctx;
+	rx2.words = w;
+	rx2.s_t0 = t0;
+	rx2.s_t1 = t1;
+	rx2.s_st = st;
+	rx2.s_dci = dci;
+	rx2.s_dcq = dcq;
+	rx2.s_best = b;
+	k_sem_give(&rx2_req);
+}
+
+static void scan_wait(void)
+{
+	(void)k_sem_take(&rx2_done, K_FOREVER);
+	rx2.scan = false;
 }
 
 static void count_decode(int ret, const struct qam_rx_info *info, uint32_t us, uint32_t engine_us)
@@ -1327,7 +1359,19 @@ int link_mac_init(void)
 	k_thread_start(&mac_thread);
 	k_thread_start(&build_thread);
 	k_thread_start(&rx2_thread);
+	link_mac_scan_split(arch_num_cpus() > 1);
 	return 0;
+}
+
+void link_mac_scan_split(bool on)
+{
+	ofdm_scan_async = on ? scan_async : NULL;
+	ofdm_scan_wait = on ? scan_wait : NULL;
+}
+
+bool link_mac_scan_split_get(void)
+{
+	return ofdm_scan_async != NULL;
 }
 
 void link_mac_get_cfg(struct mac_cfg *c)

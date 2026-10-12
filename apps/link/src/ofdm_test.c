@@ -503,6 +503,15 @@ static int cmd_vec(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+static int cmd_split(const struct shell *sh, size_t argc, char **argv)
+{
+	if (argc > 1) {
+		link_mac_scan_split(strtoul(argv[1], NULL, 0) != 0U);
+	}
+	shell_print(sh, "preamble search on %s", link_mac_scan_split_get() ? "both CPUs" : "one CPU");
+	return 0;
+}
+
 static int cmd_stx(const struct shell *sh, size_t argc, char **argv)
 {
 	uint32_t ms = 5000, period_us = 8000, seq = 0, over = 0, build_max = 0;
@@ -699,6 +708,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(ofdm_cmds,
 	SHELL_CMD_ARG(rx, NULL, "Decode captures: [-n <captures>] [-v] [-w: whole window] "
 		      "[-d: dump the first frame with errors]", cmd_rx, 1, 5),
 	SHELL_CMD_ARG(snr, NULL, "SNR per subcarrier of a looped frame: [-n <captures>]", cmd_snr, 1, 2),
+	SHELL_CMD_ARG(split, NULL, "Preamble search on both CPUs: [0|1]", cmd_split, 1, 1),
 	SHELL_CMD_ARG(vec, NULL, "Vector payload decoder: [0|1]", cmd_vec, 1, 1),
 	SHELL_CMD_ARG(stx, NULL, "Stream test frames: [-t <s>] [-p <us per frame>]", cmd_stx, 1, 4),
 	SHELL_CMD_ARG(srx, NULL, "Check the stream: [-t <s>]", cmd_srx, 1, 2),

@@ -155,6 +155,13 @@ builds the next frame in 4.6 on the other CPU, ACKs 0.3 each way.
 - Per payload symbol (26 MHz, one CPU): derotate 17 us, FFT 11, tracking 10, equalize and
   decide 10; before: 12 + 41 + 26 + 34. A frame's payload takes 2.7 ms on one CPU instead
   of 5.7 (1.1 to 1.2 ms with both).
+- **Preamble search on both CPUs.** The coarse Schmidl-Cox scan (every 4th sample, about 2000
+  steps of 70 to 150 cycles, mostly the float metric) is cut in half at the middle of the
+  window; the second half runs on the other CPU's ``link_rx2`` thread (``ofdm_scan_async()``,
+  a semaphore each way, 12 us to hand over) while this one scans the first. Search 1.12 ->
+  0.82 ms (not 0.6: the fine scan, DC estimate and the halves' own cost stay). Stream at
+  6 ms: 3.61 against 3.43 Mbit/s and 0.5 against 5.3 % lost in one pair, 3.46 against 3.33
+  in the next; MAC 2.81 against 2.66 to 2.74. ``ofdm split 0|1`` switches it.
 - **Frame assembly** (``ofdm_frame.c``) used two integer divisions per byte with divisors
   that vary (units, bytes per unit): about 0.4 ms at each end. Nested loops now, and a byte
   table for the CRC-32 (the nibble table cost 90 us per frame).

@@ -521,11 +521,7 @@ size_t ofdm_tx_build(const struct ofdm_ctx *ctx, struct ofdm_txbuf *tb, enum ofd
 	return (size_t)nslots * ctx->slot;
 }
 
-struct sc_best {
-	float num, den;
-	int32_t pr, pi;
-	int t, start;
-};
+#define sc_best ofdm_sc_best
 
 /*
  * Schmidl-Cox scan over t = t0, t0 + st, .. t1: P(t) = sum conj(x[t + m])
@@ -607,6 +603,36 @@ OFDM_HOT static void sc_scan(struct ofdm_ctx *ctx, const uint32_t *w, int t0, in
  * (both the position and the correlation, which keeps at least 32 terms),
  * then a full resolution one over the prefix around its peak.
  */
+void (*ofdm_scan_async)(struct ofdm_ctx *ctx, const uint32_t *w, int t0, int t1, int st, int dci,
+			int dcq, struct ofdm_sc_best *b);
+void (*ofdm_scan_wait)(void);
+
+void ofdm_sc_scan(struct ofdm_ctx *ctx, const uint32_t *w, int t0, int t1, int st, int dci,
+		  int dcq, struct ofdm_sc_best *b)
+{
+	sc_scan(ctx, w, t0, t1, st, dci, dcq, b);
+}
+
+/* sc_scan() over 0 .. tmax, the second half on the other CPU when there is one. */
+static void sc_scan_split(struct ofdm_ctx *ctx, const uint32_t *w, int tmax, int st, int dci,
+			  int dcq, struct sc_best *b)
+{
+	struct sc_best b2;
+	int mid = (tmax / 2 / st) * st;
+
+	/* Only the coarse scans (st > 1: no prefix ring), and only when each half is worth the hand-over. */
+	if (ofdm_scan_async == NULL || ofdm_scan_wait == NULL || st < 2 || mid < 256 * st) {
+		sc_scan(ctx, w, 0, tmax, st, dci, dcq, b);
+		return;
+	}
+	ofdm_scan_async(ctx, w, mid, tmax, st, dci, dcq, &b2);
+	sc_scan(ctx, w, 0, mid - st, st, dci, dcq, b);
+	ofdm_scan_wait();
+	if (b2.t >= 0 && (b->t < 0 || b2.num * b->den > b->num * b2.den)) {
+		*b = b2;
+	}
+}
+
 /* A coarse peak this clear (normalized metric) needs no finer coarse scan. */
 #define COARSE_CLEAR 0.7f
 
@@ -622,14 +648,14 @@ static int search(struct ofdm_ctx *ctx, const uint32_t *w, int tmax, int tlim, i
 	 * scanned again at the normal stride.
 	 */
 	if (L / (2 * st) >= 16) {
-		sc_scan(ctx, w, 0, tmax, 2 * st, dci, dcq, &c);
+		sc_scan_split(ctx, w, tmax, 2 * st, dci, dcq, &c);
 		if (c.t < 0 || c.num < COARSE_CLEAR * c.den) {
-			sc_scan(ctx, w, 0, tmax, st, dci, dcq, &c);
+			sc_scan_split(ctx, w, tmax, st, dci, dcq, &c);
 		} else {
 			st *= 2;
 		}
 	} else {
-		sc_scan(ctx, w, 0, tmax, st, dci, dcq, &c);
+		sc_scan_split(ctx, w, tmax, st, dci, dcq, &c);
 	}
 	if (c.t < 0) {
 		return -1;

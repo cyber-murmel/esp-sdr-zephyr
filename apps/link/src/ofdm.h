@@ -226,6 +226,25 @@ struct ofdm_rx_info {
 /* The vector payload decoder (16-QAM and 64-QAM with the 16-bit FFT); false: the float one. */
 extern bool ofdm_vec_enable;
 
+/* The best metric of a preamble scan (see ofdm_sc_scan()). */
+struct ofdm_sc_best {
+	float num, den;
+	int32_t pr, pi;
+	int t, start;
+};
+
+/*
+ * Schmidl-Cox scan over t = t0, t0 + st, .. t1 (the coarse scan of the preamble search, st > 1).
+ * The search splits it in two when ofdm_scan_async is set: that starts the scan of
+ * [t0, t1] on another CPU (it calls ofdm_sc_scan() there) and ofdm_scan_wait() returns once it
+ * is done. Both stay NULL when there is no second CPU to use.
+ */
+void ofdm_sc_scan(struct ofdm_ctx *ctx, const uint32_t *w, int t0, int t1, int st, int dci,
+		  int dcq, struct ofdm_sc_best *b);
+extern void (*ofdm_scan_async)(struct ofdm_ctx *ctx, const uint32_t *w, int t0, int t1, int st,
+				int dci, int dcq, struct ofdm_sc_best *b);
+extern void (*ofdm_scan_wait)(void);
+
 /* Optional cycle counter for ofdm_rx_info.prof. */
 extern uint32_t (*ofdm_clock)(void);
 
