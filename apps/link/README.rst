@@ -20,7 +20,7 @@ throughput test on the USB shell.
   symbols, estimates the carrier offset (and from it the sample clock
   offset), trains an 11 tap equalizer by least squares and tracks phase and
   taps decision directed.
-- **Error correction** per frame: RS(255,231), extended Hamming (128,120),
+- **Error correction** per frame: RS(255,223), extended Hamming (128,120),
   or none. Full frames fill the whole capture window with a short last unit
   (a shortened RS codeword, fewer Hamming blocks).
 - **Pairs**: two half length frames looped together. The receiver decodes
@@ -72,7 +72,7 @@ the same ``ofdm set`` settings on both).
   pilot symbols, a BPSK header (type, modulation, addresses, sequence
   number, CRC-16; its bits repeated over the subcarriers and combined soft),
   the payload with another pilot in its middle, each symbol with a cyclic
-  prefix. The payload is RS(255,231) in equally shortened units, byte
+  prefix. The payload is RS(255,223) in equally shortened units, byte
   interleaved over the frame, with a CRC-32. The frame loops in the DAC and
   fills half the capture window, so a whole copy always fits.
 - Receiver, on the raw capture words: an integer sliding Schmidl-Cox search
@@ -215,43 +215,45 @@ decodes what it catches, skips a frame it already has after the header (``dup``)
 reports as usual; the client's "acked" counts frames sent. Frame n carries bytes that depend
 on n, and the RS and CRC-32 check them.
 
-64-QAM, RS, 26 MHz, 30 dB (received by the server, 8 s, vector decoder):
+64-QAM, RS, 26 MHz, 30 dB (received by the server, 8 s; MER 23.3 to 23.5 dB):
 
 ======== ========== =========== ====== ======
 Period   Offered    Received    Lost   Dups
 ======== ========== =========== ====== ======
-7000 us  3.19       3.00        0      236
-6500 us  3.43       3.10        3.7 %  8
-6000 us  3.72       3.04        12.5 % 0
-5500 us  4.05       3.01        20 %   0
+7000 us  3.19       3.00        0      658
+6000 us  3.72       3.50        0      96
+5500 us  4.05       3.50        7.8 %  3
+5000 us  4.46       3.38        18.7 % 0
 ======== ========== =========== ====== ======
 
-(Mbit/s.) The receiver's cycle is about 6 ms (capture 0.4, the stages above, and the
-captures that straddle a bank switch, about 8 %): a shorter period only loses frames, a
-longer one repeats them (the repeats are skipped after the header). With the float decoder
+(Mbit/s; before the search split and the vector derotation: 3.04 with 12.5 % lost at 6000
+us.) The receiver's cycle is about 5.5 ms (capture 0.4, the stages above, and the captures
+that straddle a bank switch): a shorter period only loses frames, a longer one repeats them
+(the repeats are skipped after the header). With the float decoder
 the same boards reached 2.66 Mbit/s with 10 % lost at 7 ms, over the MAC (stop and wait,
 CSMA) 2.3 to 2.4. The MER of the link drifts by a dB or more during a session (22.3 to 23.7
 dB); more errors per RS unit make the FEC stage slower (1.8 to 2.8 ms).
 
-Parity (``CONFIG_APP_RS_PARITY``, default 24 bytes per unit, RS(255,231), 12 corrections): the
-unit needs 4.7 corrections on average, so the 16 of the earlier RS(255,223) were far more than
-needed. Fewer parity bytes carry 3.6 % more payload per frame and cut the FEC stage to 1.3 to
-1.9 ms. Blind stream on the same bench (64-QAM, 26 MHz, received Mbit/s and lost; the RS(255,223)
-column was measured earlier the same day, within the 22.3 to 23.7 dB MER drift):
+Parity (``CONFIG_APP_RS_PARITY``, 32 bytes per unit by default, RS(255,223), 16
+corrections): the unit needs about 4.7 corrections at an MER of 23.5 dB and twice that at
+22.3, and the MER drifts that much within a session (it fell from 23.6 to 22.2 dB over four
+hours of bench runs, the carrier offset from -22 to -28 kHz). 24 parity bytes carry 3.6 %
+more payload and cut the FEC stage to 1.3 to 1.9 ms, which at 23.5 dB is a better link, and
+at 22.3 dB loses half the frames (blind stream, 64-QAM, 26 MHz, received Mbit/s and lost):
 
-======== ============= =============
-Period   RS(255,223)   RS(255,231)
-======== ============= =============
-7000 us  3.00, 0       3.11, 0
+======== ============= ============= ============= =============
+Period   32, 23.5 dB   24, 23.5 dB   32, 22.4 dB   24, 22.3 dB
+======== ============= ============= ============= =============
+7000 us  3.00, 0       3.11, 0       2.98, 0.4 %   1.57, 47 %
 6500 us  3.10, 3.7 %   3.34, 0.2 %
-6000 us  3.04, 12.5 %  3.46, 4.1 %
-======== ============= =============
+6000 us  3.04, 12.5 %  3.46, 4.1 %   3.10, 10.7 %  1.19, 66 %
+======== ============= ============= ============= =============
 
-RS(255,239) (16 parity bytes) is too weak here: 21 % of the frames fail. The edge carriers
-(19 to 20 dB) produce most of the errors; a static 16-QAM zone on the outer carriers would
-trade rate for fewer errors, but a model on the measured SNR shows no net gain over simply
-lowering the parity. Over the MAC (ACKs, 50 us turnaround) the client sends 2.78 Mbit/s,
-up from 2.3 to 2.4.
+16 parity bytes lose a fifth of the frames at 23.5 dB. The edge carriers (19 to 20 dB)
+produce most of the errors; a model on the measured SNR gives a static 16-QAM zone on the
+outer carriers, or bit loading in general, only 4 % over flat 64-QAM at equal error rate,
+so neither is built. What the lower MER needs is 16-QAM (2.3 Mbit/s loss-free in the same
+state): a rate adaptation, not more parity.
 
 Building and running
 ********************
