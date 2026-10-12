@@ -233,6 +233,8 @@ int ofdm_init(struct ofdm_ctx *ctx, const struct ofdm_cfg *cfg)
 	ctx->fscale = (float)ctx->rnfft / FFT16_GAIN;
 	/* The context may sit in RAM that is not cleared at boot. */
 	ctx->sc_err = NULL;
+	ctx->w0.e16_src = NULL;
+	ctx->rx.dslot = 0.0f;
 	ctx->veq[0].sar = 0;
 	ctx->veq[1].sar = 0;
 	return 0;
@@ -709,6 +711,8 @@ static void rot_init(struct ofdm_ctx *ctx, float eps)
 }
 
 bool ofdm_vec_derot = true;
+float ofdm_carrier_hz = 2412e6f;
+int ofdm_sfo = -1;
 
 #if defined(CONFIG_APP_OFDM_ESP_DSP) && OFDM_FFT16
 /*
@@ -781,8 +785,15 @@ static void derot16(const struct ofdm_ctx *ctx, int16_t *q, const uint32_t *x, u
 OFDM_HOT static void take_slot(const struct ofdm_ctx *ctx, struct ofdm_worker *wk,
 			       const uint32_t *w, unsigned int s, bool fast)
 {
-	const uint32_t *__restrict x = &w[ctx->rx.start + (int)(s * ctx->rslot) + (int)ctx->rcp -
-					  (int)(ctx->rcp / 4U)];
+	int pos = ctx->rx.start + (int)(s * ctx->rslot) + (int)ctx->rcp - (int)(ctx->rcp / 4U);
+	const uint32_t *__restrict x;
+	bool wrapped = pos + (int)ctx->rnfft > ctx->rx.n;
+
+	/* Past the window's end: the same samples one period earlier (the frame loops). */
+	if (wrapped) {
+		pos -= ctx->rx.per;
+	}
+	x = &w[pos];
 	const struct ofdm_cf *__restrict r = ctx->rot;
 	struct ofdm_cf *__restrict b = wk->buf;
 	unsigned int n = ctx->rnfft;
@@ -834,11 +845,24 @@ OFDM_HOT static void take_slot(const struct ofdm_ctx *ctx, struct ofdm_worker *w
 	}
 	fft(ctx, wk->buf, n);
 #endif
-	if (s > 1U) {
-		struct ofdm_cf u = wk->u, us = ctx->rx.us;
+	{
+		struct ofdm_cf u = wk->u, us = ctx->rx.us, cw = ctx->rx.cw;
 
-		wk->u = (struct ofdm_cf){u.re * us.re - u.im * us.im, u.re * us.im + u.im * us.re};
+		/* The last slot's wrap undone, the step, this slot's wrap. */
+		if (wk->wrapped) {
+			u = (struct ofdm_cf){u.re * cw.re + u.im * cw.im, u.im * cw.re - u.re * cw.im};
+		}
+		if (s > 1U) {
+			u = (struct ofdm_cf){u.re * us.re - u.im * us.im, u.re * us.im + u.im * us.re};
+		}
+		if (wrapped) {
+			u = (struct ofdm_cf){u.re * cw.re - u.im * cw.im, u.re * cw.im + u.im * cw.re};
+		}
+		wk->u = u;
+		wk->wrapped = wrapped;
 	}
+	wk->slot = s;
+	wk->tslot = (float)s - (wrapped ? (float)ctx->rx.per / (float)ctx->rslot : 0.0f);
 }
 
 /* Output bin @p i of the worker's receive FFT as the float FFT would have it. */
@@ -950,6 +974,29 @@ OFDM_HOT static struct ofdm_cf track_any(const struct ofdm_ctx *ctx, struct ofdm
 	return track(ctx, wk, mod);
 }
 
+/* The sample clock drift's turn per unit of subcarrier frequency for the worker's slot. */
+static inline float sfo_theta(const struct ofdm_ctx *ctx, const struct ofdm_worker *wk)
+{
+	return ctx->rx.dslot * (wk->tslot - ctx->rx.sref);
+}
+
+/* exp(j th k) for subcarrier a's frequency k, stepped along the subcarriers by sfo_next(). */
+static inline struct ofdm_cf sfo_first(unsigned int c, float th)
+{
+	float a = th * (float)sub_freq(c, 0);
+
+	return (struct ofdm_cf){cosf(a), sinf(a)};
+}
+
+static inline struct ofdm_cf sfo_next(unsigned int c, unsigned int a, struct ofdm_cf ph,
+				      struct ofdm_cf st)
+{
+	for (int d = sub_freq(c, a + 1U) - sub_freq(c, a); d > 0; d--) {
+		ph = (struct ofdm_cf){ph.re * st.re - ph.im * st.im, ph.re * st.im + ph.im * st.re};
+	}
+	return ph;
+}
+
 /* One payload symbol: rotation, decisions into @p k and their error. */
 static inline __attribute__((always_inline)) void data_symbol_m(const struct ofdm_ctx *ctx,
 								struct ofdm_worker *wk,
@@ -958,13 +1005,20 @@ static inline __attribute__((always_inline)) void data_symbol_m(const struct ofd
 {
 	struct ofdm_cf r = track(ctx, wk, mod);
 	unsigned int c = ctx->cfg.channels, bps = ofdm_mod_bits(mod);
+	float th = sfo_theta(ctx, wk);
+	struct ofdm_cf ph = sfo_first(c, th), st = {cosf(th), sinf(th)};
 
 	float e2 = 0.0f;
 
 	float *se = ctx->sc_err;
 
 	for (unsigned int a = 0; a < c; a++) {
-		struct ofdm_cf z = eq_rot(ctx, wk, a, r.re, r.im), d;
+		struct ofdm_cf ra = {r.re * ph.re - r.im * ph.im, r.re * ph.im + r.im * ph.re};
+		struct ofdm_cf z = eq_rot(ctx, wk, a, ra.re, ra.im), d;
+
+		if (a + 1U < c) {
+			ph = sfo_next(c, a, ph, st);
+		}
 		unsigned int v = decide(mod, z, &d);
 		float ee = (z.re - d.re) * (z.re - d.re) + (z.im - d.im) * (z.im - d.im);
 
@@ -1064,6 +1118,7 @@ static inline __attribute__((always_inline)) void data_symbol_v(const struct ofd
 	const struct ofdm_veq *v = &ctx->veq[mod == OFDM_64QAM];
 	const struct cons *cn = &cons[mod];
 	struct ofdm_cf r = track(ctx, wk, mod);
+	const int16_t *ep = &v->e[0][0];
 	unsigned int c = ctx->cfg.channels, ng = c / 4U, nv = 4U * ng, bps = ofdm_mod_bits(mod);
 	unsigned int sh = (unsigned int)v->sar, qb = cn->q;
 	/* The gathered subcarriers, in the unused half of the FFT buffer (the FFT takes <= 1 KB). */
@@ -1087,11 +1142,37 @@ static inline __attribute__((always_inline)) void data_symbol_v(const struct ofd
 		cv[4][i] = 128;
 	}
 	rq32 = (uint32_t)(uint16_t)rr | ((uint32_t)(uint16_t)ri << 16);
+	if (ctx->rx.dslot != 0.0f) {
+		/* The equalizer turned against the drift, again once the band edge moved 0.02 rad. */
+		float th = sfo_theta(ctx, wk);
+
+		if (wk->e16_src != v || wk->e16_gen != ctx->rx.gen ||
+		    fabsf(th - wk->e16_th) * (float)(c / 2U) > 0.02f) {
+			struct ofdm_cf ph = sfo_first(c, th), st = {cosf(th), sinf(th)};
+
+			for (unsigned int a = 0; a < c; a++) {
+				float er = (float)v->e[a][0], ei = (float)v->e[a][1];
+				float yr = er * ph.re - ei * ph.im, yi = er * ph.im + ei * ph.re;
+
+				yr = yr > 32767.0f ? 32767.0f : (yr < -32767.0f ? -32767.0f : yr);
+				yi = yi > 32767.0f ? 32767.0f : (yi < -32767.0f ? -32767.0f : yi);
+				wk->e16[a][0] = (int16_t)(yr + (yr >= 0.0f ? 0.5f : -0.5f));
+				wk->e16[a][1] = (int16_t)(yi + (yi >= 0.0f ? 0.5f : -0.5f));
+				if (a + 1U < c) {
+					ph = sfo_next(c, a, ph, st);
+				}
+			}
+			wk->e16_src = v;
+			wk->e16_gen = ctx->rx.gen;
+			wk->e16_th = th;
+		}
+		ep = &wk->e16[0][0];
+	}
 	irq = arch_irq_lock();
 	pie_enable();
 	{
 		/* Squared error in units of 1 / U, U = 128 / s per unit of the constellation. */
-		float acc = (float)veq_kernel(gb, &v->e[0][0], ng, sh, &rq32, cv);
+		float acc = (float)veq_kernel(gb, ep, ng, sh, &rq32, cv);
 
 		e2 = acc * (cn->s * cn->s) * (1.0f / 16384.0f);
 	}
@@ -1136,7 +1217,10 @@ static inline __attribute__((always_inline)) void data_symbol_v(const struct ofd
 	}
 	/* Subcarriers past the last whole group: floats. */
 	for (unsigned int a = nv; a < c; a++) {
-		struct ofdm_cf z = eq_rot(ctx, wk, a, r.re, r.im), d;
+		float ta = sfo_theta(ctx, wk) * (float)sub_freq(c, a);
+		struct ofdm_cf ph = {cosf(ta), sinf(ta)};
+		struct ofdm_cf z = eq_rot(ctx, wk, a, r.re * ph.re - r.im * ph.im,
+					  r.re * ph.im + r.im * ph.re), d;
 		unsigned int vv = decide(mod, z, &d);
 
 		e2 += (z.re - d.re) * (z.re - d.re) + (z.im - d.im) * (z.im - d.im);
@@ -1352,7 +1436,18 @@ int ofdm_rx_begin_period(struct ofdm_ctx *ctx, const uint32_t *words, size_t n, 
 	unsigned int c = ctx->cfg.channels, nh = ctx->cfg.hdr_bits, h0 = 1U + ctx->cfg.pilots;
 	uint32_t t0 = clk(), t1;
 
+	int tlim = tmax;
+
 	memset(info, 0, sizeof(*info));
+	rx->n = (int)n;
+	rx->per = per;
+	if ((int)n >= per + (int)ctx->rnfft) {
+		/*
+		 * Every slot lies whole in the window or one period earlier: a start anywhere
+		 * the search can still measure it will do, and so will the next copy's.
+		 */
+		tmax = tlim = (int)n - (int)ctx->rnfft - 1;
+	}
 	if (tmax < 0) {
 		return -1;
 	}
@@ -1367,7 +1462,26 @@ int ofdm_rx_begin_period(struct ofdm_ctx *ctx, const uint32_t *words, size_t n, 
 	}
 	rx->dci = (si + (si >= 0 ? cnt / 2 : -cnt / 2)) / cnt;
 	rx->dcq = (sq + (sq >= 0 ? cnt / 2 : -cnt / 2)) / cnt;
-	rx->start = search(ctx, words, tmax, (int)n - per, per, rx->dci, rx->dcq, &best, &ang);
+	rx->cw = (struct ofdm_cf){1.0f, 0.0f};
+	if ((int)n > per) {
+		/* The overlap: the same samples a period apart, turned by the carrier offset. */
+		int64_t cr = 0, ci = 0;
+		float m;
+
+		for (int i = per; i < (int)n; i++) {
+			int ai = esp_sdr_rx_i(words[i]) - rx->dci, aq = esp_sdr_rx_q(words[i]) - rx->dcq;
+			int bi = esp_sdr_rx_i(words[i - per]) - rx->dci;
+			int bq = esp_sdr_rx_q(words[i - per]) - rx->dcq;
+
+			cr += ai * bi + aq * bq;
+			ci += aq * bi - ai * bq;
+		}
+		m = sqrtf((float)cr * (float)cr + (float)ci * (float)ci);
+		if (m > 0.0f) {
+			rx->cw = (struct ofdm_cf){(float)cr / m, (float)ci / m};
+		}
+	}
+	rx->start = search(ctx, words, tmax, tlim, per, rx->dci, rx->dcq, &best, &ang);
 	t1 = clk();
 	info->prof[0] = t1 - t0;
 	info->metric = best;
@@ -1381,9 +1495,16 @@ int ofdm_rx_begin_period(struct ofdm_ctx *ctx, const uint32_t *words, size_t n, 
 	/* Cycles per receive sample. */
 	rx->eps = info->cfo_frac / (float)ctx->rnfft;
 	rot_init(ctx, rx->eps);
+	rx->gen++;
+	rx->sref = 0.5f * (float)(1U + ctx->cfg.pilots);
+	rx->dslot = ofdm_sfo != 0 && ofdm_carrier_hz > 0.0f
+			    ? (float)ofdm_sfo * info->cfo_hz / ofdm_carrier_hz * ESP_SDR_TAU_F *
+				      (float)ctx->rslot / (float)ctx->rnfft
+			    : 0.0f;
 	a = -ESP_SDR_TAU_F * rx->eps * (float)ctx->rslot;
 	rx->us = (struct ofdm_cf){cosf(a), sinf(a)};
 	ctx->w0.u = (struct ofdm_cf){1.0f, 0.0f};
+	ctx->w0.wrapped = false;
 
 	channel(ctx, words);
 	/*
@@ -1397,10 +1518,11 @@ int ofdm_rx_begin_period(struct ofdm_ctx *ctx, const uint32_t *words, size_t n, 
 		int shift = (int)lrintf(rx->delay - (float)ctx->rcp / 2.0f);
 
 		if (shift != 0 && shift > -(int)ctx->rcp && shift < (int)ctx->rcp &&
-		    rx->start + shift >= 0 && rx->start + shift + per <= (int)n) {
+		    rx->start + shift >= 0 && rx->start + shift <= tlim) {
 			rx->start += shift;
 			info->start = rx->start;
 			ctx->w0.u = (struct ofdm_cf){1.0f, 0.0f};
+	ctx->w0.wrapped = false;
 			channel(ctx, words);
 		}
 	}
@@ -1444,6 +1566,7 @@ void ofdm_rx_fork(const struct ofdm_ctx *ctx, struct ofdm_worker *wk, const uint
 	float m;
 
 	wk->u = (struct ofdm_cf){cosf(a), sinf(a)};
+	wk->wrapped = false;
 	wk->rate = ctx->w0.rate;
 	take_slot(ctx, wk, words, ps, false);
 	/* The pilot equalized: its phase against the channel's is the one to undo. */

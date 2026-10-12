@@ -274,6 +274,7 @@ static void apply_cfg(void)
 	/* Sample clock tracking follows the carrier offset. */
 	qam_rx_ctx.carrier_hz = (float)cfg.freq_mhz * 1e6f;
 	qam_rx2_ctx.carrier_hz = qam_rx_ctx.carrier_hz;
+	ofdm_carrier_hz = qam_rx_ctx.carrier_hz;
 	qam_rx_ctx.avg = cfg.avg;
 	qam_rx2_ctx.avg = cfg.avg;
 }
@@ -605,7 +606,7 @@ static void dump_hand_out(const struct esp_sdr_rx_burst *b)
 }
 
 /*
- * OFDM data frames: a window of two frames at the OFDM receive rate, the
+ * OFDM data frames: a window of one frame and a margin (it loops) at the OFDM receive rate, the
  * header, the payload if the frame is for us, and the ACK (a QAM frame).
  */
 static void receive_ofdm(void)
@@ -618,7 +619,7 @@ static void receive_ofdm(void)
 	int ret, corr = 0;
 	bool dupb;
 
-	if (esp_sdr_rx_capture(link_ofdm_rx_rate(), MIN(WINDOW_SAMPLES, 2U * o->rlen + o->rnfft),
+	if (esp_sdr_rx_capture(link_ofdm_rx_rate(), MIN(WINDOW_SAMPLES, ofdm_rx_window(o, o->rlen)),
 			       &b) != 0) {
 		return;
 	}
@@ -733,7 +734,7 @@ static void receive_ofdm_ack(void)
 	int ret;
 
 	if (esp_sdr_rx_capture(link_ofdm_rx_rate(),
-			       MIN(WINDOW_SAMPLES, 2U * ofdm_hdr_rsamples(o) + o->rnfft), &b) != 0) {
+			       MIN(WINDOW_SAMPLES, ofdm_rx_window(o, ofdm_hdr_rsamples(o))), &b) != 0) {
 		return;
 	}
 	t0 = now_cyc();

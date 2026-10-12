@@ -91,6 +91,21 @@ struct ofdm_cf {
 struct ofdm_worker {
 	struct ofdm_cf buf[OFDM_NFFT_MAX] __attribute__((aligned(16)));
 	struct ofdm_cf trk, rate, u;
+	/* The slot in the buffer was read one period earlier: u includes rx.cw. */
+	bool wrapped;
+	/* The slot in the buffer, and when it was captured in slots from the frame start (one
+	 * period earlier if wrapped).
+	 */
+	unsigned int slot;
+	float tslot;
+	/*
+	 * The vector decoder's equalizer turned against the sample clock's drift (see
+	 * rx.dslot), rebuilt when the drift has moved: for which frame, equalizer and phase.
+	 */
+	int16_t e16[OFDM_CH_MAX][2] __attribute__((aligned(16)));
+	const void *e16_src;
+	uint32_t e16_gen;
+	float e16_th;
 	/* The buffer holds the 16-bit FFT's output (payload symbols), else the float FFT's. */
 	bool q16;
 };
@@ -98,6 +113,19 @@ struct ofdm_worker {
 /* Receive state between ofdm_rx_begin() and ofdm_rx_finish(). */
 struct ofdm_rxstate {
 	int start, dci, dcq;
+	/* The window (receive words) and the frame's period in it: a slot past the end is read one period earlier. */
+	int n, per;
+	/* The carrier's turn over one period, from the window's overlap with itself: a slot read
+	 * one period earlier is turned back by this.
+	 */
+	struct ofdm_cf cw;
+	/*
+	 * Sample clock drift: subcarrier k of slot s is turned back by exp(j k dslot (s - sref)),
+	 * the window's growing timing error against the pilots' (both crystals drive their
+	 * chip's carrier and sample clock, so the drift follows the carrier offset).
+	 */
+	float dslot, sref;
+	uint32_t gen;
 	float eps;
 	/* Step of the window phase per slot. */
 	struct ofdm_cf us;
@@ -198,6 +226,18 @@ static inline size_t ofdm_hdr_rsamples(const struct ofdm_ctx *ctx)
 	return (size_t)(1U + ctx->cfg.pilots + ctx->nhdr) * ctx->rslot;
 }
 
+/*
+ * Receive words that hold a looping frame of @p period receive samples whole: the frame
+ * loops without a gap, so one period anywhere holds every sample once (rotated); one FFT, a
+ * prefix and the coarse search's step more let the search see a start and every slot lie
+ * whole in the window or one period earlier.
+ */
+#define OFDM_RX_WRAP_MARGIN(nfft, cp) ((nfft) + (cp) + 16U)
+static inline size_t ofdm_rx_window(const struct ofdm_ctx *ctx, size_t period)
+{
+	return period + OFDM_RX_WRAP_MARGIN(ctx->rnfft, ctx->rcp);
+}
+
 /* Test payload: whitened bits, a function of @p seed (packed, MSB first). */
 void ofdm_test_bits(uint8_t *bits, size_t nbits, uint32_t seed);
 
@@ -229,6 +269,9 @@ struct ofdm_rx_info {
 extern bool ofdm_vec_enable;
 /* The payload derotation on the vector unit (ESP32-S3, 16-bit FFT path). */
 extern bool ofdm_vec_derot;
+/* Carrier frequency (for the sample clock drift) and the drift correction's sign (0: off). */
+extern float ofdm_carrier_hz;
+extern int ofdm_sfo;
 
 /* The best metric of a preamble scan (see ofdm_sc_scan()). */
 struct ofdm_sc_best {
@@ -254,8 +297,8 @@ extern uint32_t (*ofdm_clock)(void);
 
 /*
  * Find a whole frame copy in @p n receive words (at the receive rate), set up
- * the channel and decode the header into @p hdr (cfg.hdr_bits bits). The window
- * must hold one whole copy (a looped frame: n >= 2 * ctx->rlen + ctx->rcp).
+ * the channel and decode the header into @p hdr (cfg.hdr_bits bits). The frame
+ * loops: n >= ofdm_rx_window(ctx, ctx->rlen) holds it (read around the period).
  *
  * @retval 0 on success.
  * @retval -1 if no preamble was found.

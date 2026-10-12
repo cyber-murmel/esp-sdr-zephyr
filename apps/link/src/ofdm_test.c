@@ -66,12 +66,15 @@ static uint32_t cyc(void)
 }
 
 /*
- * Longest frame (transmit samples): the DAC bank, and two copies plus a prefix
- * in the receive window. At half the receive rate that is the whole bank.
+ * Longest frame (transmit samples): the DAC bank, and one copy plus the wrap
+ * margin in the receive window (ofdm_rx_window()).
  */
 static void layout_limit(struct ofdm_cfg *c)
 {
-	c->max_samples = c->rx_div == 2U ? WINDOW - 2U * OFDM_NFFT_MAX / 4U : (WINDOW + 1U) / 2U;
+	size_t bank = WINDOW - 2U * OFDM_NFFT_MAX / 4U;
+	size_t rx = (WINDOW - OFDM_RX_WRAP_MARGIN(OFDM_NFFT_MAX, OFDM_NFFT_MAX / 4U)) * c->rx_div;
+
+	c->max_samples = MIN(bank, rx);
 }
 
 /* 80 or 40 MS/s; the receiver below 40 MS/s has no rate. */
@@ -295,6 +298,7 @@ static int cmd_rx(const struct shell *sh, size_t argc, char **argv)
 	bool verbose = false, full = false, dump = false, cmp = false;
 	uint64_t errs_f = 0, errs_d = 0;
 	struct ofdm_cf sv_trk = {0}, sv_rate = {0}, sv_u = {0};
+	bool sv_wrapped = false;
 	size_t bits;
 
 	for (size_t i = 1; i < argc; i++) {
@@ -321,7 +325,7 @@ static int cmd_rx(const struct shell *sh, size_t argc, char **argv)
 		uint32_t t0 = cyc(), e = 0;
 
 		/* Two frames hold a whole copy wherever the capture starts. */
-		if (esp_sdr_rx_capture(RX_RATE, full ? WINDOW : MIN(WINDOW, 2U * ctx.rlen + ctx.rnfft),
+		if (esp_sdr_rx_capture(RX_RATE, full ? WINDOW : MIN(WINDOW, ofdm_rx_window(&ctx, ctx.rlen)),
 				       &b) != 0) {
 			continue;
 		}
@@ -334,6 +338,7 @@ static int cmd_rx(const struct shell *sh, size_t argc, char **argv)
 		sv_trk = ctx.w0.trk;
 		sv_rate = ctx.w0.rate;
 		sv_u = ctx.w0.u;
+		sv_wrapped = ctx.w0.wrapped;
 		ofdm_rx_finish(&ctx, b.words, mod, rx_bits, &info);
 		for (size_t i = 0; i < (bits + 7U) / 8U; i++) {
 			uint8_t d = rx_bits[i] ^ ref_bits[i];
@@ -353,6 +358,7 @@ static int cmd_rx(const struct shell *sh, size_t argc, char **argv)
 			ctx.w0.trk = sv_trk;
 			ctx.w0.rate = sv_rate;
 			ctx.w0.u = sv_u;
+			ctx.w0.wrapped = sv_wrapped;
 			ctx.sc_err = dummy;
 			ofdm_rx_finish(&ctx, b.words, mod, rx_bits, &info);
 			ctx.sc_err = NULL;
@@ -371,6 +377,7 @@ static int cmd_rx(const struct shell *sh, size_t argc, char **argv)
 				ctx.w0.trk = sv_trk;
 				ctx.w0.rate = sv_rate;
 				ctx.w0.u = sv_u;
+			ctx.w0.wrapped = sv_wrapped;
 				ofdm_vec_derot = false;
 				ofdm_rx_finish(&ctx, b.words, mod, rx_bits, &info);
 				ofdm_vec_derot = true;
@@ -491,7 +498,7 @@ static int cmd_snr(const struct shell *sh, size_t argc, char **argv)
 		struct esp_sdr_rx_burst b;
 		struct ofdm_rx_info info;
 
-		if (esp_sdr_rx_capture(RX_RATE, MIN(WINDOW, 2U * ctx.rlen + ctx.rnfft), &b) != 0 ||
+		if (esp_sdr_rx_capture(RX_RATE, MIN(WINDOW, ofdm_rx_window(&ctx, ctx.rlen)), &b) != 0 ||
 		    ofdm_rx_begin(&ctx, b.words, b.count, rx_hdr, &info) != 0) {
 			continue;
 		}
@@ -530,6 +537,15 @@ static int cmd_derot(const struct shell *sh, size_t argc, char **argv)
 		ofdm_vec_derot = strtoul(argv[1], NULL, 0) != 0U;
 	}
 	shell_print(sh, "vector derotation %s", ofdm_vec_derot ? "on" : "off (scalar)");
+	return 0;
+}
+
+static int cmd_sfo(const struct shell *sh, size_t argc, char **argv)
+{
+	if (argc > 1) {
+		ofdm_sfo = (int)strtol(argv[1], NULL, 0);
+	}
+	shell_print(sh, "sample clock drift correction %d (0: off)", ofdm_sfo);
 	return 0;
 }
 
@@ -624,7 +640,7 @@ static int cmd_srx(const struct shell *sh, size_t argc, char **argv)
 		struct ofdm_rx_info info;
 		uint32_t seq, nseq, e = 0;
 
-		if (esp_sdr_rx_capture(RX_RATE, MIN(WINDOW, 2U * ctx.rlen + ctx.rnfft), &b) != 0) {
+		if (esp_sdr_rx_capture(RX_RATE, MIN(WINDOW, ofdm_rx_window(&ctx, ctx.rlen)), &b) != 0) {
 			continue;
 		}
 		caps++;
@@ -739,6 +755,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(ofdm_cmds,
 		      "[-d: dump the first frame with errors]", cmd_rx, 1, 5),
 	SHELL_CMD_ARG(snr, NULL, "SNR per subcarrier of a looped frame: [-n <captures>]", cmd_snr, 1, 2),
 	SHELL_CMD_ARG(derot, NULL, "Payload derotation on the vector unit: [0|1]", cmd_derot, 1, 1),
+	SHELL_CMD_ARG(sfo, NULL, "Sample clock drift correction: [-1|0|1]", cmd_sfo, 1, 1),
 	SHELL_CMD_ARG(split, NULL, "Preamble search on both CPUs: [0|1]", cmd_split, 1, 1),
 	SHELL_CMD_ARG(vec, NULL, "Vector payload decoder: [0|1]", cmd_vec, 1, 1),
 	SHELL_CMD_ARG(stx, NULL, "Stream test frames: [-t <s>] [-p <us per frame>]", cmd_stx, 1, 4),

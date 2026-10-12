@@ -171,6 +171,23 @@ builds the next frame in 4.6 on the other CPU, ACKs 0.3 each way.
   0.82 ms (not 0.6: the fine scan, DC estimate and the halves' own cost stay). Stream at
   6 ms: 3.61 against 3.43 Mbit/s and 0.5 against 5.3 % lost in one pair, 3.46 against 3.33
   in the next; MAC 2.81 against 2.66 to 2.74. ``ofdm split 0|1`` switches it.
+- **Frames of a whole window.** The transmitter loops a frame without a gap (measured: the
+  received period equals the frame, correlation 0.98 between copies), so one period
+  anywhere holds every sample once, rotated. The receiver captures one frame plus a margin
+  (``ofdm_rx_window()``: an FFT, a prefix, the search's step) instead of two frames and
+  reads a slot past the window's end one period earlier, turned by the carrier's phase over
+  one period, which the window's overlap with itself measures (``rx.cw``). Frames grow from
+  8064 to 15984 samples (106 data symbols, 53 424 bits at 64-QAM, 26 MHz).
+- **Sample clock drift.** Each chip's crystal drives its carrier and its sample clock, so the
+  window drifts against the frame by the carrier offset over the carrier (9 ppm here):
+  subcarrier k of a symbol t slots from the pilots turns by k t times 6.6e-5 rad. The 400 us
+  frame lost 4 dB of MER to it (26 dB next to the pilots, 20.7 in the middle; a wrapped slot
+  lies before the pilots in time). Each symbol is turned back by its capture time (the vector
+  decoder's equalizer rebuilt per worker when the band edge moved 0.02 rad): the MER is
+  flat at 26.3 dB over the frame, 64-QAM BER 1.7e-3 -> 3e-6. ``ofdm sfo -1|0|1`` (the sign;
+  0 off).
+- Blind stream with both (64-QAM, RS, 26 MHz): 4.35 Mbit/s with 0.1 % lost at a 10 ms
+  period, 3.64 loss-free at 12 ms; RS fixes about 1.5 bytes per frame.
 - **Frame assembly** (``ofdm_frame.c``) used two integer divisions per byte with divisors
   that vary (units, bytes per unit): about 0.4 ms at each end. Nested loops now, and a byte
   table for the CRC-32 (the nibble table cost 90 us per frame).
