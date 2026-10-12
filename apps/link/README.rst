@@ -121,6 +121,57 @@ less (the default); the forced receive gain is lost now and then and the
 library re-forces it (``link status``, engine line). Details in
 ``doc/hardware-quirks.md``.
 
+Where the time goes
+===================
+
+The rate is set by the CPUs, not the air (a frame is on air for 0.2 ms of each
+10 ms exchange). Per frame at 26 MHz, 64-QAM, RS (both CPUs; the receiver in ms): search
+1.2, channel and header 0.7, payload 2.6, Reed-Solomon 2.5; the sender builds the next
+frame in 5.0 on the other CPU, ACKs 0.3 each way.
+
+- **16-bit FFT.** The receiver's payload FFT and the transmitter's inverse FFT run on
+  esp-dsp's S3 vector kernel (``dsps_fft2r_sc16_aes3_``, 7 us for 128 points against 38
+  for the float one). The input is 10 bit anyway: scaled by 32 (clipping rather than
+  wrapping on a capture with a large offset), the output is X / N and goes back to float
+  through ``ctx->fscale``; the transmitter picks the largest power of two (8, 4, 2, 1)
+  that keeps the preamble in 16 bit and rounds on the way to the DAC. The pilots and the
+  header stay on the float FFT, where two symbols decide the channel estimate (the 16-bit
+  one cost 0.3 dB of MER and ACKs there). ``OFDM_FFT16`` in ``ofdm.c`` turns it off.
+- **Phase tracking** uses the middle half of the band, every second subcarrier (21 of 84),
+  the strongest ones; the payload loop is specialised for 16-QAM and 64-QAM.
+- Per payload symbol (26 MHz, one CPU): derotate 18 us, FFT 11, tracking 10, decisions 46;
+  before: 12 + 41 + 26 + 34. The decisions are float code bound by the FPU's latencies
+  and its 16 registers; a vector (PIE) equalizer and slicer is the next step.
+- ``OFDM_NFFT_MAX`` is 256 (512 cost 8 KB of internal RAM that the 16-bit tables need).
+
+Streaming test and SNR
+======================
+
+``ofdm stx`` plays frames one after the other from both DAC banks without leaving TX (the
+next is built while the DAC loops the current one, a bank switch is one retrigger): frame
+n carries n in its header and bits that depend on n. ``ofdm srx`` regenerates them and
+counts frames seen, missed, clean and bit errors, and the clean rate. ``ofdm snr`` prints
+the SNR per subcarrier of a looped frame.
+
+.. code-block:: console
+
+   ofdm set bw 26 ch 84 mod 16qam    # on both
+   ofdm stx -t 5 -p 6000             # sending board: a frame every 6000 us
+   ofdm srx -t 6                     # receiving board
+
+Results (two boards, 30 dB, 26 MHz, ``txgain 4``, ``rxgain 32``):
+
+- Uncoded 16-QAM is clean (BER 0 apart from captures that straddle a bank switch, 2 to 3 %
+  of them): 2.0 Mbit/s of 17 kbit frames with the receiver on one CPU.
+  Uncoded 64-QAM is not (BER 5e-3 in every frame): the MER is 24 dB and the band edges are
+  at 19 to 20 dB; 64-QAM needs about 26 dB. Reed-Solomon (3.5 corrections per 255 bytes on
+  average, 16 possible) is what makes it work.
+- ``ofdm snr``: 28 dB in the middle of the band falling smoothly to 19 dB at both edges (the
+  analog filters), so the MER is a property of the band, not of the frame: 27 dB at 16 MHz,
+  24 at 26, 23 at 30.
+- A broadcast (``link_perf.py run --dst 0xff``: no ACK, no retry) gains little: the ACK
+  costs 0.34 ms of a 10 ms exchange.
+
 Building and running
 ********************
 
@@ -148,7 +199,7 @@ or from the host, for both boards at once:
 .. code-block:: console
 
    tools/link_perf.py run --server <serial> --client <serial> -t 10 -m 256qam \
-           -f rs -w 2 --set txgain=4 --set rxgain=32
+           -f rs -w 2 --set txgain=4 --set rxgain=32     # --dst 0xff: broadcast, no ACKs
 
 ``tools/link_perf.py dump`` saves a capture for ``tools/qam_sim.c``, the
 host simulator of the PHY (see its header for the build line).

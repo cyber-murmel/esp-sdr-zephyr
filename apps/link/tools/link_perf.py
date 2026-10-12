@@ -3,7 +3,7 @@
 """iperf style test between two link boards, over their USB shells.
 
     link_perf.py run --server <serial> --client <serial> [-t 10] [-m 16qam]
-                     [-f rs|hamming|none] [-n <units>] [-b <kbit/s>]
+                     [-f rs|hamming|none] [-n <units>] [-b <kbit/s>] [--dst 0xff]
                      [--set key=value ...]
     link_perf.py dump <serial> <file.bin> [--timeout-ms 2000]
     link_perf.py ofdm --rx <serial> --tx <serial> [-n 100] [-v]
@@ -82,7 +82,7 @@ def run(args):
                     sys.exit(f"{b.sn}: {line}")
     for b in (srv, cli):
         b.cmd("link clear", 0.3)
-    addr = srv.addr()
+    addr = srv.addr() if args.dst is None else int(args.dst, 0)
     copt = f" -t {args.t} -m {args.m} -f {args.f} -w {args.w}" + (f" -n {args.n}" if args.n else "") + \
         (f" -b {args.b}" if args.b else "")
     srv.cmd(f"link server -i {args.i}", 0.5)
@@ -169,6 +169,8 @@ def main():
     r.add_argument("-w", type=int, default=2, choices=[1, 2], help="frames per transmission")
     r.add_argument("-b", type=int, default=0, help="offered kbit/s (0: as fast as possible)")
     r.add_argument("-i", type=float, default=1.0, help="report interval in s")
+    r.add_argument("--dst", help="destination address (default the server's; 0xff broadcasts: "
+                   "no ACKs, no retries)")
     r.add_argument("--set", action="append", default=[], help="key=value for both boards")
     d = sub.add_parser("dump")
     d.add_argument("board")

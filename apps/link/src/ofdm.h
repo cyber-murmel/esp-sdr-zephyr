@@ -29,7 +29,8 @@
 #include <esp_sdr/esp_sdr.h>
 
 #define OFDM_NFFT_MIN 16U
-#define OFDM_NFFT_MAX 512U
+/* 256 covers every layout in use (26 MHz at 80 MS/s); 512 would cost 8 KB of internal RAM. */
+#define OFDM_NFFT_MAX 256U
 /* Shortest cyclic prefix as a fraction of the FFT size (cp_div at most this). */
 #define OFDM_CP_DIV_MAX 32U
 /* Subcarriers in use at most: a quarter of the band stays free around Nyquist. */
@@ -90,6 +91,8 @@ struct ofdm_cf {
 struct ofdm_worker {
 	struct ofdm_cf buf[OFDM_NFFT_MAX] __attribute__((aligned(16)));
 	struct ofdm_cf trk, rate, u;
+	/* The buffer holds the 16-bit FFT's output (payload symbols), else the float FFT's. */
+	bool q16;
 };
 
 /* Receive state between ofdm_rx_begin() and ofdm_rx_finish(). */
@@ -110,6 +113,9 @@ struct ofdm_ctx {
 	 * to nfft).
 	 */
 	float w[OFDM_NFFT_MAX] __attribute__((aligned(16)));
+	/* The same table in Q15 for the 16-bit receive FFT, and the factor back to the float FFT. */
+	int16_t w16[OFDM_NFFT_MAX] __attribute__((aligned(16)));
+	float fscale;
 	/* The receiver's own worker (search, channel, header, payload). */
 	struct ofdm_worker w0;
 	struct ofdm_cfg cfg;
@@ -138,6 +144,8 @@ struct ofdm_ctx {
 		struct ofdm_cf rot[OFDM_NFFT_MAX];
 	};
 	struct ofdm_rxstate rx;
+	/* Diagnostic: when set, the payload decoder adds each subcarrier's squared error here. */
+	float *sc_err;
 };
 
 /* A transmit work buffer (ofdm_tx_build()), separate so that building and decoding can overlap. */

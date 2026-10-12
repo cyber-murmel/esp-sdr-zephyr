@@ -381,6 +381,219 @@ static int cmd_rx(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+/*
+ * Streaming test: the sender plays one frame after the other from two DAC
+ * banks without ever leaving TX (the next frame is built while the DAC loops
+ * the current one, and the bank switch is one DAC retrigger). Frame n carries
+ * n in its header and bits that are a function of n; the receiver regenerates
+ * them and counts what it saw, what it lost and the bit errors.
+ */
+static EXT_RAM_BSS_ATTR uint8_t stream_bits[BITS_MAX];
+
+static uint32_t stream_seed(uint32_t seq)
+{
+	return seq * 0x9e3779b1U + 12345U;
+}
+
+static void stream_hdr(uint8_t *hdr, uint32_t seq)
+{
+	for (int i = 0; i < 4; i++) {
+		hdr[i] = (uint8_t)(seq >> (8 * i));
+		hdr[4 + i] = (uint8_t)(~seq >> (8 * i));
+	}
+}
+
+/* SNR per subcarrier from the decision errors of QPSK frames (always decided right), in dB. */
+static int cmd_snr(const struct shell *sh, size_t argc, char **argv)
+{
+	static EXT_RAM_BSS_ATTR float sc[OFDM_CH_MAX];
+	uint32_t n = 50, found = 0;
+	enum ofdm_mod keep = mod;
+	char line[100];
+	int len = 0;
+
+	for (size_t i = 1; i + 1 < argc; i += 2) {
+		if (strcmp(argv[i], "-n") == 0) {
+			n = (uint32_t)strtoul(argv[i + 1], NULL, 0);
+		}
+	}
+	if (prepare(sh) != 0) {
+		return -EINVAL;
+	}
+	mod = OFDM_QPSK;
+	memset(sc, 0, sizeof(sc));
+	ctx.sc_err = sc;
+	link_mac_pause(true);
+	for (uint32_t k = 0; k < n; k++) {
+		struct esp_sdr_rx_burst b;
+		struct ofdm_rx_info info;
+
+		if (esp_sdr_rx_capture(RX_RATE, MIN(WINDOW, 2U * ctx.rlen + ctx.rnfft), &b) != 0 ||
+		    ofdm_rx_begin(&ctx, b.words, b.count, rx_hdr, &info) != 0) {
+			continue;
+		}
+		ofdm_rx_finish(&ctx, b.words, OFDM_QPSK, rx_bits, &info);
+		found++;
+	}
+	link_mac_pause(false);
+	ctx.sc_err = NULL;
+	mod = keep;
+	shell_print(sh, "snr: %u frames, per subcarrier from the lowest frequency (dB):", found);
+	for (unsigned int a = 0; a < cfg.channels && found > 0; a++) {
+		float e = sc[a] / (float)(found * ctx.ndata);
+
+		len += snprintf(&line[len], sizeof(line) - len, "%3d", (int)lrintf(-10.0f * log10f(e)));
+		if (len > (int)sizeof(line) - 6 || a + 1 == cfg.channels) {
+			shell_print(sh, "%s", line);
+			len = 0;
+		}
+	}
+	shell_print(sh, "rx done");
+	return 0;
+}
+
+static int cmd_stx(const struct shell *sh, size_t argc, char **argv)
+{
+	uint32_t ms = 5000, period_us = 8000, seq = 0, over = 0, build_max = 0;
+	uint8_t hdr[HDR_BITS / 8U];
+	size_t words;
+	int bank = 0, ret;
+
+	for (size_t i = 1; i + 1 < argc; i += 2) {
+		if (strcmp(argv[i], "-t") == 0) {
+			ms = (uint32_t)(strtof(argv[i + 1], NULL) * 1000.0f);
+		} else if (strcmp(argv[i], "-p") == 0) {
+			period_us = (uint32_t)strtoul(argv[i + 1], NULL, 0);
+		}
+	}
+	if (prepare(sh) != 0) {
+		return -EINVAL;
+	}
+	link_mac_pause(true);
+	ofdm_test_bits(stream_bits, ofdm_frame_bits(&ctx, mod), stream_seed(0));
+	stream_hdr(hdr, 0);
+	(void)ofdm_tx_build(&ctx, &txb, mod, hdr, stream_bits, esp_sdr_tx_loop_buf(bank, &words));
+	ret = esp_sdr_tx_loop_begin(TX_RATE);
+	if (ret == 0) {
+		uint32_t start = cyc(), deadline = start;
+		uint32_t period = k_us_to_cyc_ceil32(period_us);
+
+		ret = esp_sdr_tx_loop_start(bank, ctx.len);
+		while (ret == 0 && k_cyc_to_ms_floor32(cyc() - start) < ms) {
+			uint32_t t0 = cyc(), b;
+
+			seq++;
+			bank ^= 1;
+			ofdm_test_bits(stream_bits, ofdm_frame_bits(&ctx, mod), stream_seed(seq));
+			stream_hdr(hdr, seq);
+			(void)ofdm_tx_build(&ctx, &txb, mod, hdr, stream_bits,
+					    esp_sdr_tx_loop_buf(bank, &words));
+			b = k_cyc_to_us_floor32(cyc() - t0);
+			build_max = MAX(build_max, b);
+			deadline += period;
+			if ((int32_t)(cyc() - deadline) > 0) {
+				over++;
+				deadline = cyc();
+			}
+			while ((int32_t)(deadline - cyc()) > 0) {
+			}
+			ret = esp_sdr_tx_loop_start(bank, ctx.len);
+		}
+		esp_sdr_tx_loop_end();
+	}
+	link_mac_pause(false);
+	shell_print(sh, "stx done: %u frames of %u bits, period %u us, build max %u us, "
+		    "%u periods overrun (%d)", seq + 1U, (unsigned int)ofdm_frame_bits(&ctx, mod),
+		    period_us, build_max, over, ret);
+	return ret;
+}
+
+static int cmd_srx(const struct shell *sh, size_t argc, char **argv)
+{
+	uint32_t ms = 5000, caps = 0, found = 0, hdr_bad = 0, dup = 0, bad = 0, good = 0, seen = 0;
+	uint32_t last = 0, first = 0, lost = 0;
+	uint64_t errs = 0;
+	float mer = 0.0f;
+	bool have = false;
+	uint32_t start;
+	size_t bits;
+
+	for (size_t i = 1; i + 1 < argc; i += 2) {
+		if (strcmp(argv[i], "-t") == 0) {
+			ms = (uint32_t)(strtof(argv[i + 1], NULL) * 1000.0f);
+		}
+	}
+	if (prepare(sh) != 0) {
+		return -EINVAL;
+	}
+	bits = ofdm_frame_bits(&ctx, mod);
+	link_mac_pause(true);
+	start = cyc();
+	while (k_cyc_to_ms_floor32(cyc() - start) < ms) {
+		struct esp_sdr_rx_burst b;
+		struct ofdm_rx_info info;
+		uint32_t seq, nseq, e = 0;
+
+		if (esp_sdr_rx_capture(RX_RATE, MIN(WINDOW, 2U * ctx.rlen + ctx.rnfft), &b) != 0) {
+			continue;
+		}
+		caps++;
+		if (ofdm_rx_begin(&ctx, b.words, b.count, rx_hdr, &info) != 0) {
+			continue;
+		}
+		found++;
+		seq = (uint32_t)rx_hdr[0] | (uint32_t)rx_hdr[1] << 8 | (uint32_t)rx_hdr[2] << 16 |
+		      (uint32_t)rx_hdr[3] << 24;
+		nseq = (uint32_t)rx_hdr[4] | (uint32_t)rx_hdr[5] << 8 | (uint32_t)rx_hdr[6] << 16 |
+		       (uint32_t)rx_hdr[7] << 24;
+		if (seq != ~nseq) {
+			hdr_bad++;
+			continue;
+		}
+		if (have && seq == last) {
+			dup++;
+			continue;
+		}
+		ofdm_rx_finish(&ctx, b.words, mod, rx_bits, &info);
+		ofdm_test_bits(stream_bits, bits, stream_seed(seq));
+		for (size_t i = 0; i < (bits + 7U) / 8U; i++) {
+			uint8_t d = rx_bits[i] ^ stream_bits[i];
+
+			if (i == (bits - 1U) / 8U && (bits & 7U) != 0U) {
+				d &= (uint8_t)(0xffU << (8U - (bits & 7U)));
+			}
+			e += (uint32_t)__builtin_popcount(d);
+		}
+		if (!have) {
+			first = seq;
+		} else if (seq > last) {
+			lost += seq - last - 1U;
+		}
+		have = true;
+		last = seq;
+		seen++;
+		errs += e;
+		bad += e != 0U;
+		good += e == 0U;
+		mer += info.mer_db;
+	}
+	link_mac_pause(false);
+	{
+		uint32_t us = k_cyc_to_us_floor32(cyc() - start);
+
+		shell_print(sh, "srx: %u captures, %u with a frame, %u new (seq %u..%u), %u dups, "
+			    "%u header errors, %u frames missed", caps, found, seen, first, last, dup,
+			    hdr_bad, lost);
+		shell_print(sh, "srx: %u clean, %u with bit errors (%llu bit errors, BER %.2e), "
+			    "MER %.1f dB; %.2f Mbit/s clean, %.2f Mbit/s of frames seen",
+			    good, bad, errs, seen ? (double)errs / ((double)seen * (double)bits) : 0.0,
+			    seen ? (double)(mer / seen) : 0.0, (double)good * (double)bits / (double)us,
+			    (double)seen * (double)bits / (double)us);
+	}
+	shell_print(sh, "rx done");
+	return 0;
+}
+
 static int cmd_bench(const struct shell *sh, size_t argc, char **argv)
 {
 	const unsigned int rounds = 1000;
@@ -434,6 +647,9 @@ SHELL_STATIC_SUBCMD_SET_CREATE(ofdm_cmds,
 	SHELL_CMD_ARG(tx, NULL, "Loop the test frame: [-t <s>]", cmd_tx, 1, 2),
 	SHELL_CMD_ARG(rx, NULL, "Decode captures: [-n <captures>] [-v] [-w: whole window] "
 		      "[-d: dump the first frame with errors]", cmd_rx, 1, 5),
+	SHELL_CMD_ARG(snr, NULL, "SNR per subcarrier of a looped frame: [-n <captures>]", cmd_snr, 1, 2),
+	SHELL_CMD_ARG(stx, NULL, "Stream test frames: [-t <s>] [-p <us per frame>]", cmd_stx, 1, 4),
+	SHELL_CMD_ARG(srx, NULL, "Check the stream: [-t <s>]", cmd_srx, 1, 2),
 	SHELL_CMD(bench, NULL, "Time one FFT", cmd_bench),
 	SHELL_SUBCMD_SET_END);
 

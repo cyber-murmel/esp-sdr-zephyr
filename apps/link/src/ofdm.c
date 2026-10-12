@@ -21,10 +21,14 @@
 
 #if defined(__ZEPHYR__)
 #include <esp_attr.h>
+#include <zephyr/kernel.h>
 #define OFDM_HOT IRAM_ATTR __attribute__((noinline))
 #else
 #define OFDM_HOT
 #endif
+
+/* Input scale of the 16-bit receive FFT (ofdm_init(), take_slot()). */
+#define FFT16_GAIN 32.0f
 
 #define PREAMBLE_SEED 0x5a17e4a1U
 #define PILOT_SEED    0xc39a2b7fU
@@ -224,7 +228,10 @@ int ofdm_init(struct ofdm_ctx *ctx, const struct ofdm_cfg *cfg)
 
 		ctx->w[2U * i] = cosf(a);
 		ctx->w[2U * i + 1U] = sinf(a);
+		ctx->w16[2U * i] = (int16_t)lrintf(32767.0f * ctx->w[2U * i]);
+		ctx->w16[2U * i + 1U] = (int16_t)lrintf(32767.0f * ctx->w[2U * i + 1U]);
 	}
+	ctx->fscale = (float)ctx->rnfft / FFT16_GAIN;
 	return 0;
 }
 
@@ -233,8 +240,52 @@ int ofdm_init(struct ofdm_ctx *ctx, const struct ofdm_cfg *cfg)
  * (read through ctx->rev / ctx->binr). The esp-dsp S3 kernel, or the same
  * algorithm in C (host, and the reference it is checked against).
  */
+#ifndef OFDM_FFT16
+#define OFDM_FFT16 1
+#endif
+
 #if defined(CONFIG_APP_OFDM_ESP_DSP)
 extern int dsps_fft2r_fc32_aes3_(float *data, int N, float *w);
+extern int dsps_fft2r_sc16_aes3_(int16_t *data, int N, int16_t *w);
+
+/*
+ * What the esp-dsp 16-bit kernel expects of its surroundings: it checks that the power of
+ * two N is one and that its table (here ours, passed in) was initialised.
+ */
+uint8_t dsps_fft2r_sc16_initialized = 1;
+
+int dsp_is_power_of_two(int x)
+{
+	return x > 0 && (x & (x - 1)) == 0;
+}
+
+/*
+ * The receive FFT in 16 bit: the input is scaled by FFT16_GAIN (10 bit samples, so 16 bit
+ * after derotation with room to spare), every stage halves, so the output is X * G / N.
+ * In place on the worker's buffer, bit reversed like the float one.
+ */
+static inline void pie_enable(void)
+{
+	uint32_t cp;
+
+	__asm__ volatile("rsr.cpenable %0" : "=r"(cp));
+	cp |= 1U << 3;
+	__asm__ volatile("wsr.cpenable %0\n\trsync" : : "r"(cp));
+}
+
+/*
+ * The vector registers are not part of the thread context: no other thread may run on
+ * this CPU while they are live. Interrupts masked on this CPU for the 7 us (a scheduler
+ * lock would take the global spinlock of an SMP kernel).
+ */
+static inline void fft16(const struct ofdm_ctx *ctx, int16_t *q, unsigned int n)
+{
+	unsigned int key = arch_irq_lock();
+
+	pie_enable();
+	(void)dsps_fft2r_sc16_aes3_(q, (int)n, (int16_t *)ctx->w16);
+	arch_irq_unlock(key);
+}
 
 static inline void fft(const struct ofdm_ctx *ctx, struct ofdm_cf *buf, unsigned int n)
 {
@@ -299,6 +350,109 @@ OFDM_HOT static void emit(const struct ofdm_ctx *ctx, struct ofdm_txbuf *tb, flo
 	tb->clipped += clipped;
 }
 
+#if defined(CONFIG_APP_OFDM_ESP_DSP) && OFDM_FFT16
+/*
+ * The transmit side on the 16-bit kernel: subcarrier values scaled to S, the output (the
+ * transform over nfft, so S / nfft per unit subcarrier) a power of two K times the DAC value,
+ * K the biggest of 8, 4, 2, 1 that keeps the largest input (the preamble's sqrt(2) points
+ * and a margin) inside 16 bit. Bits are read a byte at a time, the constellation through a
+ * level table by the Gray coded value.
+ */
+struct bitrd {
+	const uint8_t *p;
+	uint32_t acc;
+	unsigned int n;
+};
+
+static inline unsigned int rd_bits(struct bitrd *r, unsigned int nb)
+{
+	while (r->n < nb) {
+		r->acc = (r->acc << 8) | *r->p++;
+		r->n += 8U;
+	}
+	r->n -= nb;
+	return (r->acc >> r->n) & ((1U << nb) - 1U);
+}
+
+OFDM_HOT static void emit16(const struct ofdm_ctx *ctx, struct ofdm_txbuf *tb, unsigned int shift,
+			    uint32_t *out)
+{
+	unsigned int n = ctx->nfft;
+	const int16_t *q = (const int16_t *)tb->buf;
+	const int rnd = 1 << (shift - 1U);
+	uint32_t clipped = 0;
+
+	for (unsigned int i = 0; i < ctx->slot; i++) {
+		const int16_t *s = &q[2U * ctx->rev[(i + n - ctx->cp) & (n - 1U)]];
+		int vi = (s[0] + rnd) >> shift, vq = (-s[1] + rnd) >> shift;
+
+		if (vi > 511 || vi < -511 || vq > 511 || vq < -511) {
+			clipped++;
+			vi = vi > 511 ? 511 : (vi < -511 ? -511 : vi);
+			vq = vq > 511 ? 511 : (vq < -511 ? -511 : vq);
+		}
+		out[i] = esp_sdr_tx_word(vi, vq);
+	}
+	tb->clipped += clipped;
+}
+
+static size_t ofdm_tx_build16(const struct ofdm_ctx *ctx, struct ofdm_txbuf *tb, enum ofdm_mod mod,
+			      const uint8_t *hdr, const uint8_t *bits, uint32_t *out,
+			      unsigned int shift)
+{
+	unsigned int c = ctx->cfg.channels, bps = ofdm_mod_bits(mod), p = ctx->cfg.pilots;
+	unsigned int h0 = 1U + p, d0 = h0 + ctx->nhdr, nh = ctx->cfg.hdr_bits;
+	unsigned int mp = ctx->cfg.mid_pilot ? d0 + ctx->mid : ~0U;
+	unsigned int nslots = bits == NULL ? d0 : d0 + ctx->ndata + (ctx->cfg.mid_pilot ? 1U : 0U);
+	/* One unit subcarrier in 16 bit: amp / sqrt(c) of the DAC value per unit of the sum. */
+	float sc = (float)(1U << shift) * (float)ctx->cfg.amp * (float)ctx->nfft / sqrtf((float)c);
+	const struct cons *k = &cons[mod];
+	unsigned int qb = k->q, mask = (1U << qb) - 1U;
+	int16_t one = (int16_t)lrintf(sc), root2 = (int16_t)lrintf(sc * 1.41421356f);
+	int16_t lv[8] = {0};
+	struct bitrd rd = {.p = bits};
+	int16_t *q = (int16_t *)tb->buf;
+
+	if (mod == OFDM_BPSK) {
+		lv[0] = (int16_t)-one;
+		lv[1] = one;
+	} else {
+		/* Indexed by the Gray coded bits of one axis. */
+		for (unsigned int v = 0; v < k->k; v++) {
+			lv[v] = (int16_t)lrintf((float)(2 * gray_dec[v] - (int)(k->k - 1U)) * k->s * sc);
+		}
+	}
+	tb->clipped = 0;
+	for (unsigned int s = 0; s < nslots; s++) {
+		memset(q, 0, ctx->nfft * 2U * sizeof(int16_t));
+		for (unsigned int a = 0; a < c; a++) {
+			int16_t *x = &q[2U * ctx->bin[a]];
+
+			if (s == 0) {
+				if ((sub_freq(c, a) & 1) == 0) {
+					x[0] = pn_sign(PREAMBLE_SEED, a) > 0.0f ? root2 : (int16_t)-root2;
+				}
+			} else if (s < h0 || s == mp) {
+				x[0] = pn_sign(PILOT_SEED, a) > 0.0f ? one : (int16_t)-one;
+			} else if (s < d0) {
+				x[0] = get_bit(hdr, ((s - h0) * c + a) % nh) ? one : (int16_t)-one;
+			} else if (mod == OFDM_BPSK) {
+				x[0] = lv[rd_bits(&rd, 1U)];
+			} else {
+				unsigned int v = rd_bits(&rd, bps);
+
+				x[0] = lv[v >> qb];
+				/* Conjugated in: see emit(). */
+				x[1] = (int16_t)-lv[v & mask];
+			}
+		}
+		fft16(ctx, q, ctx->nfft);
+		emit16(ctx, tb, shift, &out[s * ctx->slot]);
+	}
+	return (size_t)nslots * ctx->slot;
+}
+#endif
+
 size_t ofdm_tx_build(const struct ofdm_ctx *ctx, struct ofdm_txbuf *tb, enum ofdm_mod mod,
 		     const uint8_t *hdr, const uint8_t *bits, uint32_t *out)
 {
@@ -315,6 +469,18 @@ size_t ofdm_tx_build(const struct ofdm_ctx *ctx, struct ofdm_txbuf *tb, enum ofd
 	if (mod >= OFDM_MODS) {
 		return 0;
 	}
+#if defined(CONFIG_APP_OFDM_ESP_DSP) && OFDM_FFT16
+	{
+		/* The largest input is the preamble's sqrt(2) points (and 5 % more as a margin). */
+		float peak = 1.5f * (float)ctx->cfg.amp * (float)ctx->nfft / sqrtf((float)c);
+
+		for (unsigned int shift = 3; shift > 0U; shift--) {
+			if (peak * (float)(1U << shift) < 32000.0f) {
+				return ofdm_tx_build16(ctx, tb, mod, hdr, bits, out, shift);
+			}
+		}
+	}
+#endif
 	tb->clipped = 0;
 	for (unsigned int s = 0; s < nslots; s++) {
 		memset(tb->buf, 0, ctx->nfft * sizeof(tb->buf[0]));
@@ -517,7 +683,7 @@ static void rot_init(struct ofdm_ctx *ctx, float eps)
  * (s - 1)), which u = exp(-j 2 pi eps rslot (s - 1)) undoes.
  */
 OFDM_HOT static void take_slot(const struct ofdm_ctx *ctx, struct ofdm_worker *wk,
-			       const uint32_t *w, unsigned int s)
+			       const uint32_t *w, unsigned int s, bool fast)
 {
 	const uint32_t *__restrict x = &w[ctx->rx.start + (int)(s * ctx->rslot) + (int)ctx->rcp -
 					  (int)(ctx->rcp / 4U)];
@@ -526,6 +692,39 @@ OFDM_HOT static void take_slot(const struct ofdm_ctx *ctx, struct ofdm_worker *w
 	unsigned int n = ctx->rnfft;
 	int dci = ctx->rx.dci, dcq = ctx->rx.dcq;
 
+#if defined(CONFIG_APP_OFDM_ESP_DSP) && OFDM_FFT16
+	wk->q16 = fast;
+	if (fast) {
+		int16_t *q = (int16_t *)b;
+
+		for (unsigned int i = 0; i < n; i++) {
+			uint32_t v = x[i];
+			float xr = (float)(esp_sdr_rx_i(v) - dci) * FFT16_GAIN;
+			float xq = (float)(esp_sdr_rx_q(v) - dcq) * FFT16_GAIN;
+			float rr = r[i].re, ri = r[i].im;
+
+			/* A capture with a big offset or a transient must clip, not wrap. */
+			int vr = (int)(xr * rr - xq * ri), vi = (int)(xr * ri + xq * rr);
+
+			vr = vr < -32767 ? -32767 : (vr > 32767 ? 32767 : vr);
+			vi = vi < -32767 ? -32767 : (vi > 32767 ? 32767 : vi);
+			q[2U * i] = (int16_t)vr;
+			q[2U * i + 1U] = (int16_t)vi;
+		}
+		fft16(ctx, q, n);
+	} else {
+		for (unsigned int i = 0; i < n; i++) {
+			uint32_t v = x[i];
+			float xr = (float)(esp_sdr_rx_i(v) - dci), xq = (float)(esp_sdr_rx_q(v) - dcq);
+			float rr = r[i].re, ri = r[i].im;
+
+			b[i].re = xr * rr - xq * ri;
+			b[i].im = xr * ri + xq * rr;
+		}
+		fft(ctx, wk->buf, n);
+	}
+#else
+	(void)fast;
 	for (unsigned int i = 0; i < n; i++) {
 		uint32_t v = x[i];
 		float xr = (float)(esp_sdr_rx_i(v) - dci), xq = (float)(esp_sdr_rx_q(v) - dcq);
@@ -535,11 +734,27 @@ OFDM_HOT static void take_slot(const struct ofdm_ctx *ctx, struct ofdm_worker *w
 		b[i].im = xr * ri + xq * rr;
 	}
 	fft(ctx, wk->buf, n);
+#endif
 	if (s > 1U) {
 		struct ofdm_cf u = wk->u, us = ctx->rx.us;
 
 		wk->u = (struct ofdm_cf){u.re * us.re - u.im * us.im, u.re * us.im + u.im * us.re};
 	}
+}
+
+/* Output bin @p i of the worker's receive FFT as the float FFT would have it. */
+static inline struct ofdm_cf fft_out(const struct ofdm_ctx *ctx, const struct ofdm_worker *wk,
+				     unsigned int i)
+{
+#if defined(CONFIG_APP_OFDM_ESP_DSP) && OFDM_FFT16
+	if (wk->q16) {
+		const int16_t *q = (const int16_t *)wk->buf;
+
+		return (struct ofdm_cf){(float)q[2U * i] * ctx->fscale,
+				       (float)q[2U * i + 1U] * ctx->fscale};
+	}
+#endif
+	return wk->buf[i];
 }
 
 /* Decided bits, packed MSB first and written a byte at a time (the buffer may be in PSRAM). */
@@ -571,7 +786,7 @@ static inline void sink_flush(struct bitsink *k)
 static inline struct ofdm_cf eq_rot(const struct ofdm_ctx *ctx, const struct ofdm_worker *wk,
 				    unsigned int a, float cr, float ci)
 {
-	struct ofdm_cf y = wk->buf[ctx->binr[a]], e = ctx->eq[a];
+	struct ofdm_cf y = fft_out(ctx, wk, ctx->binr[a]), e = ctx->eq[a];
 	float zr = y.re * e.re - y.im * e.im, zi = y.re * e.im + y.im * e.re;
 
 	return (struct ofdm_cf){zr * cr - zi * ci, zr * ci + zi * cr};
@@ -592,14 +807,21 @@ static inline struct ofdm_cf cmul(struct ofdm_cf a, struct ofdm_cf b)
  * the rate in part (a second order loop: a residual carrier offset is
  * followed without lag).
  */
-OFDM_HOT static struct ofdm_cf track(const struct ofdm_ctx *ctx, struct ofdm_worker *wk,
-				     enum ofdm_mod mod)
+static inline __attribute__((always_inline)) struct ofdm_cf track(const struct ofdm_ctx *ctx,
+								  struct ofdm_worker *wk,
+								  const enum ofdm_mod mod)
 {
 	struct ofdm_worker *rx = wk;
 	struct ofdm_cf p = cmul(rx->trk, rx->rate), r = cmul(p, rx->u);
 	float ar = 0.0f, ai = 0.0f, m;
+	/*
+	 * The middle half of the band, every second subcarrier: the strongest
+	 * (the band edges sit 8 dB lower, where decisions are least sure) and a
+	 * quarter of the work; plenty of them for a phase estimate.
+	 */
+	unsigned int a0 = ctx->cfg.channels / 4U, a1 = ctx->cfg.channels - a0;
 
-	for (unsigned int a = 0; a < ctx->cfg.channels; a++) {
+	for (unsigned int a = a0; a < a1; a += 2U) {
 		struct ofdm_cf z = eq_rot(ctx, wk, a, r.re, r.im), d;
 
 		(void)decide(mod, z, &d);
@@ -623,19 +845,34 @@ OFDM_HOT static struct ofdm_cf track(const struct ofdm_ctx *ctx, struct ofdm_wor
 	return r;
 }
 
+OFDM_HOT static struct ofdm_cf track_any(const struct ofdm_ctx *ctx, struct ofdm_worker *wk,
+					 enum ofdm_mod mod)
+{
+	return track(ctx, wk, mod);
+}
+
 /* One payload symbol: rotation, decisions into @p k and their error. */
-OFDM_HOT static void data_symbol(const struct ofdm_ctx *ctx, struct ofdm_worker *wk,
-				 enum ofdm_mod mod, struct bitsink *k, float *err)
+static inline __attribute__((always_inline)) void data_symbol_m(const struct ofdm_ctx *ctx,
+								struct ofdm_worker *wk,
+								const enum ofdm_mod mod,
+								struct bitsink *k, float *err)
 {
 	struct ofdm_cf r = track(ctx, wk, mod);
 	unsigned int c = ctx->cfg.channels, bps = ofdm_mod_bits(mod);
+
 	float e2 = 0.0f;
+
+	float *se = ctx->sc_err;
 
 	for (unsigned int a = 0; a < c; a++) {
 		struct ofdm_cf z = eq_rot(ctx, wk, a, r.re, r.im), d;
 		unsigned int v = decide(mod, z, &d);
+		float ee = (z.re - d.re) * (z.re - d.re) + (z.im - d.im) * (z.im - d.im);
 
-		e2 += (z.re - d.re) * (z.re - d.re) + (z.im - d.im) * (z.im - d.im);
+		e2 += ee;
+		if (se != NULL) {
+			se[a] += ee;
+		}
 		sink_put(k, v, bps);
 	}
 #ifdef OFDM_DEBUG
@@ -646,6 +883,43 @@ OFDM_HOT static void data_symbol(const struct ofdm_ctx *ctx, struct ofdm_worker 
 	}
 #endif
 	*err += e2;
+}
+
+/*
+ * The loops specialised by modulation, so that the constellation constants
+ * fold, for the two that carry the data (from flash: internal RAM is short,
+ * and a loop this tight runs from the cache); the others run the generic one.
+ */
+static __attribute__((noinline)) void data_symbol_16(const struct ofdm_ctx *ctx,
+						     struct ofdm_worker *wk, struct bitsink *k,
+						     float *err)
+{
+	data_symbol_m(ctx, wk, OFDM_16QAM, k, err);
+}
+
+static __attribute__((noinline)) void data_symbol_64(const struct ofdm_ctx *ctx,
+						     struct ofdm_worker *wk, struct bitsink *k,
+						     float *err)
+{
+	data_symbol_m(ctx, wk, OFDM_64QAM, k, err);
+}
+
+OFDM_HOT static void data_symbol_any(const struct ofdm_ctx *ctx, struct ofdm_worker *wk,
+				     enum ofdm_mod mod, struct bitsink *k, float *err)
+{
+	data_symbol_m(ctx, wk, mod, k, err);
+}
+
+static inline void data_symbol(const struct ofdm_ctx *ctx, struct ofdm_worker *wk,
+			       enum ofdm_mod mod, struct bitsink *k, float *err)
+{
+	if (mod == OFDM_64QAM) {
+		data_symbol_64(ctx, wk, k, err);
+	} else if (mod == OFDM_16QAM) {
+		data_symbol_16(ctx, wk, k, err);
+	} else {
+		data_symbol_any(ctx, wk, mod, k, err);
+	}
 }
 
 /*
@@ -666,10 +940,10 @@ static void channel(struct ofdm_ctx *ctx, const uint32_t *w)
 	for (unsigned int p = 0; p < np; p++) {
 		struct ofdm_cf u;
 
-		take_slot(ctx, &ctx->w0, w, 1U + p);
+		take_slot(ctx, &ctx->w0, w, 1U + p, false);
 		u = ctx->w0.u;
 		for (unsigned int a = 0; a < c; a++) {
-			struct ofdm_cf y = cmul(ctx->w0.buf[ctx->binr[a]], u);
+			struct ofdm_cf y = cmul(fft_out(ctx, &ctx->w0, ctx->binr[a]), u);
 			float s = pn_sign(PILOT_SEED, a);
 
 			/* Pilot p against the sum of the ones before: the phase step per slot. */
@@ -821,8 +1095,8 @@ int ofdm_rx_begin_period(struct ofdm_ctx *ctx, const uint32_t *words, size_t n, 
 	for (unsigned int s = 0; s < ctx->nhdr; s++) {
 		struct ofdm_cf r;
 
-		take_slot(ctx, &ctx->w0, words, h0 + s);
-		r = track(ctx, &ctx->w0, OFDM_BPSK);
+		take_slot(ctx, &ctx->w0, words, h0 + s, false);
+		r = track_any(ctx, &ctx->w0, OFDM_BPSK);
 		for (unsigned int k = 0; k < c; k++) {
 			rx->soft[(s * c + k) % nh] += eq_rot(ctx, &ctx->w0, k, r.re, r.im).re;
 		}
@@ -856,7 +1130,7 @@ void ofdm_rx_fork(const struct ofdm_ctx *ctx, struct ofdm_worker *wk, const uint
 
 	wk->u = (struct ofdm_cf){cosf(a), sinf(a)};
 	wk->rate = ctx->w0.rate;
-	take_slot(ctx, wk, words, ps);
+	take_slot(ctx, wk, words, ps, false);
 	/* The pilot equalized: its phase against the channel's is the one to undo. */
 	for (unsigned int k = 0; k < ctx->cfg.channels; k++) {
 		struct ofdm_cf z = eq_rot(ctx, wk, k, wk->u.re, wk->u.im);
@@ -875,7 +1149,7 @@ void ofdm_rx_part(const struct ofdm_ctx *ctx, struct ofdm_worker *wk, const uint
 	struct bitsink k = {.out = bits};
 
 	for (unsigned int s = s0; s < s1; s++) {
-		take_slot(ctx, wk, words, data_slot(ctx, s));
+		take_slot(ctx, wk, words, data_slot(ctx, s), true);
 		data_symbol(ctx, wk, mod, &k, err);
 	}
 	sink_flush(&k);
