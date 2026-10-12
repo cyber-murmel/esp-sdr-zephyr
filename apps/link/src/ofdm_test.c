@@ -292,7 +292,9 @@ static int cmd_rx(const struct shell *sh, size_t argc, char **argv)
 	uint32_t n = 100, found = 0, bad = 0, hbad = 0;
 	uint64_t errs = 0, prof[3] = {0}, cap_us = 0;
 	float mer = 0.0f, cfo = 0.0f, mer_min = 99.0f;
-	bool verbose = false, full = false, dump = false;
+	bool verbose = false, full = false, dump = false, cmp = false;
+	uint64_t errs_f = 0;
+	struct ofdm_cf sv_trk = {0}, sv_rate = {0}, sv_u = {0};
 	size_t bits;
 
 	for (size_t i = 1; i < argc; i++) {
@@ -304,6 +306,8 @@ static int cmd_rx(const struct shell *sh, size_t argc, char **argv)
 			full = true;
 		} else if (strcmp(argv[i], "-d") == 0) {
 			dump = true;
+		} else if (strcmp(argv[i], "-c") == 0) {
+			cmp = true;
 		}
 	}
 	if (prepare(sh) != 0) {
@@ -327,6 +331,9 @@ static int cmd_rx(const struct shell *sh, size_t argc, char **argv)
 		}
 		found++;
 		hbad += memcmp(rx_hdr, ref_hdr, sizeof(rx_hdr)) != 0;
+		sv_trk = ctx.w0.trk;
+		sv_rate = ctx.w0.rate;
+		sv_u = ctx.w0.u;
 		ofdm_rx_finish(&ctx, b.words, mod, rx_bits, &info);
 		for (size_t i = 0; i < (bits + 7U) / 8U; i++) {
 			uint8_t d = rx_bits[i] ^ ref_bits[i];
@@ -338,6 +345,27 @@ static int cmd_rx(const struct shell *sh, size_t argc, char **argv)
 		}
 		errs += e;
 		bad += e != 0U;
+		if (cmp) {
+			/* The same samples through the float decoder (a diagnostic pointer forces it). */
+			static EXT_RAM_BSS_ATTR float dummy[OFDM_CH_MAX];
+			uint32_t ef = 0;
+
+			ctx.w0.trk = sv_trk;
+			ctx.w0.rate = sv_rate;
+			ctx.w0.u = sv_u;
+			ctx.sc_err = dummy;
+			ofdm_rx_finish(&ctx, b.words, mod, rx_bits, &info);
+			ctx.sc_err = NULL;
+			for (size_t i = 0; i < (bits + 7U) / 8U; i++) {
+				uint8_t d = rx_bits[i] ^ ref_bits[i];
+
+				if (i == (bits - 1U) / 8U && (bits & 7U) != 0U) {
+					d &= (uint8_t)(0xffU << (8U - (bits & 7U)));
+				}
+				ef += (uint32_t)__builtin_popcount(d);
+			}
+			errs_f += ef;
+		}
 		if (dump && e != 0U) {
 			/* The capture of this frame, as "link dump" prints it, then stop. */
 			shell_print(sh, "frame with %u bit errors, start %d, MER %.1f dB", e, info.start,
@@ -368,11 +396,25 @@ static int cmd_rx(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "found %u/%u, header errors %u, frame errors %u, bit errors %llu/%llu "
 		    "(BER %.2e)", found, n, hbad, bad, errs, (uint64_t)found * bits,
 		    found ? (double)errs / ((double)found * (double)bits) : 0.0);
+	if (cmp) {
+		shell_print(sh, "same samples through the float decoder: bit errors %llu (BER %.2e)",
+			    errs_f, found ? (double)errs_f / ((double)found * (double)bits) : 0.0);
+	}
 	if (found > 0) {
 		shell_print(sh, "MER %.1f dB avg, %.1f min, cfo %.1f kHz; us per frame: search %llu, "
 			    "channel+header %llu, data %llu (capture %llu)",
 			    (double)(mer / found), (double)mer_min, (double)(cfo / found / 1e3f),
 			    prof[0] / found, prof[1] / found, prof[2] / found, cap_us / n);
+		{
+			float emax = 0.0f;
+
+			for (unsigned int a = 0; a < cfg.channels; a++) {
+				emax = MAX(emax, MAX(fabsf(ctx.eq[a].re), fabsf(ctx.eq[a].im)));
+			}
+			shell_print(sh, "vector equalizer: sar 16qam %d, 64qam %d (0: float decoder); "
+				    "max |eq| %.4f, fscale %.3f",
+				    ctx.veq[0].sar, ctx.veq[1].sar, (double)emax, (double)ctx.fscale);
+		}
 		if (verbose) {
 			print_channel(sh);
 		}
@@ -449,6 +491,15 @@ static int cmd_snr(const struct shell *sh, size_t argc, char **argv)
 		}
 	}
 	shell_print(sh, "rx done");
+	return 0;
+}
+
+static int cmd_vec(const struct shell *sh, size_t argc, char **argv)
+{
+	if (argc > 1) {
+		ofdm_vec_enable = strtoul(argv[1], NULL, 0) != 0U;
+	}
+	shell_print(sh, "vector payload decoder %s", ofdm_vec_enable ? "on" : "off (float)");
 	return 0;
 }
 
@@ -648,6 +699,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(ofdm_cmds,
 	SHELL_CMD_ARG(rx, NULL, "Decode captures: [-n <captures>] [-v] [-w: whole window] "
 		      "[-d: dump the first frame with errors]", cmd_rx, 1, 5),
 	SHELL_CMD_ARG(snr, NULL, "SNR per subcarrier of a looped frame: [-n <captures>]", cmd_snr, 1, 2),
+	SHELL_CMD_ARG(vec, NULL, "Vector payload decoder: [0|1]", cmd_vec, 1, 1),
 	SHELL_CMD_ARG(stx, NULL, "Stream test frames: [-t <s>] [-p <us per frame>]", cmd_stx, 1, 4),
 	SHELL_CMD_ARG(srx, NULL, "Check the stream: [-t <s>]", cmd_srx, 1, 2),
 	SHELL_CMD(bench, NULL, "Time one FFT", cmd_bench),

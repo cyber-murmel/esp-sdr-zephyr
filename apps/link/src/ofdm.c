@@ -232,6 +232,10 @@ int ofdm_init(struct ofdm_ctx *ctx, const struct ofdm_cfg *cfg)
 		ctx->w16[2U * i + 1U] = (int16_t)lrintf(32767.0f * ctx->w[2U * i + 1U]);
 	}
 	ctx->fscale = (float)ctx->rnfft / FFT16_GAIN;
+	/* The context may sit in RAM that is not cleared at boot. */
+	ctx->sc_err = NULL;
+	ctx->veq[0].sar = 0;
+	ctx->veq[1].sar = 0;
 	return 0;
 }
 
@@ -885,6 +889,168 @@ static inline __attribute__((always_inline)) void data_symbol_m(const struct ofd
 	*err += e2;
 }
 
+bool ofdm_vec_enable = true;
+
+#if defined(CONFIG_APP_OFDM_ESP_DSP) && OFDM_FFT16
+/*
+ * The payload symbol on the vector unit, four subcarriers per step, in a function of its own
+ * (it sets SAR, which the compiler does not know about). Per group: z = (g E) >> sar, rotated
+ * by r (scaled by 2^sar, so the same shift), t = z + k 128 clamped to 0 .. 256 k - 1, the
+ * level l = t >> 8 (by a multiply and the same shift), the error t0 - (t & 0xff00) - 128
+ * summed squared in the accumulator. g in place becomes l; returns the error energy.
+ * cv: five vectors of eight, 128 k, 256 k - 1, 2^(sar - 8), 0xff00, 128.
+ */
+__attribute__((noinline)) static int32_t veq_kernel(uint32_t *g, const int16_t *e, unsigned int ng,
+						     unsigned int sar, const uint32_t *rq32,
+						     const int16_t cv[5][8])
+{
+	const uint32_t *gl = g;
+	uint32_t *gs = g;
+	int32_t acc;
+
+	__asm__ volatile("wsr.sar %[sar]\n\t"
+			 "rsync\n\t"
+			 "ee.vldbc.32.ip q7, %[rq], 0\n\t"
+			 "ee.vld.128.ip q6, %[ca], 0\n\t"
+			 "ee.vld.128.ip q5, %[ch], 0\n\t"
+			 "ee.zero.accx\n\t"
+			 "loopnez %[n], 1f\n\t"
+			 "ee.vld.128.ip q0, %[gl], 16\n\t"
+			 "ee.vld.128.ip q1, %[e], 16\n\t"
+			 "ee.cmul.s16 q2, q0, q1, 0\n\t"
+			 "ee.cmul.s16 q2, q0, q1, 1\n\t"
+			 "ee.cmul.s16 q3, q2, q7, 0\n\t"
+			 "ee.cmul.s16 q3, q2, q7, 1\n\t"
+			 "ee.vadds.s16 q3, q3, q6\n\t"
+			 "ee.zero.q q1\n\t"
+			 "ee.vmax.s16 q2, q3, q1\n\t"
+			 "ee.vmin.s16 q2, q2, q5\n\t"
+			 "ee.vld.128.ip q0, %[cm], 0\n\t"
+			 "ee.vmul.s16 q0, q2, q0\n\t"
+			 "ee.vst.128.ip q0, %[gs], 16\n\t"
+			 "ee.vld.128.ip q1, %[ck], 0\n\t"
+			 "ee.andq q1, q2, q1\n\t"
+			 "ee.vsubs.s16 q3, q3, q1\n\t"
+			 "ee.vld.128.ip q1, %[cb], 0\n\t"
+			 "ee.vsubs.s16 q3, q3, q1\n\t"
+			 "ee.vmulas.s16.accx q3, q3\n\t"
+			 "1:\n\t"
+			 "movi %[acc], 0\n\t"
+			 "ee.srs.accx %[acc], %[acc], 0\n\t"
+			 : [gl] "+r"(gl), [gs] "+r"(gs), [e] "+r"(e), [acc] "=&r"(acc)
+			 : [sar] "r"(sar), [rq] "r"(rq32), [ca] "r"(cv[0]), [ch] "r"(cv[1]),
+			   [cm] "r"(cv[2]), [ck] "r"(cv[3]), [cb] "r"(cv[4]), [n] "r"(ng)
+			 : "memory");
+	return acc;
+}
+
+/* (level I, level Q) to the Gray coded bits of the subcarrier, 64-QAM (3 + 3 bits) and 16-QAM (2 + 2). */
+static const uint8_t pack64[64] = {
+#define G3(l) (((l) ^ ((l) >> 1)) & 7)
+#define ROW(i) (G3(i) << 3 | G3(0)), (G3(i) << 3 | G3(1)), (G3(i) << 3 | G3(2)), (G3(i) << 3 | G3(3)), \
+	       (G3(i) << 3 | G3(4)), (G3(i) << 3 | G3(5)), (G3(i) << 3 | G3(6)), (G3(i) << 3 | G3(7))
+	ROW(0), ROW(1), ROW(2), ROW(3), ROW(4), ROW(5), ROW(6), ROW(7),
+#undef ROW
+#undef G3
+};
+static const uint8_t pack16[16] = {
+#define G2(l) (((l) ^ ((l) >> 1)) & 3)
+#define ROW(i) (G2(i) << 2 | G2(0)), (G2(i) << 2 | G2(1)), (G2(i) << 2 | G2(2)), (G2(i) << 2 | G2(3))
+	ROW(0), ROW(1), ROW(2), ROW(3),
+#undef ROW
+#undef G2
+};
+
+static inline __attribute__((always_inline)) void data_symbol_v(const struct ofdm_ctx *ctx,
+								struct ofdm_worker *wk,
+								const enum ofdm_mod mod,
+								struct bitsink *k, float *err)
+{
+	const struct ofdm_veq *v = &ctx->veq[mod == OFDM_64QAM];
+	const struct cons *cn = &cons[mod];
+	struct ofdm_cf r = track(ctx, wk, mod);
+	unsigned int c = ctx->cfg.channels, ng = c / 4U, nv = 4U * ng, bps = ofdm_mod_bits(mod);
+	unsigned int sh = (unsigned int)v->sar, qb = cn->q;
+	/* The gathered subcarriers, in the unused half of the FFT buffer (the FFT takes <= 1 KB). */
+	const uint32_t *fo = (const uint32_t *)wk->buf;
+	uint32_t *gb = (uint32_t *)wk->buf + 256;
+	int16_t cv[5][8] __attribute__((aligned(16)));
+	uint32_t rq32;
+	int rr = (int)(r.re * (float)(1 << sh) + (r.re >= 0.0f ? 0.5f : -0.5f));
+	int ri = (int)(r.im * (float)(1 << sh) + (r.im >= 0.0f ? 0.5f : -0.5f));
+	float e2;
+	unsigned int irq;
+
+	for (unsigned int a = 0; a < nv; a++) {
+		gb[a] = fo[ctx->binr[a]];
+	}
+	for (unsigned int i = 0; i < 8U; i++) {
+		cv[0][i] = (int16_t)(cn->k * 128U);
+		cv[1][i] = (int16_t)(256U * cn->k - 1U);
+		cv[2][i] = (int16_t)(1U << (sh - 8U));
+		cv[3][i] = (int16_t)0xff00;
+		cv[4][i] = 128;
+	}
+	rq32 = (uint32_t)(uint16_t)rr | ((uint32_t)(uint16_t)ri << 16);
+	irq = arch_irq_lock();
+	pie_enable();
+	{
+		/* Squared error in units of 1 / U, U = 128 / s per unit of the constellation. */
+		float acc = (float)veq_kernel(gb, &v->e[0][0], ng, sh, &rq32, cv);
+
+		e2 = acc * (cn->s * cn->s) * (1.0f / 16384.0f);
+	}
+	arch_irq_unlock(irq);
+	if (k->n == 0U && ((nv * bps) & 7U) == 0U && (bps == 6U || bps == 4U)) {
+		/*
+		 * Whole bytes: the two Gray coded levels of a subcarrier are one table entry,
+		 * and 4 subcarriers (6 bits each) or 2 (4 bits) make 3 or 1 bytes.
+		 */
+		uint8_t *o = k->out;
+
+		if (bps == 6U) {
+			for (unsigned int a = 0; a + 4U <= nv; a += 4U) {
+				uint32_t w0 = gb[a], w1 = gb[a + 1U], w2 = gb[a + 2U], w3 = gb[a + 3U];
+				uint32_t v0 = pack64[((w0 & 7U) << 3) | (w0 >> 16)];
+				uint32_t v1 = pack64[((w1 & 7U) << 3) | (w1 >> 16)];
+				uint32_t v2 = pack64[((w2 & 7U) << 3) | (w2 >> 16)];
+				uint32_t v3 = pack64[((w3 & 7U) << 3) | (w3 >> 16)];
+				uint32_t x = (v0 << 18) | (v1 << 12) | (v2 << 6) | v3;
+
+				o[0] = (uint8_t)(x >> 16);
+				o[1] = (uint8_t)(x >> 8);
+				o[2] = (uint8_t)x;
+				o += 3;
+			}
+		} else {
+			for (unsigned int a = 0; a + 2U <= nv; a += 2U) {
+				uint32_t w0 = gb[a], w1 = gb[a + 1U];
+
+				*o++ = (uint8_t)((pack16[((w0 & 3U) << 2) | (w0 >> 16)] << 4) |
+						 pack16[((w1 & 3U) << 2) | (w1 >> 16)]);
+			}
+		}
+		k->out = o;
+	} else {
+		for (unsigned int a = 0; a < nv; a++) {
+			uint32_t w = gb[a];
+			unsigned int li = w & 0xffffU, lq = w >> 16;
+
+			sink_put(k, ((li ^ (li >> 1)) << qb) | (lq ^ (lq >> 1)), bps);
+		}
+	}
+	/* Subcarriers past the last whole group: floats. */
+	for (unsigned int a = nv; a < c; a++) {
+		struct ofdm_cf z = eq_rot(ctx, wk, a, r.re, r.im), d;
+		unsigned int vv = decide(mod, z, &d);
+
+		e2 += (z.re - d.re) * (z.re - d.re) + (z.im - d.im) * (z.im - d.im);
+		sink_put(k, vv, bps);
+	}
+	*err += e2;
+}
+#endif
+
 /*
  * The loops specialised by modulation, so that the constellation constants
  * fold, for the two that carry the data (from flash: internal RAM is short,
@@ -894,6 +1060,12 @@ static __attribute__((noinline)) void data_symbol_16(const struct ofdm_ctx *ctx,
 						     struct ofdm_worker *wk, struct bitsink *k,
 						     float *err)
 {
+#if defined(CONFIG_APP_OFDM_ESP_DSP) && OFDM_FFT16
+	if (wk->q16 && ofdm_vec_enable && ctx->veq[0].sar != 0 && ctx->sc_err == NULL) {
+		data_symbol_v(ctx, wk, OFDM_16QAM, k, err);
+		return;
+	}
+#endif
 	data_symbol_m(ctx, wk, OFDM_16QAM, k, err);
 }
 
@@ -901,6 +1073,12 @@ static __attribute__((noinline)) void data_symbol_64(const struct ofdm_ctx *ctx,
 						     struct ofdm_worker *wk, struct bitsink *k,
 						     float *err)
 {
+#if defined(CONFIG_APP_OFDM_ESP_DSP) && OFDM_FFT16
+	if (wk->q16 && ofdm_vec_enable && ctx->veq[1].sar != 0 && ctx->sc_err == NULL) {
+		data_symbol_v(ctx, wk, OFDM_64QAM, k, err);
+		return;
+	}
+#endif
 	data_symbol_m(ctx, wk, OFDM_64QAM, k, err);
 }
 
@@ -921,6 +1099,45 @@ static inline void data_symbol(const struct ofdm_ctx *ctx, struct ofdm_worker *w
 		data_symbol_any(ctx, wk, mod, k, err);
 	}
 }
+
+#if defined(CONFIG_APP_OFDM_ESP_DSP) && OFDM_FFT16
+/*
+ * The vector decoder's equalizer, from ctx->eq: in units where the constellation spacing is
+ * 256 (a power of two, so slicing is an add, a clamp and a shift), times 2^sar for the
+ * 16-bit multiply (sar 10 to 14: the slicing shift needs at least 8). Too big for that
+ * (a very weak subcarrier): sar 0, the float decoder takes the frame.
+ */
+static void veq_build(struct ofdm_ctx *ctx)
+{
+	unsigned int c = ctx->cfg.channels;
+
+	for (unsigned int m = 0; m < 2U; m++) {
+		float f = ctx->fscale * 128.0f / cons[m ? OFDM_64QAM : OFDM_16QAM].s, fmax = 0.0f;
+		int sar = 14;
+
+		for (unsigned int a = 0; a < c; a++) {
+			float v = ctx->eq[a].re < 0.0f ? -ctx->eq[a].re : ctx->eq[a].re;
+			float w = ctx->eq[a].im < 0.0f ? -ctx->eq[a].im : ctx->eq[a].im;
+
+			fmax = v > fmax ? v : fmax;
+			fmax = w > fmax ? w : fmax;
+		}
+		fmax *= f;
+		while (sar >= 10 && fmax * (float)(1 << sar) > 30000.0f) {
+			sar--;
+		}
+		if (sar < 10) {
+			ctx->veq[m].sar = 0;
+			continue;
+		}
+		for (unsigned int a = 0; a < c; a++) {
+			ctx->veq[m].e[a][0] = (int16_t)lrintf(ctx->eq[a].re * f * (float)(1 << sar));
+			ctx->veq[m].e[a][1] = (int16_t)lrintf(ctx->eq[a].im * f * (float)(1 << sar));
+		}
+		ctx->veq[m].sar = (int16_t)sar;
+	}
+}
+#endif
 
 /*
  * Channel per subcarrier from the pilots: each one's known sign undone and its
@@ -1019,6 +1236,9 @@ static void channel(struct ofdm_ctx *ctx, const uint32_t *w)
 		h[a] = h2 > 0.0f ? (struct ofdm_cf){h[a].re / h2, -h[a].im / h2}
 				 : (struct ofdm_cf){0.0f, 0.0f};
 	}
+#if defined(CONFIG_APP_OFDM_ESP_DSP) && OFDM_FFT16
+	veq_build(ctx);
+#endif
 }
 
 int ofdm_rx_begin(struct ofdm_ctx *ctx, const uint32_t *words, size_t n, uint8_t *hdr,

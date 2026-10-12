@@ -146,6 +146,15 @@ struct ofdm_ctx {
 	struct ofdm_rxstate rx;
 	/* Diagnostic: when set, the payload decoder adds each subcarrier's squared error here. */
 	float *sc_err;
+	/*
+	 * The equalizer for the vector payload decoder, per modulation (16-QAM, 64-QAM): conj(H)
+	 * times the receive FFT's scale times the factor that makes the constellation spacing
+	 * 256, in 16 bit times 2^sar (sar 0: does not fit, the float decoder is used).
+	 */
+	struct ofdm_veq {
+		int16_t e[OFDM_CH_MAX][2] __attribute__((aligned(16)));
+		int16_t sar;
+	} veq[2];
 };
 
 /* A transmit work buffer (ofdm_tx_build()), separate so that building and decoding can overlap. */
@@ -213,6 +222,9 @@ struct ofdm_rx_info {
 	/* Cycles (ofdm_clock): search, channel estimate and header, payload. */
 	uint32_t prof[3];
 };
+
+/* The vector payload decoder (16-QAM and 64-QAM with the 16-bit FFT); false: the float one. */
+extern bool ofdm_vec_enable;
 
 /* Optional cycle counter for ofdm_rx_info.prof. */
 extern uint32_t (*ofdm_clock)(void);

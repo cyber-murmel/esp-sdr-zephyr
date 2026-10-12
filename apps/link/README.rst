@@ -126,9 +126,9 @@ Where the time goes
 
 The rate is set by the CPUs, not the air (a frame is on air for 0.2 ms of each
 10 ms exchange). Per frame at 26 MHz, 64-QAM, RS (both CPUs; the receiver in ms): search
-1.2, channel and header 0.7, payload 2.6, Reed-Solomon and CRC 2.0 (13 units at about
-0.28 ms with the typical 3 or 4 corrections); the sender builds the next frame in 4.6 on
-the other CPU, ACKs 0.3 each way.
+1.1, channel and header 0.85, payload 1.2, Reed-Solomon and CRC 1.8 to 2.3 (13 units at
+about 0.28 ms with the typical 3 or 4 corrections, more when the MER drops); the sender
+builds the next frame in 4.6 on the other CPU, ACKs 0.3 each way.
 
 - **16-bit FFT.** The receiver's payload FFT and the transmitter's inverse FFT run on
   esp-dsp's S3 vector kernel (``dsps_fft2r_sc16_aes3_``, 7 us for 128 points against 38
@@ -140,9 +140,21 @@ the other CPU, ACKs 0.3 each way.
   one cost 0.3 dB of MER and ACKs there). ``OFDM_FFT16`` in ``ofdm.c`` turns it off.
 - **Phase tracking** uses the middle half of the band, every second subcarrier (21 of 84),
   the strongest ones; the payload loop is specialised for 16-QAM and 64-QAM.
-- Per payload symbol (26 MHz, one CPU): derotate 18 us, FFT 11, tracking 10, decisions 46;
-  before: 12 + 41 + 26 + 34. The decisions are float code bound by the FPU's latencies
-  and its 16 registers; a vector (PIE) equalizer and slicer is the next step.
+- **Vector payload decoder** (16-QAM and 64-QAM, ``veq_kernel()`` in ``ofdm.c``). The
+  float decisions (46 us per symbol) were bound by the FPU's latencies and 16 registers.
+  Now, after the common phase is tracked (float, 21 subcarriers), four subcarriers per step
+  on the S3's vector unit: the FFT output gathered by bin, one complex multiply by the
+  equalizer and one by the phase (``ee.cmul.s16``, shifted by SAR), then slicing as an add,
+  a clamp and a shift, the squared error summed in the accumulator (MER), the levels packed
+  to bytes through a table. The equalizer (``ctx->veq``, from the pilots' channel estimate
+  after every ``channel()``) is scaled so that the spacing of the constellation is exactly
+  256, which turns the slicer into integer arithmetic; it needs about 10 bits of headroom
+  and falls back to the float decoder for a frame whose weakest subcarrier does not fit.
+  ``ofdm vec 0|1`` switches it; ``ofdm rx -c`` decodes every capture twice, vector and
+  float: 10 635 against 10 632 bit errors in 300 frames, the same for 16-QAM and 30 MHz.
+- Per payload symbol (26 MHz, one CPU): derotate 17 us, FFT 11, tracking 10, equalize and
+  decide 10; before: 12 + 41 + 26 + 34. A frame's payload takes 2.7 ms on one CPU instead
+  of 5.7 (1.1 to 1.2 ms with both).
 - **Frame assembly** (``ofdm_frame.c``) used two integer divisions per byte with divisors
   that vary (units, bytes per unit): about 0.4 ms at each end. Nested loops now, and a byte
   table for the CRC-32 (the nibble table cost 90 us per frame).
@@ -187,20 +199,23 @@ decodes what it catches, skips a frame it already has after the header (``dup``)
 reports as usual; the client's "acked" counts frames sent. Frame n carries bytes that depend
 on n, and the RS and CRC-32 check them.
 
-64-QAM, RS, 26 MHz, 30 dB (received by the server, 8 s):
+64-QAM, RS, 26 MHz, 30 dB (received by the server, 8 s, vector decoder):
 
 ======== ========== =========== ====== ======
 Period   Offered    Received    Lost   Dups
 ======== ========== =========== ====== ======
-6000 us  3.72       2.93        15.6 % 0
-7000 us  3.19       2.98        0.5 %  30
-8000 us  2.79       2.62        0      458
+7000 us  3.19       3.00        0      236
+6500 us  3.43       3.10        3.7 %  8
+6000 us  3.72       3.04        12.5 % 0
+5500 us  4.05       3.01        20 %   0
 ======== ========== =========== ====== ======
 
-(Mbit/s.) The receiver's cycle is about 6.5 ms (capture 0.4 and the stages above), which is
-what the period has to match: shorter loses frames, longer repeats them. About 3 % of
-captures straddle a bank switch and fail. Over the MAC (stop and wait, CSMA) the same
-boards reach 2.28 Mbit/s.
+(Mbit/s.) The receiver's cycle is about 6 ms (capture 0.4, the stages above, and the
+captures that straddle a bank switch, about 8 %): a shorter period only loses frames, a
+longer one repeats them (the repeats are skipped after the header). With the float decoder
+the same boards reached 2.66 Mbit/s with 10 % lost at 7 ms, over the MAC (stop and wait,
+CSMA) 2.3 to 2.4. The MER of the link drifts by a dB or more during a session (22.3 to 23.7
+dB); more errors per RS unit make the FEC stage slower (1.8 to 2.8 ms).
 
 Building and running
 ********************

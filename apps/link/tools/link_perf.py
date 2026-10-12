@@ -148,7 +148,8 @@ def ofdm(args):
     for line in tx.lines(1.0, r"looping|failed"):
         if "failed" in line:
             sys.exit(f"{tx.sn}: {line}")
-    for line in rx.cmd(f"ofdm rx -n {args.n}{' -v' if args.v else ''}", seconds + 10.0,
+    for line in rx.cmd(f"ofdm rx -n {args.n}{' -v' if args.v else ''}{' -c' if args.c else ''}",
+                       seconds + 10.0,
                        r"^rx done"):
         if not line.startswith(("ofdm rx", "rx done")):
             print(line)
@@ -184,6 +185,7 @@ def main():
     o.add_argument("--tx", required=True, help="USB serial of the sending board")
     o.add_argument("-n", type=int, default=100, help="captures to decode")
     o.add_argument("-v", action="store_true", help="also the channel per subcarrier")
+    o.add_argument("-c", action="store_true", help="also decode with the float decoder, to compare")
     o.add_argument("--set", action="append", default=[], help="key=value for both boards")
     args = ap.parse_args()
     {"run": run, "dump": dump, "ofdm": ofdm}[args.cmd](args)
