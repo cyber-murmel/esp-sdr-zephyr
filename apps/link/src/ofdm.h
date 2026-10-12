@@ -143,6 +143,8 @@ struct ofdm_ctx {
 		/* Then the carrier offset derotation over one receive FFT window. */
 		struct ofdm_cf rot[OFDM_NFFT_MAX];
 	};
+	/* The same in Q15 for the vector derotation of the payload symbols. */
+	int16_t rot16[OFDM_NFFT_MAX][2] __attribute__((aligned(16)));
 	struct ofdm_rxstate rx;
 	/* Diagnostic: when set, the payload decoder adds each subcarrier's squared error here. */
 	float *sc_err;
@@ -225,6 +227,8 @@ struct ofdm_rx_info {
 
 /* The vector payload decoder (16-QAM and 64-QAM with the 16-bit FFT); false: the float one. */
 extern bool ofdm_vec_enable;
+/* The payload derotation on the vector unit (ESP32-S3, 16-bit FFT path). */
+extern bool ofdm_vec_derot;
 
 /* The best metric of a preamble scan (see ofdm_sc_scan()). */
 struct ofdm_sc_best {

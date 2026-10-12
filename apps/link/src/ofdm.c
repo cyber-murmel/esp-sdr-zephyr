@@ -700,11 +700,76 @@ static void rot_init(struct ofdm_ctx *ctx, float eps)
 			ri = sinf(a * (float)i);
 		}
 		ctx->rot[i] = (struct ofdm_cf){rr, ri};
+		ctx->rot16[i][0] = (int16_t)lrintf(rr * 32767.0f);
+		ctx->rot16[i][1] = (int16_t)lrintf(ri * 32767.0f);
 		t = rr * sr - ri * si;
 		ri = rr * si + ri * sr;
 		rr = t;
 	}
 }
+
+bool ofdm_vec_derot = true;
+
+#if defined(CONFIG_APP_OFDM_ESP_DSP) && OFDM_FFT16
+/*
+ * The derotation of 4 n4 receive words (any alignment: ee.ld.128.usar loads the aligned
+ * 16 bytes and ee.src.q.qup shifts the pair of chunks by the address's low bits) into
+ * int16 pairs scaled by FFT16_GAIN, on the vector unit. Per word w (Q in bits 9:0, I in
+ * 19:10): I 64 = (w >> 4) & 0xffc0 in the low half, Q 64 = w << 22 in the high half, minus
+ * the DC in the same scale (saturating), clipped to +-23170 so that the rotation (one
+ * complex multiply by rot16, Q15, >> 16: the floor of x 32 rot) stays in 16 bit. SAR is
+ * written before each shift; the vector unit takes the new value without a sync.
+ */
+__attribute__((noinline)) static void derot_kernel(int16_t *q, const uint32_t *x,
+						   const int16_t *rot16, unsigned int n4,
+						   const uint32_t *dcw, const uint32_t *maskw,
+						   const int16_t clip[2])
+{
+	const uint32_t s4 = 4, s22 = 22, s16 = 16;
+
+	__asm__ volatile("ee.vldbc.32.ip q7, %[dc], 0\n\t"
+			 "ee.vldbc.32.ip q6, %[mk], 0\n\t"
+			 "ee.vldbc.16.ip q4, %[cl], 2\n\t"
+			 "ee.vldbc.16.ip q5, %[cl], 0\n\t"
+			 "ee.ld.128.usar.ip q0, %[x], 16\n\t"
+			 "loopnez %[n], 1f\n\t"
+			 "ee.ld.128.usar.ip q1, %[x], 16\n\t"
+			 "ee.src.q.qup q2, q0, q1\n\t"
+			 "wsr.sar %[s4]\n\t"
+			 "ee.vsr.32 q3, q2\n\t"
+			 "ee.andq q3, q3, q6\n\t"
+			 "wsr.sar %[s22]\n\t"
+			 "ee.vsl.32 q2, q2\n\t"
+			 "ee.orq q3, q3, q2\n\t"
+			 "ee.vsubs.s16 q3, q3, q7\n\t"
+			 "ee.vmin.s16 q3, q3, q5\n\t"
+			 "ee.vmax.s16 q3, q3, q4\n\t"
+			 "ee.vld.128.ip q2, %[r], 16\n\t"
+			 "wsr.sar %[s16]\n\t"
+			 "ee.cmul.s16 q1, q3, q2, 0\n\t"
+			 "ee.cmul.s16 q1, q3, q2, 1\n\t"
+			 "ee.vst.128.ip q1, %[q], 16\n\t"
+			 "1:\n\t"
+			 : [q] "+r"(q), [x] "+r"(x), [r] "+r"(rot16), [cl] "+r"(clip)
+			 : [n] "r"(n4), [dc] "r"(dcw), [mk] "r"(maskw), [s4] "r"(s4),
+			   [s22] "r"(s22), [s16] "r"(s16)
+			 : "memory");
+}
+
+/* derot_kernel() with the vector unit to itself (see fft16()). */
+static void derot16(const struct ofdm_ctx *ctx, int16_t *q, const uint32_t *x, unsigned int n)
+{
+	static const uint32_t maskw = 0x0000ffc0U;
+	static const int16_t clip[2] = {-23170, 23170};
+	uint32_t dcw = ((uint32_t)(uint16_t)(int16_t)(ctx->rx.dcq * 64) << 16) |
+		       (uint16_t)(int16_t)(ctx->rx.dci * 64);
+	unsigned int key = arch_irq_lock();
+
+	pie_enable();
+	derot_kernel(q, x, (const int16_t *)ctx->rot16, n / 4U, &dcw, &maskw, clip);
+	arch_irq_unlock(key);
+}
+#endif
 
 /*
  * Slot s of the frame at rx.start into the FFT buffer, DC removed and
@@ -725,7 +790,10 @@ OFDM_HOT static void take_slot(const struct ofdm_ctx *ctx, struct ofdm_worker *w
 
 #if defined(CONFIG_APP_OFDM_ESP_DSP) && OFDM_FFT16
 	wk->q16 = fast;
-	if (fast) {
+	if (fast && ofdm_vec_derot) {
+		derot16(ctx, (int16_t *)b, x, n);
+		fft16(ctx, (int16_t *)b, n);
+	} else if (fast) {
 		int16_t *q = (int16_t *)b;
 
 		for (unsigned int i = 0; i < n; i++) {

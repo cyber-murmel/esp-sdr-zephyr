@@ -126,8 +126,8 @@ Where the time goes
 
 The rate is set by the CPUs, not the air (a frame is on air for 0.2 ms of each
 10 ms exchange). Per frame at 26 MHz, 64-QAM, RS (both CPUs; the receiver in ms): search
-1.1, channel and header 0.85, payload 1.2, Reed-Solomon and CRC 1.8 to 2.3 (13 units at
-about 0.28 ms with the typical 3 or 4 corrections, more when the MER drops); the sender
+0.8, channel and header 0.85, payload 0.8, Reed-Solomon and CRC 1.3 to 1.9 (11 units,
+more when the MER drops); the sender
 builds the next frame in 4.6 on the other CPU, ACKs 0.3 each way.
 
 - **16-bit FFT.** The receiver's payload FFT and the transmitter's inverse FFT run on
@@ -152,9 +152,18 @@ builds the next frame in 4.6 on the other CPU, ACKs 0.3 each way.
   and falls back to the float decoder for a frame whose weakest subcarrier does not fit.
   ``ofdm vec 0|1`` switches it; ``ofdm rx -c`` decodes every capture twice, vector and
   float: 10 635 against 10 632 bit errors in 300 frames, the same for 16-QAM and 30 MHz.
-- Per payload symbol (26 MHz, one CPU): derotate 17 us, FFT 11, tracking 10, equalize and
-  decide 10; before: 12 + 41 + 26 + 34. A frame's payload takes 2.7 ms on one CPU instead
-  of 5.7 (1.1 to 1.2 ms with both).
+- **Vector derotation** (``derot_kernel()``): the payload symbol's samples go from the
+  capture words (any alignment: ``ee.ld.128.usar`` and ``ee.src.q.qup``) to the 16-bit FFT
+  input in one pass of the vector unit, four samples per step: I and Q unpacked by two shifts
+  and a mask, the DC subtracted, clipped so that the rotation fits, and one complex multiply
+  by the rotation in Q15 (``ctx->rot16``). 17 us per symbol became 3. Measured on chip
+  first: ``ee.vmul.s16`` truncates, SAR takes a new value for the next vector instruction
+  without a sync, ``ee.src.q.qup`` writes the shifted chunk and moves the second one up.
+  ``ofdm derot 0|1`` switches it; ``ofdm rx -c`` also decodes each capture with the scalar
+  one: 21 811 against 21 843 bit errors in 200 frames (rounding goes the other way).
+- Per payload symbol (26 MHz, one CPU): derotate 3 us, FFT 11, tracking 10, equalize and
+  decide 10; before: 12 + 41 + 26 + 34. A frame's payload takes 1.6 ms on one CPU instead
+  of 5.7 (0.8 ms with both).
 - **Preamble search on both CPUs.** The coarse Schmidl-Cox scan (every 4th sample, about 2000
   steps of 70 to 150 cycles, mostly the float metric) is cut in half at the middle of the
   window; the second half runs on the other CPU's ``link_rx2`` thread (``ofdm_scan_async()``,
