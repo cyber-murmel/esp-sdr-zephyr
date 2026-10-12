@@ -103,18 +103,26 @@ size_t ofdm_frame_build(const struct ofdm_ctx *ctx, struct ofdm_txbuf *tb, struc
 	for (unsigned int u = 0; u < l.units; u++) {
 		memset(wk->units[u], 0, RS_N);
 	}
-	for (size_t d = 0; d < l.user + 4U; d++) {
-		uint8_t v = d < l.user ? data[d] : (uint8_t)(crc >> (8U * (d - l.user)));
+	/* Unit by unit (a division per byte is 15 cycles or more with a divisor that varies). */
+	for (unsigned int u = 0, d = 0; u < l.units && d < l.user + 4U; u++) {
+		uint8_t *dst = unit_byte(wk, &l, u, 0);
 
-		*unit_byte(wk, &l, (unsigned int)(d / l.k), (unsigned int)(d % l.k)) = v;
+		for (unsigned int pos = 0; pos < l.k && d < l.user + 4U; pos++, d++) {
+			dst[pos] = d < l.user ? data[d] : (uint8_t)(crc >> (8U * (d - l.user)));
+		}
 	}
 	for (unsigned int u = 0; u < l.units; u++) {
 		rs_encode(wk->units[u]);
 	}
-	for (j = 0; j < (size_t)l.units * l.len; j++) {
-		wk->bytes[j] = *unit_byte(wk, &l, (unsigned int)(j % l.units),
-					  (unsigned int)(j / l.units));
+	/* Interleaved: byte p of every unit, then byte p + 1. */
+	for (unsigned int pos = 0; pos < l.len; pos++) {
+		uint8_t *out_p = &wk->bytes[(size_t)pos * l.units];
+
+		for (unsigned int u = 0; u < l.units; u++) {
+			out_p[u] = *unit_byte(wk, &l, u, pos);
+		}
 	}
+	j = (size_t)l.units * l.len;
 	memset(&wk->bytes[j], 0, l.cap - j + 1U);
 	hdr_pack(h, hb);
 	return ofdm_tx_build(ctx, tb, h->mod, hb, wk->bytes, out);
@@ -216,13 +224,15 @@ int ofdm_frame_check(const struct ofdm_ctx *ctx, const struct ofdm_fhdr *h, stru
 	if (!layout_of(ctx, h->mod, &l)) {
 		return -3;
 	}
-	for (size_t d = 0; d < l.user + 4U; d++) {
-		uint8_t v = *unit_byte(wk, &l, (unsigned int)(d / l.k), (unsigned int)(d % l.k));
+	for (unsigned int u = 0, d = 0; u < l.units && d < l.user + 4U; u++) {
+		const uint8_t *src = unit_byte(wk, &l, u, 0);
 
-		if (d < l.user) {
-			data[d] = v;
-		} else {
-			crc |= (uint32_t)v << (8U * (d - l.user));
+		for (unsigned int pos = 0; pos < l.k && d < l.user + 4U; pos++, d++) {
+			if (d < l.user) {
+				data[d] = src[pos];
+			} else {
+				crc |= (uint32_t)src[pos] << (8U * (d - l.user));
+			}
 		}
 	}
 	return qam_crc32(data, l.user) == crc ? 0 : -3;

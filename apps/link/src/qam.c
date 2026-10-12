@@ -199,12 +199,24 @@ static const uint32_t crc32_nibble[16] = {
 	0x9b64c2b0, 0x86d3d2d4, 0xa00ae278, 0xbdbdf21c,
 };
 
+/* The byte table (1 KB), built from the nibble one on first use: a lookup per byte. */
+static uint32_t crc32_byte[256];
+static bool crc32_ready;
+
 static uint32_t crc32_update(uint32_t crc, const uint8_t *p, size_t n)
 {
+	if (!crc32_ready) {
+		for (unsigned int b = 0; b < 256U; b++) {
+			uint32_t v = b;
+
+			v = (v >> 4) ^ crc32_nibble[v & 15U];
+			v = (v >> 4) ^ crc32_nibble[v & 15U];
+			crc32_byte[b] = v;
+		}
+		crc32_ready = true;
+	}
 	for (size_t i = 0; i < n; i++) {
-		crc ^= p[i];
-		crc = (crc >> 4) ^ crc32_nibble[crc & 15U];
-		crc = (crc >> 4) ^ crc32_nibble[crc & 15U];
+		crc = (crc >> 8) ^ crc32_byte[(crc ^ p[i]) & 0xffU];
 	}
 	return crc;
 }

@@ -126,8 +126,9 @@ Where the time goes
 
 The rate is set by the CPUs, not the air (a frame is on air for 0.2 ms of each
 10 ms exchange). Per frame at 26 MHz, 64-QAM, RS (both CPUs; the receiver in ms): search
-1.2, channel and header 0.7, payload 2.6, Reed-Solomon 2.5; the sender builds the next
-frame in 5.0 on the other CPU, ACKs 0.3 each way.
+1.2, channel and header 0.7, payload 2.6 (on its own 1.4 when the other CPU is free),
+Reed-Solomon and CRC 1.1; the sender builds the next frame in 4.6 on the other CPU, ACKs
+0.3 each way.
 
 - **16-bit FFT.** The receiver's payload FFT and the transmitter's inverse FFT run on
   esp-dsp's S3 vector kernel (``dsps_fft2r_sc16_aes3_``, 7 us for 128 points against 38
@@ -142,6 +143,9 @@ frame in 5.0 on the other CPU, ACKs 0.3 each way.
 - Per payload symbol (26 MHz, one CPU): derotate 18 us, FFT 11, tracking 10, decisions 46;
   before: 12 + 41 + 26 + 34. The decisions are float code bound by the FPU's latencies
   and its 16 registers; a vector (PIE) equalizer and slicer is the next step.
+- **Frame assembly** (``ofdm_frame.c``) used two integer divisions per byte with divisors
+  that vary (units, bytes per unit): 0.6 ms at each end. Nested loops now, and a byte table
+  for the CRC-32 (the nibble table cost 90 us per frame).
 - ``OFDM_NFFT_MAX`` is 256 (512 cost 8 KB of internal RAM that the 16-bit tables need).
 
 Streaming test and SNR
