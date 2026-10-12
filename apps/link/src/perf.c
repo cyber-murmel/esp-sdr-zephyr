@@ -29,6 +29,7 @@
 
 #include "app_crash.h"
 #include "mac.h"
+#include "ofdm_frame.h"
 #include "qam.h"
 
 static const char *const fec_names[QAM_FECS] = {"rs", "hamming", "none"};
@@ -221,9 +222,11 @@ static int cmd_client(const struct shell *sh, size_t argc, char **argv)
 {
 	uint32_t dst, duration = 10000, interval = 1000, ncw = 0, rate = 0, window = 2, stream = 0;
 	enum qam_mod mod = QAM_QAM16;
-	enum qam_fec fec = QAM_FEC_RS;
+	unsigned int fec = QAM_FEC_RS;
+	struct mac_cfg mc;
 	int ret;
 
+	link_mac_get_cfg(&mc);
 	if (argc < 2 || parse_u32(argv[1], &dst) != 0 || dst > 0xff) {
 		shell_error(sh, "usage: link client <addr> [-t s] [-m mod] [-f fec] [-n units] [-w 1|2] [-b kbit/s] [-s us] [-i s]");
 		return -EINVAL;
@@ -248,9 +251,18 @@ static int cmd_client(const struct shell *sh, size_t argc, char **argv)
 			ret = parse_u32(val, &stream);
 		} else if (strcmp(opt, "-f") == 0) {
 			ret = -EINVAL;
-			for (int f = 0; f < QAM_FECS; f++) {
+			if (mc.phy == MAC_PHY_OFDM) {
+				/* The OFDM codes: rs, none, bch<t>-<bytes> (ofdm_frame.h). */
+				int f = ofdm_fec_parse(val);
+
+				if (f >= 0) {
+					fec = (unsigned int)f;
+					ret = 0;
+				}
+			}
+			for (int f = 0; mc.phy != MAC_PHY_OFDM && f < QAM_FECS; f++) {
 				if (strcmp(val, fec_names[f]) == 0) {
-					fec = (enum qam_fec)f;
+					fec = (unsigned int)f;
 					ret = 0;
 				}
 			}
@@ -272,22 +284,24 @@ static int cmd_client(const struct shell *sh, size_t argc, char **argv)
 		i++;
 	}
 	ret = link_mac_client_start((uint8_t)dst, mod, fec, ncw, window, duration, rate, stream);
-	if (ret != 0) {
+	if (ret != 0 && mc.phy == MAC_PHY_OFDM) {
+		shell_error(sh, "no OFDM frame for %s with %s (ofdm set: the layout)", mod_names[mod],
+			    ofdm_fec_name(fec));
+		return ret;
+	} else if (ret != 0) {
 		shell_error(sh, "%s with %s takes 1 to %u units, window 1 or 2", mod_names[mod],
-			    fec_names[fec], qam_ncw_max(mod, fec));
+			    fec_names[fec], qam_ncw_max(mod, (enum qam_fec)fec));
 		return ret;
 	}
 	{
-		struct qam_hdr h = {.mod = mod, .fec = fec, .ncw = ncw, .full = ncw == 0,
+		struct qam_hdr h = {.mod = mod, .fec = (uint8_t)fec, .ncw = ncw, .full = ncw == 0,
 				    .pair = window == 2};
 
-		struct mac_cfg mc;
-
-		link_mac_get_cfg(&mc);
 		if (mc.phy == MAC_PHY_OFDM) {
-			shell_print(sh, "client to 0x%02x: OFDM %s, rs, %u B per frame, %u ms%s", dst,
-				    mod_names[mod], (unsigned int)link_mac_frame_bytes(mod),
-				    duration, duration == 0 ? " (until stopped)" : "");
+			shell_print(sh, "client to 0x%02x: OFDM %s, %s, %u B per frame, %u ms%s", dst,
+				    mod_names[mod], ofdm_fec_name(fec),
+				    (unsigned int)link_mac_frame_bytes_fec(mod, fec), duration,
+				    duration == 0 ? " (until stopped)" : "");
 		} else {
 			shell_print(sh, "client to 0x%02x: %s, %s, %s, %u x %u B per transmission, %u ms%s",
 				    dst, mod_names[mod], fec_names[fec],

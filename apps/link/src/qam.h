@@ -259,4 +259,10 @@ uint16_t qam_crc16(const uint8_t *p, size_t n);
 
 uint32_t qam_crc32(const uint8_t *p, size_t n);
 
+/* The CRC-32 of a stream in parts: qam_crc32_cont(qam_crc32(a), b) = CRC-32 of a, b; 0 starts one. */
+uint32_t qam_crc32_cont(uint32_t crc, const uint8_t *p, size_t n);
+
+/* Build the CRC-32 tables (else on first use, which two CPUs must not race). */
+void qam_crc_init(void);
+
 #endif /* LINK_QAM_H_ */

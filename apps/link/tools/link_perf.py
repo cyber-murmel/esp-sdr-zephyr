@@ -30,6 +30,8 @@ import time
 import serial
 
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+# QAM codes, then the OFDM ones (apps/link/src/ofdm_frame.c).
+FECS = ["rs", "hamming", "none"] + [f"bch{t}-{n}" for n in (64, 128, 256) for t in (1, 2, 3, 4)] + ["bch1-8"]
 OFDM_KEYS = ("bw", "ch", "cp", "mod", "amp", "syms", "rxdiv", "fs", "pilots", "smooth")
 
 
@@ -165,7 +167,8 @@ def main():
     r.add_argument("--client", required=True, help="USB serial of the sending board")
     r.add_argument("-t", type=float, default=10.0, help="seconds")
     r.add_argument("-m", default="16qam", choices=["qpsk", "16qam", "64qam", "256qam", "1024qam", "4096qam"])
-    r.add_argument("-f", default="rs", choices=["rs", "hamming", "none"], help="error correction")
+    r.add_argument("-f", default="rs", choices=FECS,
+                   help="error correction (QAM: rs, hamming, none; OFDM: rs, none, bch<t>-<bytes>)")
     r.add_argument("-n", type=int, default=0, help="FEC units per frame (0: full frames)")
     r.add_argument("-w", type=int, default=2, choices=[1, 2], help="frames per transmission")
     r.add_argument("-b", type=int, default=0, help="offered kbit/s (0: as fast as possible)")

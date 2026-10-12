@@ -72,9 +72,11 @@ the same ``ofdm set`` settings on both).
   pilot symbols, a BPSK header (type, modulation, addresses, sequence
   number, CRC-16; its bits repeated over the subcarriers and combined soft),
   the payload with another pilot in its middle, each symbol with a cyclic
-  prefix. The payload is RS(255,223) in equally shortened units, byte
-  interleaved over the frame, with a CRC-32. The frame loops in the DAC and
-  fills half the capture window, so a whole copy always fits.
+  prefix. The payload carries the user data and a CRC-32 under the code the
+  header names (``-f``, see "Light error correction"): RS(255,223) in
+  equally shortened units byte interleaved over the frame, BCH blocks, or
+  none. The frame loops in the DAC and fills the capture window (read
+  around the period, see "Frames of a whole window").
 - Receiver, on the raw capture words: an integer sliding Schmidl-Cox search
   (coarse at twice the stride when its peak is clear, then at full
   resolution), the carrier offset from its phase, the channel from the two
@@ -271,6 +273,47 @@ produce most of the errors; a model on the measured SNR gives a static 16-QAM zo
 outer carriers, or bit loading in general, only 4 % over flat 64-QAM at equal error rate,
 so neither is built. What the lower MER needs is 16-QAM (2.3 Mbit/s loss-free in the same
 state): a rate adaptation, not more parity.
+
+Light error correction
+======================
+
+With the sample clock drift corrected the 64-QAM payload arrives with a raw bit error rate
+around 3e-6 (MER 26 to 27 dB): about one bit error in five long frames, so RS(255,223)
+(12.5 % parity, 16 byte errors per 255) carries far more protection than the channel needs.
+The frames name their code in the header (4 bits, ``link client ... -f <code>``):
+
+- ``rs``: RS(255,223) as before, for raw error rates up to a few 1e-3.
+- ``none``: the CRC-32 alone.
+- ``bch<t>-<bytes>``: binary BCH codes (``src/bch.c``) on contiguous blocks of up to 64, 128
+  or 256 bytes (GF(2^9), 2^10, 2^11), correcting t = 1 to 4 bit errors per block with m t
+  parity bits: ``bch2-128`` is 20 parity bits per 1024, 2.3 %. ``bch1-8`` is a Hamming
+  code of 56 data bits per 64.
+
+The receiver checks the CRC-32 first (four bytes per lookup step, slicing by 4); only a
+frame that fails it is decoded, block by block: the remainder register (a reflected CRC
+with the code's generator, also four bytes per step while r <= 32), and for a block whose
+remainder is not zero the syndromes, Berlekamp-Massey and a Chien search. The sender's
+parity is the same register. The blocks are not interleaved: a 1024-bit block already spans
+every subcarrier twice, and a symbol that goes wrong as a whole would sink an interleaved
+frame of t-error blocks just the same.
+
+Simulated (``tools/ofdm_sim.c``, ``FRAME=1 FEC=<code>``, 64-QAM, 26 MHz, the 80 MS/s frame
+of 3213 payload bytes; frames decoded of 20):
+
+=========== ========== ======= ======= =======
+Code        User bytes 24 dB   27 dB   30 dB
+=========== ========== ======= ======= =======
+rs          2791       20      20      20
+bch1-8      2803       5       20      20
+bch2-128    3121       0       20      20
+bch2-256    3168       0       20      20
+bch4-64     2954       20      20      20
+none        3209       0       8       20
+=========== ========== ======= ======= =======
+
+``bch2-256`` carries 13.5 % more than ``rs`` where the link runs (the board's MER, about the
+simulator's 27 to 30 dB); ``bch4-64`` keeps RS's margin at 24 dB with 6 % more. A Hamming
+code of 64-bit blocks costs what RS costs and corrects far less.
 
 Building and running
 ********************

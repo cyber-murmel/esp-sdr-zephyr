@@ -6,14 +6,14 @@
  * through carrier offset, optional multipath, noise and 10 bit quantization,
  * and decodes it; or decodes a real capture (link_perf.py dump).
  *
- *   cc -O2 -Wall -Isrc -I../../include src/ofdm.c src/ofdm_frame.c src/qam.c src/rs.c src/hamming.c \
- *      tools/ofdm_sim.c -lm -o /tmp/ofdm_sim
+ *   cc -O2 -Wall -Isrc -I../../include src/ofdm.c src/ofdm_frame.c src/qam.c src/rs.c src/bch.c \
+ *      src/hamming.c tools/ofdm_sim.c -lm -o /tmp/ofdm_sim
  *   BW=16 CH=52 MOD=64qam /tmp/ofdm_sim [capture.bin]
  *
  * Environment: BW (MHz), CH, CPDIV, MOD (bpsk .. 64qam, default all), AMP,
  * SYMS, CFO (Hz), MP (1: multipath), GAIN (receive scale), RXDIV (1, 2:
- * receive at 40 MS/s), PILOTS, SMOOTH, HDR (header bits), TRIALS. SNR is over
- * the receive bandwidth.
+ * receive at 40 MS/s), PILOTS, SMOOTH, HDR (header bits), TRIALS, FEC (the
+ * frames' code: rs, none, bch<t>-<bytes>). SNR is over the receive bandwidth.
  */
 
 #include <math.h>
@@ -311,14 +311,27 @@ int main(int argc, char **argv)
 	}
 
 	if (getenv("FRAME")) {
+		const char *fname = getenv("FEC") ? getenv("FEC") : "rs";
+		int fec = ofdm_fec_parse(fname);
+
+		if (fec < 0) {
+			printf("no code %s\n", fname);
+			return 1;
+		}
 		rs_init();
 		for (int m = m0; m <= m1; m++) {
-			struct ofdm_fhdr h = {.type = 0, .mod = (enum ofdm_mod)m, .dst = 2, .src = 1};
-			size_t user = ofdm_frame_user_bytes(&ctx, h.mod);
+			struct ofdm_fhdr h = {.type = 0, .mod = (enum ofdm_mod)m, .fec = (uint8_t)fec,
+					      .dst = 2, .src = 1};
+			size_t user = ofdm_frame_user_bytes(&ctx, h.mod, h.fec);
 			const double snrs[] = {12, 15, 18, 21, 24, 27, 30};
 			int trials = (int)env_f("TRIALS", 20);
 
-			printf("%s frames: %zu user bytes = %.1f Mbit/s on air\n", mod_names[m], user,
+			if (user == 0U) {
+				printf("%s: no %s frame\n", mod_names[m], fname);
+				continue;
+			}
+			printf("%s frames, %s: %zu user bytes of %zu = %.1f Mbit/s on air\n", mod_names[m],
+			       fname, user, ofdm_frame_bits(&ctx, h.mod) / 8U,
 			       (double)user * 8.0 / ((double)ctx.len / FS) / 1e6);
 			for (size_t s = 0; s < sizeof(snrs) / sizeof(snrs[0]); s++) {
 				int ok = 0, hdr_err = 0, data_err = 0, none = 0, fixed = 0;
@@ -343,8 +356,8 @@ int main(int argc, char **argv)
 						none++;
 						continue;
 					}
-					if (ret != 0 || g.seq != h.seq || g.mod != h.mod || g.dst != h.dst ||
-					    g.src != h.src) {
+					if (ret != 0 || g.seq != h.seq || g.mod != h.mod || g.fec != h.fec ||
+					    g.dst != h.dst || g.src != h.src) {
 						hdr_err++;
 						continue;
 					}
@@ -356,7 +369,7 @@ int main(int argc, char **argv)
 					ok++;
 					fixed += corr;
 				}
-				printf("  snr %4.0f dB: ok %3d/%d, none %d, header %d, data %d, RS fixed %.1f B/frame\n",
+				printf("  snr %4.0f dB: ok %3d/%d, none %d, header %d, data %d, fixed %.1f/frame\n",
 				       snrs[s], ok, trials, none, hdr_err, data_err,
 				       ok ? (double)fixed / ok : 0.0);
 			}

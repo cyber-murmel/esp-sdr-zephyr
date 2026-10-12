@@ -140,8 +140,10 @@ int link_mac_calibrate(void);
  * both banks without leaving TX, each looped for @p stream_us, no carrier sense, no ACK
  * (the receiver takes what it catches; use a broadcast @p dst). Counted as ACKed when sent;
  * a frame whose successor was not built in time stays on air longer and counts as dropped.
+ *
+ * @p fec is an enum qam_fec on the QAM PHY, an OFDM code id (ofdm_fec_parse()) on OFDM.
  */
-int link_mac_client_start(uint8_t dst, enum qam_mod mod, enum qam_fec fec, unsigned int ncw,
+int link_mac_client_start(uint8_t dst, enum qam_mod mod, unsigned int fec, unsigned int ncw,
 			  unsigned int window, uint32_t duration_ms, uint32_t rate_kbps,
 			  uint32_t stream_us);
 void link_mac_client_stop(void);
@@ -184,6 +186,8 @@ void link_mac_dump_release(void);
 
 /* User bytes per data frame at @p mod with the current PHY settings, 0 if none fit. */
 size_t link_mac_frame_bytes(enum qam_mod mod);
+/* The same under @p fec (an enum qam_fec, or an OFDM code id on OFDM). */
+size_t link_mac_frame_bytes_fec(enum qam_mod mod, unsigned int fec);
 
 struct ofdm_ctx;
 
