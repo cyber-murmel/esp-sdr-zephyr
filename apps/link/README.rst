@@ -126,9 +126,9 @@ Where the time goes
 
 The rate is set by the CPUs, not the air (a frame is on air for 0.2 ms of each
 10 ms exchange). Per frame at 26 MHz, 64-QAM, RS (both CPUs; the receiver in ms): search
-1.2, channel and header 0.7, payload 2.6 (on its own 1.4 when the other CPU is free),
-Reed-Solomon and CRC 1.1; the sender builds the next frame in 4.6 on the other CPU, ACKs
-0.3 each way.
+1.2, channel and header 0.7, payload 2.6, Reed-Solomon and CRC 2.0 (13 units at about
+0.28 ms with the typical 3 or 4 corrections); the sender builds the next frame in 4.6 on
+the other CPU, ACKs 0.3 each way.
 
 - **16-bit FFT.** The receiver's payload FFT and the transmitter's inverse FFT run on
   esp-dsp's S3 vector kernel (``dsps_fft2r_sc16_aes3_``, 7 us for 128 points against 38
@@ -144,8 +144,8 @@ Reed-Solomon and CRC 1.1; the sender builds the next frame in 4.6 on the other C
   before: 12 + 41 + 26 + 34. The decisions are float code bound by the FPU's latencies
   and its 16 registers; a vector (PIE) equalizer and slicer is the next step.
 - **Frame assembly** (``ofdm_frame.c``) used two integer divisions per byte with divisors
-  that vary (units, bytes per unit): 0.6 ms at each end. Nested loops now, and a byte table
-  for the CRC-32 (the nibble table cost 90 us per frame).
+  that vary (units, bytes per unit): about 0.4 ms at each end. Nested loops now, and a byte
+  table for the CRC-32 (the nibble table cost 90 us per frame).
 - ``OFDM_NFFT_MAX`` is 256 (512 cost 8 KB of internal RAM that the 16-bit tables need).
 
 Streaming test and SNR
@@ -175,6 +175,32 @@ Results (two boards, 30 dB, 26 MHz, ``txgain 4``, ``rxgain 32``):
   24 at 26, 23 at 30.
 - A broadcast (``link_perf.py run --dst 0xff``: no ACK, no retry) gains little: the ACK
   costs 0.34 ms of a 10 ms exchange.
+
+Blind stream
+============
+
+``link client 0xff -s <us>`` (``link_perf.py run --dst 0xff --stream <us>``, OFDM only)
+sends a stream without carrier sense or ACKs: the radio stays in TX and plays one frame
+after the other, each from its own DAC bank for ``<us>``, the next built on the other CPU
+meanwhile (a late build keeps the old frame on air and counts as dropped). The server
+decodes what it catches, skips a frame it already has after the header (``dup``), and
+reports as usual; the client's "acked" counts frames sent. Frame n carries bytes that depend
+on n, and the RS and CRC-32 check them.
+
+64-QAM, RS, 26 MHz, 30 dB (received by the server, 8 s):
+
+======== ========== =========== ====== ======
+Period   Offered    Received    Lost   Dups
+======== ========== =========== ====== ======
+6000 us  3.72       2.93        15.6 % 0
+7000 us  3.19       2.98        0.5 %  30
+8000 us  2.79       2.62        0      458
+======== ========== =========== ====== ======
+
+(Mbit/s.) The receiver's cycle is about 6.5 ms (capture 0.4 and the stages above), which is
+what the period has to match: shorter loses frames, longer repeats them. About 3 % of
+captures straddle a bank switch and fail. Over the MAC (stop and wait, CSMA) the same
+boards reach 2.28 Mbit/s.
 
 Building and running
 ********************

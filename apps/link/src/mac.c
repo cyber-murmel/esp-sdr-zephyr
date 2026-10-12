@@ -125,6 +125,8 @@ static struct {
 	unsigned int window;
 	int64_t end_ms;
 	uint32_t rate_kbps;
+	/* Blind stream: us each frame stays on air (0: the normal MAC). */
+	uint32_t stream_us;
 } client, client_req;
 static atomic_t client_dirty;
 static int64_t client_end_ms;
@@ -378,6 +380,15 @@ static void send_ack(uint8_t dst, uint16_t seq, bool other)
 }
 
 /* Count a data frame for us; false if it is a duplicate. */
+/* Whether the frame (@p src, @p seq) arrived already. */
+static bool seq_seen(uint8_t src, uint16_t seq)
+{
+	typeof(srcs[0]) *st = &srcs[src];
+	int16_t d = (int16_t)(seq - st->max_seq);
+
+	return st->seen && d <= 0 && -d < SEQ_WINDOW && (st->got & BIT64(-d)) != 0U;
+}
+
 static bool on_data(const struct qam_hdr *h)
 {
 	size_t bytes = frame_bytes(h);
@@ -573,6 +584,7 @@ static void receive_ofdm(void)
 	struct ofdm_rx_info oi;
 	uint32_t t0, tf = 0;
 	int ret, corr = 0;
+	bool dupb;
 
 	if (esp_sdr_rx_capture(link_ofdm_rx_rate(), MIN(WINDOW_SAMPLES, 2U * o->rlen + o->rnfft),
 			       &b) != 0) {
@@ -583,8 +595,14 @@ static void receive_ofdm(void)
 	}
 	t0 = now_cyc();
 	ret = ofdm_frame_begin(o, b.words, b.count, &fh, &oi);
-	if (ret == 0 && fh.type == MAC_DATA &&
-	    (fh.dst == cfg.addr || fh.dst == MAC_ADDR_BROADCAST)) {
+	/* A blind stream repeats a frame until the next is ready: no second decode for it. */
+	dupb = ret == 0 && fh.type == MAC_DATA && fh.dst == MAC_ADDR_BROADCAST &&
+	       seq_seen(fh.src, fh.seq);
+	if (dupb) {
+		STAT(stats.rx_dup++);
+		ret = 1;
+	} else if (ret == 0 && fh.type == MAC_DATA &&
+		   (fh.dst == cfg.addr || fh.dst == MAC_ADDR_BROADCAST)) {
 		uint32_t t1 = now_cyc(), t2;
 		float err = 0.0f;
 
@@ -845,10 +863,13 @@ static void fill_payload(uint8_t *p, uint16_t seq, size_t n)
 	}
 }
 
+/* The bank build() writes: the data bank, or the idle one of a stream. */
+static int build_bank = DATA_BANK;
+
 static size_t build(const struct qam_hdr *h, unsigned int n)
 {
 	size_t words;
-	uint32_t *bank = esp_sdr_tx_loop_buf(DATA_BANK, &words);
+	uint32_t *bank = esp_sdr_tx_loop_buf(build_bank, &words);
 
 	if (cfg.phy == MAC_PHY_OFDM) {
 		struct ofdm_fhdr fh = {.type = h[0].type, .mod = ofdm_mod_of(h[0].mod),
@@ -1038,6 +1059,65 @@ static void retry_or_drop(bool timeout)
 	out.quiet = 0;
 }
 
+/*
+ * A blind stream (client.stream_us): the radio stays in TX and plays one frame after the
+ * other, each from its own bank, switching by one DAC retrigger every stream_us; the next
+ * frame is built on the other CPU meanwhile. No sense, no ACK. Returns when the client
+ * stops, its time is up, or the MAC is paused.
+ */
+static void stream_run(void)
+{
+	const uint32_t period = k_us_to_cyc_ceil32(client.stream_us);
+	int bank = DATA_BANK;
+	uint32_t deadline;
+	size_t len, bytes = frame_bytes(&(struct qam_hdr){.mod = (uint8_t)client.mod});
+
+	build_discard();
+	build_bank = bank;
+	build_next();
+	if (!build_wait() || !job.ready) {
+		client.active = false;
+		return;
+	}
+	len = job.len;
+	job.ready = false;
+	if (esp_sdr_tx_loop_begin(link_ofdm_tx_rate()) != 0) {
+		client.active = false;
+		return;
+	}
+	(void)esp_sdr_tx_loop_start(bank, len);
+	deadline = now_cyc() + period;
+	STAT(stats.tx_frames++; stats.tx_attempts++; stats.tx_acked++; stats.tx_bytes_acked += bytes);
+	while (client.active && !atomic_get(&paused) && !atomic_get(&client_dirty) &&
+	       (client.end_ms == 0 || k_uptime_get() < client.end_ms)) {
+		/* The idle bank gets the next frame, on the other CPU. */
+		build_bank = bank ^ 1;
+		build_next();
+		while ((int32_t)(deadline - now_cyc()) > 0) {
+		}
+		if (!build_wait() || !job.ready) {
+			break;
+		}
+		if ((int32_t)(now_cyc() - deadline) > (int32_t)(period / 8U)) {
+			/* The frame was not ready in time: the old one stayed on air longer. */
+			STAT(stats.tx_dropped++);
+			deadline = now_cyc();
+		}
+		len = job.len;
+		job.ready = false;
+		bank ^= 1;
+		(void)esp_sdr_tx_loop_start(bank, len);
+		deadline += period;
+		STAT(stats.tx_frames++; stats.tx_attempts++; stats.tx_acked++;
+		     stats.tx_bytes_acked += bytes);
+	}
+	esp_sdr_tx_loop_end();
+	build_bank = DATA_BANK;
+	if (atomic_get(&client_dirty) == 0 && client.end_ms != 0 && k_uptime_get() >= client.end_ms) {
+		client.active = false;
+	}
+}
+
 static void mac_loop(void *p1, void *p2, void *p3)
 {
 	int ret;
@@ -1112,6 +1192,10 @@ static void mac_loop(void *p1, void *p2, void *p3)
 			client_end_ms = k_uptime_get();
 		}
 
+		if (client.active && client.stream_us != 0U) {
+			stream_run();
+			continue;
+		}
 		build_poll();
 		if (!out.pending && client.active) {
 			int64_t now = k_ticks_to_us_floor64(k_uptime_ticks());
@@ -1280,11 +1364,15 @@ int link_mac_calibrate(void)
 }
 
 int link_mac_client_start(uint8_t dst, enum qam_mod mod, enum qam_fec fec, unsigned int ncw,
-			  unsigned int window, uint32_t duration_ms, uint32_t rate_kbps)
+			  unsigned int window, uint32_t duration_ms, uint32_t rate_kbps,
+			  uint32_t stream_us)
 {
 	struct qam_hdr h = {.mod = mod, .fec = fec, .ncw = ncw, .full = ncw == 0,
 			    .pair = window == 2};
 
+	if (stream_us != 0U && (cfg.phy != MAC_PHY_OFDM || stream_us < 500U || stream_us > 100000U)) {
+		return -EINVAL;
+	}
 	if (cfg.phy == MAC_PHY_OFDM) {
 		/* One frame per transmission, the layout from "ofdm set"; -n and -f do not apply. */
 		size_t bytes = link_mac_frame_bytes(mod);
@@ -1313,6 +1401,7 @@ int link_mac_client_start(uint8_t dst, enum qam_mod mod, enum qam_fec fec, unsig
 		.window = window,
 		.end_ms = duration_ms ? k_uptime_get() + duration_ms : 0,
 		.rate_kbps = rate_kbps,
+		.stream_us = stream_us,
 	};
 	atomic_set(&client_dirty, 1);
 	return 0;

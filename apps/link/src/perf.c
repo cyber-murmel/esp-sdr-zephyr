@@ -4,7 +4,7 @@
  * iperf style throughput test over the MAC, on the "link" shell command:
  *
  *   link server [-i <s>] | link server stop
- *   link client <addr> [-t <s>] [-m qpsk|16qam|...|4096qam] [-f rs|hamming|none]
+ *   link client <addr> [-t <s>] [-m qpsk|16qam|...|4096qam] [-f rs|hamming|none] [-s <us>]
  *               [-n <units>] [-w 1|2]
  *               [-b <kbit/s>] [-i <s>]
  *   link stop | status | cal | set <key> <value> | dump [<ms>]
@@ -219,13 +219,13 @@ static int cmd_server(const struct shell *sh, size_t argc, char **argv)
 
 static int cmd_client(const struct shell *sh, size_t argc, char **argv)
 {
-	uint32_t dst, duration = 10000, interval = 1000, ncw = 0, rate = 0, window = 2;
+	uint32_t dst, duration = 10000, interval = 1000, ncw = 0, rate = 0, window = 2, stream = 0;
 	enum qam_mod mod = QAM_QAM16;
 	enum qam_fec fec = QAM_FEC_RS;
 	int ret;
 
 	if (argc < 2 || parse_u32(argv[1], &dst) != 0 || dst > 0xff) {
-		shell_error(sh, "usage: link client <addr> [-t s] [-m mod] [-f fec] [-n units] [-w 1|2] [-b kbit/s] [-i s]");
+		shell_error(sh, "usage: link client <addr> [-t s] [-m mod] [-f fec] [-n units] [-w 1|2] [-b kbit/s] [-s us] [-i s]");
 		return -EINVAL;
 	}
 	for (size_t i = 2; i < argc; i++) {
@@ -244,6 +244,8 @@ static int cmd_client(const struct shell *sh, size_t argc, char **argv)
 			ret = parse_u32(val, &window);
 		} else if (strcmp(opt, "-b") == 0) {
 			ret = parse_u32(val, &rate);
+		} else if (strcmp(opt, "-s") == 0) {
+			ret = parse_u32(val, &stream);
 		} else if (strcmp(opt, "-f") == 0) {
 			ret = -EINVAL;
 			for (int f = 0; f < QAM_FECS; f++) {
@@ -269,7 +271,7 @@ static int cmd_client(const struct shell *sh, size_t argc, char **argv)
 		}
 		i++;
 	}
-	ret = link_mac_client_start((uint8_t)dst, mod, fec, ncw, window, duration, rate);
+	ret = link_mac_client_start((uint8_t)dst, mod, fec, ncw, window, duration, rate, stream);
 	if (ret != 0) {
 		shell_error(sh, "%s with %s takes 1 to %u units, window 1 or 2", mod_names[mod],
 			    fec_names[fec], qam_ncw_max(mod, fec));

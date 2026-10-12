@@ -135,9 +135,15 @@ int link_mac_calibrate(void);
  * of them per transmission (1, or 2 as a pair the receiver decodes on both
  * CPUs), until @p duration_ms passes (0: until stopped),
  * at most @p rate_kbps of user data (0: as fast as the MAC goes).
+ *
+ * With @p stream_us (OFDM only) the frames are a blind stream: one after the other from
+ * both banks without leaving TX, each looped for @p stream_us, no carrier sense, no ACK
+ * (the receiver takes what it catches; use a broadcast @p dst). Counted as ACKed when sent;
+ * a frame whose successor was not built in time stays on air longer and counts as dropped.
  */
 int link_mac_client_start(uint8_t dst, enum qam_mod mod, enum qam_fec fec, unsigned int ncw,
-			  unsigned int window, uint32_t duration_ms, uint32_t rate_kbps);
+			  unsigned int window, uint32_t duration_ms, uint32_t rate_kbps,
+			  uint32_t stream_us);
 void link_mac_client_stop(void);
 bool link_mac_client_active(void);
 /* When the client last finished (its last frame done), in ms of uptime. */
