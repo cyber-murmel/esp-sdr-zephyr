@@ -3,7 +3,7 @@
  *
  * Link frames on the OFDM PHY: a 64 bit header (type, modulation, addresses,
  * sequence number, CRC-16) on the BPSK header symbols, and a payload of
- * shortened RS(255,223) units, byte interleaved over the frame (a weak
+ * shortened RS(255,231) units, byte interleaved over the frame (a weak
  * subcarrier spreads its errors over all units), carrying the user data and
  * its CRC-32.
  */

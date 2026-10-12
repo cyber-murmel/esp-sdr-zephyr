@@ -666,7 +666,7 @@ static int cmd_bench(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "fft %u (%s): %.2f us", ctx.nfft,
 		    IS_ENABLED(CONFIG_APP_OFDM_ESP_DSP) ? "esp-dsp" : "C",
 		    (double)k_cyc_to_ns_floor64(t0) / 1e3 / rounds);
-	/* RS(255,223) decode with e byte errors, on the stack. */
+	/* RS(255,231) decode with e byte errors, on the stack. */
 	for (unsigned int e = 0; e <= 10; e += (e == 0 ? 2 : (e == 2 ? 3 : 5))) {
 		uint8_t ref[RS_N], cw[RS_N];
 		uint32_t sum = 0;

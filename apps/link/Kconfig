@@ -129,6 +129,15 @@ config APP_OFDM_ESP_DSP
 	help
 	  Else the same radix-2 algorithm in C, in IRAM.
 
+config APP_RS_PARITY
+	int "Reed-Solomon parity bytes per 255-byte unit"
+	range 8 64
+	default 24
+	help
+	  Multiple of 4. The unit corrects half as many byte errors. 24 is RS(255,231),
+	  32 is RS(255,223), 16 is RS(255,239). The 64-QAM link at 24 dB needs about 4.7
+	  corrections per unit with a tail: 16 loses 21 % of the frames, 24 about 1 %.
+
 config APP_MAC_PRIORITY
 	int "MAC thread priority"
 	default 4

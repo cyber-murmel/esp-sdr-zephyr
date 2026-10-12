@@ -20,7 +20,7 @@ throughput test on the USB shell.
   symbols, estimates the carrier offset (and from it the sample clock
   offset), trains an 11 tap equalizer by least squares and tracks phase and
   taps decision directed.
-- **Error correction** per frame: RS(255,223), extended Hamming (128,120),
+- **Error correction** per frame: RS(255,231), extended Hamming (128,120),
   or none. Full frames fill the whole capture window with a short last unit
   (a shortened RS codeword, fewer Hamming blocks).
 - **Pairs**: two half length frames looped together. The receiver decodes
@@ -72,7 +72,7 @@ the same ``ofdm set`` settings on both).
   pilot symbols, a BPSK header (type, modulation, addresses, sequence
   number, CRC-16; its bits repeated over the subcarriers and combined soft),
   the payload with another pilot in its middle, each symbol with a cyclic
-  prefix. The payload is RS(255,223) in equally shortened units, byte
+  prefix. The payload is RS(255,231) in equally shortened units, byte
   interleaved over the frame, with a CRC-32. The frame loops in the DAC and
   fills half the capture window, so a whole copy always fits.
 - Receiver, on the raw capture words: an integer sliding Schmidl-Cox search
@@ -180,8 +180,8 @@ Results (two boards, 30 dB, 26 MHz, ``txgain 4``, ``rxgain 32``):
 - Uncoded 16-QAM is clean (BER 0 apart from captures that straddle a bank switch, 2 to 3 %
   of them): 2.0 Mbit/s of 17 kbit frames with the receiver on one CPU.
   Uncoded 64-QAM is not (BER 5e-3 in every frame): the MER is 24 dB and the band edges are
-  at 19 to 20 dB; 64-QAM needs about 26 dB. Reed-Solomon (3.5 corrections per 255 bytes on
-  average, 16 possible) is what makes it work.
+  at 19 to 20 dB; 64-QAM needs about 26 dB. Reed-Solomon (about 4.7 corrections per 255-byte
+  unit on average, with a tail) is what makes it work.
 - ``ofdm snr``: 28 dB in the middle of the band falling smoothly to 19 dB at both edges (the
   analog filters), so the MER is a property of the band, not of the frame: 27 dB at 16 MHz,
   24 at 26, 23 at 30.
@@ -216,6 +216,26 @@ longer one repeats them (the repeats are skipped after the header). With the flo
 the same boards reached 2.66 Mbit/s with 10 % lost at 7 ms, over the MAC (stop and wait,
 CSMA) 2.3 to 2.4. The MER of the link drifts by a dB or more during a session (22.3 to 23.7
 dB); more errors per RS unit make the FEC stage slower (1.8 to 2.8 ms).
+
+Parity (``CONFIG_APP_RS_PARITY``, default 24 bytes per unit, RS(255,231), 12 corrections): the
+unit needs 4.7 corrections on average, so the 16 of the earlier RS(255,223) were far more than
+needed. Fewer parity bytes carry 3.6 % more payload per frame and cut the FEC stage to 1.3 to
+1.9 ms. Blind stream on the same bench (64-QAM, 26 MHz, received Mbit/s and lost; the RS(255,223)
+column was measured earlier the same day, within the 22.3 to 23.7 dB MER drift):
+
+======== ============= =============
+Period   RS(255,223)   RS(255,231)
+======== ============= =============
+7000 us  3.00, 0       3.11, 0
+6500 us  3.10, 3.7 %   3.34, 0.2 %
+6000 us  3.04, 12.5 %  3.46, 4.1 %
+======== ============= =============
+
+RS(255,239) (16 parity bytes) is too weak here: 21 % of the frames fail. The edge carriers
+(19 to 20 dB) produce most of the errors; a static 16-QAM zone on the outer carriers would
+trade rate for fewer errors, but a model on the measured SNR shows no net gain over simply
+lowering the parity. Over the MAC (ACKs, 50 us turnaround) the client sends 2.78 Mbit/s,
+up from 2.3 to 2.4.
 
 Building and running
 ********************

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Unit test of apps/link/src/rs.c (RS(255,223)) on native_sim. rs.c takes
+# Unit test of apps/link/src/rs.c (RS(255,231)) on native_sim. rs.c takes
 # the __ZEPHYR__ branch (IRAM_ATTR from hal_espressif's esp_attr.h, not
 # available here) when built inside any Zephyr app, native_sim included:
 # undefine it for this one file, same as the host simulators

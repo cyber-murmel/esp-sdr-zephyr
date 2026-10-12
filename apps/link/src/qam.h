@@ -11,7 +11,7 @@
  *   preamble  2 x 64 QPSK, the same PN sequence twice (timing, frequency
  *             offset, equalizer training)
  *   header    32 QPSK: 8 bytes with a CRC-16
- *   payload   ncw units (RS(255,223), Hamming or uncoded), byte
+ *   payload   ncw units (RS(255,231), Hamming or uncoded), byte
  *             interleaved, in QPSK to 4096-QAM (Gray coded per axis); the
  *             data bytes end in a CRC-32
  */
@@ -49,7 +49,7 @@
 #define QAM_CRC_BYTES   4
 
 /*
- * Error correction per unit of QAM_UNIT bytes on air: RS(255,223), 15
+ * Error correction per unit of QAM_UNIT bytes on air: RS(255,231), 15
  * extended Hamming (128,120) blocks (240 bytes, 225 data), or none (255 data).
  */
 enum qam_fec {

@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * RS(255,223) codec. The encoder runs the parity register a word at a time
+ * RS(255,231) codec. The encoder runs the parity register a word at a time
  * from a 256 x 32 byte table; the decoder first checks the codeword with the
  * same register (a clean one costs no more than encoding) and only computes
  * syndromes, Berlekamp-Massey, Chien search and Forney for a dirty one,
@@ -108,28 +108,21 @@ void rs_init(void)
 /* Parity register over data[0..RS_K). */
 RS_HOT static void parity(const uint8_t *data, uint32_t reg[WORDS])
 {
-	uint32_t r0 = 0, r1 = 0, r2 = 0, r3 = 0, r4 = 0, r5 = 0, r6 = 0, r7 = 0;
+	uint32_t r[WORDS] = {0};
 
 	for (unsigned int i = 0; i < RS_K; i++) {
-		const uint32_t *t = enc_table[data[i] ^ (r0 & 0xff)];
+		const uint32_t *t = enc_table[data[i] ^ (r[0] & 0xff)];
 
-		r0 = ((r0 >> 8) | (r1 << 24)) ^ t[0];
-		r1 = ((r1 >> 8) | (r2 << 24)) ^ t[1];
-		r2 = ((r2 >> 8) | (r3 << 24)) ^ t[2];
-		r3 = ((r3 >> 8) | (r4 << 24)) ^ t[3];
-		r4 = ((r4 >> 8) | (r5 << 24)) ^ t[4];
-		r5 = ((r5 >> 8) | (r6 << 24)) ^ t[5];
-		r6 = ((r6 >> 8) | (r7 << 24)) ^ t[6];
-		r7 = (r7 >> 8) ^ t[7];
+#pragma GCC unroll 16
+		for (unsigned int w = 0; w < WORDS - 1; w++) {
+			r[w] = ((r[w] >> 8) | (r[w + 1] << 24)) ^ t[w];
+		}
+		r[WORDS - 1] = (r[WORDS - 1] >> 8) ^ t[WORDS - 1];
 	}
-	reg[0] = r0;
-	reg[1] = r1;
-	reg[2] = r2;
-	reg[3] = r3;
-	reg[4] = r4;
-	reg[5] = r5;
-	reg[6] = r6;
-	reg[7] = r7;
+#pragma GCC unroll 16
+	for (unsigned int w = 0; w < WORDS; w++) {
+		reg[w] = r[w];
+	}
 }
 
 void rs_encode(uint8_t *cw)
