@@ -726,7 +726,7 @@ static void receive_ofdm(void)
 	}
 	{
 		struct qam_hdr h = {.type = fh.type, .mod = (uint8_t)qam_mod_of(fh.mod),
-				    .dst = fh.dst, .src = fh.src, .seq = fh.seq};
+				    .fec = fh.fec, .dst = fh.dst, .src = fh.src, .seq = fh.seq};
 
 		(void)on_data(&h);
 		if (h.dst == cfg.addr) {
@@ -1143,7 +1143,8 @@ static void stream_run(void)
 	const uint32_t period = k_us_to_cyc_ceil32(client.stream_us);
 	int bank = DATA_BANK;
 	uint32_t deadline;
-	size_t len, bytes = frame_bytes(&(struct qam_hdr){.mod = (uint8_t)client.mod});
+	size_t len, bytes = frame_bytes(&(struct qam_hdr){.mod = (uint8_t)client.mod,
+							   .fec = (uint8_t)client.fec});
 
 	build_discard();
 	build_bank = bank;

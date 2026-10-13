@@ -380,25 +380,52 @@ static inline unsigned int rd_bits(struct bitrd *r, unsigned int nb)
 	return (r->acc >> r->n) & ((1U << nb) - 1U);
 }
 
-OFDM_HOT static uint32_t emit16(const struct ofdm_ctx *ctx, const int16_t *q, unsigned int shift,
-				uint32_t *out)
+/*
+ * Samples n0 .. n0 + cnt - 1 (natural order, read through the bit reversal) of the 16-bit
+ * FFT output as DAC words: a constant shift (rounded), clipped to +-511, Q negated.
+ */
+static inline __attribute__((always_inline)) uint32_t emit_run(const uint32_t *__restrict q32,
+							       const uint16_t *__restrict rev,
+							       unsigned int n0, unsigned int cnt,
+							       const int sh,
+							       uint32_t *__restrict out)
 {
-	unsigned int n = ctx->nfft;
-	const int rnd = 1 << (shift - 1U);
+	const int rnd = 1 << (sh - 1);
 	uint32_t clipped = 0;
 
-	for (unsigned int i = 0; i < ctx->slot; i++) {
-		const int16_t *s = &q[2U * ctx->rev[(i + n - ctx->cp) & (n - 1U)]];
-		int vi = (s[0] + rnd) >> shift, vq = (-s[1] + rnd) >> shift;
+	for (unsigned int i = 0; i < cnt; i++) {
+		uint32_t w = q32[rev[n0 + i]];
+		int vi = ((int)(int16_t)w + rnd) >> sh;
+		int vq = (rnd - (int)(int16_t)(w >> 16)) >> sh;
+		int ci = vi > 511 ? 511 : (vi < -511 ? -511 : vi);
+		int cq = vq > 511 ? 511 : (vq < -511 ? -511 : vq);
 
-		if (vi > 511 || vi < -511 || vq > 511 || vq < -511) {
-			clipped++;
-			vi = vi > 511 ? 511 : (vi < -511 ? -511 : vi);
-			vq = vq > 511 ? 511 : (vq < -511 ? -511 : vq);
-		}
-		out[i] = esp_sdr_tx_word(vi, vq);
+		clipped += (uint32_t)((ci != vi) | (cq != vq));
+		out[i] = ((uint32_t)ci & 0x3ffU) | (((uint32_t)cq & 0x3ffU) << 10);
 	}
 	return clipped;
+}
+
+/*
+ * One slot out of the 16-bit FFT buffer, prefix first: its clipped samples. A loop per
+ * shift (the shift a constant: no shift register set per sample) and from flash (internal
+ * RAM is short; the loop stays in the cache).
+ */
+static __attribute__((noinline)) uint32_t emit16(const struct ofdm_ctx *ctx, const int16_t *q,
+						 unsigned int shift, uint32_t *out)
+{
+	const uint32_t *q32 = (const uint32_t *)q;
+	const uint16_t *rev = ctx->rev;
+	unsigned int n = ctx->nfft, cp = ctx->cp;
+
+	switch (shift) {
+	case 1:
+		return emit_run(q32, rev, n - cp, cp, 1, out) + emit_run(q32, rev, 0, n, 1, &out[cp]);
+	case 2:
+		return emit_run(q32, rev, n - cp, cp, 2, out) + emit_run(q32, rev, 0, n, 2, &out[cp]);
+	default:
+		return emit_run(q32, rev, n - cp, cp, 3, out) + emit_run(q32, rev, 0, n, 3, &out[cp]);
+	}
 }
 
 /*
@@ -425,44 +452,66 @@ static uint32_t help_gen;
 
 /* Slot s of the job into the 16-bit FFT buffer @p q, transformed and emitted: its clipped samples
  * (from flash, like the whole build was: internal RAM is short). */
-static __attribute__((noinline)) uint32_t tx_slot16(const struct txjob *j, int16_t *q,
-						    unsigned int s)
+/* A subcarrier's bits to its packed 16-bit point (I low, Q high, conjugated: see emit()). */
+static void tx_lut(const struct txjob *j, uint32_t lut[64])
+{
+	unsigned int bps = ofdm_mod_bits(j->mod), qb = cons[j->mod].q, mask = (1U << qb) - 1U;
+
+	for (unsigned int v = 0; v < (1U << bps); v++) {
+		int16_t i = j->mod == OFDM_BPSK ? j->lv[v] : j->lv[v >> qb];
+		int16_t q = j->mod == OFDM_BPSK ? 0 : (int16_t)-j->lv[v & mask];
+
+		lut[v] = (uint32_t)(uint16_t)i | ((uint32_t)(uint16_t)q << 16);
+	}
+}
+
+static __attribute__((noinline)) uint32_t tx_slot16(const struct txjob *j, const uint32_t *lut,
+						    int16_t *q, unsigned int s)
 {
 	const struct ofdm_ctx *ctx = j->ctx;
 	unsigned int c = ctx->cfg.channels, bps = ofdm_mod_bits(j->mod), nh = ctx->cfg.hdr_bits;
-	unsigned int qb = cons[j->mod].q, mask = (1U << qb) - 1U;
-	struct bitrd rd = {.p = NULL};
-
+	memset(q, 0, ctx->nfft * 2U * sizeof(int16_t));
 	if (s >= j->d0 && s != j->mp) {
-		/* Payload symbol i (the mid pilot's slot skipped) starts at bit i c bps. */
+		/*
+		 * Payload symbol i (the mid pilot's slot skipped) starts at bit i c bps: a byte at a
+		 * time into the bit buffer, a table lookup and one store per subcarrier.
+		 */
 		size_t i = s - j->d0 - (s > j->mp ? 1U : 0U), bp = i * c * bps;
+		const uint8_t *__restrict p = &j->bits[bp >> 3];
+		const uint16_t *__restrict bin = ctx->bin;
+		uint32_t *__restrict q32 = (uint32_t *)q;
+		uint32_t acc = 0, m = (1U << bps) - 1U;
+		unsigned int nb = 0;
 
-		rd.p = &j->bits[bp >> 3];
 		if ((bp & 7U) != 0U) {
-			rd.n = 8U - (unsigned int)(bp & 7U);
-			rd.acc = *rd.p++ & ((1U << rd.n) - 1U);
+			nb = 8U - (unsigned int)(bp & 7U);
+			acc = *p++ & ((1U << nb) - 1U);
+		}
+		for (unsigned int a = 0; a < c; a++) {
+			if (nb < bps) {
+				acc = (acc << 8) | *p++;
+				nb += 8U;
+			}
+			nb -= bps;
+			q32[bin[a]] = lut[(acc >> nb) & m];
 		}
 	}
-	memset(q, 0, ctx->nfft * 2U * sizeof(int16_t));
-	for (unsigned int a = 0; a < c; a++) {
+	for (unsigned int a = 0; s < j->d0 && a < c; a++) {
 		int16_t *x = &q[2U * ctx->bin[a]];
 
 		if (s == 0) {
 			if ((sub_freq(c, a) & 1) == 0) {
 				x[0] = pn_sign(PREAMBLE_SEED, a) > 0.0f ? j->root2 : (int16_t)-j->root2;
 			}
-		} else if (s < j->h0 || s == j->mp) {
+		} else if (s < j->h0) {
 			x[0] = pn_sign(PILOT_SEED, a) > 0.0f ? j->one : (int16_t)-j->one;
-		} else if (s < j->d0) {
-			x[0] = get_bit(j->hdr, ((s - j->h0) * c + a) % nh) ? j->one : (int16_t)-j->one;
-		} else if (j->mod == OFDM_BPSK) {
-			x[0] = j->lv[rd_bits(&rd, 1U)];
 		} else {
-			unsigned int v = rd_bits(&rd, bps);
-
-			x[0] = j->lv[v >> qb];
-			/* Conjugated in: see emit(). */
-			x[1] = (int16_t)-j->lv[v & mask];
+			x[0] = get_bit(j->hdr, ((s - j->h0) * c + a) % nh) ? j->one : (int16_t)-j->one;
+		}
+	}
+	if (s == j->mp) {
+		for (unsigned int a = 0; a < c; a++) {
+			q[2U * ctx->bin[a]] = pn_sign(PILOT_SEED, a) > 0.0f ? j->one : (int16_t)-j->one;
 		}
 	}
 	fft16(ctx, q, ctx->nfft);
@@ -473,6 +522,9 @@ static __attribute__((noinline)) uint32_t tx_slot16(const struct txjob *j, int16
 static bool tx_work(struct txjob *j, int16_t *q, uint32_t gen, bool (*keep_going)(void *),
 		    void *arg)
 {
+	uint32_t lut[64];
+	bool first = true;
+
 	for (;;) {
 		uint32_t v = __atomic_load_n(&j->word, __ATOMIC_ACQUIRE), cl;
 
@@ -486,7 +538,12 @@ static bool tx_work(struct txjob *j, int16_t *q, uint32_t gen, bool (*keep_going
 						 __ATOMIC_ACQUIRE)) {
 			continue;
 		}
-		cl = tx_slot16(j, q, v & 0xffffU);
+		if (first) {
+			/* This worker's table, once it has a slot of the build. */
+			tx_lut(j, lut);
+			first = false;
+		}
+		cl = tx_slot16(j, lut, q, v & 0xffffU);
 		if (cl != 0U) {
 			__atomic_fetch_add(&j->clipped, cl, __ATOMIC_RELAXED);
 		}

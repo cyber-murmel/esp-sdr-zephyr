@@ -190,14 +190,25 @@ builds the next frame in 4.6 on the other CPU, ACKs 0.3 each way.
   0 off).
 - Blind stream with both (64-QAM, RS, 26 MHz): 4.35 Mbit/s with 0.1 % lost at a 10 ms
   period, 3.64 loss-free at 12 ms; RS fixes about 1.5 bytes per frame.
-- **The sender on both CPUs** (not measured yet). In a blind stream the receiver cycles in
-  about 5.6 ms but the sender needs about 10 ms per long frame: it was the limit, building
-  on one CPU while the MAC thread spun until the next bank switch. Now the MAC thread helps
-  (``ofdm_tx_help()``) until 100 us before the deadline: the frame's symbols are claimed one
-  by one from a shared counter (generation and next slot in one word, compare and swap;
-  the build closes the word before it reuses the fields, a race a host stress test found)
-  and built in either CPU's FFT buffer. ``ofdm txhelp 0|1`` switches it. ``link status``
-  shows the build's stages (coding: CRC and FEC; symbols).
+- **The sender.** The long frame took 10.1 ms to build on one CPU (RS coding 2.4 ms, then
+  per symbol 30 us of mapping, 7 of FFT, 27 of output) while the MAC thread spun until the
+  next bank switch: the sender was the limit. Now:
+
+  - the MAC thread helps (``ofdm_tx_help()``) until 100 us before the deadline: the frame's
+    symbols are claimed one by one from a shared counter (generation and next slot in one
+    word, compare and swap; the build closes the word before it reuses the fields, a race a
+    host stress test found) and built in either CPU's FFT buffer (``ofdm txhelp 0|1``);
+  - a subcarrier's bits map through a table straight to its packed 16-bit point, one store
+    per subcarrier (30 -> 8 us per symbol);
+  - the output loop runs per shift with the shift a constant, without index arithmetic or
+    reloads (27 -> 19 us);
+  - the BCH codes' coding takes 0.43 ms instead of RS's 2.4.
+
+  The build: 10.1 -> 2.85 ms (``link status``: build stages, coding and symbols), built
+  frames checked bit for bit against the same frame built alone. Blind stream, 64-QAM,
+  ``bch2-256``, 26 MHz: 7.5 to 7.7 Mbit/s at a 6 ms period (6 to 8 % lost), 6.8 at 7 ms
+  (4 %); over the MAC with ACKs 5.5 Mbit/s. The receiver is the limit again: per frame
+  capture 0.4, search 1.5, channel and header 1.05, payload 2.2 (both CPUs), FEC 0.55 ms.
 - **Frame assembly** (``ofdm_frame.c``) used two integer divisions per byte with divisors
   that vary (units, bytes per unit): about 0.4 ms at each end. Nested loops now, and a byte
   table for the CRC-32 (the nibble table cost 90 us per frame).
