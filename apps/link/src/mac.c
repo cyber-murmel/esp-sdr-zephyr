@@ -921,8 +921,13 @@ static size_t build(const struct qam_hdr *h, unsigned int n)
 				       .fec = h[0].fec, .dst = h[0].dst, .src = h[0].src,
 				       .seq = h[0].seq};
 
+		size_t len;
+
 		fill_payload(payload[0], h[0].seq, frame_bytes(&h[0]));
-		return ofdm_frame_build(link_ofdm(), &ofdm_tb, &ofdm_txw, &fh, payload[0], bank);
+		len = ofdm_frame_build(link_ofdm(), &ofdm_tb, &ofdm_txw, &fh, payload[0], bank);
+		STAT(stats.build_prof_us[0] += cyc_us(ofdm_tb.prof[0]);
+		     stats.build_prof_us[1] += cyc_us(ofdm_tb.prof[1]); stats.build_prof_n++);
+		return len;
 	}
 
 	if (qam_tx_ctx.mod != (int)h[0].mod || qam_tx_ctx.amp != cfg.amp) {
@@ -1105,11 +1110,33 @@ static void retry_or_drop(bool timeout)
 	out.quiet = 0;
 }
 
+/* The MAC thread builds symbols of the next frame while a stream frame plays (ofdm_tx_help()). */
+static bool tx_help = true;
+
+void link_mac_tx_help(bool on)
+{
+	tx_help = on;
+}
+
+bool link_mac_tx_help_get(void)
+{
+	return tx_help;
+}
+
+/* Help while the deadline is more than two symbols' build away. */
+static bool before_deadline(void *arg)
+{
+	uint32_t deadline = *(const uint32_t *)arg;
+
+	return (int32_t)(deadline - now_cyc()) > (int32_t)k_us_to_cyc_ceil32(100U);
+}
+
 /*
  * A blind stream (client.stream_us): the radio stays in TX and plays one frame after the
  * other, each from its own bank, switching by one DAC retrigger every stream_us; the next
- * frame is built on the other CPU meanwhile. No sense, no ACK. Returns when the client
- * stops, its time is up, or the MAC is paused.
+ * frame is built on the other CPU meanwhile, with this thread's help while it waits
+ * (ofdm_tx_help()). No sense, no ACK. Returns when the client stops, its time is up, or the
+ * MAC is paused.
  */
 static void stream_run(void)
 {
@@ -1139,6 +1166,10 @@ static void stream_run(void)
 		/* The idle bank gets the next frame, on the other CPU. */
 		build_bank = bank ^ 1;
 		build_next();
+		if (tx_help && cfg.phy == MAC_PHY_OFDM) {
+			/* The ACK buffer is this thread's, and a stream sends no ACKs. */
+			ofdm_tx_help(&ofdm_ack_tb, before_deadline, &deadline);
+		}
 		while ((int32_t)(deadline - now_cyc()) > 0) {
 		}
 		if (!build_wait() || !job.ready) {
@@ -1174,6 +1205,7 @@ static void mac_loop(void *p1, void *p2, void *p3)
 
 	rs_init();
 	qam_crc_init();
+	ofdm_tx_share(&ofdm_tb);
 	ham_init();
 	qam_clock = now_cyc;
 	qam_rx_ctx.cw = rx_cw[0];

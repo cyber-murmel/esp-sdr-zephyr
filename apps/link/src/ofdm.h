@@ -192,6 +192,8 @@ struct ofdm_txbuf {
 	struct ofdm_cf buf[OFDM_NFFT_MAX] __attribute__((aligned(16)));
 	/* Samples clipped by the last build. */
 	uint32_t clipped;
+	/* ofdm_frame_build()'s stages in ofdm_clock() cycles: the coding (CRC, FEC), the symbols. */
+	uint32_t prof[2];
 };
 
 /*
@@ -251,6 +253,21 @@ void ofdm_test_bits(uint8_t *bits, size_t nbits, uint32_t seed);
  */
 size_t ofdm_tx_build(const struct ofdm_ctx *ctx, struct ofdm_txbuf *tb, enum ofdm_mod mod,
 		     const uint8_t *hdr, const uint8_t *bits, uint32_t *out);
+
+/*
+ * Frames built with @p tb (one work buffer, in internal RAM) take help from other CPUs: a
+ * thread there that calls ofdm_tx_help() builds symbols of the frame while it is being built.
+ * The 16-bit transmit path (CONFIG_APP_OFDM_ESP_DSP) only.
+ */
+void ofdm_tx_share(struct ofdm_txbuf *tb);
+
+/*
+ * Wait for the next shared build (ofdm_tx_share()) and build its symbols with it, in @p tb's
+ * buffer (the caller's own, internal RAM), until none are left: returns then, or once
+ * @p keep_going(@p arg) is false (asked before each symbol, about 30 us apart; it may spin
+ * until then).
+ */
+void ofdm_tx_help(struct ofdm_txbuf *tb, bool (*keep_going)(void *), void *arg);
 
 struct ofdm_rx_info {
 	/* Frame start in the window, sample index. */

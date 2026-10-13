@@ -380,11 +380,10 @@ static inline unsigned int rd_bits(struct bitrd *r, unsigned int nb)
 	return (r->acc >> r->n) & ((1U << nb) - 1U);
 }
 
-OFDM_HOT static void emit16(const struct ofdm_ctx *ctx, struct ofdm_txbuf *tb, unsigned int shift,
-			    uint32_t *out)
+OFDM_HOT static uint32_t emit16(const struct ofdm_ctx *ctx, const int16_t *q, unsigned int shift,
+				uint32_t *out)
 {
 	unsigned int n = ctx->nfft;
-	const int16_t *q = (const int16_t *)tb->buf;
 	const int rnd = 1 << (shift - 1U);
 	uint32_t clipped = 0;
 
@@ -399,63 +398,198 @@ OFDM_HOT static void emit16(const struct ofdm_ctx *ctx, struct ofdm_txbuf *tb, u
 		}
 		out[i] = esp_sdr_tx_word(vi, vq);
 	}
-	tb->clipped += clipped;
+	return clipped;
+}
+
+/*
+ * One frame's symbols. A shared build (the work buffer given to ofdm_tx_share()) hands its
+ * slots out to helpers on other CPUs (ofdm_tx_help()): word holds the build's generation (high
+ * 16 bits) and the next slot (low 16), claimed by compare and swap, so a slot always belongs to
+ * the build it was claimed from; that build waits for all its slots before it returns, and
+ * the next one closes the word before it changes the fields.
+ */
+struct txjob {
+	const struct ofdm_ctx *ctx;
+	enum ofdm_mod mod;
+	const uint8_t *hdr, *bits;
+	uint32_t *out;
+	unsigned int shift, nslots, h0, d0, mp;
+	int16_t one, root2, lv[8];
+	uint32_t word, done, clipped;
+};
+
+static struct txjob shared_job;
+static struct ofdm_txbuf *shared_tb;
+/* The last build the helper helped. */
+static uint32_t help_gen;
+
+/* Slot s of the job into the 16-bit FFT buffer @p q, transformed and emitted: its clipped samples
+ * (from flash, like the whole build was: internal RAM is short). */
+static __attribute__((noinline)) uint32_t tx_slot16(const struct txjob *j, int16_t *q,
+						    unsigned int s)
+{
+	const struct ofdm_ctx *ctx = j->ctx;
+	unsigned int c = ctx->cfg.channels, bps = ofdm_mod_bits(j->mod), nh = ctx->cfg.hdr_bits;
+	unsigned int qb = cons[j->mod].q, mask = (1U << qb) - 1U;
+	struct bitrd rd = {.p = NULL};
+
+	if (s >= j->d0 && s != j->mp) {
+		/* Payload symbol i (the mid pilot's slot skipped) starts at bit i c bps. */
+		size_t i = s - j->d0 - (s > j->mp ? 1U : 0U), bp = i * c * bps;
+
+		rd.p = &j->bits[bp >> 3];
+		if ((bp & 7U) != 0U) {
+			rd.n = 8U - (unsigned int)(bp & 7U);
+			rd.acc = *rd.p++ & ((1U << rd.n) - 1U);
+		}
+	}
+	memset(q, 0, ctx->nfft * 2U * sizeof(int16_t));
+	for (unsigned int a = 0; a < c; a++) {
+		int16_t *x = &q[2U * ctx->bin[a]];
+
+		if (s == 0) {
+			if ((sub_freq(c, a) & 1) == 0) {
+				x[0] = pn_sign(PREAMBLE_SEED, a) > 0.0f ? j->root2 : (int16_t)-j->root2;
+			}
+		} else if (s < j->h0 || s == j->mp) {
+			x[0] = pn_sign(PILOT_SEED, a) > 0.0f ? j->one : (int16_t)-j->one;
+		} else if (s < j->d0) {
+			x[0] = get_bit(j->hdr, ((s - j->h0) * c + a) % nh) ? j->one : (int16_t)-j->one;
+		} else if (j->mod == OFDM_BPSK) {
+			x[0] = j->lv[rd_bits(&rd, 1U)];
+		} else {
+			unsigned int v = rd_bits(&rd, bps);
+
+			x[0] = j->lv[v >> qb];
+			/* Conjugated in: see emit(). */
+			x[1] = (int16_t)-j->lv[v & mask];
+		}
+	}
+	fft16(ctx, q, ctx->nfft);
+	return emit16(ctx, q, j->shift, &j->out[s * ctx->slot]);
+}
+
+/* Claim and build slots of the build @p gen until none are left: false if it is not current. */
+static bool tx_work(struct txjob *j, int16_t *q, uint32_t gen, bool (*keep_going)(void *),
+		    void *arg)
+{
+	for (;;) {
+		uint32_t v = __atomic_load_n(&j->word, __ATOMIC_ACQUIRE), cl;
+
+		if ((v >> 16) != gen) {
+			return false;
+		}
+		if ((v & 0xffffU) >= j->nslots || (keep_going != NULL && !keep_going(arg))) {
+			return true;
+		}
+		if (!__atomic_compare_exchange_n(&j->word, &v, v + 1U, false, __ATOMIC_ACQ_REL,
+						 __ATOMIC_ACQUIRE)) {
+			continue;
+		}
+		cl = tx_slot16(j, q, v & 0xffffU);
+		if (cl != 0U) {
+			__atomic_fetch_add(&j->clipped, cl, __ATOMIC_RELAXED);
+		}
+		__atomic_fetch_add(&j->done, 1U, __ATOMIC_RELEASE);
+	}
+}
+
+void ofdm_tx_share(struct ofdm_txbuf *tb)
+{
+	shared_tb = tb;
+}
+
+void ofdm_tx_help(struct ofdm_txbuf *tb, bool (*keep_going)(void *), void *arg)
+{
+	struct txjob *j = &shared_job;
+
+	while (keep_going(arg)) {
+		uint32_t v = __atomic_load_n(&j->word, __ATOMIC_ACQUIRE), gen = v >> 16;
+
+		if (gen == help_gen) {
+			continue;
+		}
+		help_gen = gen;
+		/*
+		 * A build not seen yet: help it if it has slots left. One already done (the last
+		 * frame, when this thread asks before the next one opens) only counts as seen.
+		 */
+		if ((v & 0xffffU) < j->nslots) {
+			(void)tx_work(j, (int16_t *)tb->buf, gen, keep_going, arg);
+			return;
+		}
+	}
 }
 
 static size_t ofdm_tx_build16(const struct ofdm_ctx *ctx, struct ofdm_txbuf *tb, enum ofdm_mod mod,
 			      const uint8_t *hdr, const uint8_t *bits, uint32_t *out,
 			      unsigned int shift)
 {
-	unsigned int c = ctx->cfg.channels, bps = ofdm_mod_bits(mod), p = ctx->cfg.pilots;
-	unsigned int h0 = 1U + p, d0 = h0 + ctx->nhdr, nh = ctx->cfg.hdr_bits;
+	unsigned int c = ctx->cfg.channels, p = ctx->cfg.pilots;
+	unsigned int h0 = 1U + p, d0 = h0 + ctx->nhdr;
 	unsigned int mp = ctx->cfg.mid_pilot ? d0 + ctx->mid : ~0U;
 	unsigned int nslots = bits == NULL ? d0 : d0 + ctx->ndata + (ctx->cfg.mid_pilot ? 1U : 0U);
 	/* One unit subcarrier in 16 bit: amp / sqrt(c) of the DAC value per unit of the sum. */
 	float sc = (float)(1U << shift) * (float)ctx->cfg.amp * (float)ctx->nfft / sqrtf((float)c);
 	const struct cons *k = &cons[mod];
-	unsigned int qb = k->q, mask = (1U << qb) - 1U;
-	int16_t one = (int16_t)lrintf(sc), root2 = (int16_t)lrintf(sc * 1.41421356f);
-	int16_t lv[8] = {0};
-	struct bitrd rd = {.p = bits};
-	int16_t *q = (int16_t *)tb->buf;
+	/* The shared build of a whole frame lets helpers in; the rest (ACKs too) build alone. */
+	bool shared = tb == shared_tb && bits != NULL;
+	struct txjob local, *j = shared ? &shared_job : &local;
+	uint32_t old = shared ? __atomic_load_n(&j->word, __ATOMIC_RELAXED) >> 16 : 0U;
+	uint32_t gen = (old + 1U) & 0xffffU;
 
+	/*
+	 * Closed first (slot 0xffff, never claimed): a helper still holding the last build's
+	 * counter would otherwise check it against this build's slot count and claim with it
+	 * (found by a host stress test of this protocol).
+	 */
+	__atomic_store_n(&j->word, (old << 16) | 0xffffU, __ATOMIC_RELEASE);
+	j->ctx = ctx;
+	j->mod = mod;
+	j->hdr = hdr;
+	j->bits = bits;
+	j->out = out;
+	j->shift = shift;
+	j->nslots = nslots;
+	j->h0 = h0;
+	j->d0 = d0;
+	j->mp = mp;
+	j->one = (int16_t)lrintf(sc);
+	j->root2 = (int16_t)lrintf(sc * 1.41421356f);
+	memset(j->lv, 0, sizeof(j->lv));
 	if (mod == OFDM_BPSK) {
-		lv[0] = (int16_t)-one;
-		lv[1] = one;
+		j->lv[0] = (int16_t)-j->one;
+		j->lv[1] = j->one;
 	} else {
 		/* Indexed by the Gray coded bits of one axis. */
 		for (unsigned int v = 0; v < k->k; v++) {
-			lv[v] = (int16_t)lrintf((float)(2 * gray_dec[v] - (int)(k->k - 1U)) * k->s * sc);
+			j->lv[v] = (int16_t)lrintf((float)(2 * gray_dec[v] - (int)(k->k - 1U)) * k->s *
+						   sc);
 		}
 	}
-	tb->clipped = 0;
-	for (unsigned int s = 0; s < nslots; s++) {
-		memset(q, 0, ctx->nfft * 2U * sizeof(int16_t));
-		for (unsigned int a = 0; a < c; a++) {
-			int16_t *x = &q[2U * ctx->bin[a]];
-
-			if (s == 0) {
-				if ((sub_freq(c, a) & 1) == 0) {
-					x[0] = pn_sign(PREAMBLE_SEED, a) > 0.0f ? root2 : (int16_t)-root2;
-				}
-			} else if (s < h0 || s == mp) {
-				x[0] = pn_sign(PILOT_SEED, a) > 0.0f ? one : (int16_t)-one;
-			} else if (s < d0) {
-				x[0] = get_bit(hdr, ((s - h0) * c + a) % nh) ? one : (int16_t)-one;
-			} else if (mod == OFDM_BPSK) {
-				x[0] = lv[rd_bits(&rd, 1U)];
-			} else {
-				unsigned int v = rd_bits(&rd, bps);
-
-				x[0] = lv[v >> qb];
-				/* Conjugated in: see emit(). */
-				x[1] = (int16_t)-lv[v & mask];
-			}
-		}
-		fft16(ctx, q, ctx->nfft);
-		emit16(ctx, tb, shift, &out[s * ctx->slot]);
+	j->done = 0;
+	j->clipped = 0;
+	/* Open: the generation with slot 0 next (the fields above published with it). */
+	__atomic_store_n(&j->word, gen << 16, __ATOMIC_RELEASE);
+	(void)tx_work(j, (int16_t *)tb->buf, gen, NULL, NULL);
+	/* Slots a helper claimed may still be in progress. */
+	while (__atomic_load_n(&j->done, __ATOMIC_ACQUIRE) < nslots) {
 	}
+	tb->clipped = __atomic_load_n(&j->clipped, __ATOMIC_RELAXED);
 	return (size_t)nslots * ctx->slot;
+}
+#else
+/* No 16-bit transmit path: every build stays on its own CPU. */
+void ofdm_tx_share(struct ofdm_txbuf *tb)
+{
+	(void)tb;
+}
+
+void ofdm_tx_help(struct ofdm_txbuf *tb, bool (*keep_going)(void *), void *arg)
+{
+	(void)tb;
+	(void)keep_going;
+	(void)arg;
 }
 #endif
 

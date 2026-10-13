@@ -190,6 +190,14 @@ builds the next frame in 4.6 on the other CPU, ACKs 0.3 each way.
   0 off).
 - Blind stream with both (64-QAM, RS, 26 MHz): 4.35 Mbit/s with 0.1 % lost at a 10 ms
   period, 3.64 loss-free at 12 ms; RS fixes about 1.5 bytes per frame.
+- **The sender on both CPUs** (not measured yet). In a blind stream the receiver cycles in
+  about 5.6 ms but the sender needs about 10 ms per long frame: it was the limit, building
+  on one CPU while the MAC thread spun until the next bank switch. Now the MAC thread helps
+  (``ofdm_tx_help()``) until 100 us before the deadline: the frame's symbols are claimed one
+  by one from a shared counter (generation and next slot in one word, compare and swap;
+  the build closes the word before it reuses the fields, a race a host stress test found)
+  and built in either CPU's FFT buffer. ``ofdm txhelp 0|1`` switches it. ``link status``
+  shows the build's stages (coding: CRC and FEC; symbols).
 - **Frame assembly** (``ofdm_frame.c``) used two integer divisions per byte with divisors
   that vary (units, bytes per unit): about 0.4 ms at each end. Nested loops now, and a byte
   table for the CRC-32 (the nibble table cost 90 us per frame).

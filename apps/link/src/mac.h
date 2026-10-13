@@ -113,6 +113,9 @@ struct mac_stats {
 	/* Frame builds (background and retries). */
 	uint64_t build_us_sum;
 	uint32_t build_n;
+	/* OFDM builds' stages: the coding (CRC, FEC), the symbols; summed in us. */
+	uint64_t build_prof_us[2];
+	uint32_t build_prof_n;
 	/* Decoder stages (qam_rx_info.prof), summed in us. */
 	uint64_t prof_us[6];
 	/* Capture engine time of the last sense slot and full window, in us. */
@@ -163,6 +166,10 @@ int link_mac_bench_decode(enum qam_mod mod, struct qam_rx_info *info, uint32_t *
 
 /* Park the MAC thread (radio idle) for measurements. */
 void link_mac_pause(bool pause);
+
+/* The MAC thread helps build a blind stream's next OFDM frame (default on). */
+void link_mac_tx_help(bool on);
+bool link_mac_tx_help_get(void);
 
 /* Split the OFDM preamble search over both CPUs (default on with two). */
 void link_mac_scan_split(bool on);

@@ -371,6 +371,11 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 		shell_print(sh, "engine: %u transmissions, rx gain re-forced %u times (%u us each)",
 			    d.dac_sessions, d.gain_refreshed, d.gain_apply_us);
 	}
+	if (s.build_prof_n > 0 && c.phy == MAC_PHY_OFDM) {
+		shell_print(sh, "build stages avg us (OFDM): coding %llu, symbols %llu (the rest of the "
+			    "build: the test data)",
+			    s.build_prof_us[0] / s.build_prof_n, s.build_prof_us[1] / s.build_prof_n);
+	}
 	if (s.decode_n > 0 && c.phy == MAC_PHY_OFDM) {
 		shell_print(sh, "decode stages avg us (OFDM): search %llu, channel+header %llu, "
 			    "payload %llu, fec %llu; engine window %u us",

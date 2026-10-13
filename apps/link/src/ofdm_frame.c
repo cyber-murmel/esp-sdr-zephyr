@@ -204,12 +204,24 @@ static inline uint8_t *unit_byte(struct ofdm_fwork *wk, const struct layout *l, 
 	return &wk->units[u][RS_N - l->len + p];
 }
 
+/* The coded payload's symbols, the time of both stages into tb->prof. */
+static size_t symbols(const struct ofdm_ctx *ctx, struct ofdm_txbuf *tb, const struct ofdm_fhdr *h,
+		      const uint8_t *hb, struct ofdm_fwork *wk, uint32_t *out, uint32_t t0)
+{
+	uint32_t t1 = ofdm_clock != NULL ? ofdm_clock() : 0U;
+	size_t len = ofdm_tx_build(ctx, tb, h->mod, hb, wk->bytes, out);
+
+	tb->prof[0] = t1 - t0;
+	tb->prof[1] = (ofdm_clock != NULL ? ofdm_clock() : 0U) - t1;
+	return len;
+}
+
 size_t ofdm_frame_build(const struct ofdm_ctx *ctx, struct ofdm_txbuf *tb, struct ofdm_fwork *wk,
 			const struct ofdm_fhdr *h, const uint8_t *data, uint32_t *out)
 {
 	struct layout l;
 	uint8_t hb[8];
-	uint32_t crc;
+	uint32_t crc, t0 = ofdm_clock != NULL ? ofdm_clock() : 0U;
 	size_t j;
 
 	if (!layout_of(ctx, h->mod, h->fec, &l)) {
@@ -232,7 +244,7 @@ size_t ofdm_frame_build(const struct ofdm_ctx *ctx, struct ofdm_txbuf *tb, struc
 		j = (size_t)l.units * l.len;
 		memset(&wk->bytes[j], 0, l.cap - j + 1U);
 		hdr_pack(h, hb);
-		return ofdm_tx_build(ctx, tb, h->mod, hb, wk->bytes, out);
+		return symbols(ctx, tb, h, hb, wk, out, t0);
 	}
 	/* User data, then its CRC (little endian), over the units' data bytes. */
 	for (unsigned int u = 0; u < l.units; u++) {
@@ -260,7 +272,7 @@ size_t ofdm_frame_build(const struct ofdm_ctx *ctx, struct ofdm_txbuf *tb, struc
 	j = (size_t)l.units * l.len;
 	memset(&wk->bytes[j], 0, l.cap - j + 1U);
 	hdr_pack(h, hb);
-	return ofdm_tx_build(ctx, tb, h->mod, hb, wk->bytes, out);
+	return symbols(ctx, tb, h, hb, wk, out, t0);
 }
 
 size_t ofdm_frame_build_hdr(const struct ofdm_ctx *ctx, struct ofdm_txbuf *tb,
