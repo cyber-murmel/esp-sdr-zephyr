@@ -11,13 +11,15 @@
 #include <zigbee/mt.h>
 #include <zigbee/zb_net.h>
 
+#include "zb_net_priv.h"
+
 #define BDB_NOTIFY_REMAINING 0x04
 #define SCAN_EXP             3
 /* A BDB steering window (Z-Stack opens joining for 180 s). */
 #define STEERING_SECONDS     180
 #define BEACONS_PER_AREQ     8
 
-static struct znp_nv_key exkey(uint8_t item, uint16_t sub)
+struct znp_nv_key zbn_exkey(uint8_t item, uint16_t sub)
 {
 	return (struct znp_nv_key){.sys = ZNP_NV_SYS_ZSTACK, .item = item, .sub = sub};
 }
@@ -123,7 +125,7 @@ static bool load_network(struct zb_net *n)
 /* ------------------------------------------------------------------------------------------ */
 /* Children and association policy */
 
-static struct zb_child *child_find_ext(struct zb_net *n, const uint8_t ext[8])
+struct zb_child *zbn_child_by_ext(struct zb_net *n, const uint8_t ext[8])
 {
 	for (int i = 0; i < ZB_NET_MAX_CHILDREN; i++) {
 		if (n->children[i].used && memcmp(n->children[i].ext, ext, 8) == 0) {
@@ -133,7 +135,7 @@ static struct zb_child *child_find_ext(struct zb_net *n, const uint8_t ext[8])
 	return NULL;
 }
 
-static struct zb_child *child_find_nwk(struct zb_net *n, uint16_t nwk)
+struct zb_child *zbn_child_by_nwk(struct zb_net *n, uint16_t nwk)
 {
 	for (int i = 0; i < ZB_NET_MAX_CHILDREN; i++) {
 		if (n->children[i].used && n->children[i].nwk == nwk) {
@@ -154,16 +156,17 @@ static size_t child_count(const struct zb_net *n)
 }
 
 /* AddrMgrUserType bits: Assoc is ours, Security and the rest belong to the key tables. */
-#define ADDRMGR_ASSOC BIT(0)
+#define ADDRMGR_ASSOC    BIT(0)
+#define ADDRMGR_SECURITY BIT(1)
 
 static bool addrmgr_read(struct zb_net *n, int idx, uint8_t e[ZB_ADDRMGR_LEN])
 {
-	return znp_nv_read(n->nv, exkey(ZB_NVEX_ADDRMGR, (uint16_t)idx), 0, e, ZB_ADDRMGR_LEN) ==
+	return znp_nv_read(n->nv, zbn_exkey(ZB_NVEX_ADDRMGR, (uint16_t)idx), 0, e, ZB_ADDRMGR_LEN) ==
 	       (int)ZB_ADDRMGR_LEN;
 }
 
 /* The ADDRMGR entry of a child: Assoc set while it is a child, cleared when it is not. */
-static void child_persist(struct zb_net *n, int idx)
+void zbn_child_persist(struct zb_net *n, int idx)
 {
 	const struct zb_child *c = &n->children[idx];
 	uint8_t e[ZB_ADDRMGR_LEN];
@@ -174,6 +177,7 @@ static void child_persist(struct zb_net *n, int idx)
 	}
 	if (mine) {
 		e[0] = (e[0] == 0xFFU ? 0U : e[0]) | ADDRMGR_ASSOC;
+		e[0] = c->authorized ? (e[0] | ADDRMGR_SECURITY) : (e[0] & ~ADDRMGR_SECURITY);
 		e[1] = 0xFF; /* alignment padding */
 		mt_put_u16(&e[2], c->nwk);
 		memcpy(&e[4], c->ext, 8);
@@ -182,7 +186,7 @@ static void child_persist(struct zb_net *n, int idx)
 	} else {
 		memset(e, 0xFF, sizeof(e));
 	}
-	(void)znp_nv_set(n->nv, exkey(ZB_NVEX_ADDRMGR, (uint16_t)idx), e, sizeof(e));
+	(void)znp_nv_set(n->nv, zbn_exkey(ZB_NVEX_ADDRMGR, (uint16_t)idx), e, sizeof(e));
 }
 
 /* Only entries with the Assoc bit are children; the host's other entries stay its own. */
@@ -196,7 +200,10 @@ static void load_children(struct zb_net *n)
 		    mt_get_u16(&e[2]) == 0xFFFFU) {
 			continue;
 		}
-		n->children[i] = (struct zb_child){.used = true, .nwk = mt_get_u16(&e[2]), .cap = 0x8E};
+		n->children[i] = (struct zb_child){.used = true,
+						   .authorized = (e[0] & ADDRMGR_SECURITY) != 0U,
+						   .nwk = mt_get_u16(&e[2]),
+						   .cap = 0x8E};
 		memcpy(n->children[i].ext, &e[4], 8);
 	}
 }
@@ -228,10 +235,13 @@ static uint8_t net_assoc_req(void *ctx, const uint8_t ext[8], uint8_t cap, uint1
 	uint8_t status = ZB_ASSOC_OK;
 
 	k_mutex_lock(&n->lock, K_FOREVER);
-	c = child_find_ext(n, ext);
+	c = zbn_child_by_ext(n, ext);
 	if (c != NULL) {
-		/* A device that joins again keeps its address. */
+		/* A device that joins again keeps its address, and gets the network key again. */
 		c->cap = cap;
+		c->tentative = true;
+		c->authorized = false;
+		c->rx_fc = 0;
 		*short_addr = c->nwk;
 		goto out;
 	}
@@ -243,7 +253,7 @@ static uint8_t net_assoc_req(void *ctx, const uint8_t ext[8], uint8_t cap, uint1
 			/* Stochastic address assignment: any free address in 0x0001-0xFFF7. */
 			do {
 				a = (uint16_t)sys_rand32_get();
-			} while (a == 0U || a > 0xFFF7U || child_find_nwk(n, a) != NULL);
+			} while (a == 0U || a > 0xFFF7U || zbn_child_by_nwk(n, a) != NULL);
 			n->children[i] =
 				(struct zb_child){.used = true, .tentative = true, .nwk = a, .cap = cap};
 			memcpy(n->children[i].ext, ext, 8);
@@ -262,33 +272,40 @@ static void net_assoc_done(void *ctx, const uint8_t ext[8], uint16_t short_addr,
 {
 	struct zb_net *n = ctx;
 	struct zb_child *c;
+	int idx = -1;
 
 	k_mutex_lock(&n->lock, K_FOREVER);
-	c = child_find_ext(n, ext);
+	c = zbn_child_by_ext(n, ext);
 	if (c != NULL && c->tentative) {
-		int idx = (int)(c - n->children);
-
+		idx = (int)(c - n->children);
 		if (delivered) {
 			c->tentative = false;
-			child_persist(n, idx);
+			zbn_child_persist(n, idx);
 		} else {
 			memset(c, 0, sizeof(*c));
+			zbn_child_persist(n, idx);
 			update_capacity(n);
+			idx = -1;
 		}
 	}
 	k_mutex_unlock(&n->lock);
+
+	/* The joiner has its address: the trust center now hands it the network key. */
+	if (idx >= 0) {
+		zbn_tc_join(n, idx);
+	}
 }
 
 static void net_data_ind(void *ctx, const struct zb_mac_hdr *h, const uint8_t *payload, size_t len,
 			 uint8_t lqi, int8_t rssi)
 {
-	/* NWK frames: handled from phase 3 on. */
-	ARG_UNUSED(ctx);
-	ARG_UNUSED(h);
-	ARG_UNUSED(payload);
-	ARG_UNUSED(len);
-	ARG_UNUSED(lqi);
 	ARG_UNUSED(rssi);
+	zbn_rx(ctx, h, payload, len, lqi);
+}
+
+static void net_tick(void *ctx)
+{
+	zbn_tick(ctx);
 }
 
 void zb_net_mac_up(struct zb_net *n, struct zb_mac_up *up)
@@ -297,18 +314,19 @@ void zb_net_mac_up(struct zb_net *n, struct zb_mac_up *up)
 		.assoc_req = net_assoc_req,
 		.assoc_done = net_assoc_done,
 		.data_ind = net_data_ind,
+		.tick = net_tick,
 		.ctx = n,
 	};
 }
 
 struct zb_child *zb_net_child_by_ext(struct zb_net *n, const uint8_t ext[8])
 {
-	return child_find_ext(n, ext);
+	return zbn_child_by_ext(n, ext);
 }
 
 struct zb_child *zb_net_child_by_nwk(struct zb_net *n, uint16_t nwk)
 {
-	return child_find_nwk(n, nwk);
+	return zbn_child_by_nwk(n, nwk);
 }
 
 size_t zb_net_child_count(struct zb_net *n)
@@ -366,6 +384,7 @@ static int start_mac(struct zb_net *n)
 	int r;
 
 	memcpy(b.epid, n->epid, 8);
+	zbn_security_load(n);
 	r = zb_mac_start(n->mac, n->pan, n->channel, &b);
 	if (r == 0) {
 		n->formed = true;
@@ -504,12 +523,12 @@ static int form_new(struct zb_net *n)
 	/* The NWK frame counter of this network: starts at 0. */
 	memset(secmat, 0, sizeof(secmat));
 	memcpy(&secmat[4], epid, 8);
-	r |= znp_nv_set(n->nv, exkey(ZB_NVEX_NWK_SEC_MATERIAL, 0), secmat, sizeof(secmat));
+	r |= znp_nv_set(n->nv, zbn_exkey(ZB_NVEX_NWK_SEC_MATERIAL, 0), secmat, sizeof(secmat));
 	/* A new network has no children. */
 	for (int i = 0; i < ZB_NET_MAX_CHILDREN; i++) {
 		if (n->children[i].used) {
 			memset(&n->children[i], 0, sizeof(n->children[i]));
-			child_persist(n, i);
+			zbn_child_persist(n, i);
 		}
 	}
 	/* The marker last: a network counts as formed only once everything else is stored. */
@@ -735,12 +754,12 @@ int zb_net_child_add(struct zb_net *n, uint16_t nwk, const uint8_t ext[8], uint8
 	int i;
 
 	k_mutex_lock(&n->lock, K_FOREVER);
-	c = child_find_ext(n, ext);
+	c = zbn_child_by_ext(n, ext);
 	i = c != NULL ? (int)(c - n->children) : free_slot(n);
 	if (i >= 0) {
 		n->children[i] = (struct zb_child){.used = true, .nwk = nwk, .cap = cap};
 		memcpy(n->children[i].ext, ext, 8);
-		child_persist(n, i);
+		zbn_child_persist(n, i);
 		update_capacity(n);
 	}
 	k_mutex_unlock(&n->lock);
@@ -753,11 +772,11 @@ int zb_net_child_remove(struct zb_net *n, const uint8_t ext[8])
 	int i = -1;
 
 	k_mutex_lock(&n->lock, K_FOREVER);
-	c = child_find_ext(n, ext);
+	c = zbn_child_by_ext(n, ext);
 	if (c != NULL) {
 		i = (int)(c - n->children);
 		memset(c, 0, sizeof(*c));
-		child_persist(n, i);
+		zbn_child_persist(n, i);
 		update_capacity(n);
 	}
 	k_mutex_unlock(&n->lock);

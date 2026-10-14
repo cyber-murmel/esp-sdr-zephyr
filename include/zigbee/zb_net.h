@@ -8,6 +8,7 @@
 #ifndef ZIGBEE_ZB_NET_H_
 #define ZIGBEE_ZB_NET_H_
 
+#include <zigbee/zb_frame.h>
 #include <zigbee/zb_mac.h>
 #include <zigbee/znp_nv.h>
 
@@ -38,6 +39,8 @@ enum zb_nv_id {
 	ZB_NV_LOGICAL_TYPE = 0x0087,
 	ZB_NV_ZDO_DIRECT_CB = 0x008F,
 	ZB_NV_TCLK_SEED = 0x0101,
+	/* Private to this firmware: the APS security frame counter, written ahead. */
+	ZB_NV_APS_FRAME_COUNTER = 0x0F20,
 };
 
 /* Extended NV item ids (system ZNP_NV_SYS_ZSTACK): tables, one sub id per entry. */
@@ -107,10 +110,54 @@ struct zb_child {
 	bool used;
 	/* True from the association until the response is ACKed. */
 	bool tentative;
+	/* The network key has been delivered: frames from it are accepted. */
+	bool authorized;
 	uint16_t nwk;
 	uint8_t ext[8];
 	uint8_t cap;
+	/* Highest NWK frame counter seen from it (replay protection). */
+	uint32_t rx_fc;
+	int64_t last_seen;
 };
+
+/* An application frame received (APS payload of an authorized neighbour). */
+struct zb_aps_rx {
+	uint16_t src;
+	uint16_t cluster, profile;
+	uint8_t src_ep, dst_ep;
+	bool broadcast;
+	uint8_t lqi;
+	uint8_t aps_counter;
+	const uint8_t *data;
+	uint8_t len;
+};
+
+/* An application frame to send. */
+struct zb_aps_tx {
+	/* NWK destination: a short address or one of the broadcast addresses. */
+	uint16_t dst;
+	bool broadcast;
+	uint8_t src_ep, dst_ep;
+	uint16_t cluster, profile;
+	bool ack_req;
+	/* Report the outcome through zb_net_cb.data_confirm (not for ZDO and broadcasts). */
+	bool confirm;
+	/* Handed back with the confirmation. */
+	uint32_t tag;
+	const uint8_t *data;
+	size_t len;
+};
+
+/* Result codes of a confirmation (Z-Stack's). */
+#define ZB_CONFIRM_OK            0x00
+#define ZB_CONFIRM_FAILURE       0x01
+#define ZB_CONFIRM_APS_NO_ACK    0xB7
+#define ZB_CONFIRM_NO_ROUTE      0xCD
+#define ZB_CONFIRM_CHANNEL_BUSY  0xE1
+#define ZB_CONFIRM_MAC_NO_ACK    0xE9
+
+/* Longest application payload with NWK security (no APS security). */
+#define ZB_APS_MAX_PAYLOAD 82
 
 /* What the net layer reports upwards; the callbacks run in the MAC thread. */
 struct zb_net_cb {
@@ -123,7 +170,32 @@ struct zb_net_cb {
 	void (*energy_done)(void *ctx, int status, uint32_t mask, const uint8_t *ed, size_t n,
 			    uint32_t tag);
 	void (*permit)(void *ctx, uint8_t duration);
+	/* A device was given the network key (the trust center's join). */
+	void (*tc_join)(void *ctx, uint16_t nwk, const uint8_t ext[8], uint16_t parent);
+	/* An application frame came in. */
+	void (*aps_rx)(void *ctx, const struct zb_aps_rx *rx);
+	/* Outcome of a zb_net_send() with confirm set. */
+	void (*data_confirm)(void *ctx, uint8_t status, uint32_t tag);
+	/* A line of protocol trace (why a frame was dropped, what the trust center did). */
+	void (*trace)(void *ctx, const char *msg);
 	void *ctx;
+};
+
+#define ZB_APS_WAITS 6
+#define ZB_APS_DUPS  8
+
+struct zb_aps_wait {
+	bool used;
+	uint16_t dst;
+	uint8_t counter;
+	uint32_t tag;
+	int64_t deadline;
+};
+
+struct zb_aps_dup {
+	uint16_t src;
+	uint8_t counter;
+	int64_t until;
 };
 
 struct zb_net_job {
@@ -152,6 +224,18 @@ struct zb_net {
 	uint32_t bdb_primary, bdb_secondary;
 	struct zb_child children[ZB_NET_MAX_CHILDREN];
 	struct zb_net_job job;
+
+	/* Network security: the active key and the frame counters (written ahead to flash). */
+	bool keys_ok;
+	uint8_t nwk_key[ZB_KEY_LEN];
+	uint8_t nwk_key_seq;
+	uint8_t tc_link_key[ZB_KEY_LEN];
+	uint32_t nwk_fc, nwk_fc_limit;
+	uint32_t aps_fc, aps_fc_limit;
+	uint8_t nwk_seq, aps_counter;
+	int64_t next_link_status;
+	struct zb_aps_wait waits[ZB_APS_WAITS];
+	struct zb_aps_dup dups[ZB_APS_DUPS];
 };
 
 /* The MAC callbacks of the net layer (association policy); pass to zb_mac_init(). */
@@ -195,6 +279,13 @@ int zb_net_energy_scan(struct zb_net *n, uint32_t mask, uint8_t exp, uint32_t ta
 int zb_net_change_channel(struct zb_net *n, uint8_t channel);
 /* ScanDuration 0xFF: the channel mask and network manager address in the NIB. */
 int zb_net_set_channel_mask(struct zb_net *n, uint32_t mask, uint16_t manager);
+
+/*
+ * Send an application frame to a neighbour (or everyone): NWK secured, no routing yet. Returns
+ * 0 once accepted, with the outcome (MAC and APS acknowledgements) through data_confirm;
+ * -EMSGSIZE, -ENOTCONN.
+ */
+int zb_net_send(struct zb_net *n, const struct zb_aps_tx *tx);
 
 /* Association table for the host's UTIL_ASSOC_* commands; slot index or -1. */
 int zb_net_child_add(struct zb_net *n, uint16_t nwk, const uint8_t ext[8], uint8_t cap);

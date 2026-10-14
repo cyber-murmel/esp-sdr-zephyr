@@ -43,6 +43,9 @@ struct zb_stack {
 	struct zb_ep eps[ZB_EP_MAX];
 	struct zb_group groups[ZB_GROUP_MAX];
 	uint8_t default_eui[8];
+	/* The host asked for ZDO messages as raw callbacks (zigpy-znp) rather than as AREQs. */
+	bool msg_cb;
+	uint8_t zdo_tsn;
 	/* 0 off; 1 stack events; 2 also every frame (DEBUG_MSG AREQs to the host). */
 	uint8_t trace_level;
 };

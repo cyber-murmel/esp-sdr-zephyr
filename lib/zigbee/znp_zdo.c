@@ -22,6 +22,7 @@ enum {
 	ZDO_MGMT_LQI_REQ = 0x31,
 	ZDO_MGMT_RTG_REQ = 0x32,
 	ZDO_MGMT_BIND_REQ = 0x33,
+	ZDO_MGMT_LEAVE_REQ = 0x34,
 	ZDO_MGMT_PERMIT_JOIN_REQ = 0x36,
 	ZDO_MGMT_NWK_UPDATE_REQ = 0x37,
 	ZDO_MSG_CB_REGISTER = 0x3E,
@@ -41,6 +42,8 @@ enum {
 	ZDO_BEACON_NOTIFY_IND = 0xC5,
 	ZDO_NWK_DISCOVERY_CNF = 0xC7,
 	ZDO_PERMIT_JOIN_IND = 0xCB,
+	ZDO_TC_DEV_IND = 0xCA,
+	ZDO_END_DEVICE_ANNCE_IND = 0xC1,
 	ZDO_MSG_CB_INCOMING = 0xFF,
 };
 
@@ -49,6 +52,7 @@ enum {
 	AF_DATA_REQUEST = 0x01,
 	AF_DATA_REQUEST_EXT = 0x02,
 	AF_DATA_CONFIRM = 0x80,
+	AF_INCOMING_MSG = 0x81,
 };
 
 enum {
@@ -69,9 +73,13 @@ enum {
 	ZCL_MGMT_LQI_REQ = 0x0031,
 	ZCL_MGMT_RTG_REQ = 0x0032,
 	ZCL_MGMT_BIND_REQ = 0x0033,
+	ZCL_MGMT_LEAVE_REQ = 0x0034,
 	ZCL_MGMT_PERMIT_JOIN_REQ = 0x0036,
 	ZCL_MGMT_NWK_UPDATE_REQ = 0x0038,
+	ZCL_DEVICE_ANNCE = 0x0013,
 	ZCL_RSP_BIT = 0x8000,
+	ZCL_NWK_ADDR_RSP = 0x8000,
+	ZCL_IEEE_ADDR_RSP = 0x8001,
 };
 
 /* Scan duration values of Mgmt_NWK_Update_req that are no scan. */
@@ -83,12 +91,18 @@ enum {
 #define STATUS_OK            0x00
 #define STATUS_FAIL          0x01
 #define STATUS_INVALID_PARAM 0x02
+#define STATUS_BUFFER_FULL   0x11
 #define ZDO_INVALID_EP       0x82
 #define ZDO_NOT_SUPPORTED    0x84
 #define AF_NWK_NO_ROUTE      0xCD
 #define ROUTING_NO_ENTRY     4
 
 #define NWK_COORDINATOR 0x0000
+
+/* AF_DATA_REQUEST_EXT address modes and options. */
+#define AF_ADDR_NWK            0x02
+#define AF_ADDR_BROADCAST      0x0F
+#define AF_OPTION_ACK_REQUEST  0x10
 #define NWK_BROADCAST_ROUTERS 0xFFFC
 
 #define DEVICE_TYPE_COORDINATOR 1
@@ -198,18 +212,18 @@ static size_t body_energy(int status, uint32_t mask, const uint8_t *ed, size_t n
 	return 10U + n;
 }
 
-/* A ZDO response as the host's message callback sees it. */
-static void msg_cb_incoming(struct zb_stack *s, uint16_t cluster, uint8_t tsn, const uint8_t *body,
-			    size_t len, bool after)
+/* A ZDO message as the host's message callback sees it (@p cluster as on air). */
+static void msg_cb_incoming(struct zb_stack *s, uint16_t src, bool bcast, uint16_t cluster,
+			    uint8_t tsn, const uint8_t *body, size_t len, bool after)
 {
-	uint8_t d[8 + 160];
+	uint8_t d[9 + 100];
 
-	if (len > 160U) {
+	if (len > 100U) {
 		return;
 	}
-	mt_put_u16(&d[0], NWK_COORDINATOR);
-	d[2] = 0; /* not a broadcast */
-	mt_put_u16(&d[3], cluster | ZCL_RSP_BIT);
+	mt_put_u16(&d[0], src);
+	d[2] = bcast ? 1 : 0;
+	mt_put_u16(&d[3], cluster);
 	d[5] = 0; /* security use */
 	d[6] = tsn;
 	mt_put_u16(&d[7], NWK_COORDINATOR);
@@ -281,7 +295,8 @@ static void ev_energy_done(void *ctx, int status, uint32_t mask, const uint8_t *
 	size_t len = body_energy(status, mask, ed, n, body);
 
 	if ((tag & ESCAN_TAG_LOOPBACK) != 0U) {
-		msg_cb_incoming(s, ZCL_MGMT_NWK_UPDATE_REQ, (uint8_t)tag, body, len, false);
+		msg_cb_incoming(s, NWK_COORDINATOR, false, ZCL_MGMT_NWK_UPDATE_REQ | ZCL_RSP_BIT,
+				(uint8_t)tag, body, len, false);
 	} else {
 		uint8_t d[2 + 10 + 16];
 
@@ -298,7 +313,111 @@ static void ev_permit(void *ctx, uint8_t duration)
 	znp_send_areq(s->znp, MT_ZDO, ZDO_PERMIT_JOIN_IND, &duration, 1);
 }
 
+static void ev_tc_join(void *ctx, uint16_t nwk, const uint8_t ext[8], uint16_t parent)
+{
+	struct zb_stack *s = ctx;
+	uint8_t d[12];
+
+	mt_put_u16(d, nwk);
+	memcpy(&d[2], ext, 8);
+	mt_put_u16(&d[10], parent);
+	znp_send_areq_after(s->znp, MT_ZDO, ZDO_TC_DEV_IND, d, sizeof(d));
+}
+
+static void ev_data_confirm(void *ctx, uint8_t status, uint32_t tag)
+{
+	struct zb_stack *s = ctx;
+	const uint8_t d[] = {status, (uint8_t)(tag >> 8), (uint8_t)tag};
+
+	znp_send_areq_after(s->znp, MT_AF, AF_DATA_CONFIRM, d, sizeof(d));
+}
+
+/* A ZDO frame from a device: responses and the device announcement, in the host's style. */
+static void zdo_incoming(struct zb_stack *s, const struct zb_aps_rx *rx)
+{
+	const uint8_t *body = &rx->data[1];
+	size_t len = rx->len - 1U;
+	uint8_t tsn = rx->data[0];
+	uint8_t d[2 + 100];
+
+	if (rx->len < 1U) {
+		return;
+	}
+	if (rx->cluster == ZCL_DEVICE_ANNCE && len >= 11U) {
+		/* srcaddr, nwkaddr, IEEE address, capabilities */
+		mt_put_u16(d, rx->src);
+		memcpy(&d[2], body, 11);
+		znp_send_areq_after(s->znp, MT_ZDO, ZDO_END_DEVICE_ANNCE_IND, d, 13);
+	}
+	if (s->msg_cb) {
+		msg_cb_incoming(s, rx->src, rx->broadcast, rx->cluster, tsn, body, len, true);
+		return;
+	}
+	if ((rx->cluster & ZCL_RSP_BIT) == 0U || len > 98U) {
+		return;
+	}
+	if (rx->cluster == ZCL_NWK_ADDR_RSP || rx->cluster == ZCL_IEEE_ADDR_RSP) {
+		/* No source address; Z-Stack puts the start index before the count. */
+		memcpy(d, body, len);
+		if (len >= 13U) {
+			uint8_t t = d[11];
+
+			d[11] = d[12];
+			d[12] = t;
+		} else if (len == 11U) {
+			d[11] = 0;
+			d[12] = 0;
+			len = 13;
+		}
+		znp_send_areq_after(s->znp, MT_ZDO, (uint8_t)(0x80U + (rx->cluster & 0xFFU)), d, (uint8_t)len);
+		return;
+	}
+	mt_put_u16(d, rx->src);
+	memcpy(&d[2], body, len);
+	znp_send_areq_after(s->znp, MT_ZDO, (uint8_t)(0x80U + (rx->cluster & 0xFFU)), d, (uint8_t)(2U + len));
+}
+
+/* An application frame: AF_INCOMING_MSG. */
+static void af_incoming(struct zb_stack *s, const struct zb_aps_rx *rx)
+{
+	uint8_t d[17 + ZB_APS_MAX_PAYLOAD];
+
+	mt_put_u16(&d[0], 0); /* group */
+	mt_put_u16(&d[2], rx->cluster);
+	mt_put_u16(&d[4], rx->src);
+	d[6] = rx->src_ep;
+	d[7] = rx->dst_ep;
+	d[8] = rx->broadcast ? 1 : 0;
+	d[9] = rx->lqi;
+	d[10] = 0; /* security use */
+	mt_put_u32(&d[11], (uint32_t)k_uptime_get());
+	d[15] = rx->aps_counter;
+	d[16] = rx->len;
+	memcpy(&d[17], rx->data, rx->len);
+	znp_send_areq_after(s->znp, MT_AF, AF_INCOMING_MSG, d, (uint8_t)(17U + rx->len));
+}
+
+static void ev_aps_rx(void *ctx, const struct zb_aps_rx *rx)
+{
+	struct zb_stack *s = ctx;
+
+	if (rx->dst_ep == 0U && rx->profile == 0U) {
+		zdo_incoming(s, rx);
+	} else {
+		af_incoming(s, rx);
+	}
+}
+
+static void ev_trace(void *ctx, const char *msg)
+{
+	zb_stack_trace(ctx, 1, "%s", msg);
+}
+
 const struct zb_net_cb zb_stack_net_cb = {
+	.trace = ev_trace,
+	.tc_join = ev_tc_join,
+	.aps_rx = ev_aps_rx,
+	.data_confirm = ev_data_confirm,
 	.state = ev_state,
 	.bdb = ev_bdb,
 	.beacons = ev_beacons,
@@ -507,21 +626,57 @@ static void zdo_areq_rsp(struct zb_stack *s, uint16_t cluster, const uint8_t *bo
 	znp_send_areq_after(s->znp, MT_ZDO, (uint8_t)(0x80U + (cluster & 0xFFU)), d, (uint8_t)(skip + len));
 }
 
-/* A ZDO request over MT: the payload is the destination, then the ZDO request without its TSN. */
+/* A ZDO request to another device (or a broadcast): [TSN][payload] as an APS frame to endpoint 0. */
+static int zdo_send(struct zb_stack *s, uint16_t dst, uint16_t cluster, const uint8_t *payload,
+		    size_t len)
+{
+	uint8_t d[ZB_APS_MAX_PAYLOAD];
+	struct zb_aps_tx tx = {
+		.dst = dst,
+		.broadcast = dst >= NWK_BROADCAST_ROUTERS,
+		.cluster = cluster,
+		.data = d,
+		.len = 1U + len,
+	};
+
+	if (len + 1U > sizeof(d)) {
+		return -EMSGSIZE;
+	}
+	d[0] = s->zdo_tsn++;
+	memcpy(&d[1], payload, len);
+	return zb_net_send(&s->net, &tx);
+}
+
+static int send_status(struct mt_frame *rsp, int r)
+{
+	return status_rsp(rsp, r == 0 ? STATUS_OK : r == -EMSGSIZE ? STATUS_INVALID_PARAM : STATUS_FAIL);
+}
+
+/*
+ * A ZDO request over MT: the payload is the destination, then the ZDO request without its TSN.
+ * About this device it is answered here, otherwise it goes over the air.
+ */
 static int zdo_mt_request(struct zb_stack *s, uint16_t cluster, const uint8_t *d, size_t len,
 			  struct mt_frame *rsp)
 {
+	/* Requests about a device: the short address of interest follows the destination. */
+	bool about_device = cluster >= ZCL_NODE_DESC_REQ && cluster <= ZCL_MATCH_DESC_REQ;
 	uint8_t body[64];
+	uint16_t dst;
 	size_t n;
 
-	if (len < 2U || !for_me(mt_get_u16(d))) {
-		return status_rsp(rsp, STATUS_FAIL); /* other devices: NWK layer, later */
+	if (len < 2U) {
+		return MT_ERR_LENGTH;
 	}
-	n = zdo_body(s, cluster, d + 2, len - 2U, mt_get_u16(d) == NWK_COORDINATOR, true, body);
-	if (n > 0U) {
-		zdo_areq_rsp(s, cluster, body, n);
+	dst = mt_get_u16(d);
+	if (for_me(dst) && (!about_device || len < 4U || mt_get_u16(&d[2]) == NWK_COORDINATOR)) {
+		n = zdo_body(s, cluster, d + 2, len - 2U, dst == NWK_COORDINATOR, true, body);
+		if (n > 0U) {
+			zdo_areq_rsp(s, cluster, body, n);
+		}
+		return status_rsp(rsp, STATUS_OK);
 	}
-	return status_rsp(rsp, STATUS_OK);
+	return send_status(rsp, zdo_send(s, dst, cluster, d + 2, len - 2U));
 }
 
 int znp_zdo_handler(struct znp *z, const struct mt_frame *req, struct mt_frame *rsp)
@@ -535,42 +690,42 @@ int znp_zdo_handler(struct znp *z, const struct mt_frame *req, struct mt_frame *
 	case ZDO_NODE_DESC_REQ:
 	case ZDO_POWER_DESC_REQ:
 	case ZDO_ACTIVE_EP_REQ:
-		/* destination, then the short address of interest: this device's only */
+		/* destination, then the short address of interest */
 		if (req->len != 4U) {
 			return MT_ERR_LENGTH;
-		}
-		if (mt_get_u16(&d[2]) != NWK_COORDINATOR) {
-			return status_rsp(rsp, STATUS_FAIL);
 		}
 		return zdo_mt_request(s, req->cmd, d, req->len, rsp);
 	case ZDO_SIMPLE_DESC_REQ:
 		if (req->len != 5U) {
 			return MT_ERR_LENGTH;
 		}
-		if (mt_get_u16(&d[2]) != NWK_COORDINATOR) {
-			return status_rsp(rsp, STATUS_FAIL);
-		}
 		return zdo_mt_request(s, req->cmd, d, req->len, rsp);
 	case ZDO_MATCH_DESC_REQ:
 	case ZDO_MGMT_LQI_REQ:
 	case ZDO_MGMT_RTG_REQ:
 	case ZDO_MGMT_BIND_REQ:
+	case ZDO_MGMT_LEAVE_REQ:
 		if (req->len < 3U) {
 			return MT_ERR_LENGTH;
 		}
 		return zdo_mt_request(s, req->cmd, d, req->len, rsp);
 	case ZDO_NWK_ADDR_REQ:
 	case ZDO_IEEE_ADDR_REQ:
-		/* No destination: the request goes to the network; only this device is known. */
+		/* NWK_ADDR: IEEE address, request type, start index (broadcast to the network).
+		 * IEEE_ADDR: the short address first, answered by that device.
+		 */
 		if (req->len < 4U) {
 			return MT_ERR_LENGTH;
 		}
 		n = zdo_body(s, req->cmd, d, req->len, true, true, body);
-		if (n == 0U) {
-			return status_rsp(rsp, STATUS_FAIL);
+		if (n > 0U) {
+			zdo_areq_rsp(s, req->cmd, body, n);
+			return status_rsp(rsp, STATUS_OK);
 		}
-		zdo_areq_rsp(s, req->cmd, body, n);
-		return status_rsp(rsp, STATUS_OK);
+		return send_status(rsp, zdo_send(s, req->cmd == ZDO_NWK_ADDR_REQ
+							    ? ZB_BCAST_RX_ON_IDLE
+							    : mt_get_u16(d),
+						 req->cmd, d, req->len));
 	case ZDO_NWK_DISCOVERY_REQ:
 		if (req->len != 5U) {
 			return MT_ERR_LENGTH;
@@ -580,18 +735,25 @@ int znp_zdo_handler(struct znp *z, const struct mt_frame *req, struct mt_frame *
 		}
 		return status_rsp(rsp, zb_net_discover(&s->net, mt_get_u32(d), d[4]) == 0 ? STATUS_OK
 											  : STATUS_FAIL);
-	case ZDO_MGMT_PERMIT_JOIN_REQ:
+	case ZDO_MGMT_PERMIT_JOIN_REQ: {
 		/* address mode, destination, duration, TC significance */
+		uint16_t dst;
+
 		if (req->len != 5U) {
 			return MT_ERR_LENGTH;
 		}
-		if (!for_me(mt_get_u16(&d[1]))) {
-			return status_rsp(rsp, STATUS_FAIL);
+		dst = mt_get_u16(&d[1]);
+		if (for_me(dst)) {
+			permit_from_zdo(s, d[3]);
+			body[0] = STATUS_OK;
+			zdo_areq_rsp(s, ZCL_MGMT_PERMIT_JOIN_REQ, body, 1);
 		}
-		permit_from_zdo(s, d[3]);
-		body[0] = STATUS_OK;
-		zdo_areq_rsp(s, ZCL_MGMT_PERMIT_JOIN_REQ, body, 1);
-		return status_rsp(rsp, STATUS_OK);
+		if (dst == NWK_COORDINATOR) {
+			return status_rsp(rsp, STATUS_OK);
+		}
+		/* Other devices and the routers around: the request goes over the air too. */
+		return send_status(rsp, zdo_send(s, dst, ZCL_MGMT_PERMIT_JOIN_REQ, &d[3], 2));
+	}
 	case ZDO_MGMT_NWK_UPDATE_REQ: {
 		/* destination, address mode, channels, scan duration, scan count, manager */
 		uint32_t mask;
@@ -626,6 +788,7 @@ int znp_zdo_handler(struct znp *z, const struct mt_frame *req, struct mt_frame *
 		if (req->len != 2U) {
 			return MT_ERR_LENGTH;
 		}
+		s->msg_cb = true;
 		return status_rsp(rsp, STATUS_OK);
 	case ZDO_STARTUP_FROM_APP:
 		if (req->len != 2U) {
@@ -773,7 +936,7 @@ static void local_zdo(struct zb_stack *s, uint16_t cluster, const uint8_t *data,
 			permit_from_zdo(s, data[0]);
 			if (unicast) {
 				body[0] = STATUS_OK;
-				msg_cb_incoming(s, cluster, tsn, body, 1, true);
+				msg_cb_incoming(s, NWK_COORDINATOR, false, cluster | ZCL_RSP_BIT, tsn, body, 1, true);
 			}
 		}
 		return;
@@ -796,10 +959,51 @@ static void local_zdo(struct zb_stack *s, uint16_t cluster, const uint8_t *data,
 	default:
 		n = zdo_body(s, cluster, data, len, unicast, false, body);
 		if (n > 0U) {
-			msg_cb_incoming(s, cluster, tsn, body, n, true);
+			msg_cb_incoming(s, NWK_COORDINATOR, false, cluster | ZCL_RSP_BIT, tsn, body, n, true);
 		}
 		return;
 	}
+}
+
+/*
+ * Send what the host asked for: application data from a registered endpoint (its profile) or a
+ * ZDO frame (endpoint 0). The outcome follows as AF_DATA_CONFIRM for application data.
+ */
+static int af_send(struct zb_stack *s, bool bcast, uint16_t dst, uint8_t dst_ep, uint8_t src_ep,
+		   uint16_t cluster, uint8_t tsn, uint8_t options, const uint8_t *data, size_t len,
+		   struct mt_frame *rsp)
+{
+	struct zb_aps_tx tx = {
+		.dst = dst,
+		.broadcast = bcast,
+		.src_ep = src_ep,
+		.dst_ep = dst_ep,
+		.cluster = cluster,
+		.ack_req = (options & AF_OPTION_ACK_REQUEST) != 0U,
+		.confirm = dst_ep != 0U && !bcast,
+		.tag = ((uint32_t)src_ep << 8) | tsn,
+		.data = data,
+		.len = len,
+	};
+	int r;
+
+	if (src_ep != 0U) {
+		bool found = false;
+
+		for (int i = 0; i < ZB_EP_MAX && !found; i++) {
+			if (s->eps[i].used && s->eps[i].ep == src_ep) {
+				tx.profile = s->eps[i].profile;
+				found = true;
+			}
+		}
+		if (!found) {
+			return status_rsp(rsp, STATUS_INVALID_PARAM);
+		}
+	}
+	r = zb_net_send(&s->net, &tx);
+	return status_rsp(rsp, r == 0 ? STATUS_OK
+				       : r == -EMSGSIZE ? STATUS_INVALID_PARAM
+							: r == -ENOMEM ? STATUS_BUFFER_FULL : STATUS_FAIL);
 }
 
 static int af_data_request_ext(struct zb_stack *s, const struct mt_frame *req, struct mt_frame *rsp)
@@ -821,23 +1025,21 @@ static int af_data_request_ext(struct zb_stack *s, const struct mt_frame *req, s
 	if (req->len != 20U + dlen) {
 		return MT_ERR_LENGTH;
 	}
+	if (mode != AF_ADDR_NWK && mode != AF_ADDR_BROADCAST) {
+		return status_rsp(rsp, STATUS_FAIL); /* group and IEEE addressing: not supported */
+	}
 
-	if (dst_ep == 0U && (mode == 0x02 || mode == 0x0F) && for_me(dst)) {
-		/* ZDO to this device (or broadcast, which includes it). */
+	if (dst_ep == 0U && for_me(dst)) {
+		/* ZDO to this device (or a broadcast, which includes it). */
 		local_zdo(s, cluster, &d[20], dlen, dst == NWK_COORDINATOR);
-		return status_rsp(rsp, STATUS_OK);
+		if (dst == NWK_COORDINATOR) {
+			return status_rsp(rsp, STATUS_OK);
+		}
+	} else if (dst == NWK_COORDINATOR) {
+		return status_rsp(rsp, STATUS_FAIL); /* no application endpoints on this side */
 	}
-	if (dst_ep == 0U) {
-		/* ZDO to other devices: no confirmation is expected for ZDO. Not yet routed. */
-		return status_rsp(rsp, STATUS_OK);
-	}
-	/* Application data needs the NWK layer: the send fails, confirmed as no route. */
-	{
-		const uint8_t c[] = {AF_NWK_NO_ROUTE, src_ep, tsn};
-
-		znp_send_areq_after(s->znp, MT_AF, AF_DATA_CONFIRM, c, sizeof(c));
-	}
-	return status_rsp(rsp, STATUS_OK);
+	return af_send(s, mode == AF_ADDR_BROADCAST, dst, dst_ep, src_ep, cluster, tsn, d[16], &d[20],
+		       dlen, rsp);
 }
 
 int znp_af_handler(struct znp *z, const struct mt_frame *req, struct mt_frame *rsp)
@@ -856,12 +1058,11 @@ int znp_af_handler(struct znp *z, const struct mt_frame *req, struct mt_frame *r
 		if (req->len < 10U || req->len != 10U + d[9]) {
 			return MT_ERR_LENGTH;
 		}
-		{
-			const uint8_t c[] = {AF_NWK_NO_ROUTE, d[3], d[6]};
-
-			znp_send_areq_after(s->znp, MT_AF, AF_DATA_CONFIRM, c, sizeof(c));
+		if (mt_get_u16(d) == NWK_COORDINATOR) {
+			return status_rsp(rsp, STATUS_FAIL);
 		}
-		return status_rsp(rsp, STATUS_OK);
+		return af_send(s, false, mt_get_u16(d), d[2], d[3], mt_get_u16(&d[4]), d[6], d[7],
+			       &d[10], d[9], rsp);
 	}
 	}
 	return MT_ERR_COMMAND;

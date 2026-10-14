@@ -368,6 +368,9 @@ static void mac_thread(void *p1, void *p2, void *p3)
 			}
 		}
 		expire_pending(m);
+		if (m->up.tick != NULL) {
+			m->up.tick(m->up.ctx);
+		}
 	}
 }
 

@@ -30,12 +30,16 @@ Progress (``Z-Stack`` below always means the protocol, not TI's firmware):
        formation, restore and the NIB in Z-Stack 3.30's aligned layout, the ``APP_CNF``, ``ZDO``,
        ``AF`` and ``DEBUG`` commands. zigpy-znp's complete application startup and
        zigbee-herdsman (Zigbee2MQTT) start, restore after a reboot, scan real networks and
-       register their endpoints. Open: a real device associating.
+       register their endpoints, and a lamp joins.
    * - 3
-     - NWK security, routing, APS and the trust center (the transport key, install codes), data
-       through ``AF``: not started. Until then a device that associates stays a MAC child: it
-       gets its short address and no network key, and application data requests are confirmed
-       with "no route".
+     - Done for devices next to the coordinator, verified with a lamp (pair, announce, endpoint
+       discovery, On/Off command with APS acknowledgement): NWK security (AES-CCM*, frame
+       counters written ahead to flash), the trust center handing out the network key under the
+       default link key, secured data to and from direct neighbours with APS acknowledgements and
+       duplicate rejection, link status, rejoin, ZDO requests to devices, ``AF`` data and
+       confirmations. Not done: routing (devices that are not direct neighbours), install codes
+       and unique link keys, key switching, fragmentation, child aging, and ``ZDO_MGMT_LQI_REQ``
+       style tables of the coordinator itself (they answer empty).
    * - 4, 5
      - Sleepy end devices (frame pending in the ACK); the ESP32-S3 software radio: not started.
 

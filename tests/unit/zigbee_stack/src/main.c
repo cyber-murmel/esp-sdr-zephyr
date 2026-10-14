@@ -902,7 +902,7 @@ ZTEST(zigbee_stack, test_a_device_joins_and_is_remembered)
 	r = sreq(MT_UTIL, 0x49, (uint8_t[]){1}, 1);
 	zassert_equal(r.data[4], 0xFF, "no second device");
 	zassert_equal(ex_read(ZB_NVEX_ADDRMGR, 0, e), ZB_ADDRMGR_LEN);
-	zassert_equal(e[0], 0x01, "AddrMgrUserType.Assoc");
+	zassert_equal(e[0], 0x03, "AddrMgrUserType Assoc and Security: it holds the network key");
 	zassert_equal(mt_get_u16(&e[2]), child);
 	zassert_mem_equal(&e[4], JOINER, 8);
 
@@ -1205,7 +1205,7 @@ ZTEST(zigbee_stack, test_key_table_entries_of_the_host_are_not_children)
 		zassert_equal(g[0], 0x02, "the host's entry is untouched");
 		zassert_equal(mt_get_u16(&g[2]), 0x4321);
 		zassert_equal(ex_read(ZB_NVEX_ADDRMGR, 1, g), ZB_ADDRMGR_LEN);
-		zassert_equal(g[0], 0x01, "the child took the next slot");
+		zassert_equal(g[0], 0x03, "the child took the next slot");
 		zassert_equal(sreq(MT_UTIL, 0x00, NULL, 0).data[13], 1);
 	}
 }
@@ -1267,4 +1267,437 @@ ZTEST(zigbee_stack, test_overlapping_energy_scans_report_to_their_own_host_path)
 	zassert_true(wait_areq(m, MT_ZDO, 0xB8, 5000, &ev));
 	k_sleep(K_MSEC(100));
 	zassert_true(find(m, MT_AREQ, MT_ZDO, 0xFF, NULL) < 0 || find(m, MT_AREQ, MT_ZDO, 0xB8, NULL) >= 0);
+}
+
+/* ------------------------------------------------------------------------------------------ */
+/* The trust center, NWK security and the APS data path, against a simulated device. */
+
+struct txd {
+	struct zb_nwk_hdr nh;
+	struct zb_sec_hdr sh;
+	uint8_t pl[ZB_MAC_MAX_FRAME];
+	size_t plen;
+	uint16_t mac_dst;
+	bool ar;
+};
+
+/* Open a frame the stick transmitted (MAC data frame carrying a NWK frame). */
+static bool open_tx(int idx, const uint8_t key[16], struct txd *o)
+{
+	uint8_t f[ZB_MAC_MAX_FRAME];
+	size_t n = mr.tx_log[idx].n, plen, nl;
+	struct zb_mac_hdr mh;
+	uint8_t *nw;
+
+	memcpy(f, mr.tx_log[idx].f, n);
+	if (zb_mac_parse(f, n, &mh) != 0 || mh.type != ZB_FT_DATA) {
+		return false;
+	}
+	o->mac_dst = mh.dst_short;
+	o->ar = mh.ar;
+	nw = &f[mh.len];
+	nl = n - mh.len;
+	if (zb_nwk_parse(nw, nl, &o->nh) != 0) {
+		return false;
+	}
+	if (!o->nh.security) {
+		o->plen = nl - o->nh.len;
+		memcpy(o->pl, nw + o->nh.len, o->plen);
+		return true;
+	}
+	if (zb_sec_parse(nw, nl, o->nh.len, &o->sh) != 0 ||
+	    zb_sec_open(nw, nl, o->nh.len, key, &o->sh, &plen) != 0) {
+		return false;
+	}
+	o->plen = plen;
+	memcpy(o->pl, nw + o->nh.len + o->sh.len, plen);
+	return true;
+}
+
+/* Wait until the mock radio has transmitted @p count frames in total. */
+static void wait_tx_total(int count)
+{
+	for (int i = 0; i < 400 && mr.tx_count < count; i++) {
+		k_sleep(K_MSEC(5));
+	}
+	zassert_true(mr.tx_count >= count, "expected %d transmissions, saw %d", count, mr.tx_count);
+}
+
+/* The first NWK data frame transmitted at or after index @p from (link status and the like skipped). */
+static int wait_data_tx(int from, const uint8_t key[16], struct txd *t)
+{
+	for (int w = 0; w < 400; w++) {
+		for (int i = from; i < mr.tx_count; i++) {
+			if (open_tx(i, key, t) && t->nh.type == ZB_NWK_DATA) {
+				return i;
+			}
+		}
+		k_sleep(K_MSEC(5));
+	}
+	zassert_unreachable("no NWK data frame after index %d", from);
+	return -1;
+}
+
+/* A device sends the stick a NWK frame (secured with the network key, as a joined device does). */
+static void dev_sends(uint16_t child, uint8_t type, uint16_t nwk_dst, const uint8_t *pl, size_t len,
+		      uint32_t counter, const uint8_t key[16])
+{
+	uint8_t f[ZB_MAC_MAX_FRAME], mf[ZB_MAC_MAX_FRAME];
+	struct zb_nwk_hdr nh = {.type = type, .proto_ver = 2, .security = true, .dst = nwk_dst,
+				.src = child, .radius = 30, .seq = (uint8_t)counter};
+	size_t hl = zb_nwk_build(&nh, f), tl, mn;
+
+	memcpy(&f[hl], pl, len);
+	tl = zb_sec_protect(f, 116, hl, len, key, ZB_KEYID_NETWORK, 0, counter, JOINER);
+	zassert_true(tl > 0U);
+	mn = zb_mac_build_data(mf, (uint8_t)counter, mr.pan, nwk_dst == 0U ? 0U : 0xFFFFU, child,
+			       nwk_dst == 0U, f, tl);
+	zb_mac_rx(&st.mac, mf, mn, 200, -50);
+}
+
+/* The join of JOINER up to and including the network key. Returns the device's short address. */
+static int join_tx0;
+
+static uint16_t join_device(void)
+{
+	uint8_t f[ZB_MAC_MAX_FRAME];
+	int txs;
+	uint16_t child;
+	struct mt_frame ev;
+	int m;
+
+	mr.ed_dbm[20] = -90;
+	m = zigpy_form(BIT(20));
+	zassert_true(wait_state(m, 9, 10000));
+	zassert_equal(sreq(MT_ZDO, 0x36, (uint8_t[]){2, 0, 0, 0xFF, 1}, 5).data[0], 0);
+	m = mark();
+	txs = join_tx0 = mr.tx_count;
+	zb_mac_rx(&st.mac, f, zb_mac_build_assoc_req(f, 1, mr.pan, 0, JOINER, 0x8E), 200, -50);
+	zb_mac_rx(&st.mac, f, zb_mac_build_data_req(f, 2, mr.pan, 0, JOINER, NULL), 200, -50);
+	wait_tx_total(txs + 2);
+	{
+		struct zb_mac_hdr h;
+
+		zassert_ok(zb_mac_parse(mr.tx_log[txs].f, mr.tx_log[txs].n, &h));
+		child = mt_get_u16(&mr.tx_log[txs].f[h.len + 1]);
+	}
+	zassert_true(wait_areq(m, MT_ZDO, 0xCA, 1000, &ev), "no ZDO_TC_DEV_IND");
+	zassert_equal(mt_get_u16(&ev.data[0]), child);
+	zassert_mem_equal(&ev.data[2], JOINER, 8);
+	zassert_equal(mt_get_u16(&ev.data[10]), 0x0000, "parent");
+	return child;
+}
+
+ZTEST(zigbee_stack, test_trust_center_hands_the_joiner_the_network_key)
+{
+	static const uint8_t link[16] = "ZigBeeAlliance09";
+	uint8_t ktk[16], tk[ZB_MAC_MAX_FRAME];
+	int txs;
+	struct zb_mac_hdr mh;
+	struct zb_nwk_hdr nh;
+	struct zb_sec_hdr sh;
+	uint16_t child;
+	size_t plen, nl;
+
+	child = join_device();
+	txs = join_tx0;
+	zb_key_transport_key(link, ktk);
+
+	/* The frame after the association response: NWK unsecured, the APS command secured. */
+	memcpy(tk, mr.tx_log[txs + 1].f, mr.tx_log[txs + 1].n);
+	zassert_ok(zb_mac_parse(tk, mr.tx_log[txs + 1].n, &mh));
+	zassert_equal(mh.dst_short, child);
+	zassert_true(mh.ar, "acknowledged by the joiner");
+	nl = mr.tx_log[txs + 1].n - mh.len;
+	zassert_ok(zb_nwk_parse(&tk[mh.len], nl, &nh));
+	zassert_false(nh.security, "the joiner has no network key yet");
+	zassert_equal(nh.dst, child);
+	zassert_equal(nh.src, 0x0000);
+	zassert_equal(tk[mh.len + nh.len], 0x21, "APS command frame with security");
+	zassert_ok(zb_sec_parse(&tk[mh.len + nh.len], nl - nh.len, 2, &sh));
+	zassert_equal(sh.key_id, ZB_KEYID_TRANSPORT);
+	zassert_mem_equal(sh.src, EUI, 8);
+	zassert_ok(zb_sec_open(&tk[mh.len + nh.len], nl - nh.len, 2, ktk, &sh, &plen));
+	zassert_equal(plen, 35);
+	{
+		const uint8_t *p = &tk[mh.len + nh.len + 2 + sh.len];
+
+		zassert_equal(p[0], 0x05, "Transport-Key");
+		zassert_equal(p[1], 0x01, "standard network key");
+		zassert_mem_equal(&p[2], KEY, 16);
+		zassert_equal(p[18], 0, "key sequence number");
+		zassert_mem_equal(&p[19], JOINER, 8);
+		zassert_mem_equal(&p[27], EUI, 8);
+	}
+	zassert_equal(sreq(MT_UTIL, 0x00, NULL, 0).data[13], 1);
+}
+
+ZTEST(zigbee_stack, test_data_to_and_from_a_joined_device)
+{
+	static const uint8_t ep1[] = {1, 0x04, 0x01, 0x00, 0x04, 0, 0, 0, 0};
+	uint8_t d[64], aps[32];
+	struct txd t;
+	struct mt_frame ev;
+	uint16_t child;
+	int m, txs;
+
+	child = join_device();
+	zassert_equal(sreq(MT_AF, 0x00, ep1, sizeof(ep1)).data[0], 0);
+
+	/* The device announces itself (broadcast, endpoint 0, profile 0, cluster 0x0013). */
+	{
+		struct zb_aps_hdr ah = {.type = ZB_APS_DATA, .delivery = ZB_APS_BROADCAST, .dst_ep = 0,
+					.cluster = 0x0013, .counter = 50};
+		size_t o = zb_aps_build(&ah, aps);
+
+		aps[o++] = 0x07; /* ZDO TSN */
+		mt_put_u16(&aps[o], child);
+		memcpy(&aps[o + 2], JOINER, 8);
+		aps[o + 10] = 0x8E;
+		m = mark();
+		dev_sends(child, ZB_NWK_DATA, ZB_BCAST_RX_ON_IDLE, aps, o + 11, 100, KEY);
+	}
+	zassert_true(wait_areq(m, MT_ZDO, 0xC1, 1000, &ev), "no ZDO_END_DEVICE_ANNCE_IND");
+	zassert_equal(mt_get_u16(&ev.data[0]), child, "srcaddr");
+	zassert_equal(mt_get_u16(&ev.data[2]), child, "nwkaddr");
+	zassert_mem_equal(&ev.data[4], JOINER, 8);
+	zassert_equal(ev.data[12], 0x8E);
+
+	/* The host sends an On/Off "Off" command with an APS acknowledgement requested. */
+	memset(d, 0, sizeof(d));
+	d[0] = 2;
+	mt_put_u16(&d[1], child);
+	d[9] = 1;                    /* destination endpoint */
+	d[12] = 1;                   /* source endpoint */
+	mt_put_u16(&d[13], 0x0006);  /* On/Off cluster */
+	d[15] = 0x21;                /* transaction */
+	d[16] = 0x10;                /* APS acknowledgement */
+	d[17] = 30;
+	mt_put_u16(&d[18], 3);
+	d[20] = 0x01;                /* ZCL: cluster specific, client to server */
+	d[21] = 0x5A;                /* ZCL sequence */
+	d[22] = 0x00;                /* Off */
+	txs = mr.tx_count;
+	m = mark();
+	zassert_equal(sreq(MT_AF, 0x02, d, 23).data[0], 0);
+	wait_tx_total(txs + 1);
+	zassert_true(open_tx(txs, KEY, &t));
+	zassert_equal(t.mac_dst, child);
+	zassert_true(t.ar);
+	zassert_equal(t.nh.dst, child);
+	zassert_true(t.nh.security);
+	zassert_equal(t.sh.key_id, ZB_KEYID_NETWORK);
+	zassert_mem_equal(t.sh.src, EUI, 8);
+	{
+		struct zb_aps_hdr ah;
+
+		zassert_ok(zb_aps_parse(t.pl, t.plen, &ah));
+		zassert_equal(ah.type, ZB_APS_DATA);
+		zassert_true(ah.ack_req);
+		zassert_equal(ah.dst_ep, 1);
+		zassert_equal(ah.src_ep, 1);
+		zassert_equal(ah.cluster, 0x0006);
+		zassert_equal(ah.profile, 0x0104, "the source endpoint's profile");
+		zassert_equal(t.plen - ah.len, 3);
+		zassert_equal(t.pl[ah.len], 0x01);
+		zassert_equal(t.pl[ah.len + 2], 0x00);
+
+		/* No confirmation until the device acknowledges at the APS layer. */
+		k_sleep(K_MSEC(100));
+		zassert_true(find(m, MT_AREQ, MT_AF, 0x80, NULL) < 0);
+		{
+			struct zb_aps_hdr ack = {.type = ZB_APS_ACK, .dst_ep = 1, .src_ep = 1,
+						 .cluster = 0x0006, .profile = 0x0104,
+						 .counter = ah.counter};
+			size_t o = zb_aps_build(&ack, aps);
+
+			dev_sends(child, ZB_NWK_DATA, 0x0000, aps, o, 101, KEY);
+		}
+	}
+	zassert_true(wait_areq(m, MT_AF, 0x80, 1000, &ev), "no AF_DATA_CONFIRM");
+	zassert_equal(ev.data[0], 0x00, "status success");
+	zassert_equal(ev.data[1], 1, "endpoint");
+	zassert_equal(ev.data[2], 0x21, "transaction");
+
+	/* A send the device never acknowledges is confirmed as APS no-ack. */
+	d[15] = 0x22;
+	m = mark();
+	zassert_equal(sreq(MT_AF, 0x02, d, 23).data[0], 0);
+	k_sleep(K_SECONDS(5));
+	zassert_true(find(m, MT_AREQ, MT_AF, 0x80, &ev) >= 0);
+	zassert_equal(ev.data[0], 0xB7);
+	zassert_equal(ev.data[2], 0x22);
+
+	/* A send the MAC cannot deliver is confirmed as MAC no-ack. */
+	mr.script[0] = mr.script[1] = mr.script[2] = mr.script[3] = -ENOMSG;
+	mr.script_i = 0;
+	mr.script_n = 4;
+	d[15] = 0x23;
+	m = mark();
+	zassert_equal(sreq(MT_AF, 0x02, d, 23).data[0], 0);
+	zassert_true(find(m, MT_AREQ, MT_AF, 0x80, &ev) >= 0);
+	zassert_equal(ev.data[0], 0xE9);
+
+	/* A report from the device: acknowledged at the APS layer and delivered to the host. */
+	{
+		struct zb_aps_hdr ah = {.type = ZB_APS_DATA, .delivery = ZB_APS_UNICAST, .ack_req = true,
+					.dst_ep = 1, .src_ep = 1, .cluster = 0x0006,
+					.profile = 0x0104, .counter = 77};
+		size_t o = zb_aps_build(&ah, aps);
+
+		aps[o++] = 0x18;
+		aps[o++] = 0x33;
+		aps[o++] = 0x0A; /* ZCL report attributes */
+		txs = mr.tx_count;
+		m = mark();
+		dev_sends(child, ZB_NWK_DATA, 0x0000, aps, o, 102, KEY);
+		(void)wait_data_tx(txs, KEY, &t);
+		{
+			struct zb_aps_hdr ack;
+
+			zassert_ok(zb_aps_parse(t.pl, t.plen, &ack));
+			zassert_equal(ack.type, ZB_APS_ACK);
+			zassert_equal(ack.counter, 77);
+			zassert_equal(ack.dst_ep, 1);
+			zassert_equal(ack.cluster, 0x0006);
+		}
+		zassert_true(wait_areq(m, MT_AF, 0x81, 1000, &ev), "no AF_INCOMING_MSG");
+		zassert_equal(mt_get_u16(&ev.data[2]), 0x0006, "cluster");
+		zassert_equal(mt_get_u16(&ev.data[4]), child, "source");
+		zassert_equal(ev.data[6], 1, "source endpoint");
+		zassert_equal(ev.data[7], 1, "destination endpoint");
+		zassert_equal(ev.data[8], 0, "not a broadcast");
+		zassert_equal(ev.data[16], 3);
+		zassert_equal(ev.data[17], 0x18);
+		zassert_equal(ev.data[19], 0x0A);
+
+		/* The same APS counter again (a retransmission): acknowledged, delivered once. */
+		m = mark();
+		dev_sends(child, ZB_NWK_DATA, 0x0000, aps, o, 103, KEY);
+		k_sleep(K_MSEC(200));
+		zassert_true(find(m, MT_AREQ, MT_AF, 0x81, NULL) < 0, "duplicate delivered");
+
+		/* A replayed NWK frame counter is dropped before anything else. */
+		txs = mr.tx_count;
+		dev_sends(child, ZB_NWK_DATA, 0x0000, aps, o, 103, KEY);
+		k_sleep(K_MSEC(200));
+		zassert_equal(mr.tx_count, txs, "no acknowledgement for a replay");
+	}
+}
+
+ZTEST(zigbee_stack, test_frames_that_do_not_belong_are_ignored)
+{
+	static const uint8_t wrong_key[16] = {1, 2, 3};
+	uint8_t aps[32];
+	uint16_t child;
+	int m, txs;
+	struct zb_aps_hdr ah = {.type = ZB_APS_DATA, .delivery = ZB_APS_UNICAST, .ack_req = true,
+				.dst_ep = 1, .src_ep = 1, .cluster = 0x0006, .profile = 0x0104,
+				.counter = 5};
+	size_t o;
+
+	child = join_device();
+	o = zb_aps_build(&ah, aps);
+	aps[o++] = 0x18;
+	m = mark();
+	txs = mr.tx_count;
+	/* Wrong key, a stranger's address, and an unsecured NWK frame. */
+	dev_sends(child, ZB_NWK_DATA, 0x0000, aps, o + 1, 200, wrong_key);
+	dev_sends(child + 1, ZB_NWK_DATA, 0x0000, aps, o + 1, 201, KEY);
+	{
+		uint8_t f[ZB_MAC_MAX_FRAME], mf[ZB_MAC_MAX_FRAME];
+		struct zb_nwk_hdr nh = {.type = ZB_NWK_DATA, .proto_ver = 2, .dst = 0, .src = child,
+					.radius = 30};
+		size_t hl = zb_nwk_build(&nh, f);
+
+		memcpy(&f[hl], aps, o + 1);
+		zb_mac_rx(&st.mac, mf, zb_mac_build_data(mf, 9, mr.pan, 0, child, true, f, hl + o + 1), 200,
+			  -50);
+	}
+	k_sleep(K_MSEC(300));
+	zassert_equal(mr.tx_count, txs);
+	zassert_true(find(m, MT_AREQ, MT_AF, 0x81, NULL) < 0);
+}
+
+ZTEST(zigbee_stack, test_link_status_and_rejoin)
+{
+	uint16_t child;
+	uint8_t pl[1] = {ZB_NWKC_REJOIN_REQ};
+	struct txd t;
+	int txs, found = -1;
+
+	child = join_device();
+
+	/* A rejoin request from a known device: the same address, success, secured. */
+	txs = mr.tx_count;
+	pl[0] = ZB_NWKC_REJOIN_REQ;
+	{
+		uint8_t req[2] = {ZB_NWKC_REJOIN_REQ, 0x8E};
+
+		dev_sends(child, ZB_NWK_COMMAND, 0x0000, req, sizeof(req), 300, KEY);
+	}
+	wait_tx_total(txs + 1);
+	zassert_true(open_tx(txs, KEY, &t));
+	zassert_equal(t.nh.type, ZB_NWK_COMMAND);
+	zassert_equal(t.pl[0], ZB_NWKC_REJOIN_RSP);
+	zassert_equal(mt_get_u16(&t.pl[1]), child);
+	zassert_equal(t.pl[3], 0);
+
+	/* The coordinator announces its neighbours every 15 s. */
+	txs = mr.tx_count;
+	k_sleep(K_SECONDS(40));
+	for (int i = txs; i < mr.tx_count && found < 0; i++) {
+		if (open_tx(i, KEY, &t) && t.nh.type == ZB_NWK_COMMAND && t.pl[0] == ZB_NWKC_LINK_STATUS) {
+			found = i;
+		}
+	}
+	zassert_true(found >= 0, "no link status in %d frames", mr.tx_count - txs);
+	zassert_true(open_tx(found, KEY, &t));
+	zassert_equal(t.nh.dst, ZB_BCAST_ROUTERS);
+	zassert_equal(t.nh.radius, 1);
+	zassert_equal(t.mac_dst, 0xFFFF);
+	zassert_false(t.ar);
+	zassert_equal(t.pl[1] & 0x1F, 1, "one neighbour");
+	zassert_true((t.pl[1] & 0x60) == 0x60, "first and last frame");
+	zassert_equal(mt_get_u16(&t.pl[2]), child);
+	zassert_equal(t.pl[4], 0x11);
+}
+
+ZTEST(zigbee_stack, test_counters_are_written_ahead_and_survive_a_reset)
+{
+	uint8_t sm[ZB_SECMAT_LEN], b[4];
+	uint32_t first, after;
+	struct txd t;
+	uint16_t child;
+	struct mt_frame ev;
+	int txs, m;
+
+	child = join_device();
+	/* The first secured NWK frame raises the stored limit above the counters in use. */
+	txs = mr.tx_count;
+	{
+		uint8_t req[2] = {ZB_NWKC_REJOIN_REQ, 0x8E};
+
+		dev_sends(child, ZB_NWK_COMMAND, 0x0000, req, sizeof(req), 399, KEY);
+	}
+	wait_tx_total(txs + 1);
+	ex_read(ZB_NVEX_NWK_SEC_MATERIAL, 0, sm);
+	first = mt_get_u32(sm);
+	zassert_true(first >= 1024U, "the stored value is ahead of the counters in use");
+
+	/* After a reset the counters continue from the stored value, never from behind. */
+	m = mark();
+	areq(MT_SYS, 0x00, (uint8_t[]){1}, 1);
+	zassert_true(wait_areq(m, MT_SYS, 0x80, 1000, &ev));
+	txs = mr.tx_count;
+	(void)b;
+	{
+		uint8_t req[2] = {ZB_NWKC_REJOIN_REQ, 0x8E};
+
+		dev_sends(child, ZB_NWK_COMMAND, 0x0000, req, sizeof(req), 400, KEY);
+	}
+	wait_tx_total(txs + 1);
+	zassert_true(open_tx(txs, KEY, &t));
+	after = t.sh.counter;
+	zassert_true(after >= first, "counter %u went back below the stored %u", after, first);
 }

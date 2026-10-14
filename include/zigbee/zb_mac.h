@@ -35,6 +35,8 @@ struct zb_mac_up {
 	/* A data frame for this node; @p payload follows the header. */
 	void (*data_ind)(void *ctx, const struct zb_mac_hdr *h, const uint8_t *payload, size_t n,
 			 uint8_t lqi, int8_t rssi);
+	/* Optional: called at least once a second, for timers of the layer above. */
+	void (*tick)(void *ctx);
 	/* Optional: every frame sent or received (no FCS). */
 	void (*trace)(void *ctx, bool tx, const uint8_t *f, size_t n, uint8_t lqi, int8_t rssi);
 	void *ctx;
