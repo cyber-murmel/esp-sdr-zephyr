@@ -2,3 +2,4 @@
 
 rsource "esp_sdr/Kconfig"
 rsource "ieee802154/Kconfig"
+rsource "zigbee/Kconfig"

@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+config ZIGBEE_ZNP
+	bool "Z-Stack ZNP (MT) server"
+	help
+	  The MT serial protocol of TI's Z-Stack 3.x network processor: frame parser,
+	  command dispatch, SYS/UTIL and the NV item store, for apps that act as a Zigbee
+	  USB stick (apps/zstack).
+
+if ZIGBEE_ZNP
+
+config ZIGBEE_ZNP_RANDOM_NOTE
+	bool
+	default y
+	imply ENTROPY_GENERATOR
+	help
+	  The MAC's CSMA backoff and address allocation use sys_rand32_get(); an entropy
+	  generator (or CONFIG_TEST_RANDOM_GENERATOR in tests) must provide it.
+
+config ZNP_NV_ITEMS
+	int "NV item slots"
+	default 192
+	help
+	  Items the host can create: Z-Stack's OSAL items, the address manager and key
+	  tables (one item per entry) and the stack's own state.
+
+config ZNP_NV_POOL_SIZE
+	int "NV pool size in bytes"
+	default 16384
+	help
+	  RAM for the item data. A network with 100 devices needs about 8 kB.
+
+endif # ZIGBEE_ZNP
