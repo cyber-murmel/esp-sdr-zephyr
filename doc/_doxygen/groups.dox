@@ -35,6 +35,13 @@
  */
 
 /**
+ * @defgroup esp_sdr_diag Diagnostic-bus ring
+ * @ingroup esp_sdr
+ * @brief Gapless 40 MS/s receive through the modem diagnostic bus and PARLIO, ESP32-C5
+ * (esp_sdr_diag.h, CONFIG_ESP_SDR_DIAG).
+ */
+
+/**
  * @defgroup ieee154 IEEE 802.15.4
  * @brief Software O-QPSK PHY and the esp_sdr radio driver (CONFIG_ESP_SDR_IEEE802154).
  */

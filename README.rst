@@ -23,7 +23,7 @@ Contents
    * - ``include/``
      - ``esp_sdr/``: the API, ``esp_sdr.h``, ``esp_sdr_rx.h``,
        ``esp_sdr_tx.h``, ``esp_sdr_ring.h``, ``esp_sdr_paced.h``,
-       ``ieee154_phy.h``, ``ieee154_esp_sdr.h``
+       ``esp_sdr_diag.h``, ``ieee154_phy.h``, ``ieee154_esp_sdr.h``
    * - ``apps/``
      - - ``capture``: capture survey on the console
        - ``stream``: VITA 49.2 RX and TX over USB (CDC-NCM)
@@ -75,8 +75,9 @@ The library
 - **Chips:** ESP32-S3 (XIAO ESP32S3), SMP or single core. ESP32-C6
   (XIAO ESP32C6) and ESP32-C5 (C5-Zero): burst captures, and continuous
   CPU-paced receive and transmit up to 250 kS/s (``esp_sdr_paced.h``);
-  ``capture``, ``rfprobe``, ``wpan`` (C6) and ``osmosdr_serial`` run on
-  them.
+  the C5 also has a gapless 40 MS/s ring through the modem diagnostic
+  bus (``esp_sdr_diag.h``, ``CONFIG_ESP_SDR_DIAG``). ``capture``,
+  ``rfprobe``, ``wpan`` (C6) and ``osmosdr_serial`` run on them.
 - **Tuning:** 100 to 6000 MHz in the API, but the PLL locks over a
   chip-specific range (about 1.8 to 2.8 GHz on the S3); below 2210 MHz
   through the 5/6 divider. ``-ERANGE`` when the VCO is out of range.

@@ -5,9 +5,9 @@ end to end under twister (that one is deployed by hand, see below). Four tiers:
 
 | Tier | Where | Runs on | Covers |
 | --- | --- | --- | --- |
-| Unit | `tests/unit/` | host (`native_sim/native/64`), no board | Portable code as ztest suites: the 802.15.4 PHY (`ieee154_phy`), the driver's signal processing (`ieee154_dsp`), link RS(255,231) (`link_rs`) and Hamming(128,120) (`link_hamming`), the `stream` app's I/Q packing (`iq_pack`). With `IEEE154_TABLES` set, `ieee154_phy` and `ieee154_dsp` also print their sweep tables (`scripts/unit-tables.sh`). |
-| Integration | `tests/integration/` | one real board | ztest on the radio itself. `esp_sdr_rx_api`: the receive API's contract (error codes, bounds, one real capture per supported rate). Needs no antenna, peer or host tool and never transmits. |
-| Regression | `tests/regression/` | two real boards | pytest through twister's multi-board harness. `ieee802154_link`: the C6 native radio and the S3 software radio exchange `apps/wpan` test frames both ways on channels 11, 15, 20 and 25, plus ACK requests. Guards against the two bugs that only ever showed as lost frames between real boards (`doc/hardware-quirks.md`). `lo_tuning`: the S3 sends tones to the C6 at overlapping LO frequencies, through the 5/6 divider and directly tuned; guards the transmit divider and `-ERANGE`. |
+| Unit | `tests/unit/` | host (`native_sim/native/64`), no board | Portable code as ztest suites: the 802.15.4 PHY (`ieee154_phy`), the driver's signal processing (`ieee154_dsp`), link RS(255,231) (`link_rs`) and Hamming(128,120) (`link_hamming`), the `stream` app's I/Q packing (`iq_pack`), the diagnostic-bus ring's box16 and CIC decimator (`diag_dsp`, bit-exact against naive references). With `IEEE154_TABLES` set, `ieee154_phy` and `ieee154_dsp` also print their sweep tables (`scripts/unit-tables.sh`). |
+| Integration | `tests/integration/` | one real board | ztest on the radio itself. `esp_sdr_rx_api`: the receive API's contract (error codes, bounds, one real capture per supported rate); on the S3, C6 and C5. `esp_sdr_diag_api`: the C5's gapless diagnostic-bus ring (argument contract, a 10 s run's byte rate and integrity, every step of the decimation ladder, stop and restart). Need no antenna, peer or host tool and never transmit. |
+| Regression | `tests/regression/` | two real boards | pytest through twister's multi-board harness. `ieee802154_link`: the C6 native radio and the S3 software radio exchange `apps/wpan` test frames both ways on channels 11, 15, 20 and 25, plus ACK requests. Guards against the two bugs that only ever showed as lost frames between real boards (`doc/hardware-quirks.md`). `lo_tuning`: the S3 sends tones to the C6 at overlapping LO frequencies, through the 5/6 divider and directly tuned; guards the transmit divider and `-ERANGE`. `stream_gapless`: the C6 and the C5 on a coax link stream a tone to each other through `apps/osmosdr_serial` (receive by the CPU-paced estimator or by the C5's diagnostic-bus ring); no gap may be found in the recording. |
 | Smoke | `apps/*/sample.yaml` | build, and one board | Every app builds for its boards; `apps/capture` also boots on the S3 and the C6 and must print `esp-sdr rx: ready` (console harness); `apps/multiapp` boots into an app from its file on the FAT volume (pytest, `sample.esp_sdr.multiapp.hil`). |
 
 ## Continuous integration
@@ -59,7 +59,26 @@ Without the variable the cases are skipped and the unit tests stay at a few seco
 
 ## Integration tests (one board)
 
-Each test has one id per board: `integration.esp_sdr.rx_api.c6` and `.s3`.
+Each test has one id per board: `integration.esp_sdr.rx_api.c6`, `.c5` and `.s3`;
+`integration.esp_sdr.diag_api.c5` (the SoCs with a gapless diagnostic-bus ring; another SoC adds
+its id and `boards/<board>.conf` to that test). The C5 and the C6 both have a USB-Serial-JTAG
+console, deployed the same way:
+
+```
+west twister -p waveshare_esp32c5_zero/esp32c5/hpcore -T esp-sdr-zephyr/tests/integration/esp_sdr_diag_api \
+    --device-testing --flash-before \
+    --device-serial-pty "python3 .claude/skills/esp32s3-console/s3pty.py <by-id port>" \
+    --west-flash="--esp-device=<by-id port>" --outdir <dir> --runtime-artifact-cleanup pass
+```
+
+`esp_sdr_diag_api` runs about 25 s and drives 8 pads as outputs (toggling at up to 40 MHz): nothing
+may be wired to the C5's GPIO 0, 1, 3, 4, 5, 7, 10 and 23. Its checks are the ring's contract, not
+a signal: every byte of 40 MB/s arrives for the time of the run (to 2 %), no block is skipped, the
+interrupt never falls behind, the byte count follows the system timer (a byte lost per ring wrap
+would be -17 ppm; the bound is 5 ppm), the consumer's cost stays under the 6 cycles per byte the
+CPU has at 240 MHz, the receiver's noise reaches the pads (the ring is not a constant), and each
+step of the decimation ladder (250 to 15.625 kS/s) has the right rate, a gapless index and the
+right count.
 
 - C6: flashed directly with twister's device testing. Opening the C6's USB-Serial-JTAG port
   resets the chip, and the suite finishes before a plain `--device-serial` attach after the
@@ -92,16 +111,20 @@ About a minute, flashing included. It leaves the test image on the board: `west 
 
 ## Regression tests (two boards)
 
-Two scenarios, both pytest through twister's multi-board harness, each with its own pair of
+Three scenarios, all pytest through twister's multi-board harness, each with its own pair of
 images:
 
 - `tests/regression/ieee802154_link`: 802.15.4 frames between the C6's native radio and the S3's
   software radio.
 - `tests/regression/lo_tuning`: tones from the S3 to the C6 at overlapping LO frequencies.
+- `tests/regression/stream_gapless`: a tone streamed between the C6 and the C5 through a coax
+  link, both ways, with no gap in the recording.
 
 Each has three ids: `regression.esp_sdr.<test>.c6` and `.s3` only build the two images
 (`build_only`); `regression.esp_sdr.<test>` runs `pytest/` on both boards (`required_devices` and
-`required_applications`).
+`required_applications`). `stream_gapless` has the C6 and two C5 images (`.c5`: the receive paced
+by the CPU through the IQ estimator, `.c5_diag`: from the diagnostic-bus ring) and a scenario for
+each: `regression.esp_sdr.stream_gapless.c6_c5` and `.c6_c5_diag`.
 
 Run them with both boards attached:
 
@@ -158,6 +181,40 @@ status` of both boards.
 `apps/wpan/tools/interop.py --native <C6> --sdr <S3> --channels 11,15,20,25` runs a similar exchange
 by hand, with its own defaults (200 frames of 16 bytes, 10 ms apart) and, when a direction fails
 completely, the I/Q inversion fallbacks.
+
+### stream_gapless
+
+`tests/regression/stream_gapless` builds `apps/osmosdr_serial` from its own directory, as
+`ieee802154_link` does `apps/wpan` (`diag.conf` of the app selects the ring for the `.c5_diag`
+image). It needs the C6 and a C5 on a coax link with a 30 dB attenuator between their U.FL
+ports, 2437 MHz. The pytest asks twister for the flashed boards, lets go of their consoles (the
+stream is binary) and drives them with `apps/osmosdr_serial/tools/esdr_serial.py`.
+
+For each direction (C6 to C5, C5 to C6) and for the receive rates 250 and 31.25 kS/s, one board
+transmits a tone at 125 kS/s; after 15 s (the transmitter's tone drifts a few ppm while it warms
+up) the other records 10 s. What passes:
+
+- a usable link: the tone at least 30 dB over the median bin and inside the band;
+- the samples the stream owes (98 %), no index jump, no overflow flag, no lost sample counted by
+  the device (`rx_overflows`, `rx_ring_lost_pairs`);
+- `apps/osmosdr_serial/tools/gapcheck.py` finds no gap in the tone: it tracks the tone segment by
+  segment, demodulates, averages blocks of 64 samples and looks for a spike in the block phase (k
+  lost samples are k * 360 * f / fs degrees) or a dip of the amplitude (zero-filled samples).
+  Phase noise of the blocks is about 1 degree at the bench levels, the threshold 30 degrees;
+- the transmitter played 99.5 % of what it was given (`tx_underruns`) and the host fed it in
+  real time.
+
+The levels are for this desk: C5 receive gain index 40 (about 10 dB below full scale; from index
+48 up the C5 clips), C6 receive index 30, transmit step 2. Override them with
+`ESP_SDR_STREAM_<C5|C6>_RX_GAIN` and `ESP_SDR_STREAM_<C5|C6>_TX_STEP`, and the recording time
+with `ESP_SDR_STREAM_CAPTURE_S`. The diagnostic-bus scenario was checked to fail on the bug it guards: serving the USB FIFO once
+per 8 KiB ring block instead of every 2 KiB failed `c6_to_c5` at 250 kS/s with 1.55 M of 2.5 M
+samples, 758 index jumps and 761 receiver overflows, while the other three streams passed. A
+failure carries the evidence in one line: sample count, flags,
+index jumps, the tone's frequency and level, and the device's counters. `gapcheck.py` also runs
+by hand on any recording (`esdr_serial.py <port> rx --out x.npy`, then `gapcheck.py x.npy --rate
+250000`; `--selftest` checks the detector itself). Another SoC pair is another entry in the
+pytest's `CHIPS` and the gains, and another set of ids in `testcase.yaml`.
 
 ### lo_tuning
 

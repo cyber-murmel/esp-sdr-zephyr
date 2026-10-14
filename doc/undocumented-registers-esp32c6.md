@@ -225,18 +225,20 @@ whole stream.
 
 Leads for a continuous C6 receive below 80 MS/s, none tried:
 
-- The modem diagnostic bus into PARL_IO. A third-party project, not re-checked
-  here, reports for the ESP32-C5 that the dump's I/Q MSBs appear on MODEM_DIAG
-  (Q[9:6] on lines 9:6, I[9:6] on 19:16), and that routed through the GPIO
-  matrix into PARL_IO, a cyclic 40 MS/s capture takes every second sample of
-  the 80 MS/s bus as 4+4-bit I/Q, bit-perfect in a bounded capture (it claims
-  no gapless running across ring wraps;
+- The modem diagnostic bus into PARL_IO. It works on the ESP32-C5, gapless: the dump engine runs
+  free (source 15, count 0x1ffff, SRAM block handed back), the dump word is on
+  `MODEM_DIAG[19:0]` (Q on 9:0, I on 19:10), the GPIO matrix loops 8 lanes into PARL_IO, and
+  PARLIO RX at 40 MHz takes every second sample of the 80 MS/s bus as 4+4 bits (`doc/hardware-quirks.md`,
+  "ESP32-C5"; ESPsoup, and before it
   [Twotoz/C5VRX](https://github.com/Twotoz/C5VRX/blob/a165e19db47ebd49051217d7c968a1b8220c20fb/docs/continuous-iq-findings.md)).
-  The C6 selector registers are DUMP_DIAG_SEL0_REG and DUMP_DIAG_SEL1_REG
-  (0x600a9018 and 0x600a901c), and the diag lines are enabled in
-  IO_MUX_MODEM_DIAG_EN_REG (0x600900bc); both below. Which selector
-  value puts receive I/Q on the C6 bus is unknown. Sampling below 80 MHz
-  decimates without filtering, so the analog low-pass has to be narrowed first.
+  On the C6 a sweep of 128 selector settings (2026-10-12) found only sign-like lanes, with the
+  dump engine armed as the C6 `adctrig()` does it. The C5 recipe differs in the lane register
+  (the C5 value includes bit 24; the sweep wrote 0x000c2040 without it), in running the engine
+  free with the SRAM bank handed back, and in its selector pair at 0x600a9404/0x600a9408 where the
+  C6 has DUMP_DIAG_SEL0_REG/SEL1_REG at 0x600a9018/0x600a901c. Not tried on the C6 yet with
+  those differences; the C6 diag lines are enabled in IO_MUX_MODEM_DIAG_EN_REG (0x600900bc), for
+  which no C5 counterpart was found. Sampling below 80 MHz decimates without filtering, so the analog low-pass
+  has to be narrowed first.
 - The 802.11p clock mode: `phy_11p_set(1, m)` writes MODEM_SYSCON_WIFI_BB_CFG_REG
   (0x600a981c) bits 4:2 = 4 for m = 0, else 5, presumably for 10 and 5 MHz
   channels, and clears AGC_R30_REG (0x600a7030) bit 5 (*decompile* C6 `libphy.a`

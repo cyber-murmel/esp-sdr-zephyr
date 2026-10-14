@@ -271,8 +271,50 @@ simple boot). Nothing was transmitted.
   gain 60 over 2412 to 2472 MHz, low gave ambient Wi-Fi up to -1 dBFS
   (clipping), high at most -16 dBFS with the U.FL on coax and -30 dBFS with
   it open. The library does not drive the pin.
-- **No ring and no transmit.** The C5 build has neither; `ESP_SDR_RFTEST`
-  links the C5 librftest only for `force_rx_gain()`.
+- **Gapless receive through the modem diagnostic bus.** `ESP_SDR_DIAG`
+  (`esp_sdr_diag.h`; the method is ESPsoup's, github.com/pit711/espsoup-firmware, itself after
+  ESP-SDR's S31 streaming and Twotoz/C5VRX) streams 40 MS/s without a gap. The pieces, all
+  measured:
+  - The dump engine runs free: source 15, rate index 0, count `0x1ffff` (the counter is 17 bits
+    and counts above 65535 never reach DONE, so it never stops), started with RUN and a trigger
+    pulse, then the SRAM usage register is written back so that the CPU owns block 1 again. The
+    engine writes nothing into it afterwards, but the diagnostic bus keeps carrying the dump word.
+  - `MODEM_DIAG[9:0]` (signal index 106 + lane) is the Q field of the dump word and `[19:10]` the I
+    field, as in the capture's words. Eight lanes (a window of 4 bits of each, `lsb` to `lsb + 3`
+    and `10 + lsb` to `10 + lsb + 3`) go through the GPIO matrix to eight pads (output enabled
+    by `esp_rom_gpio_connect_out_signal()`, input enabled) and straight back into
+    `PARL_RX_DATA0..7` (signal index 48). No wire; the pads really toggle at up to 40 MHz, so
+    nothing may be connected to GPIO 0, 1, 3, 4, 5, 7, 10 and 23 (ESPsoup's pads; the board
+    files here use none of them, the C5-Zero's schematic was not checked).
+  - PARLIO RX takes PLL_F240M / 6 = 40 MHz, 8 bits wide, rising edge, LSB first, a soft
+    delimiter with EOF at the ring length: every second sample of the 80 MS/s bus, as a Q nibble
+    (bits 3:0) and an I nibble (bits 7:4) per byte. The lane order was settled against the 10-bit
+    capture: I + jQ gives a tone at +f, as the capture does. No filter before the sampling:
+    narrow the low-pass to 20 MHz or less.
+  - A GDMA RX channel (AHB, channel 0, trigger 9, owner check off) runs over a circular ring of
+    16 descriptors of 3584 bytes (the length field holds 4095 at most) in the lower half of block
+    1 (57344 bytes at 0x40820000). The hardware writes the received length back into every
+    finished descriptor; the interrupt walks the ring from the last one seen and clears the
+    length, so interrupts that merge lose nothing. The last 8 KiB of that half hold the
+    descriptors and the consumer's buffers (the `osmosdr_serial` image has 144 bytes of RAM
+    margin without the mode).
+  - Measured: 40 MB/s for 40 s, 0 skipped blocks, +0.15 ppm against the system timer (a byte
+    lost per ring wrap would show as -17 ppm). box16 (a boxcar of 16, SWAR on four words) and
+    a third-order CIC cost 4.1 to 4.4 CPU cycles per byte at 240 MHz (budget 6.0); with the USB
+    service of `osmosdr_serial`, 5.7.
+  - The nibble window needs the level: a signal that exceeds `8 << lsb` counts wraps. At RX
+    gain 60 on a hot link the front end clips and every window is useless; from index 48 up the
+    C5 clips a tone that sits 10 dB below full scale at index 40.
+  - USB: the decimated samples reach the sink in chunks every 51 us. The USB-Serial-JTAG FIFO
+    takes one 64-byte packet per visit; serving it once per 8 KiB ring block (205 us) capped the
+    stream near 310 kB/s and lost a quarter of the samples at 250 kS/s.
+  `osmosdr_serial` takes the mode with `-DEXTRA_CONF_FILE=diag.conf` (`CONFIG_APP_RX_DIAG`); its
+  250 kS/s stream ran 60 s with no index jump, and `tests/regression/stream_gapless` runs both
+  receive paths against a C6 transmitter.
+- **No transmit ring.** The C5 transmits through the TX DC value register only
+  (`esp_sdr_tx_paced_*()`); `ESP_SDR_RFTEST` links the C5 librftest for `force_rx_gain()`.
+  Host-fed transmit at 250 kS/s starves on the C5 too (USB OUT delivers about 239 kS/s): 125
+  kS/s is the reliable rate on both chips.
 
 ## CPU and toolchain
 
