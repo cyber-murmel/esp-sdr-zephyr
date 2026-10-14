@@ -960,10 +960,13 @@ static void build_loop(void *p1, void *p2, void *p3)
 /* Header of a new test frame. */
 static struct qam_hdr new_hdr(bool pair)
 {
+	/* A code of the PHY in use (the PHY may have changed since the client started). */
+	unsigned int fecs = cfg.phy == MAC_PHY_OFDM ? OFDM_FECS : QAM_FECS;
+
 	return (struct qam_hdr){
 		.type = MAC_DATA,
 		.mod = (uint8_t)client.mod,
-		.fec = (uint8_t)client.fec,
+		.fec = (uint8_t)(client.fec < fecs ? client.fec : 0U),
 		.full = client.ncw == 0,
 		.ncw = (uint8_t)client.ncw,
 		.pair = pair,
@@ -1206,7 +1209,13 @@ static void mac_loop(void *p1, void *p2, void *p3)
 
 	rs_init();
 	qam_crc_init();
+	/* PSRAM is not cleared at boot: no BCH code set up yet. */
+	ofdm_txw.bch_key = 0;
+	ofdm_rxw.bch_key = 0;
+#if !defined(MULTIAPP_NAME)
+	/* (An extension's statics are in PSRAM, where the hand-over's atomics do not hold.) */
 	ofdm_tx_share(&ofdm_tb);
+#endif
 	ham_init();
 	qam_clock = now_cyc;
 	qam_rx_ctx.cw = rx_cw[0];

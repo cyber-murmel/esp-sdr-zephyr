@@ -209,6 +209,25 @@ builds the next frame in 4.6 on the other CPU, ACKs 0.3 each way.
   ``bch2-256``, 26 MHz: 7.5 to 7.7 Mbit/s at a 6 ms period (6 to 8 % lost), 6.8 at 7 ms
   (4 %); over the MAC with ACKs 5.5 Mbit/s. The receiver is the limit again: per frame
   capture 0.4, search 1.5, channel and header 1.05, payload 2.2 (both CPUs), FEC 0.55 ms.
+- **Channel stage.** The search lands on the preamble plateau's early edge and the window
+  is then moved to the middle of the prefix, almost always by some samples: the channel was
+  measured a second time. A whole-sample move only turns subcarrier f by 2 pi f shift / N
+  (and all of them by the carrier offset's turn), so the estimate is turned instead
+  (``equalizer()``); and the vector equalizer is rounded inline instead of by ``lrintf()``.
+  Channel and header 0.95 -> 0.55 ms. Averaging the channel over frames (``ofdm chavg 1``:
+  a complex gain and a phase slope fitted per frame) gains 2 dB in the simulator but
+  nothing on the bench, where the 27 to 29 dB are not set by the pilots' noise: off by
+  default.
+- **Search.** The float metric is about 40 % of a coarse step; an integer pre-test
+  (``|pr| + |pi|`` against ``sqrt(best) min(Ra, Rb)``, rounded to never skip a better step) skips
+  most of them: 116 -> 101 cycles per step, the same peaks. Tried and dropped: a metric
+  every 8 samples with 8 correlation terms (frames missed at 12 dB, 15 times the errors at
+  27 dB), the DC offset from every 16th sample (aliases with the 144-sample slot), rings of
+  products and energies (slower than the multiplies they save).
+- **Drift reference.** The sample clock drift is now timed against when the pilots were
+  captured (a pilot read one period earlier counts as such), and the phase tracker turns its
+  subcarriers for it too: frames that start in the last 270 samples of a period lost their
+  payload (1.8 % of random captures). Minimum MER over 200 captures 26.1 dB (was 13 to 18).
 - **Frame assembly** (``ofdm_frame.c``) used two integer divisions per byte with divisors
   that vary (units, bytes per unit): about 0.4 ms at each end. Nested loops now, and a byte
   table for the CRC-32 (the nibble table cost 90 us per frame).

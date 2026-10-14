@@ -233,6 +233,7 @@ int ofdm_init(struct ofdm_ctx *ctx, const struct ofdm_cfg *cfg)
 	ctx->fscale = (float)ctx->rnfft / FFT16_GAIN;
 	/* The context may sit in RAM that is not cleared at boot. */
 	ctx->sc_err = NULL;
+	ctx->havg_n = 0;
 	ctx->w0.e16_src = NULL;
 	ctx->rx.dslot = 0.0f;
 	ctx->veq[0].sar = 0;
@@ -600,7 +601,9 @@ static size_t ofdm_tx_build16(const struct ofdm_ctx *ctx, struct ofdm_txbuf *tb,
 	 * counter would otherwise check it against this build's slot count and claim with it
 	 * (found by a host stress test of this protocol).
 	 */
-	__atomic_store_n(&j->word, (old << 16) | 0xffffU, __ATOMIC_RELEASE);
+	if (shared) {
+		__atomic_store_n(&j->word, (old << 16) | 0xffffU, __ATOMIC_RELEASE);
+	}
 	j->ctx = ctx;
 	j->mod = mod;
 	j->hdr = hdr;
@@ -623,6 +626,17 @@ static size_t ofdm_tx_build16(const struct ofdm_ctx *ctx, struct ofdm_txbuf *tb,
 			j->lv[v] = (int16_t)lrintf((float)(2 * gray_dec[v] - (int)(k->k - 1U)) * k->s *
 						   sc);
 		}
+	}
+	if (!shared) {
+		/* Alone (an ACK, or no helper registered): no atomics, its memory may be anywhere. */
+		uint32_t lut[64], cl = 0;
+
+		tx_lut(j, lut);
+		for (unsigned int s = 0; s < nslots; s++) {
+			cl += tx_slot16(j, lut, (int16_t *)tb->buf, s);
+		}
+		tb->clipped = cl;
+		return (size_t)nslots * ctx->slot;
 	}
 	j->done = 0;
 	j->clipped = 0;
@@ -726,8 +740,8 @@ size_t ofdm_tx_build(const struct ofdm_ctx *ctx, struct ofdm_txbuf *tb, enum ofd
  * edge (later ones cut into the next symbol), from a ring of the last cp + 1
  * metrics.
  */
-OFDM_HOT static void sc_scan(struct ofdm_ctx *ctx, const uint32_t *w, int t0, int t1, int st,
-			     int dci, int dcq, struct sc_best *b)
+static __attribute__((noinline)) void sc_scan(struct ofdm_ctx *ctx, const uint32_t *w, int t0,
+					      int t1, int st, int dci, int dcq, struct sc_best *b)
 {
 	enum { MASK = OFDM_RING - 1U };
 	int L = (int)ctx->rnfft / 2, cp = (int)ctx->rcp;
@@ -796,6 +810,69 @@ OFDM_HOT static void sc_scan(struct ofdm_ctx *ctx, const uint32_t *w, int t0, in
  * (both the position and the correlation, which keeps at least 32 terms),
  * then a full resolution one over the prefix around its peak.
  */
+/*
+ * The coarse scan (st >= 2): sc_scan()'s sums and metric, with a cheap integer pre-test in
+ * front of the metric (floating point, about 40 % of a step): |P| <= |pr| + |pi| and
+ * Ra Rb >= min(Ra, Rb)^2, so a step whose |pr| + |pi| stays below sqrt(best) min(Ra, Rb) cannot
+ * beat the best. Rounded so that it never skips one that could: the same peak as sc_scan().
+ */
+OFDM_HOT static void sc_scan_coarse(struct ofdm_ctx *ctx, const uint32_t *w, int t0, int t1,
+				    int st, int dci, int dcq, struct sc_best *b)
+{
+	int L = (int)ctx->rnfft / 2;
+	int32_t pr = 0, pi = 0, ra = 0, rb = 0, sb = 0;
+
+	b->num = 0.0f;
+	b->den = 1.0f;
+	b->t = b->start = -1;
+	for (int m = 0; m < L; m += st) {
+		uint32_t wa = w[t0 + m], wb = w[t0 + m + L];
+		int ai = esp_sdr_rx_i(wa) - dci, aq = esp_sdr_rx_q(wa) - dcq;
+		int bi = esp_sdr_rx_i(wb) - dci, bq = esp_sdr_rx_q(wb) - dcq;
+
+		pr += ai * bi + aq * bq;
+		pi += ai * bq - aq * bi;
+		ra += ai * ai + aq * aq;
+		rb += bi * bi + bq * bq;
+	}
+	for (int t = t0;; t += st) {
+		/* In units of 64 (sums up to 2^27): sb is sqrt(best) in Q8. */
+		int32_t ap = ((pr < 0 ? -pr : pr) + (pi < 0 ? -pi : pi)) >> 6;
+		int32_t mr = (ra < rb ? ra : rb) >> 6;
+
+		if (ap + 1 >= ((mr * sb) >> 8)) {
+			float fr = (float)pr, fi = (float)pi;
+			float num = fr * fr + fi * fi, den = (float)ra * (float)rb;
+
+			/* num / den > b->num / b->den */
+			if (num * b->den > b->num * den) {
+				b->num = num;
+				b->den = den;
+				b->pr = pr;
+				b->pi = pi;
+				b->t = b->start = t;
+				/* Rounded down: the test stays on the safe side. */
+				sb = den > 0.0f ? (int32_t)(sqrtf(num / den) * 256.0f) : 0;
+			}
+		}
+		if (t + st > t1) {
+			break;
+		}
+		{
+			uint32_t wa = w[t], wb = w[t + L], wc = w[t + 2 * L];
+			int ai = esp_sdr_rx_i(wa) - dci, aq = esp_sdr_rx_q(wa) - dcq;
+			int bi = esp_sdr_rx_i(wb) - dci, bq = esp_sdr_rx_q(wb) - dcq;
+			int ci = esp_sdr_rx_i(wc) - dci, cq = esp_sdr_rx_q(wc) - dcq;
+			int eb = bi * bi + bq * bq;
+
+			pr += (bi * ci + bq * cq) - (ai * bi + aq * bq);
+			pi += (bi * cq - bq * ci) - (ai * bq - aq * bi);
+			ra += eb - (ai * ai + aq * aq);
+			rb += (ci * ci + cq * cq) - eb;
+		}
+	}
+}
+
 void (*ofdm_scan_async)(struct ofdm_ctx *ctx, const uint32_t *w, int t0, int t1, int st, int dci,
 			int dcq, struct ofdm_sc_best *b);
 void (*ofdm_scan_wait)(void);
@@ -803,7 +880,7 @@ void (*ofdm_scan_wait)(void);
 void ofdm_sc_scan(struct ofdm_ctx *ctx, const uint32_t *w, int t0, int t1, int st, int dci,
 		  int dcq, struct ofdm_sc_best *b)
 {
-	sc_scan(ctx, w, t0, t1, st, dci, dcq, b);
+	sc_scan_coarse(ctx, w, t0, t1, st, dci, dcq, b);
 }
 
 /* sc_scan() over 0 .. tmax, the second half on the other CPU when there is one. */
@@ -812,15 +889,24 @@ static void sc_scan_split(struct ofdm_ctx *ctx, const uint32_t *w, int tmax, int
 {
 	struct sc_best b2;
 	int mid = (tmax / 2 / st) * st;
+	/* Read once: the shell may switch the split meanwhile (ofdm split). */
+	void (*scan_async)(struct ofdm_ctx *, const uint32_t *, int, int, int, int, int,
+			   struct ofdm_sc_best *) = ofdm_scan_async;
+	void (*scan_wait)(void) = ofdm_scan_wait;
 
-	/* Only the coarse scans (st > 1: no prefix ring), and only when each half is worth the hand-over. */
-	if (ofdm_scan_async == NULL || ofdm_scan_wait == NULL || st < 2 || mid < 256 * st) {
+	if (st < 2) {
+		/* Full resolution: the plain scan (its prefix ring needs every metric). */
 		sc_scan(ctx, w, 0, tmax, st, dci, dcq, b);
 		return;
 	}
-	ofdm_scan_async(ctx, w, mid, tmax, st, dci, dcq, &b2);
-	sc_scan(ctx, w, 0, mid - st, st, dci, dcq, b);
-	ofdm_scan_wait();
+	/* Split only when each half is worth the hand-over. */
+	if (scan_async == NULL || scan_wait == NULL || mid < 256 * st) {
+		sc_scan_coarse(ctx, w, 0, tmax, st, dci, dcq, b);
+		return;
+	}
+	scan_async(ctx, w, mid, tmax, st, dci, dcq, &b2);
+	sc_scan_coarse(ctx, w, 0, mid - st, st, dci, dcq, b);
+	scan_wait();
 	if (b2.t >= 0 && (b->t < 0 || b2.num * b->den > b->num * b2.den)) {
 		*b = b2;
 	}
@@ -1114,6 +1200,29 @@ static inline struct ofdm_cf cmul(struct ofdm_cf a, struct ofdm_cf b)
 /* Gain of the rate update: a residual offset shows as a steady step in the measured phase. */
 #define RATE_GAIN 0.25f
 
+/* The sample clock drift's turn per unit of subcarrier frequency for the worker's slot. */
+static inline float sfo_theta(const struct ofdm_ctx *ctx, const struct ofdm_worker *wk)
+{
+	return ctx->rx.dslot * (wk->tslot - ctx->rx.sref);
+}
+
+/* exp(j th k) for subcarrier a's frequency k, stepped along the subcarriers by sfo_next(). */
+static inline struct ofdm_cf sfo_first(unsigned int c, float th)
+{
+	float a = th * (float)sub_freq(c, 0);
+
+	return (struct ofdm_cf){cosf(a), sinf(a)};
+}
+
+static inline struct ofdm_cf sfo_next(unsigned int c, unsigned int a, struct ofdm_cf ph,
+				      struct ofdm_cf st)
+{
+	for (int d = sub_freq(c, a + 1U) - sub_freq(c, a); d > 0; d--) {
+		ph = (struct ofdm_cf){ph.re * st.re - ph.im * st.im, ph.re * st.im + ph.im * st.re};
+	}
+	return ph;
+}
+
 /*
  * The rotation for the symbol in the worker's buffer: the tracked phase advanced by its
  * rate, and this window's known phase; then the symbol's own residual
@@ -1133,10 +1242,24 @@ static inline __attribute__((always_inline)) struct ofdm_cf track(const struct o
 	 * (the band edges sit 8 dB lower, where decisions are least sure) and a
 	 * quarter of the work; plenty of them for a phase estimate.
 	 */
-	unsigned int a0 = ctx->cfg.channels / 4U, a1 = ctx->cfg.channels - a0;
+	unsigned int c = ctx->cfg.channels, a0 = c / 4U, a1 = c - a0;
+	/* Each subcarrier turned against the sample clock drift too, as the decoder will. */
+	float th = sfo_theta(ctx, wk);
+	struct ofdm_cf ph = {1.0f, 0.0f}, st = {1.0f, 0.0f};
 
+	if (th != 0.0f) {
+		float ang = th * (float)sub_freq(c, a0);
+
+		ph = (struct ofdm_cf){cosf(ang), sinf(ang)};
+		st = (struct ofdm_cf){cosf(th), sinf(th)};
+	}
 	for (unsigned int a = a0; a < a1; a += 2U) {
-		struct ofdm_cf z = eq_rot(ctx, wk, a, r.re, r.im), d;
+		struct ofdm_cf ra = cmul(r, ph);
+		struct ofdm_cf z = eq_rot(ctx, wk, a, ra.re, ra.im), d;
+
+		if (a + 2U < a1) {
+			ph = sfo_next(c, a + 1U, sfo_next(c, a, ph, st), st);
+		}
 
 		(void)decide(mod, z, &d);
 		ar += z.re * d.re + z.im * d.im;
@@ -1163,29 +1286,6 @@ OFDM_HOT static struct ofdm_cf track_any(const struct ofdm_ctx *ctx, struct ofdm
 					 enum ofdm_mod mod)
 {
 	return track(ctx, wk, mod);
-}
-
-/* The sample clock drift's turn per unit of subcarrier frequency for the worker's slot. */
-static inline float sfo_theta(const struct ofdm_ctx *ctx, const struct ofdm_worker *wk)
-{
-	return ctx->rx.dslot * (wk->tslot - ctx->rx.sref);
-}
-
-/* exp(j th k) for subcarrier a's frequency k, stepped along the subcarriers by sfo_next(). */
-static inline struct ofdm_cf sfo_first(unsigned int c, float th)
-{
-	float a = th * (float)sub_freq(c, 0);
-
-	return (struct ofdm_cf){cosf(a), sinf(a)};
-}
-
-static inline struct ofdm_cf sfo_next(unsigned int c, unsigned int a, struct ofdm_cf ph,
-				      struct ofdm_cf st)
-{
-	for (int d = sub_freq(c, a + 1U) - sub_freq(c, a); d > 0; d--) {
-		ph = (struct ofdm_cf){ph.re * st.re - ph.im * st.im, ph.re * st.im + ph.im * st.re};
-	}
-	return ph;
 }
 
 /* One payload symbol: rotation, decisions into @p k and their error. */
@@ -1471,6 +1571,12 @@ static inline void data_symbol(const struct ofdm_ctx *ctx, struct ofdm_worker *w
 }
 
 #if defined(CONFIG_APP_OFDM_ESP_DSP) && OFDM_FFT16
+/* Rounded to 16 bit inline (lrintf() is a library call). */
+static inline int16_t rnd16(float x)
+{
+	return (int16_t)(x + (x >= 0.0f ? 0.5f : -0.5f));
+}
+
 /*
  * The vector decoder's equalizer, from ctx->eq: in units where the constellation spacing is
  * 256 (a power of two, so slicing is an add, a clamp and a shift), times 2^sar for the
@@ -1501,16 +1607,105 @@ static void veq_build(struct ofdm_ctx *ctx)
 			continue;
 		}
 		for (unsigned int a = 0; a < c; a++) {
-			ctx->veq[m].e[a][0] = (int16_t)lrintf(ctx->eq[a].re * f * (float)(1 << sar));
-			ctx->veq[m].e[a][1] = (int16_t)lrintf(ctx->eq[a].im * f * (float)(1 << sar));
+			ctx->veq[m].e[a][0] = rnd16(ctx->eq[a].re * f * (float)(1 << sar));
+			ctx->veq[m].e[a][1] = rnd16(ctx->eq[a].im * f * (float)(1 << sar));
 		}
 		ctx->veq[m].sar = (int16_t)sar;
 	}
 }
 #endif
 
+bool ofdm_chavg;
+bool ofdm_finerot = true;
+
 /*
- * Channel per subcarrier from the pilots: each one's known sign undone and its
+ * The channel does not change from frame to frame (the same cable, filters and gain); a
+ * frame's own window start and carrier phase do. ctx->havg averages the pilots' response
+ * over frames; each frame fits it a complex gain and a phase slope over the subcarriers
+ * (its timing) against its own pilots, adds itself to the average in that frame of
+ * reference, and takes the average, so turned, as its channel: 2 numbers from the pilots
+ * instead of a noisy value per subcarrier. A poor fit (the gain or the path changed)
+ * starts the average over. Returns false while it has too few frames (h unchanged).
+ */
+static bool chan_avg(struct ofdm_ctx *ctx, struct ofdm_cf *h)
+{
+	unsigned int c = ctx->cfg.channels;
+	struct ofdm_cf *av = ctx->havg, r = {0.0f, 0.0f}, s = {0.0f, 0.0f}, zp = {0.0f, 0.0f};
+	struct ofdm_cf ph, st, g, gi;
+	float ea = 0.0f, eh = 0.0f, th, a0, al, g2;
+
+	if (ctx->havg_n == 0U) {
+		memcpy(av, h, c * sizeof(h[0]));
+		ctx->havg_n = 1;
+		return false;
+	}
+	/* The slope: the step of h conj(av) between neighbouring subcarriers. */
+	for (unsigned int a = 0; a < c; a++) {
+		struct ofdm_cf z = {h[a].re * av[a].re + h[a].im * av[a].im,
+				    h[a].im * av[a].re - h[a].re * av[a].im};
+
+		if (a > 0U && sub_freq(c, a) - sub_freq(c, a - 1U) == 1) {
+			r.re += z.re * zp.re + z.im * zp.im;
+			r.im += z.im * zp.re - z.re * zp.im;
+		}
+		zp = z;
+	}
+	th = (r.re != 0.0f || r.im != 0.0f) ? atan2f(r.im, r.re) : 0.0f;
+	/* The gain: h against av turned by the slope, by least squares. */
+	a0 = -th * (float)sub_freq(c, 0);
+	ph = (struct ofdm_cf){cosf(a0), sinf(a0)};
+	st = (struct ofdm_cf){cosf(th), -sinf(th)};
+	for (unsigned int a = 0; a < c; a++) {
+		struct ofdm_cf z = {h[a].re * av[a].re + h[a].im * av[a].im,
+				    h[a].im * av[a].re - h[a].re * av[a].im};
+
+		z = cmul(z, ph);
+		s.re += z.re;
+		s.im += z.im;
+		ea += av[a].re * av[a].re + av[a].im * av[a].im;
+		eh += h[a].re * h[a].re + h[a].im * h[a].im;
+		if (a + 1U < c) {
+			for (int d = sub_freq(c, a + 1U) - sub_freq(c, a); d > 0; d--) {
+				ph = cmul(ph, st);
+			}
+		}
+	}
+	if (ea <= 0.0f || eh <= 0.0f || s.re * s.re + s.im * s.im < 0.5f * ea * eh) {
+		/* Not the same channel any more: start over from this frame. */
+		memcpy(av, h, c * sizeof(h[0]));
+		ctx->havg_n = 1;
+		return false;
+	}
+	g = (struct ofdm_cf){s.re / ea, s.im / ea};
+	g2 = g.re * g.re + g.im * g.im;
+	gi = (struct ofdm_cf){g.re / g2, -g.im / g2};
+	/* Up to 16 frames by count, then 1/16 of each new one. */
+	al = 1.0f / (float)(ctx->havg_n < 16U ? ctx->havg_n + 1U : 16U);
+	ph = (struct ofdm_cf){cosf(-a0), sinf(-a0)};
+	st = (struct ofdm_cf){st.re, -st.im};
+	for (unsigned int a = 0; a < c; a++) {
+		/* This frame's turn of the average: g exp(j th f). */
+		struct ofdm_cf m = cmul(g, ph), mi = cmul(gi, (struct ofdm_cf){ph.re, -ph.im});
+		struct ofdm_cf al_h = cmul(h[a], mi);
+
+		av[a].re += al * (al_h.re - av[a].re);
+		av[a].im += al * (al_h.im - av[a].im);
+		h[a] = cmul(av[a], m);
+		if (a + 1U < c) {
+			for (int d = sub_freq(c, a + 1U) - sub_freq(c, a); d > 0; d--) {
+				ph = cmul(ph, st);
+			}
+		}
+	}
+	if (ctx->havg_n < 0xffffU) {
+		ctx->havg_n++;
+	}
+	return true;
+}
+
+/*
+ * Channel per subcarrier from the pilots (into ctx->eq; equalizer() inverts it): each one's
+ * known sign undone and its
  * window phase (rx.u) too, averaged; optionally smoothed over the neighbours
  * (3 taps 1 2 1, after taking out the phase slope between subcarriers that a
  * timing offset puts there); then conj(H) / |H|^2.
@@ -1523,11 +1718,15 @@ static void channel(struct ofdm_ctx *ctx, const uint32_t *w)
 
 	struct ofdm_cf dr = {0.0f, 0.0f};
 
+	float tsum = 0.0f;
+
 	memset(h, 0, c * sizeof(h[0]));
 	for (unsigned int p = 0; p < np; p++) {
 		struct ofdm_cf u;
 
 		take_slot(ctx, &ctx->w0, w, 1U + p, false);
+		/* When the pilots were captured: a pilot read one period earlier counts as such. */
+		tsum += ctx->w0.tslot;
 		u = ctx->w0.u;
 		for (unsigned int a = 0; a < c; a++) {
 			struct ofdm_cf y = cmul(fft_out(ctx, &ctx->w0, ctx->binr[a]), u);
@@ -1544,6 +1743,8 @@ static void channel(struct ofdm_ctx *ctx, const uint32_t *w)
 			h[a].im += s * g * y.im;
 		}
 	}
+	/* The sample clock drift's time reference: the channel is measured at the pilots. */
+	ctx->rx.sref = tsum / (float)np;
 	/*
 	 * A residual carrier offset turns each pilot by the same step theta: the
 	 * tracking starts undoing it, rate exp(-j theta) per slot, from the
@@ -1570,6 +1771,9 @@ static void channel(struct ofdm_ctx *ctx, const uint32_t *w)
 	ctx->rx.delay = (rho.re != 0.0f || rho.im != 0.0f)
 				? -atan2f(rho.im, rho.re) * (float)ctx->rnfft / ESP_SDR_TAU_F
 				: 0.0f;
+	if (ofdm_chavg && chan_avg(ctx, h)) {
+		return;
+	}
 	if (ctx->cfg.smooth) {
 		struct ofdm_cf *hs = ctx->w0.buf;
 		float m;
@@ -1596,15 +1800,42 @@ static void channel(struct ofdm_ctx *ctx, const uint32_t *w)
 				acc.im += h[a + 1].im * r.re - h[a + 1].re * r.im;
 				ws += 1.0f;
 			}
-			hs[a] = (struct ofdm_cf){acc.re / ws, acc.im / ws};
+			/* ws is 3 or 4 (the S3 FPU has no divide). */
+			ws = ws > 3.5f ? 0.25f : 0.33333333f;
+			hs[a] = (struct ofdm_cf){acc.re * ws, acc.im * ws};
 		}
 		memcpy(h, hs, c * sizeof(h[0]));
 	}
-	for (unsigned int a = 0; a < c; a++) {
-		float h2 = h[a].re * h[a].re + h[a].im * h[a].im;
+}
 
-		h[a] = h2 > 0.0f ? (struct ofdm_cf){h[a].re / h2, -h[a].im / h2}
-				 : (struct ofdm_cf){0.0f, 0.0f};
+/*
+ * The channel ctx->eq holds (H, measured at a window @p shift samples earlier) as the
+ * equalizer, conj(H') / |H'|^2: moving the window later by shift samples turns subcarrier
+ * f by 2 pi f shift / N, and the carrier offset adds 2 pi eps shift to all of them.
+ */
+static void equalizer(struct ofdm_ctx *ctx, int shift)
+{
+	unsigned int c = ctx->cfg.channels;
+	struct ofdm_cf *h = ctx->eq, ph = {1.0f, 0.0f}, st = {1.0f, 0.0f};
+
+	if (shift != 0) {
+		float a0 = ESP_SDR_TAU_F * (float)shift *
+			   ((float)sub_freq(c, 0) / (float)ctx->rnfft + ctx->rx.eps);
+		float as = ESP_SDR_TAU_F * (float)shift / (float)ctx->rnfft;
+
+		ph = (struct ofdm_cf){cosf(a0), sinf(a0)};
+		st = (struct ofdm_cf){cosf(as), sinf(as)};
+	}
+	for (unsigned int a = 0; a < c; a++) {
+		struct ofdm_cf v = cmul(h[a], ph);
+		float h2 = v.re * v.re + v.im * v.im, inv = h2 > 0.0f ? 1.0f / h2 : 0.0f;
+
+		h[a] = (struct ofdm_cf){v.re * inv, -v.im * inv};
+		if (a + 1U < c) {
+			for (int d = sub_freq(c, a + 1U) - sub_freq(c, a); d > 0; d--) {
+				ph = cmul(ph, st);
+			}
+		}
 	}
 #if defined(CONFIG_APP_OFDM_ESP_DSP) && OFDM_FFT16
 	veq_build(ctx);
@@ -1687,6 +1918,7 @@ int ofdm_rx_begin_period(struct ofdm_ctx *ctx, const uint32_t *words, size_t n, 
 	rx->eps = info->cfo_frac / (float)ctx->rnfft;
 	rot_init(ctx, rx->eps);
 	rx->gen++;
+	/* Until channel() measures it from the pilots' capture times. */
 	rx->sref = 0.5f * (float)(1U + ctx->cfg.pilots);
 	rx->dslot = ofdm_sfo != 0 && ofdm_carrier_hz > 0.0f
 			    ? (float)ofdm_sfo * info->cfo_hz / ofdm_carrier_hz * ESP_SDR_TAU_F *
@@ -1712,10 +1944,18 @@ int ofdm_rx_begin_period(struct ofdm_ctx *ctx, const uint32_t *words, size_t n, 
 		    rx->start + shift >= 0 && rx->start + shift <= tlim) {
 			rx->start += shift;
 			info->start = rx->start;
-			ctx->w0.u = (struct ofdm_cf){1.0f, 0.0f};
-	ctx->w0.wrapped = false;
-			channel(ctx, words);
+			if (!ofdm_finerot) {
+				/* Measured again at the new window. */
+				ctx->w0.u = (struct ofdm_cf){1.0f, 0.0f};
+				ctx->w0.wrapped = false;
+				channel(ctx, words);
+				shift = 0;
+			}
+		} else {
+			shift = 0;
 		}
+		/* The channel turned to the new window (exactly: a whole number of samples). */
+		equalizer(ctx, shift);
 	}
 
 	/* Header: BPSK, its bits repeated over the subcarriers and summed soft. */

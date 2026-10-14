@@ -139,12 +139,13 @@ set(esp_dsp_fft ${esp_dsp}/modules/fft/float/dsps_fft2r_fc32_aes3_.S
                 ${esp_dsp}/modules/fft/fixed/dsps_fft2r_sc16_aes3.S)
 multiapp_extension(link APP ${apps_dir}/link STACK 2048
   SOURCES ${link}/main.c ${link}/mac.c ${link}/perf.c ${link}/qam.c ${link}/rs.c
-          ${link}/hamming.c ${link}/ofdm.c ${link}/ofdm_frame.c ${link}/ofdm_test.c
-          ${esp_dsp_fft})
+          ${link}/bch.c ${link}/hamming.c ${link}/ofdm.c ${link}/ofdm_frame.c
+          ${link}/ofdm_test.c ${esp_dsp_fft})
 llext_compile_definitions(link_ext QAM_SPS=CONFIG_APP_SPS)
 set_source_files_properties(${link}/qam.c ${link}/ofdm.c PROPERTIES
   COMPILE_OPTIONS "-O3;-ffp-contract=fast")
-set_source_files_properties(${link}/rs.c ${link}/hamming.c PROPERTIES COMPILE_OPTIONS -O3)
+set_source_files_properties(${link}/rs.c ${link}/bch.c ${link}/hamming.c PROPERTIES
+  COMPILE_OPTIONS -O3)
 set_source_files_properties(${esp_dsp_fft} PROPERTIES
   COMPILE_DEFINITIONS CONFIG_IDF_TARGET_ESP32S3=1
   INCLUDE_DIRECTORIES ${esp_dsp}/modules/fft/include)

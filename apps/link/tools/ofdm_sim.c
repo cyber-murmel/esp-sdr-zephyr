@@ -13,7 +13,8 @@
  * Environment: BW (MHz), CH, CPDIV, MOD (bpsk .. 64qam, default all), AMP,
  * SYMS, CFO (Hz), MP (1: multipath), GAIN (receive scale), RXDIV (1, 2:
  * receive at 40 MS/s), PILOTS, SMOOTH, HDR (header bits), TRIALS, FEC (the
- * frames' code: rs, none, bch<t>-<bytes>). SNR is over the receive bandwidth.
+ * frames' code: rs, none, bch<t>-<bytes>), CHAVG and FINEROT (0: the channel per frame,
+ * measured again after the fine timing). SNR is over the receive bandwidth.
  */
 
 #include <math.h>
@@ -196,6 +197,8 @@ int main(int argc, char **argv)
 
 	/* The channel model has no sample clock drift: no correction for it. */
 	ofdm_sfo = (int)env_f("SFO", 0);
+	ofdm_chavg = env_f("CHAVG", 0) != 0.0;
+	ofdm_finerot = env_f("FINEROT", 1) != 0.0;
 	srand(1);
 	if (ms) {
 		for (int m = 0; m < OFDM_MODS; m++) {

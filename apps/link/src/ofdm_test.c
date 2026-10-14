@@ -558,6 +558,20 @@ static int cmd_txhelp(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+static int cmd_chavg(const struct shell *sh, size_t argc, char **argv)
+{
+	if (argc > 1) {
+		ofdm_chavg = strtoul(argv[1], NULL, 0) != 0U;
+		ctx.havg_n = 0;
+	}
+	if (argc > 2) {
+		ofdm_finerot = strtoul(argv[2], NULL, 0) != 0U;
+	}
+	shell_print(sh, "channel averaged over frames: %s (%u in it); fine timing by %s",
+		    ofdm_chavg ? "on" : "off", ctx.havg_n, ofdm_finerot ? "turning" : "measuring again");
+	return 0;
+}
+
 static int cmd_split(const struct shell *sh, size_t argc, char **argv)
 {
 	if (argc > 1) {
@@ -766,6 +780,8 @@ SHELL_STATIC_SUBCMD_SET_CREATE(ofdm_cmds,
 	SHELL_CMD_ARG(derot, NULL, "Payload derotation on the vector unit: [0|1]", cmd_derot, 1, 1),
 	SHELL_CMD_ARG(sfo, NULL, "Sample clock drift correction: [-1|0|1]", cmd_sfo, 1, 1),
 	SHELL_CMD_ARG(txhelp, NULL, "Build stream frames on both CPUs: [0|1]", cmd_txhelp, 1, 1),
+	SHELL_CMD_ARG(chavg, NULL, "Channel averaged over frames, fine timing by turning: [0|1 [0|1]]",
+		      cmd_chavg, 1, 2),
 	SHELL_CMD_ARG(split, NULL, "Preamble search on both CPUs: [0|1]", cmd_split, 1, 1),
 	SHELL_CMD_ARG(vec, NULL, "Vector payload decoder: [0|1]", cmd_vec, 1, 1),
 	SHELL_CMD_ARG(stx, NULL, "Stream test frames: [-t <s>] [-p <us per frame>]", cmd_stx, 1, 4),

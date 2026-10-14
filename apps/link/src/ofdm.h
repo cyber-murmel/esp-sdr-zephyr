@@ -168,12 +168,16 @@ struct ofdm_ctx {
 		struct {
 			float rnum[OFDM_RING], rden[OFDM_RING];
 		};
+
 		/* Then the carrier offset derotation over one receive FFT window. */
 		struct ofdm_cf rot[OFDM_NFFT_MAX];
 	};
 	/* The same in Q15 for the vector derotation of the payload symbols. */
 	int16_t rot16[OFDM_NFFT_MAX][2] __attribute__((aligned(16)));
 	struct ofdm_rxstate rx;
+	/* The channel averaged over frames (ofdm_chavg), and how many frames are in it (0: none). */
+	struct ofdm_cf havg[OFDM_CH_MAX];
+	uint32_t havg_n;
 	/* Diagnostic: when set, the payload decoder adds each subcarrier's squared error here. */
 	float *sc_err;
 	/*
@@ -257,7 +261,9 @@ size_t ofdm_tx_build(const struct ofdm_ctx *ctx, struct ofdm_txbuf *tb, enum ofd
 /*
  * Frames built with @p tb (one work buffer, in internal RAM) take help from other CPUs: a
  * thread there that calls ofdm_tx_help() builds symbols of the frame while it is being built.
- * The 16-bit transmit path (CONFIG_APP_OFDM_ESP_DSP) only.
+ * The 16-bit transmit path (CONFIG_APP_OFDM_ESP_DSP) only. The hand-over uses compare and
+ * swap (S32C1I), which is atomic in internal RAM only: not for a build whose statics are in
+ * PSRAM (a multiapp extension). Other builds use no atomics.
  */
 void ofdm_tx_share(struct ofdm_txbuf *tb);
 
@@ -286,6 +292,9 @@ struct ofdm_rx_info {
 extern bool ofdm_vec_enable;
 /* The payload derotation on the vector unit (ESP32-S3, 16-bit FFT path). */
 extern bool ofdm_vec_derot;
+/* The channel averaged over frames (default off: no gain measured on the bench); fine timing by turning the channel, not measuring it again (default on). */
+extern bool ofdm_chavg;
+extern bool ofdm_finerot;
 /* Carrier frequency (for the sample clock drift) and the drift correction's sign (0: off). */
 extern float ofdm_carrier_hz;
 extern int ofdm_sfo;
