@@ -30,6 +30,13 @@ void app_usb_classes(struct usbd_context *ctx);
 void app_usb_dfu_prepare(void);
 
 /*
+ * Leave the application's USB device for DFU mode, as a detach request from
+ * the host does (app_usb_dfu_prepare() first). False if USB is not up or DFU
+ * is not configured.
+ */
+bool app_usb_dfu_enter(void);
+
+/*
  * After a DFU download: whether it went to the image slot, which MCUboot then
  * test-boots. Weak, true.
  */

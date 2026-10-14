@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+mainmenu "ESP-SDR Ubertooth"
+
+choice APP_UBERTOOTH_USB_ID
+	prompt "USB identity"
+	default APP_UBERTOOTH_USB_ID_UBERTOOTH
+	help
+	  The Ubertooth host tools open only 1d50:6000, 1d50:6002 and ffff:0004.
+	  1d50:6002 is Great Scott Gadgets' Ubertooth One: use it on a bench to run the
+	  unmodified tools, not in a product. DFU mode keeps the project ID (2fe3:ffff).
+
+config APP_UBERTOOTH_USB_ID_UBERTOOTH
+	bool "Ubertooth One (1d50:6002)"
+
+config APP_UBERTOOTH_USB_ID_PROJECT
+	bool "Project ID (2fe3:0005): the host tools need a patch to find it"
+
+endchoice
+
+config APP_UBERTOOTH_API_VERSION
+	hex "USB API version reported as bcdDevice"
+	default 0x0107
+	help
+	  libubertooth refuses a device below its UBERTOOTH_API_VERSION and warns above it.
+
+# The sample USB helper's identity follows the choice (defaults here win over its own).
+config SAMPLE_USBD_VID
+	default 0x1d50 if APP_UBERTOOTH_USB_ID_UBERTOOTH
+
+config SAMPLE_USBD_PID
+	default 0x6002 if APP_UBERTOOTH_USB_ID_UBERTOOTH
+	default 0x0005 if APP_UBERTOOTH_USB_ID_PROJECT
+
+rsource "../common/Kconfig"
+
+# USB device identity (VID, PID, strings) for the sample USB helper.
+source "samples/subsys/usb/common/Kconfig.sample_usbd"
+
+source "Kconfig.zephyr"

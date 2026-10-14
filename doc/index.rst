@@ -27,6 +27,7 @@ The API reference of the library is generated with Doxygen:
    apps/link
    apps/wpan
    apps/rfprobe
+   apps/ubertooth
    apps/multiapp
    apps/micropython
 

@@ -128,7 +128,7 @@ static void app_watchdog_arm(void)
 
 #if defined(CONFIG_APP_USB_DFU)
 /* DFU mode is a separate device with only the DFU class, as in samples/subsys/usb/dfu. */
-USBD_DEVICE_DEFINE(dfu_usbd, DEVICE_DT_GET(DT_NODELABEL(zephyr_udc0)), CONFIG_SAMPLE_USBD_VID,
+USBD_DEVICE_DEFINE(dfu_usbd, DEVICE_DT_GET(DT_NODELABEL(zephyr_udc0)), CONFIG_APP_USB_DFU_VID,
 		   CONFIG_APP_USB_DFU_PID);
 USBD_DESC_LANG_DEFINE(dfu_lang);
 USBD_DESC_PRODUCT_DEFINE(dfu_product, CONFIG_SAMPLE_USBD_PRODUCT " DFU");
@@ -174,6 +174,20 @@ static void switch_to_dfu_mode(struct usbd_context *const ctx)
 	}
 }
 #endif /* CONFIG_APP_USB_DFU */
+
+bool app_usb_dfu_enter(void)
+{
+#if defined(CONFIG_APP_USB_DFU)
+	if (usb_ctx == NULL) {
+		return false;
+	}
+	app_usb_dfu_prepare();
+	switch_to_dfu_mode(usb_ctx);
+	return true;
+#else
+	return false;
+#endif
+}
 
 static void msg_cb(struct usbd_context *const ctx, const struct usbd_msg *const msg)
 {

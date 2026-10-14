@@ -1,0 +1,16 @@
+sample:
+  name: ESP-SDR Ubertooth
+  description: >-
+    Ubertooth One device firmware on the ESP32-S3 SDR: the USB protocol of the
+    upstream host tools (ubertooth-util, -specan, -btle, ...)
+common:
+  tags: esp-sdr
+  sysbuild: true
+  platform_allow:
+    - xiao_esp32s3/esp32s3/procpu
+  integration_platforms:
+    - xiao_esp32s3/esp32s3/procpu
+tests:
+  # Needs a board and the upstream host tools: see the README.
+  sample.esp_sdr.ubertooth:
+    build_only: true

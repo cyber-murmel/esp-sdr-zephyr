@@ -59,6 +59,7 @@ Contents
        - ``link``: QAM or OFDM packet link
        - ``wpan``: 802.15.4 test shell
        - ``rfprobe``: bench probe (tuning, tones, registers)
+       - ``ubertooth``: Ubertooth One device firmware for the upstream host tools
        - ``multiapp``: one firmware that runs the others
          (`doc/multiapp.md <doc/multiapp.md>`__)
        - ``micropython``: MicroPython REPL on USB, toward GNU Radio flowgraphs

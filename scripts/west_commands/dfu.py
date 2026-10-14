@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """west dfu: update a running esp-sdr board over USB DFU and confirm the image.
 
-The apps in this repository expose DFU (runtime 2fe3:0005, DFU mode
-2fe3:ffff) and an MCUboot shell on their CDC-ACM port. This command detaches
+The apps in this repository expose DFU (runtime 2fe3:0005, or 1d50:6002 for
+the Ubertooth app, DFU mode 2fe3:ffff) and an MCUboot shell on their CDC-ACM port. This command detaches
 the board into DFU mode, downloads the signed image into the secondary slot,
 waits until the board has left USB and come back running the new image (on
 trial), checks that its shell still answers after a settle time, and only
@@ -19,9 +19,9 @@ from pathlib import Path
 
 from west.commands import WestCommand
 
-VID = "2fe3"
-PID_APP = "0005"
-PID_DFU = "ffff"
+# vid:pid of a running app (the Ubertooth app presents the Ubertooth One's IDs) and of DFU mode.
+APP_IDS = ("2fe3:0005", "1d50:6002")
+DFU_ID = "2fe3:ffff"
 USB = Path("/sys/bus/usb/devices")
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
@@ -36,26 +36,26 @@ def usb_boards():
         if ":" in d.name or not (d / "idVendor").exists():
             continue
         try:
-            if (d / "idVendor").read_text().strip() != VID:
-                continue
-            pid = (d / "idProduct").read_text().strip()
+            ident = f"{(d / 'idVendor').read_text().strip()}:{(d / 'idProduct').read_text().strip()}"
             serial = (d / "serial").read_text().strip() if (d / "serial").exists() else ""
         except OSError:
             continue
-        if pid in (PID_APP, PID_DFU):
-            boards[serial or f"dfu@{d.name}"] = (d.name, pid)
+        if ident in APP_IDS or ident == DFU_ID:
+            boards[serial or f"dfu@{d.name}"] = (d.name, ident)
     return boards
 
 
-def port_pid(port):
+def port_id(port):
+    """vid:pid of the device on a USB port, or None."""
     try:
-        return (USB / port / "idProduct").read_text().strip()
+        return f"{(USB / port / 'idVendor').read_text().strip()}:{(USB / port / 'idProduct').read_text().strip()}"
     except OSError:
         return None
 
 
 def shell_tty(serial):
-    links = glob.glob(f"/dev/serial/by-id/usb-Zephyr_Project_ESP-SDR*_{serial}-if00")
+    # The CDC-ACM interface is 0 in most apps, behind the vendor interface in others.
+    links = glob.glob(f"/dev/serial/by-id/usb-Zephyr_Project_ESP-SDR*_{serial}-if0[0-9]")
     return links[0] if links else None
 
 
@@ -245,12 +245,12 @@ class Dfu(WestCommand):
             return None
 
     def download(self, sn, port, image, alt="slot1_image"):
-        if port_pid(port) != PID_DFU:
-            self.dfu_util(["-S", sn, "-d", f"{VID}:{port_pid(port) or PID_APP}", "-e"], 15)
-        if not self.wait_for(lambda: port_pid(port) == PID_DFU, 15):
+        if port_id(port) != DFU_ID:
+            self.dfu_util(["-S", sn, "-d", port_id(port) or APP_IDS[0], "-e"], 15)
+        if not self.wait_for(lambda: port_id(port) == DFU_ID, 15):
             self.wrn(f"{sn}: no DFU mode")
             return False
-        r = self.dfu_util(["-d", f"{VID}:{PID_DFU}", "-p", port, "-a", alt, "-D",
+        r = self.dfu_util(["-d", DFU_ID, "-p", port, "-a", alt, "-D",
                            str(image)], 120)
         if r is None:
             return False
@@ -274,10 +274,10 @@ class Dfu(WestCommand):
                 continue
             self.inf(f"{sn}: downloaded (try {attempt}), waiting for the swap")
             # Leave USB first: the old image's shell link can outlive the download.
-            if not self.wait_for(lambda: port_pid(port) != PID_DFU, 30):
+            if not self.wait_for(lambda: port_id(port) != DFU_ID, 30):
                 self.wrn(f"{sn}: did not reset after the download")
                 continue
-            if not self.wait_for(lambda: port_pid(port) == PID_APP and shell_tty(sn), 90):
+            if not self.wait_for(lambda: port_id(port) in APP_IDS and shell_tty(sn), 90):
                 self.wrn(f"{sn}: did not come back")
                 continue
             break
@@ -314,7 +314,7 @@ class Dfu(WestCommand):
         time.sleep(args.settle)
         tty = shell_tty(sn)
         alive = ""
-        if tty and port_pid(port) == PID_APP:
+        if tty and port_id(port) in APP_IDS:
             try:
                 sh = Shell(tty)
                 alive = sh.cmd("kernel uptime")
