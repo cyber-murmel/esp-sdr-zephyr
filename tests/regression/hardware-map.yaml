@@ -1,6 +1,7 @@
 # Hardware map of the boards on the desk, for the two-board regression tests
 # (scripts/run-regression-tests.sh, doc/testing.md). For another desk change the
-# serial numbers: `ls /dev/serial/by-id` shows them.
+# serial numbers: `ls /dev/serial/by-id` shows them. The stream_gapless scenarios also need the
+# C5 on a coax link to the C6 (a 30 dB attenuator between the U.FL ports).
 #
 # id: what scripts/twister-flash.py gets as --board-id. The C6's is the serial number of
 #     its USB-Serial-JTAG, the S3's the USB serial number of the esp-sdr firmware.
@@ -12,11 +13,20 @@
 #     each scenario puts its own image with its own USB product string on the S3, which
 #     changes its /dev/serial/by-id name.
 
-- id: 98:A3:16:8E:29:9C
+- id: 98:A3:16:8E:91:F0
   platform: xiao_esp32c6/esp32c6/hpcore
   product: USB JTAG/serial debug unit
   runner: esp32
-  serial: /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_98:A3:16:8E:29:9C-if00
+  serial: /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_98:A3:16:8E:91:F0-if00
+  connected: true
+  flash_before: true
+  flash_timeout: 120
+
+- id: 3C:DC:75:8C:84:AC
+  platform: waveshare_esp32c5_zero/esp32c5/hpcore
+  product: USB JTAG/serial debug unit
+  runner: esp32
+  serial: /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_3C:DC:75:8C:84:AC-if00
   connected: true
   flash_before: true
   flash_timeout: 120

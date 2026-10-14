@@ -10,6 +10,11 @@ tests:
     platform_allow:
       - xiao_esp32c6/esp32c6/hpcore
 
+  # The C5 as well: USB-Serial-JTAG console, flashed directly.
+  integration.esp_sdr.rx_api.c5:
+    platform_allow:
+      - waveshare_esp32c5_zero/esp32c5/hpcore
+
   # The S3 normally runs an app that owns the USB OTG port, so it needs
   # MCUboot and its own USB shell to deploy over `west dfu` (see Kconfig).
   integration.esp_sdr.rx_api.s3:

@@ -3,7 +3,7 @@
  *
  * Hardware integration test of the esp_sdr receive API's contract: error
  * codes and boundary values, plus one real capture per supported rate.
- * Runs on the real radio (xiao_esp32s3 or xiao_esp32c6); needs no antenna,
+ * Runs on the real radio (xiao_esp32s3, xiao_esp32c6 or waveshare_esp32c5_zero); needs no antenna,
  * peer board or host tool, and never transmits.
  */
 #include <errno.h>
@@ -80,9 +80,8 @@ ZTEST(esp_sdr_rx_api, test_capture_rejects_bad_count)
 ZTEST(esp_sdr_rx_api, test_capture_rejects_unsupported_rate)
 {
 	static const enum esp_sdr_rate rates[] = {
-		ESP_SDR_RATE_80MSPS,
-		ESP_SDR_RATE_40MSPS,
-		ESP_SDR_RATE_16MSPS,
+		ESP_SDR_RATE_80MSPS, ESP_SDR_RATE_40MSPS, ESP_SDR_RATE_20MSPS, ESP_SDR_RATE_10MSPS,
+		ESP_SDR_RATE_8MSPS,  ESP_SDR_RATE_4MSPS,  ESP_SDR_RATE_16MSPS,
 	};
 	struct esp_sdr_rx_burst b;
 	bool checked_one = false;
@@ -97,7 +96,7 @@ ZTEST(esp_sdr_rx_api, test_capture_rejects_unsupported_rate)
 		}
 	}
 	if (!checked_one) {
-		ztest_test_skip(); /* this SoC supports all three native rates */
+		ztest_test_skip(); /* this SoC supports every native rate */
 	}
 }
 
@@ -105,12 +104,11 @@ ZTEST(esp_sdr_rx_api, test_capture_rejects_unsupported_rate)
 ZTEST(esp_sdr_rx_api, test_capture_returns_requested_count)
 {
 	static const enum esp_sdr_rate rates[] = {
-		ESP_SDR_RATE_80MSPS,
-		ESP_SDR_RATE_40MSPS,
-		ESP_SDR_RATE_16MSPS,
+		ESP_SDR_RATE_80MSPS, ESP_SDR_RATE_40MSPS, ESP_SDR_RATE_20MSPS, ESP_SDR_RATE_10MSPS,
+		ESP_SDR_RATE_8MSPS,  ESP_SDR_RATE_4MSPS,  ESP_SDR_RATE_16MSPS,
 	};
 
-	/* Both SoCs capture at 80 MS/s: without it the loop below would test nothing. */
+	/* Every SoC captures at 80 MS/s: without it the loop below would test nothing. */
 	zassert_true(esp_sdr_rx_rate_hz(ESP_SDR_RATE_80MSPS) > 0U, "80 MS/s reported unsupported");
 	ARRAY_FOR_EACH(rates, k) {
 		struct esp_sdr_rx_burst b = {0};

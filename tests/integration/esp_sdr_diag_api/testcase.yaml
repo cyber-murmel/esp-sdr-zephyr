@@ -1,0 +1,14 @@
+common:
+  tags:
+    - esp-sdr
+    - hardware
+  harness: ztest
+  # The suite runs a minute: a plain --device-serial attach after the flash still sees it.
+  timeout: 180
+
+tests:
+  # The SoCs with a gapless diagnostic-bus ring; add a board here with its boards/<board>.conf
+  # when another SoC gets one.
+  integration.esp_sdr.diag_api.c5:
+    platform_allow:
+      - waveshare_esp32c5_zero/esp32c5/hpcore

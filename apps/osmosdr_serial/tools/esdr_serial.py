@@ -130,16 +130,19 @@ def peaks(x, fs, k=5):
     return ", ".join(out)
 
 
-def cmd_rx(d, a):
-    d.set_freq(a.freq)
-    d.set_u32("SET_SAMPLE_RATE", a.rate)
-    d.request("SET_FORMAT", value=a.bits)
-    if a.gain is not None:
-        d.request("SET_RX_GAIN", value=a.gain)
+def capture(d, rate, seconds, bits=8, freq=2437000000, gain=None):
+    """Receive for @p seconds. Returns the complex samples (all blocks, index gaps not filled),
+    the OR of the block flags, the index jumps as (block, expected, got, flags) and the
+    elapsed time."""
+    d.set_freq(freq)
+    d.set_u32("SET_SAMPLE_RATE", rate)
+    d.request("SET_FORMAT", value=bits)
+    if gain is not None:
+        d.request("SET_RX_GAIN", value=gain)
     d.blocks = []
     d.request("SET_MODE", value=MODE_RX)
-    t0, got, items, flags, last = time.time(), 0, [], 0, None
-    while time.time() - t0 < a.seconds:
+    t0, items, flags, last, jumps = time.time(), [], 0, None, []
+    while time.time() - t0 < seconds:
         kind, h, payload = d._next(2.0)
         if kind != "block":
             continue
@@ -149,13 +152,41 @@ def cmd_rx(d, a):
         v = np.frombuffer(payload, dt)[:2 * n].astype(np.float32)
         items.append(v[0::2] + 1j * v[1::2])
         if last is not None and index != last:
-            print(f"index jump at block {len(items)}: {last} -> {index}, flags {fl:#x}")
+            jumps.append((len(items), last, index, fl))
         last = index + n
-        got += n
-    dt = time.time() - t0
+    elapsed = time.time() - t0
     d.request("SET_MODE", value=MODE_OFF)
-    x = np.concatenate(items)
-    print(f"{got} samples in {dt:.2f} s = {got / dt / 1e3:.1f} kS/s, flags seen {flags:#x}")
+    return np.concatenate(items), flags, jumps, elapsed
+
+
+def transmit(d, rate, seconds, tone=50000, bits=8, freq=2437000000, gain=8):
+    """Transmit a tone for @p seconds of samples (as fast as the device takes them, which is
+    real time). Returns the number of samples and the elapsed time."""
+    n = int(rate * seconds)
+    ph = 2 * np.pi * tone / rate * np.arange(n)
+    if bits == 16:
+        v = np.empty(2 * n, np.int16)
+        v[0::2], v[1::2] = 16000 * np.cos(ph), 16000 * np.sin(ph)
+    else:
+        v = np.empty(2 * n, np.int8)
+        v[0::2], v[1::2] = 100 * np.cos(ph), 100 * np.sin(ph)
+    d.set_freq(freq)
+    d.set_u32("SET_SAMPLE_RATE", rate)
+    d.request("SET_FORMAT", value=bits)
+    d.request("SET_TX_GAIN", value=gain)
+    d.request("SET_MODE", value=MODE_TX)
+    t0 = time.time()
+    d.send_tx(v.tobytes())
+    elapsed = time.time() - t0
+    d.request("SET_MODE", value=MODE_OFF, timeout=10.0)
+    return n, elapsed
+
+
+def cmd_rx(d, a):
+    x, flags, jumps, dt = capture(d, a.rate, a.seconds, a.bits, a.freq, a.gain)
+    for block, last, index, fl in jumps:
+        print(f"index jump at block {block}: {last} -> {index}, flags {fl:#x}")
+    print(f"{len(x)} samples in {dt:.2f} s = {len(x) / dt / 1e3:.1f} kS/s, flags seen {flags:#x}")
     print("spectrum:", peaks(x[-(1 << 16):], a.rate))
     print("stats:", {k: v for k, v in d.stats().items() if v})
     if a.out:
@@ -163,23 +194,7 @@ def cmd_rx(d, a):
 
 
 def cmd_tx(d, a):
-    n = int(a.rate * a.seconds)
-    ph = 2 * np.pi * a.tone / a.rate * np.arange(n)
-    if a.bits == 16:
-        v = np.empty(2 * n, np.int16)
-        v[0::2], v[1::2] = 16000 * np.cos(ph), 16000 * np.sin(ph)
-    else:
-        v = np.empty(2 * n, np.int8)
-        v[0::2], v[1::2] = 100 * np.cos(ph), 100 * np.sin(ph)
-    d.set_freq(a.freq)
-    d.set_u32("SET_SAMPLE_RATE", a.rate)
-    d.request("SET_FORMAT", value=a.bits)
-    d.request("SET_TX_GAIN", value=a.gain)
-    d.request("SET_MODE", value=MODE_TX)
-    t0 = time.time()
-    d.send_tx(v.tobytes())
-    dt = time.time() - t0
-    d.request("SET_MODE", value=MODE_OFF, timeout=10.0)
+    n, dt = transmit(d, a.rate, a.seconds, a.tone, a.bits, a.freq, a.gain)
     print(f"sent {n} samples in {dt:.2f} s = {n / dt / 1e3:.1f} kS/s")
     print("stats:", {k: v for k, v in d.stats().items() if v})
 

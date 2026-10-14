@@ -15,3 +15,13 @@ tests:
   # Needs a host: run tools/esdr_serial.py (see README).
   sample.esp_sdr.osmosdr_serial:
     build_only: true
+  # Receive from the C5's diagnostic-bus ring instead of the CPU-paced IQ estimator
+  # (diag.conf); exercised by tests/regression/stream_gapless.
+  sample.esp_sdr.osmosdr_serial.diag:
+    platform_allow:
+      - waveshare_esp32c5_zero/esp32c5/hpcore
+    integration_platforms:
+      - waveshare_esp32c5_zero/esp32c5/hpcore
+    extra_args:
+      - EXTRA_CONF_FILE=diag.conf
+    build_only: true
