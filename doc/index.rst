@@ -26,6 +26,7 @@ The API reference of the library is generated with Doxygen:
    apps/osmosdr_serial
    apps/link
    apps/wpan
+   apps/zstack
    apps/rfprobe
    apps/ubertooth
    apps/multiapp

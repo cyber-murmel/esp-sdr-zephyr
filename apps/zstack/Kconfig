@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+mainmenu "zstack: Zigbee coordinator with the Z-Stack ZNP serial protocol"
+
+config ZSTACK_RX_BUF
+	int "Receive buffer in bytes"
+	default 1024
+
+config ZSTACK_TX_BUF
+	int "Transmit buffer in bytes"
+	default 2048
+	help
+	  Frames for the host wait here for the USB endpoint; a frame that does not fit
+	  is dropped whole.
+
+config ZSTACK_IDLE_MS
+	int "Idle gap that drops a partial frame, in ms"
+	default 100
+
+config ZSTACK_NV_REC_MAX
+	int "Largest NV item that is stored in flash, in bytes"
+	default 2048
+
+source "Kconfig.zephyr"
