@@ -9,7 +9,7 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/hwinfo.h>
 #include <zephyr/kernel.h>
-#include <zephyr/kernel_version.h>
+#include <zephyr/version.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/reboot.h>
 

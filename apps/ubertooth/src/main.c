@@ -12,6 +12,7 @@
 #include "app_cpu.h"
 #include "app_usb.h"
 #include "ubt_plat.h"
+#include "ubt_radio.h"
 
 LOG_MODULE_REGISTER(ubertooth, LOG_LEVEL_INF);
 
@@ -26,6 +27,9 @@ int main(void)
 	}
 	if (app_usb_init() != 0) {
 		LOG_ERR("usb init failed");
+	}
+	if (ubt_radio_init() != 0) {
+		LOG_ERR("radio init failed");
 	}
 	/* Again for the threads started since (usbd, UDC). */
 	k_sleep(K_MSEC(500));

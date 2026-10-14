@@ -13,6 +13,8 @@
 #include <zephyr/sys/atomic.h>
 #include <zephyr/usb/usbd.h>
 
+#include <esp_sdr/esp_sdr.h>
+
 #include "app_usb.h"
 #include "ubt_ctrl.h"
 #include "ubt_usb.h"
@@ -120,8 +122,13 @@ static struct usbd_class_data *ubt_c_data;
 static atomic_t up;
 /* Bit i: stage[i] is on the bulk endpoint. */
 static atomic_t busy;
-static uint8_t stage[INFLIGHT][64] __aligned(4);
-static uint8_t req_data[REQ_DATA_MAX] __aligned(4);
+/* USB DMA buffers; internal RAM below the ring banks is full, so they live in the high region. */
+static struct {
+	uint8_t stage[INFLIGHT][64];
+	uint8_t req_data[(REQ_DATA_MAX + 3U) & ~3U];
+} usb_high __aligned(4) ESP_SDR_HIGH_RAM;
+#define stage    usb_high.stage
+#define req_data usb_high.req_data
 static struct k_work tx_work;
 static struct k_work_delayable keepalive_work;
 static uint32_t last_tx_clkn;

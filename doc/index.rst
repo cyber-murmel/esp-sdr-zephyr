@@ -44,6 +44,7 @@ The API reference of the library is generated with Doxygen:
    testing
    multiapp
    zigbit-reference
+   ubertooth
 
 Indices
 =======

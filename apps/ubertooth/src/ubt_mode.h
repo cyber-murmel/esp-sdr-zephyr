@@ -25,4 +25,9 @@ void ubt_mode_init(struct ubt_dev *d);
 /* A request changed the device state. Any thread. */
 void ubt_mode_kick(void);
 
+/* The modes that live in their own files. */
+void ubt_specan_run(struct ubt_dev *d);
+/* dBm of a full scale tone at the spectrum analyser's gain, times 256 (calibration). */
+void ubt_specan_set_fs_dbm(int dbm_q8);
+
 #endif /* UBT_MODE_H_ */

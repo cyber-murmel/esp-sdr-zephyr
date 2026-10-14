@@ -20,8 +20,7 @@ DFU sit behind it.
 Status
 ******
 
-Written and tested on the host, **not yet run on a board** unless a line below
-says otherwise.
+Written and tested on the host; the lines below say what has also run on a board.
 
 .. list-table::
    :header-rows: 1
@@ -29,9 +28,10 @@ says otherwise.
    * - Part
      - State
    * - USB function, vendor requests, clock, queue, register file
-     - unit tests on ``native_sim`` (``tests/unit/ubertooth_core``)
+     - unit tests on ``native_sim`` (``tests/unit/ubertooth_core``); ``ubertooth-util`` runs on a board
    * - Spectrum analyser (``ubertooth-specan``)
-     - planned
+     - runs on a board: 79 channels per sweep in ascending order, about 84 sweeps/s; levels not
+       calibrated yet
    * - BLE sniffing (``ubertooth-btle``)
      - planned
    * - Transmit (BLE advertising, TX test, generic packet)
@@ -88,7 +88,10 @@ the udev rule of the ``ubertooth`` package (``40-ubertooth.rules``) covers
 Shell
 *****
 
-``ubt status``: mode, channel, USB state, queue fill, clock.
+``ubt status``: mode, channel, USB state, queue fill, clock. For bench work (``doc/ubertooth.md``):
+``ubt tune <a> <b> [n]`` times retunes, ``ubt rx start <mhz> [gain]`` / ``stop`` / ``stats`` runs the
+4 MS/s ring stream, ``ubt rx spec`` and ``ubt rx floor`` show its spectrum and noise floor,
+``ubt specanfs <dbm>`` sets the spectrum analyser's level calibration.
 
 Source of the Ubertooth parts
 *****************************

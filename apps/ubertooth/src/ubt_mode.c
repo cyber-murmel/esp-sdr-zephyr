@@ -7,6 +7,8 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
+#include <esp_sdr/esp_sdr.h>
+
 #include "app_cpu.h"
 #include "ubt_mode.h"
 
@@ -23,7 +25,10 @@ LOG_MODULE_REGISTER(ubt_mode, LOG_LEVEL_INF);
 
 static struct ubt_dev *dev;
 static K_SEM_DEFINE(kick_sem, 0, 1);
-static K_THREAD_STACK_DEFINE(stack, THREAD_STACK);
+/* Internal RAM below the ring banks is full: the stack lives in the high region. */
+static struct {
+	K_KERNEL_STACK_MEMBER(stack, THREAD_STACK);
+} mode_high ESP_SDR_HIGH_RAM;
 static struct k_thread thread;
 
 /* XMAS: the one LED blinks (upstream runs a light show on the three of an Ubertooth One). */
@@ -45,8 +50,11 @@ static void xmas_run(struct ubt_dev *d)
 
 static const struct ubt_mode_ops mode_xmas = {.mode = MODE_XMAS, .run = xmas_run};
 
+static const struct ubt_mode_ops mode_specan = {.mode = MODE_SPECAN, .run = ubt_specan_run};
+
 static const struct ubt_mode_ops *const modes[] = {
 	&mode_xmas,
+	&mode_specan,
 };
 
 static const struct ubt_mode_ops *find_mode(uint8_t mode)
@@ -123,7 +131,7 @@ void ubt_mode_init(struct ubt_dev *d)
 	for (size_t i = 0; i < ARRAY_SIZE(modes); i++) {
 		d->supported_modes |= UBT_MODE_BIT(modes[i]->mode);
 	}
-	tid = k_thread_create(&thread, stack, K_THREAD_STACK_SIZEOF(stack), mode_thread, NULL, NULL,
+	tid = k_thread_create(&thread, mode_high.stack, K_KERNEL_STACK_SIZEOF(mode_high.stack), mode_thread, NULL, NULL,
 			      NULL, THREAD_PRIO, 0, K_NO_WAIT);
 	k_thread_name_set(tid, "ubt_mode");
 	k_thread_cpu_pin(tid, 0);
