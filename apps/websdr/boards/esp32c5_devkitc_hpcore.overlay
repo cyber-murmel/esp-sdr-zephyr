@@ -1,0 +1,21 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * The protocol on UART0, the board's USB-UART bridge ("UART" port), at the
+ * viewer's default 2 MBaud. -DFILE_SUFFIX=usb moves it to USB-Serial-JTAG.
+ */
+
+/ {
+	chosen {
+		esp-sdr,websdr-uart = &uart0;
+	};
+};
+
+&uart0 {
+	current-speed = <2000000>;
+};
+
+/* Not needed here, and not every C5 module has it. */
+&psram0 {
+	status = "disabled";
+};

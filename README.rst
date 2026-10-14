@@ -29,6 +29,7 @@ Contents
        - ``stream``: VITA 49.2 RX and TX over USB (CDC-NCM)
        - ``osmosdr``: HackRF-style USB SDR for GNU Radio and gqrx
        - ``osmosdr_serial``: the same over USB-Serial-JTAG (C6, C5)
+       - ``websdr``: the ESP-WebSDR browser viewer's serial protocol
        - ``link``: QAM or OFDM packet link
        - ``wpan``: 802.15.4 test shell
        - ``rfprobe``: bench probe (tuning, tones, registers)
@@ -75,8 +76,8 @@ The library
 - **Chips:** ESP32-S3 (XIAO ESP32S3), SMP or single core. ESP32-C6
   (XIAO ESP32C6) and ESP32-C5 (C5-Zero): burst captures, and continuous
   CPU-paced receive and transmit up to 250 kS/s (``esp_sdr_paced.h``);
-  ``capture``, ``rfprobe``, ``wpan`` (C6) and ``osmosdr_serial`` run on
-  them.
+  ``capture``, ``rfprobe``, ``wpan`` (C6), ``osmosdr_serial`` and
+  ``websdr`` run on them.
 - **Tuning:** 100 to 6000 MHz in the API, but the PLL locks over a
   chip-specific range (about 1.8 to 2.8 GHz on the S3); below 2210 MHz
   through the 5/6 divider. ``-ERANGE`` when the VCO is out of range.

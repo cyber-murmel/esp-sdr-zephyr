@@ -1,0 +1,16 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * -DFILE_SUFFIX=usb: the protocol on USB-Serial-JTAG, the DevKitC's native
+ * "USB" port, which also flashes; console and logs stay on UART0 ("COM").
+ */
+
+/ {
+	chosen {
+		esp-sdr,websdr-uart = &usb_serial;
+	};
+};
+
+&usb_serial {
+	status = "okay";
+};
