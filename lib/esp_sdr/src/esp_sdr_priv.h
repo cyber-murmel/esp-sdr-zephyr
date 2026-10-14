@@ -324,6 +324,12 @@ void esp_sdr_rx_prepare(void);
 /* Re-force a fixed receive gain last applied more than 20 ms ago; lock held. Returns whether it did. */
 bool esp_sdr_rx_gain_refresh(void);
 void esp_sdr_rx_resume(void);
+/*
+ * Point the dump engine at the receive I/Q and give it the SRAM bank per usage;
+ * returns the bank usage to restore with esp_sdr_dump_disarm(). Lock held.
+ */
+uint32_t esp_sdr_dump_arm(uint32_t usage);
+void esp_sdr_dump_disarm(uint32_t saved);
 void esp_sdr_tx_prepare(void);
 /* esp_sdr_tx_prepare() without the settle time. */
 void esp_sdr_tx_front_end(void);

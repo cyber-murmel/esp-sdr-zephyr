@@ -7,4 +7,14 @@ config APP_FREQ_MHZ
 	range 100 6000
 	default 2437
 
+config APP_RX_DIAG
+	bool "Receive through the modem diagnostic bus (ESP32-C5)"
+	depends on SOC_SERIES_ESP32C5
+	select ESP_SDR_DIAG
+	help
+	  Gapless 40 MS/s ring through the GPIO matrix and PARLIO (esp_sdr_diag.h), a boxcar
+	  of 16 and a CIC in the library down to the requested rate, instead of the IQ
+	  estimator polled by the CPU. Drives 8 pads as outputs while receiving; the nibble
+	  window is picked from the signal level when a stream starts.
+
 source "Kconfig.zephyr"

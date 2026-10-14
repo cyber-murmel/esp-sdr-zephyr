@@ -45,6 +45,16 @@ config ESP_SDR_PACED
 	  through the modem's IQ estimator and continuous transmit through the
 	  TX DC value register, paced by the CPU from the caller's loop.
 
+config ESP_SDR_DIAG
+	bool "Gapless receive through the modem diagnostic bus (ESP32-C5)"
+	depends on SOC_SERIES_ESP32C5 && ESP_SDR_PACED
+	help
+	  esp_sdr_diag_run(): the dump engine runs free, the GPIO matrix loops
+	  the modem diagnostic bus back into the PARLIO receiver, and a GDMA
+	  ring in SRAM bank 1 collects 4 bits of I and 4 bits of Q at 40 MS/s
+	  without the CPU. Drives 8 pads as outputs while it runs. Takes the
+	  bank of the capture engine and the radio for the whole run.
+
 config ESP_SDR_BANK1
 	bool "Reserve a second dump bank"
 	depends on SOC_SERIES_ESP32S3

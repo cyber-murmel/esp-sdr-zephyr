@@ -266,7 +266,7 @@ static uint32_t rate_bits(enum esp_sdr_rate rate)
 #endif
 
 /* Point the engine at the receive I/Q; returns the saved bank usage. */
-static uint32_t dump_arm(uint32_t usage)
+uint32_t esp_sdr_dump_arm(uint32_t usage)
 {
 	uint32_t saved = REG_READ(DUMP_USAGE_REG);
 
@@ -297,7 +297,7 @@ static uint32_t dump_arm(uint32_t usage)
 	return saved;
 }
 
-static void dump_disarm(uint32_t saved)
+void esp_sdr_dump_disarm(uint32_t saved)
 {
 	REG_WRITE(DUMP_CTRL_REG, 0);
 	REG_WRITE(DUMP_USAGE_REG, saved);
@@ -325,7 +325,7 @@ static int capture_locked(enum esp_sdr_rate rate, size_t count, volatile uint32_
 	(void)esp_sdr_rx_gain_refresh();
 	*t0 = k_cycle_get_64();
 	start = (uint32_t)*t0;
-	saved = dump_arm(usage);
+	saved = esp_sdr_dump_arm(usage);
 
 #if defined(CONFIG_SOC_SERIES_ESP32S3)
 	ctrl = DUMP_CTRL_RUN | rate_bits(rate) | FIELD_PREP(DUMP_CTRL_COUNT, count);
@@ -349,7 +349,7 @@ static int capture_locked(enum esp_sdr_rate rate, size_t count, volatile uint32_
 		elapsed = k_cyc_to_us_floor32(k_cycle_get_32() - start);
 	} while (!done && elapsed < DUMP_TIMEOUT_US);
 
-	dump_disarm(saved);
+	esp_sdr_dump_disarm(saved);
 
 	if (!done) {
 		return -ETIMEDOUT;

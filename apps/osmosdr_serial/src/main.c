@@ -21,6 +21,9 @@
 
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_paced.h>
+#if defined(CONFIG_APP_RX_DIAG)
+#include <esp_sdr/esp_sdr_diag.h>
+#endif
 #include <esp_sdr/esp_sdr_rx.h>
 
 #include "esdr_proto.h"
@@ -38,8 +41,15 @@
 #else
 #define TX_DAC_MAX_HZ 250000U
 #endif
+/* The diagnostic-bus ring delivers 2.5 MS/s divided by the decimation. */
+#define DIAG_IQ_HZ 2500000U
 #define OUT_BLOCKS 3U
+/* The diagnostic-bus build has no RAM for more. */
+#if defined(CONFIG_APP_RX_DIAG)
+#define TX_RING_BYTES 8192U
+#else
 #define TX_RING_BYTES 16384U
+#endif
 /* Cycles one FIFO byte access takes, and the margin left before a sample is due. */
 #define IO_SLACK_CYCLES 40
 
@@ -476,52 +486,139 @@ static void out_commit(void)
 	stats.rx_samples += sys_le16_to_cpu(h->samples);
 }
 
+/* Receive samples into the output blocks: 16-bit or 8-bit items, a block at a time. */
+static bool rx_full;
+static uint32_t rx_per_block;
+
+static void rx_begin(void)
+{
+	rx_per_block = ESDR_BLOCK_PAYLOAD / (want.bits == 16U ? 4U : 2U);
+	rx_full = false;
+	out.fill_n = 0;
+}
+
+/* One sample, int16 full scale; commits the block when it is full. */
+static void rx_emit(int32_t vi, int32_t vq)
+{
+	uint8_t *blk = out.blk[out.committed % OUT_BLOCKS] + sizeof(struct esdr_block_hdr);
+
+	if (rx_full) {
+		/* The block index moves on: the host sees the gap. */
+		stats.rx_overflow_samples++;
+		out.index++;
+	} else if (want.bits == 16U) {
+		sys_put_le16((uint16_t)vi, blk + 4U * out.fill_n);
+		sys_put_le16((uint16_t)vq, blk + 4U * out.fill_n + 2U);
+		out.fill_n++;
+	} else {
+		blk[2U * out.fill_n] = (uint8_t)(int8_t)CLAMP((vi + 128) >> 8, -127, 127);
+		blk[2U * out.fill_n + 1U] = (uint8_t)(int8_t)CLAMP((vq + 128) >> 8, -127, 127);
+		out.fill_n++;
+	}
+	if (out.fill_n == rx_per_block) {
+		out_commit();
+	}
+	/* No free block: drop until one is, then mark the gap. */
+	rx_full = out.committed - out.sent >= OUT_BLOCKS;
+	if (rx_full && out.next_flags == 0U) {
+		out.next_flags = ESDR_BLK_OVERFLOW | ESDR_BLK_GAP;
+		stats.rx_overflows++;
+	}
+}
+
+/* After a stream: whole blocks only, the partial one is dropped and the restart marked. */
+static void rx_end(void)
+{
+	while (out.sent != out.committed) {
+		out_service(64);
+	}
+	usj_flush();
+	out.pkt = 0;
+	out.fill_n = 0;
+	out.next_flags = ESDR_BLK_GAP;
+}
+
+#if defined(CONFIG_APP_RX_DIAG)
+/* The diagnostic-bus ring: the library decimates, this takes its blocks of samples. */
+static uint64_t diag_expect;
+static unsigned int diag_dgain_shift;
+
+static void diag_iq_sink(void *user, const int32_t *iq, size_t n, uint64_t index)
+{
+	ARG_UNUSED(user);
+	if (index != diag_expect) {
+		/* Blocks of the ring were skipped: close the block in progress, move on, flag the gap. */
+		if (out.fill_n != 0U) {
+			out_commit();
+		}
+		out.index += index - diag_expect;
+		out.next_flags |= ESDR_BLK_GAP;
+	}
+	diag_expect = index + n;
+	for (size_t j = 0; j < n; j++) {
+		/* Raw counts times 16 to int16 with the digital gain: x * 2^g / 16. */
+		int32_t vi = (iq[2U * j] << diag_dgain_shift) >> 4;
+		int32_t vq = (iq[2U * j + 1U] << diag_dgain_shift) >> 4;
+
+		rx_emit(CLAMP(vi, -32767, 32767), CLAMP(vq, -32767, 32767));
+	}
+	/* Between blocks, with interrupts open: what the USB FIFO takes, and a look for a request. */
+	out_service(256);
+	in_service(16);
+	if (req.ready) {
+		esp_sdr_diag_stop();
+	}
+}
+
+static void run_rx_diag(void)
+{
+	struct esp_sdr_diag_stats ds;
+	struct esp_sdr_diag_cfg cfg = {
+		.decim = (uint8_t)(DIAG_IQ_HZ / want.rate_hz),
+		.lsb = ESP_SDR_DIAG_LSB_AUTO,
+		.iq_sink = diag_iq_sink,
+	};
+	int ret;
+
+	rx_begin();
+	diag_expect = 0;
+	diag_dgain_shift = dgain_db() / 6U;
+	ret = esp_sdr_diag_run(&cfg, &ds);
+	if (ret != 0) {
+		/* Could not start, or the ring overran: the host sees the stream stop. */
+		want.mode = ESDR_MODE_OFF;
+	}
+	stats.ring_runs++;
+	stats.ring_errors += ds.skips + (ds.overrun ? 1U : 0U);
+	stats.rx_ring_lost_pairs += (uint64_t)ds.skipped_blocks * (ESP_SDR_DIAG_BLOCK / 16U) / cfg.decim;
+	stats.ring_cycles_x100 = ds.sink_cycles_x100;
+	rx_end();
+}
+#endif
+
 static void run_rx(void)
 {
-	uint32_t per_block = ESDR_BLOCK_PAYLOAD / (want.bits == 16U ? 4U : 2U);
 	uint32_t k = rx_scale();
-	bool full = false;
 	unsigned int key;
 	int ret;
 
+#if defined(CONFIG_APP_RX_DIAG)
+	run_rx_diag();
+	return;
+#endif
 	ret = esp_sdr_rx_paced_start(want.rate_hz);
 	if (ret != 0) {
 		want.mode = ESDR_MODE_OFF;
 		return;
 	}
-	out.fill_n = 0;
+	rx_begin();
 	key = irq_lock();
 	esp_sdr_paced_sync();
 	while (!req.ready) {
 		int32_t i, q;
 		if (esp_sdr_rx_paced_poll(&i, &q)) {
-			uint8_t *blk = out.blk[out.committed % OUT_BLOCKS] + sizeof(struct esdr_block_hdr);
-			int32_t vi = (int32_t)(((int64_t)i * k) >> 16), vq = (int32_t)(((int64_t)q * k) >> 16);
-
-			vi = CLAMP(vi, -32767, 32767);
-			vq = CLAMP(vq, -32767, 32767);
-			if (full) {
-				/* The block index moves on: the host sees the gap. */
-				stats.rx_overflow_samples++;
-				out.index++;
-			} else if (want.bits == 16U) {
-				sys_put_le16((uint16_t)vi, blk + 4U * out.fill_n);
-				sys_put_le16((uint16_t)vq, blk + 4U * out.fill_n + 2U);
-				out.fill_n++;
-			} else {
-				blk[2U * out.fill_n] = (uint8_t)(int8_t)CLAMP((vi + 128) >> 8, -127, 127);
-				blk[2U * out.fill_n + 1U] = (uint8_t)(int8_t)CLAMP((vq + 128) >> 8, -127, 127);
-				out.fill_n++;
-			}
-			if (out.fill_n == per_block) {
-				out_commit();
-			}
-			/* No free block: drop until one is, then mark the gap. */
-			full = out.committed - out.sent >= OUT_BLOCKS;
-			if (full && out.next_flags == 0U) {
-				out.next_flags = ESDR_BLK_OVERFLOW | ESDR_BLK_GAP;
-				stats.rx_overflows++;
-			}
+			rx_emit(CLAMP((int32_t)(((int64_t)i * k) >> 16), -32767, 32767),
+				CLAMP((int32_t)(((int64_t)q * k) >> 16), -32767, 32767));
 		}
 		/* Sample instants stay exact: I/O only while a byte fits before the next one is due. */
 		out_until(esp_sdr_paced_deadline());
@@ -530,14 +627,7 @@ static void run_rx(void)
 	irq_unlock(key);
 	esp_sdr_rx_paced_stop();
 	pacing_stats();
-	/* Whole blocks only: the partial one is dropped and the restart marked. */
-	while (out.sent != out.committed) {
-		out_service(64);
-	}
-	usj_flush();
-	out.pkt = 0;
-	out.fill_n = 0;
-	out.next_flags = ESDR_BLK_GAP;
+	rx_end();
 }
 
 static bool tx_input(void *user, int16_t *i, int16_t *q)

@@ -16,12 +16,18 @@ zephyr_library_sources(
 )
 zephyr_library_sources_ifdef(CONFIG_SOC_SERIES_ESP32S3 src/esp_sdr_tx.c)
 zephyr_library_sources_ifdef(CONFIG_ESP_SDR_PACED src/esp_sdr_paced.c)
+zephyr_library_sources_ifdef(CONFIG_ESP_SDR_DIAG src/esp_sdr_diag.c)
 zephyr_library_sources_ifdef(CONFIG_ESP_SDR_TX src/esp_sdr_tx_stream.c)
 zephyr_library_sources_ifdef(CONFIG_ESP_SDR_TX_DAC src/esp_sdr_tx_dac.c)
 zephyr_library_sources_ifdef(CONFIG_ESP_SDR_TX_DAC_SIMD src/esp_sdr_pie.S)
 zephyr_library_sources_ifdef(CONFIG_ESP_SDR_RING src/esp_sdr_ring.c src/esp_sdr_ring_fir.S
   src/esp_sdr_ring_dot.S)
 zephyr_library_include_directories(${ESP_SDR_UPSTREAM_DIR}/main/common)
+if(CONFIG_ESP_SDR_DIAG)
+  # The hal's C5 glue leaves the PARLIO low-level headers out of the include path.
+  set(esp_sdr_hal ${WEST_TOPDIR}/modules/hal/espressif/components/esp_hal_parlio)
+  zephyr_library_include_directories(${esp_sdr_hal}/include ${esp_sdr_hal}/${CONFIG_SOC_SERIES}/include)
+endif()
 
 # Three banks for the continuous ring; two: loop playback ping-pongs between
 # them, captures may use either.

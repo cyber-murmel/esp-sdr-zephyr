@@ -11,6 +11,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <zephyr/app_version.h>
 #include <zephyr/kernel.h>
@@ -23,6 +24,9 @@
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_rx.h>
 #include <esp_sdr/esp_sdr_tx.h>
+#if defined(CONFIG_ESP_SDR_DIAG)
+#include <esp_sdr/esp_sdr_diag.h>
+#endif
 
 #if defined(CONFIG_USB_DEVICE_STACK_NEXT)
 #include "app_usb.h"
@@ -307,6 +311,152 @@ static int cmd_sleep(const struct shell *sh, size_t argc, char **argv)
 }
 #endif
 
+#if defined(CONFIG_ESP_SDR_DIAG)
+/* diag level: the nibble window the signal needs. */
+static int cmd_diag_level(const struct shell *sh, size_t argc, char **argv)
+{
+	uint8_t lsb = 0;
+	int ret = esp_sdr_diag_level(&lsb);
+
+	shell_print(sh, "diag level ret %d lsb %u", ret, lsb);
+	return 0;
+}
+
+static struct {
+	uint32_t x;
+	uint8_t buf[8192];
+	size_t want, got;
+	bool snap;
+} dg;
+
+static void diag_sink(void *user, const uint8_t *blk, size_t n, uint64_t index)
+{
+	ARG_UNUSED(user);
+	ARG_UNUSED(index);
+	if (dg.snap) {
+		dg.got = MIN(dg.want, MIN(n, sizeof(dg.buf)));
+		memcpy(dg.buf, blk, dg.got);
+		esp_sdr_diag_stop();
+		return;
+	}
+	/* Touch every byte, as a consumer would. */
+	for (size_t k = 0; k < n; k += 4) {
+		dg.x ^= *(const uint32_t *)&blk[k];
+	}
+}
+
+static void diag_print(const struct shell *sh, int ret, const struct esp_sdr_diag_stats *s)
+{
+	shell_print(sh, "diag ret %d bytes %llu consumed %llu skips %u skipped %u overrun %d "
+			"ppm %d.%02d lsb %u sink %u.%02u cyc/B rate %u isrs %u raw %08x",
+		    ret, s->bytes, s->consumed, s->skips, s->skipped_blocks, s->overrun,
+		    s->ppm_x100 / 100, abs(s->ppm_x100) % 100, s->lsb, s->sink_cycles_x100 / 100U,
+		    s->sink_cycles_x100 % 100U, s->byte_rate, s->isrs, s->dma_raw);
+	shell_print(sh, "desc %08x %08x %08x %08x", s->dw0[0], s->dw0[1], s->dw0[2], s->dw0[3]);
+}
+
+/* diag run <s> [div] [lsb|-1] [edge] [R]: the ring for s seconds; with R the CIC decimates, else a consumer touches every byte. */
+static int cmd_diag_run(const struct shell *sh, size_t argc, char **argv)
+{
+	struct esp_sdr_diag_stats s;
+	struct esp_sdr_diag_cfg cfg = {
+		.seconds = (uint32_t)arg(argv, argc, 1, 5),
+		.clk_div = (uint8_t)arg(argv, argc, 2, 6),
+		.lsb = (uint8_t)arg(argv, argc, 3, -1),
+		.falling_edge = arg(argv, argc, 4, 0) != 0,
+		.decim = (uint8_t)arg(argv, argc, 5, 0),
+	};
+
+	cfg.sink = cfg.decim != 0U ? NULL : diag_sink;
+	dg.snap = false;
+	diag_print(sh, esp_sdr_diag_run(&cfg, &s), &s);
+	return 0;
+}
+
+static void diag_iq_sink(void *user, const int32_t *iq, size_t n, uint64_t index)
+{
+	ARG_UNUSED(user);
+	ARG_UNUSED(index);
+	int16_t *out = (int16_t *)dg.buf;
+
+	for (size_t k = 0; k < n && dg.got < dg.want; k++, dg.got++) {
+		out[2U * dg.got] = (int16_t)CLAMP(iq[2U * k], INT16_MIN, INT16_MAX);
+		out[2U * dg.got + 1U] = (int16_t)CLAMP(iq[2U * k + 1U], INT16_MIN, INT16_MAX);
+	}
+	if (dg.got >= dg.want) {
+		esp_sdr_diag_stop();
+	}
+}
+
+/* diag iq <R> [pairs] [lsb|-1]: decimated I/Q (int16 pairs, raw counts times 16), base64. */
+static int cmd_diag_iq(const struct shell *sh, size_t argc, char **argv)
+{
+	struct esp_sdr_diag_stats s;
+	struct esp_sdr_diag_cfg cfg = {
+		.seconds = 4,
+		.decim = (uint8_t)arg(argv, argc, 1, 40),
+		.lsb = (uint8_t)arg(argv, argc, 3, -1),
+		.iq_sink = diag_iq_sink,
+	};
+	char line[80];
+	int ret;
+
+	dg.snap = false;
+	dg.got = 0;
+	dg.want = (size_t)CLAMP(arg(argv, argc, 2, 2048), 16, (long)(sizeof(dg.buf) / 4U));
+	ret = esp_sdr_diag_run(&cfg, &s);
+	diag_print(sh, ret, &s);
+	shell_print(sh, "iq n %u rate %u lsb %u f %u", (unsigned int)dg.got, s.iq_rate, s.lsb,
+		    esp_sdr_get_freq());
+	for (size_t w = 0; w < dg.got * 4U; w += 48) {
+		size_t bytes = MIN(48U, dg.got * 4U - w), olen;
+
+		(void)base64_encode((uint8_t *)line, sizeof(line), &olen, &dg.buf[w], bytes);
+		line[olen] = '\0';
+		shell_print(sh, "d %s", line);
+	}
+	shell_print(sh, "end");
+	return 0;
+}
+
+/* diag snap [lsb|-1] [bytes] [edge]: the first bytes of the ring, base64 (8 bytes per sample pair of nibbles). */
+static int cmd_diag_snap(const struct shell *sh, size_t argc, char **argv)
+{
+	struct esp_sdr_diag_stats s;
+	struct esp_sdr_diag_cfg cfg = {
+		.seconds = 2,
+		.lsb = (uint8_t)arg(argv, argc, 1, -1),
+		.falling_edge = arg(argv, argc, 3, 0) != 0,
+		.sink = diag_sink,
+	};
+	char line[80];
+	int ret;
+
+	dg.snap = true;
+	dg.got = 0;
+	dg.want = (size_t)CLAMP(arg(argv, argc, 2, 4096), 64, (long)sizeof(dg.buf));
+	ret = esp_sdr_diag_run(&cfg, &s);
+	diag_print(sh, ret, &s);
+	shell_print(sh, "snap n %u lsb %u f %u", (unsigned int)dg.got, s.lsb, esp_sdr_get_freq());
+	for (size_t w = 0; w < dg.got; w += 48) {
+		size_t bytes = MIN(48U, dg.got - w), olen;
+
+		(void)base64_encode((uint8_t *)line, sizeof(line), &olen, &dg.buf[w], bytes);
+		line[olen] = '\0';
+		shell_print(sh, "d %s", line);
+	}
+	shell_print(sh, "end");
+	return 0;
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(diag_cmds,
+	SHELL_CMD(level, NULL, "the nibble window the signal needs", cmd_diag_level),
+	SHELL_CMD_ARG(run, NULL, "<s> [div] [lsb|-1] [edge] [R]: gapless ring, stats", cmd_diag_run, 1, 5),
+	SHELL_CMD_ARG(snap, NULL, "[lsb|-1] [bytes] [edge]: ring bytes, base64", cmd_diag_snap, 1, 3),
+	SHELL_CMD_ARG(iq, NULL, "<R> [pairs] [lsb|-1]: decimated I/Q, base64", cmd_diag_iq, 1, 3),
+	SHELL_SUBCMD_SET_END);
+#endif
+
 SHELL_STATIC_SUBCMD_SET_CREATE(probe_cmds,
 	SHELL_CMD_ARG(f, NULL, "<MHz>: tune through the library's plan", cmd_f, 2, 0),
 	SHELL_CMD_ARG(raw, NULL, "<PLL MHz> [kHz]: program the PLL directly", cmd_raw, 2, 1),
@@ -317,6 +467,9 @@ SHELL_STATIC_SUBCMD_SET_CREATE(probe_cmds,
 	SHELL_CMD(tone, &tone_cmds, "loop a tone", NULL),
 #endif
 	SHELL_CMD_ARG(rx, NULL, "[n] [rate 0..6]: capture, base64 dump", cmd_rx, 1, 2),
+#if defined(CONFIG_ESP_SDR_DIAG)
+	SHELL_CMD(diag, &diag_cmds, "gapless ring through the diagnostic bus (C5)", NULL),
+#endif
 	SHELL_CMD_ARG(dump, NULL, "<block> [regs]: analog I2C registers", cmd_dump, 2, 1),
 #if defined(CONFIG_POWEROFF)
 	SHELL_CMD_ARG(sleep, NULL, "<ms>: deep sleep, timer wakeup", cmd_sleep, 2, 0),
