@@ -52,9 +52,16 @@ static const struct ubt_mode_ops mode_xmas = {.mode = MODE_XMAS, .run = xmas_run
 
 static const struct ubt_mode_ops mode_specan = {.mode = MODE_SPECAN, .run = ubt_specan_run};
 
+static const struct ubt_mode_ops mode_slave = {.mode = MODE_BT_SLAVE_LE, .run = ubt_btle_slave_run};
+static const struct ubt_mode_ops mode_txtest = {.mode = MODE_TX_TEST, .run = ubt_tx_test_run};
+static const struct ubt_mode_ops mode_txgen = {.mode = MODE_TX_GENERIC, .run = ubt_tx_generic_run};
+
 static const struct ubt_mode_ops *const modes[] = {
 	&mode_xmas,
 	&mode_specan,
+	&mode_slave,
+	&mode_txtest,
+	&mode_txgen,
 };
 
 static const struct ubt_mode_ops *find_mode(uint8_t mode)

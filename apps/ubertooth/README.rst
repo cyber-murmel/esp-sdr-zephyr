@@ -35,7 +35,8 @@ Written and tested on the host; the lines below say what has also run on a board
    * - BLE sniffing (``ubertooth-btle``)
      - planned
    * - Transmit (BLE advertising, TX test, generic packet)
-     - planned
+     - BLE advertising (``ubertooth-btle -s``) runs on a board and is seen by a PC Bluetooth adapter
+       (address, flags and CRC intact); TX test starts and stops; generic packet not tried
    * - BR/EDR symbol stream (``ubertooth-rx``, ``-scan``)
      - planned, fixed channel and the 25 Hz sweep only
 

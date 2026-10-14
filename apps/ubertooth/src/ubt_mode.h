@@ -27,6 +27,9 @@ void ubt_mode_kick(void);
 
 /* The modes that live in their own files. */
 void ubt_specan_run(struct ubt_dev *d);
+void ubt_btle_slave_run(struct ubt_dev *d);
+void ubt_tx_test_run(struct ubt_dev *d);
+void ubt_tx_generic_run(struct ubt_dev *d);
 /* dBm of a full scale tone at the spectrum analyser's gain, times 256 (calibration). */
 void ubt_specan_set_fs_dbm(int dbm_q8);
 

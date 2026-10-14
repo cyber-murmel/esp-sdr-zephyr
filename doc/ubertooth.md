@@ -73,6 +73,12 @@ captures of 0.2 ms, two times 32 frames of FFT and the rest). Overlapping the FF
 would reach about 135 sweeps/s. The levels are relative: the full scale reference of the byte is a
 guess (`ubt specanfs`) until a source of known power is available.
 
+Transmit, `ubertooth-btle -s22:44:66:88:aa:cc -A38` (ADV_IND, flags 05, every 100 ms on 2426 MHz,
+LO at 2422 MHz, TX gain step 6): the PC's Bluetooth adapter (`bluetoothctl scan on`) lists
+"Device 22:44:66:88:AA:CC (public)" with AdvertisingFlags 05, i.e. the whitening, CRC-24, GFSK
+modulator, DAC and RF all work as a BLE advertiser. TX_TEST (PRBS9 loop on 2441 MHz) starts and
+stops; its output was not observed.
+
 ## Status
 
 See the table in the README. Hardware results so far: USB function and the control requests (checked

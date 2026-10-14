@@ -8,6 +8,7 @@ project(esp_sdr_ubertooth)
 include(${CMAKE_CURRENT_LIST_DIR}/../common/common.cmake)
 
 target_sources(app PRIVATE
+  src/gfsk_mod.c
   src/main.c
   src/shell.c
   src/ubt_clock.c
@@ -21,11 +22,13 @@ target_sources(app PRIVATE
   src/ubt_regs.c
   src/ubt_specan.c
   src/ubt_specan_run.c
+  src/ubt_tx.c
+  src/ubt_tx_run.c
   src/ubt_usb.c
   src/upstream/bluetooth_le.c)
 
 # Per-sample loops of the DSP.
-set_source_files_properties(src/ubt_specan.c PROPERTIES COMPILE_OPTIONS "-O3")
+set_source_files_properties(src/ubt_specan.c src/gfsk_mod.c PROPERTIES COMPILE_OPTIONS "-O3")
 
 # Only the ESP32-S3 16 bit FFT kernel of esp-dsp: its IDF scaffolding stays out (as in apps/link).
 set(ESP_DSP_DIR "${WEST_TOPDIR}/modules/lib/esp-dsp")

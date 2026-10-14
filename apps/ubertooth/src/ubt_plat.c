@@ -106,6 +106,12 @@ int ubt_init(void)
 	ubt_queue_init(&ubt.queue, queue_slots);
 	ubt_regs_init(&ubt.regs);
 	ubt.le.access_address = 0x8e89bed6U;
+	/* Upstream's defaults: the advertising data {flags} and PA level 3 (FREND 0b1011). */
+	ubt.adv_data[0] = 0x02;
+	ubt.adv_data[1] = 0x01;
+	ubt.adv_data[2] = 0x05;
+	ubt.adv_len = 3;
+	ubt.pa_level = 3;
 	ubt_dev_reset(&ubt);
 	ubt_usb_init(&ubt);
 	ubt_mode_init(&ubt);

@@ -2,7 +2,8 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
  * Vendored from https://github.com/greatscottgadgets/ubertooth (2020-12-R1 + master 2026-03),
- * with two unused extern declarations removed.
+ * with two unused extern declarations removed and the CRC table made static const (it
+ * belongs in flash: internal RAM below the ring banks is full).
  */
 /*
  * Copyright 2012 Dominic Spill
@@ -129,7 +130,7 @@ u32 btle_reverse_crc(u32 crc, u8 *data, int len) {
 	return ret;
 }
 
-u32 btle_crc_lut[256] = {
+static const u32 btle_crc_lut[256] = {
 	0x000000, 0x01b4c0, 0x036980, 0x02dd40, 0x06d300, 0x0767c0, 0x05ba80, 0x040e40,
 	0x0da600, 0x0c12c0, 0x0ecf80, 0x0f7b40, 0x0b7500, 0x0ac1c0, 0x081c80, 0x09a840,
 	0x1b4c00, 0x1af8c0, 0x182580, 0x199140, 0x1d9f00, 0x1c2bc0, 0x1ef680, 0x1f4240,
