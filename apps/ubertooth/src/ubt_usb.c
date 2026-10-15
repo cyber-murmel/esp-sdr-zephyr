@@ -172,14 +172,29 @@ static int submit(unsigned int slot, size_t len)
 	return err;
 }
 
+/*
+ * Packets the bulk endpoint may hold. The LE modes are read with POLL by the tools; as on the real
+ * device (two endpoint buffers) the first packets are lost to a bulk endpoint nobody reads, so
+ * keep that to two there.
+ */
+static unsigned int inflight_limit(void)
+{
+	return dev->mode == MODE_BT_FOLLOW_LE || dev->mode == MODE_BT_PROMISC_LE ? 2U : INFLIGHT;
+}
+
 static int free_slot(void)
 {
+	unsigned int used = 0;
+	int free = -1;
+
 	for (unsigned int i = 0; i < INFLIGHT; i++) {
 		if (!atomic_test_bit(&busy, i)) {
-			return (int)i;
+			free = free < 0 ? (int)i : free;
+		} else {
+			used++;
 		}
 	}
-	return -1;
+	return used < inflight_limit() ? free : -1;
 }
 
 static void tx_work_fn(struct k_work *work)

@@ -15,7 +15,7 @@
 LOG_MODULE_REGISTER(ubt_mode, LOG_LEVEL_INF);
 
 #define THREAD_STACK 1536
-#define THREAD_PRIO  12
+#define THREAD_PRIO  14
 
 /* The reply of RESET and FLASH needs time to reach the host before the chip goes. */
 #define RESET_DELAY_MS 1000
@@ -52,6 +52,7 @@ static const struct ubt_mode_ops mode_xmas = {.mode = MODE_XMAS, .run = xmas_run
 
 static const struct ubt_mode_ops mode_specan = {.mode = MODE_SPECAN, .run = ubt_specan_run};
 
+static const struct ubt_mode_ops mode_btle = {.mode = MODE_BT_FOLLOW_LE, .run = ubt_btle_run};
 static const struct ubt_mode_ops mode_slave = {.mode = MODE_BT_SLAVE_LE, .run = ubt_btle_slave_run};
 static const struct ubt_mode_ops mode_txtest = {.mode = MODE_TX_TEST, .run = ubt_tx_test_run};
 static const struct ubt_mode_ops mode_txgen = {.mode = MODE_TX_GENERIC, .run = ubt_tx_generic_run};
@@ -59,6 +60,7 @@ static const struct ubt_mode_ops mode_txgen = {.mode = MODE_TX_GENERIC, .run = u
 static const struct ubt_mode_ops *const modes[] = {
 	&mode_xmas,
 	&mode_specan,
+	&mode_btle,
 	&mode_slave,
 	&mode_txtest,
 	&mode_txgen,
