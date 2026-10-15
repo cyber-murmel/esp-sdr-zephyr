@@ -135,7 +135,8 @@ set_source_files_properties(src/osmosdr.c ${osmosdr}/usb_sdr.c PROPERTIES
 # link, with the flags of its own build (apps/link/CMakeLists.txt).
 set(link ${apps_dir}/link/src)
 set(esp_dsp ${WEST_TOPDIR}/modules/lib/esp-dsp)
-set(esp_dsp_fft ${esp_dsp}/modules/fft/float/dsps_fft2r_fc32_aes3_.S)
+set(esp_dsp_fft ${esp_dsp}/modules/fft/float/dsps_fft2r_fc32_aes3_.S
+                ${esp_dsp}/modules/fft/fixed/dsps_fft2r_sc16_aes3.S)
 multiapp_extension(link APP ${apps_dir}/link STACK 2048
   SOURCES ${link}/main.c ${link}/mac.c ${link}/perf.c ${link}/qam.c ${link}/rs.c
           ${link}/hamming.c ${link}/ofdm.c ${link}/ofdm_frame.c ${link}/ofdm_test.c

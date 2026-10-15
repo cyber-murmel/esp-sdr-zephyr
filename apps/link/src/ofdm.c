@@ -258,7 +258,8 @@ extern int dsps_fft2r_sc16_aes3_(int16_t *data, int N, int16_t *w);
  */
 uint8_t dsps_fft2r_sc16_initialized = 1;
 
-int dsp_is_power_of_two(int x)
+/* Hidden: the kernel's call8 cannot take a dynamic symbol (multiapp's link extension). */
+__attribute__((visibility("hidden"))) int dsp_is_power_of_two(int x)
 {
 	return x > 0 && (x & (x - 1)) == 0;
 }
