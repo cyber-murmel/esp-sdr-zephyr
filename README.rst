@@ -86,9 +86,9 @@ Getting started
    west update
    west blobs fetch hal_espressif
    west blobs fetch esp-sdr-zephyr
-   west build -d build --sysbuild -b xiao_esp32s3/esp32s3/procpu esp-sdr-zephyr/apps/multiapp
-   west flash -d build
-   west dfu --storage -d build
+   west build --pristine --sysbuild --board xiao_esp32s3/esp32s3/procpu esp-sdr-zephyr/apps/multiapp
+   west flash
+   west dfu --storage
 
 This puts multiapp on a XIAO ESP32S3. On its USB shell ``app list``
 shows the apps and ``app run <name>`` starts one, for example

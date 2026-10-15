@@ -1,0 +1,93 @@
+[manifest]
+group-filter = ["-babblesim", "-optional", "-testing"]
+
+[[manifest.projects]]
+name = "zephyr"
+url = "https://github.com/cyber-murmel/zephyr"
+revision = "ffb8a7cce5d31e098a09854d065e2e5ef7c493a4"
+path = "modules/zephyr"
+west-commands = "scripts/west-commands.yml"
+
+[manifest.projects.nix]
+hash = "sha256-hsljlgGSKRWV71oK48J0J9jjmQRxdI8pq0I5ZD7JJrQ="
+
+[[manifest.projects]]
+name = "hal_espressif"
+url = "https://github.com/cyber-murmel/hal_espressif"
+revision = "54d64a1289e8d0cddccef6359a385ffb4c68b213"
+path = "modules/hal/espressif"
+groups = ["hal"]
+
+[manifest.projects.nix]
+hash = "sha256-2OnaUIQZHGDceOU4mvLpwgbhafByLUdmWGcjHHW7Cmw="
+
+[[manifest.projects]]
+name = "libvrt"
+url = "https://github.com/cyber-murmel/libvrt"
+revision = "6ee1471079b969d843aa2f7dbc6ac74c086168a2"
+path = "modules/lib/libvrt"
+
+[manifest.projects.nix]
+hash = "sha256-ZsZrPNPtJWvX9EZnBq+M6zWyjZtdmvsbWoaeqzkp5ik="
+
+[[manifest.projects]]
+name = "esp-sdr"
+url = "https://github.com/ESPARGOS/esp-sdr"
+revision = "1fe55351036337359bcac1ccca6db04c32fde4f8"
+path = "modules/lib/esp-sdr"
+
+[manifest.projects.nix]
+hash = "sha256-HQeEBeljbSKgxwedEtTUrRg2YbX7FHSkfPEOsxjB8tM="
+
+[[manifest.projects]]
+name = "esp-dsp"
+url = "https://github.com/espressif/esp-dsp"
+revision = "3c8ac0fdfec83740b783e200862c8d0c056de0ad"
+path = "modules/lib/esp-dsp"
+
+[manifest.projects.nix]
+hash = "sha256-APW/rEinKZI4d0d+nej3FgoZ94P2IknzADzsdywHC1s="
+
+[[manifest.projects]]
+name = "fatfs"
+url = "https://github.com/zephyrproject-rtos/fatfs"
+revision = "4f60a12c58c3de4246857ad87c40239ecd93349b"
+path = "modules/fs/fatfs"
+groups = ["fs"]
+
+[manifest.projects.nix]
+hash = "sha256-xJ4NabPhqIirDq7f9BJGMgu9RMBoWIwJvCbF4BQQgKA="
+
+[[manifest.projects]]
+name = "mbedtls"
+url = "https://github.com/zephyrproject-rtos/mbedtls"
+revision = "c43f34b93797e81fd0257c30004dcd0ae332ae51"
+path = "modules/crypto/mbedtls"
+groups = ["crypto"]
+
+[manifest.projects.nix]
+hash = "sha256-jUvtMDot7/Y8geDqNkoNRcaveWLPV8dGslwlCfAOqNk="
+
+[[manifest.projects]]
+name = "mcuboot"
+url = "https://github.com/zephyrproject-rtos/mcuboot"
+revision = "a8ffd2c312910cc648219bcb29e04260f7857492"
+path = "bootloader/mcuboot"
+groups = ["bootloader"]
+
+[manifest.projects.nix]
+hash = "sha256-bhKqDOvRXtmbdIM1PpMJwwEOB9DyLodnWsQ+epmTLhY="
+
+[[manifest.projects]]
+name = "tf-psa-crypto"
+url = "https://github.com/zephyrproject-rtos/tf-psa-crypto"
+revision = "765af96a20a2b408474dcd950372ba9af4d26b62"
+path = "modules/crypto/tf-psa-crypto"
+groups = ["crypto"]
+
+[manifest.projects.nix]
+hash = "sha256-/TE5i1wocpwhiKsn1wdtCYhJYusJWrcWiQA7bng0+hs="
+
+[manifest.self]
+path = "esp-sdr-zephyr"
+west-commands = "scripts/west-commands.yml"

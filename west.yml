@@ -21,7 +21,7 @@ manifest:
     # Xtensa changes apps/multiapp needs (doc/multiapp.md, "Zephyr changes").
     - name: zephyr
       remote: cyber-murmel
-      revision: 2823501659b0eb52da8884196fa24cd53ee66276 # esp-sdr-multiapp branch
+      revision: ffb8a7cce5d31e098a09854d065e2e5ef7c493a4 # esp-sdr-multiapp branch
       path: modules/zephyr
       import:
         name-allowlist:
