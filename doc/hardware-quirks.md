@@ -215,13 +215,14 @@ capture bank's end up to `DRAM_USER_END` (0x3fce9704).
   a PSRAM stack, which is why the prelude turns its `app_usb_init()` into a
   call that does nothing.
 
-## ESP32-C5 (receive only)
+## ESP32-C5
 
 Measured on one Waveshare ESP32-C5-Zero (ESP32-C5HF4 rev v1.0, 48 MHz
 crystal, 4 MB flash, no PSRAM), board `waveshare_esp32c5_zero/esp32c5/hpcore`
 (`boards/waveshare/esp32c5_zero/`: console on USB-Serial-JTAG, 4 MB flash
 with Espressif's partitions at the C5's 0x2000 boot offset, PSRAM disabled,
-simple boot). Nothing was transmitted.
+simple boot). The receive items were measured without transmitting; the transmit items with a
+XIAO ESP32-C6 on the other end of a 30 dB coax attenuator.
 
 - **The capture engine is the C6's with a rate field.** Raw source 15 in
   `0x600a9008` bits 20:17, rate index in bits 23:21, a 17-bit count, lanes in
@@ -305,16 +306,47 @@ simple boot). Nothing was transmitted.
   - The nibble window needs the level: a signal that exceeds `8 << lsb` counts wraps. At RX
     gain 60 on a hot link the front end clips and every window is useless; from index 48 up the
     C5 clips a tone that sits 10 dB below full scale at index 40.
+  - Only the lane word matters (an ablation with a tone from the C6 present): `0x600a9018` =
+    lanes 24 to 27 with bit 24 set. Without bit 24, or with other lane numbers, the bus carries
+    no I/Q. RUN cleared after the start, source 0 or 3 instead of 15, either clock force
+    (`0x600a9c04`, `0x600a0800` bit 2) cleared, or `0x600a901c` zeroed: the I/Q stays. The
+    selector pair `0x600a9404`/`0x600a9408` reads 0 on the working path.
   - USB: the decimated samples reach the sink in chunks every 51 us. The USB-Serial-JTAG FIFO
     takes one 64-byte packet per visit; serving it once per 8 KiB ring block (205 us) capped the
     stream near 310 kB/s and lost a quarter of the samples at 250 kS/s.
   `osmosdr_serial` takes the mode with `-DEXTRA_CONF_FILE=diag.conf` (`CONFIG_APP_RX_DIAG`); its
   250 kS/s stream ran 60 s with no index jump, and `tests/regression/stream_gapless` runs both
   receive paths against a C6 transmitter.
-- **No transmit ring.** The C5 transmits through the TX DC value register only
-  (`esp_sdr_tx_paced_*()`); `ESP_SDR_RFTEST` links the C5 librftest for `force_rx_gain()`.
-  Host-fed transmit at 250 kS/s starves on the C5 too (USB OUT delivers about 239 kS/s): 125
-  kS/s is the reliable rate on both chips.
+- **Transmit.** Two paths, both after the vendor CW turned the chain on and its tone stopped:
+  - The TX DC value register (`0x600a0c08`, `esp_sdr_tx_paced_*()`), written by the CPU. A store
+    costs 15 CPU cycles, a load 18. The library's poll costs about 177 cycles per sample (its
+    loads from `.bss`, code from flash), so it keeps the rate up to 1.35 MS/s; a loop that only
+    stores one prepacked word per sample keeps it exactly up to 8 MS/s (ceiling about 8.8). Both
+    see stalls of 3 to 36 us now and then even with interrupts locked (cause unknown); pacing on
+    absolute targets turns them into jitter, not lost samples.
+  - The DAC engine (`0x600a900c`, `esp_sdr_replay_*()`, `ESP_SDR_REPLAY`): plays up to 16383
+    words (I 9:0, Q 19:10) out of the dump bank, at 80 MS/s, or 40 MS/s with bit 17 (upstream's
+    layout; the C6 uses bit 15 instead). Bits 14 to 16 are no rate field on the C5: with them the
+    pass time is not proportional to the count, and some codes never set DONE. A repeat count
+    (bits 27:20, with LOOP) plays the passes back to back: 255 passes of 16000 words took
+    12240047 cycles against 12240000 for the samples. Repeat count 0 with LOOP plays until RUN
+    clears, and its seam is invisible (a C6 capture folded at the loop period shows no step
+    above 1 degree where one lost sample would make 31.5). Restarting a finished pass from the
+    CPU leaves a hole of 35 to 37 samples at 80 MS/s (about 0.45 us: the poll, and about 0.25 us
+    until the engine plays), so periodic content uses the repeat count. The engine owns all of
+    block 1 while it plays: no diagnostic-bus ring meanwhile.
+  - The level follows the samples times the DAC scale (`0x600a0c04` bits 23:8, one byte per
+    branch; the tone stop leaves full scale, the library sets 15 as upstream). The power step of
+    the vendor tone does nothing on either path: steps 0 to 15 gave the same level. The chain
+    compresses above amplitude times scale of about 1000 to 1500 (third harmonic at -16 dBc with
+    400 x 15); at 50 x 15 the image is 32 dB down and the third harmonic 46 dB. Once the chain
+    came up 28 dB louder with the same settings, a clean tone, not reproduced since.
+  - Half duplex only: while the chain transmits, the receive output freezes at a constant.
+    Turning the receive power and clock back on (`phy_pbus_xpd_rx_on()`, `phy_set_rxclk_en()`)
+    revives the receiver and stops the transmitter.
+  - Host-fed transmit at 250 kS/s starves on the C5 too (USB OUT delivers about 239 kS/s): 125
+    kS/s is the reliable rate on both chips. `ESP_SDR_RFTEST` links the C5 librftest for
+    `force_rx_gain()`.
 
 ## CPU and toolchain
 

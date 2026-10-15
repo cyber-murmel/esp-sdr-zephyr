@@ -6,7 +6,7 @@ end to end under twister (that one is deployed by hand, see below). Four tiers:
 | Tier | Where | Runs on | Covers |
 | --- | --- | --- | --- |
 | Unit | `tests/unit/` | host (`native_sim/native/64`), no board | Portable code as ztest suites: the 802.15.4 PHY (`ieee154_phy`), the driver's signal processing (`ieee154_dsp`), link RS(255,231) (`link_rs`) and Hamming(128,120) (`link_hamming`), the `stream` app's I/Q packing (`iq_pack`), the diagnostic-bus ring's box16 and CIC decimator (`diag_dsp`, bit-exact against naive references). With `IEEE154_TABLES` set, `ieee154_phy` and `ieee154_dsp` also print their sweep tables (`scripts/unit-tables.sh`). |
-| Integration | `tests/integration/` | one real board | ztest on the radio itself. `esp_sdr_rx_api`: the receive API's contract (error codes, bounds, one real capture per supported rate); on the S3, C6 and C5. `esp_sdr_diag_api`: the C5's gapless diagnostic-bus ring (argument contract, a 10 s run's byte rate and integrity, every step of the decimation ladder, stop and restart). Need no antenna, peer or host tool and never transmit. |
+| Integration | `tests/integration/` | one real board | ztest on the radio itself. `esp_sdr_rx_api`: the receive API's contract (error codes, bounds, one real capture per supported rate); on the S3, C6 and C5. `esp_sdr_diag_api`: the C5's gapless diagnostic-bus ring (argument contract, a 10 s run's byte rate and integrity, every step of the decimation ladder, stop and restart). Need no antenna, peer or host tool and never transmit. `esp_sdr_replay_api`: the C5's DAC-engine replay (argument contract, pass time at 80 and 40 MS/s, repeat count, restarts, receive afterwards); plays all-zero words, so only the LO leaks out: keep the board on its coax link. |
 | Regression | `tests/regression/` | two real boards | pytest through twister's multi-board harness. `ieee802154_link`: the C6 native radio and the S3 software radio exchange `apps/wpan` test frames both ways on channels 11, 15, 20 and 25, plus ACK requests. Guards against the two bugs that only ever showed as lost frames between real boards (`doc/hardware-quirks.md`). `lo_tuning`: the S3 sends tones to the C6 at overlapping LO frequencies, through the 5/6 divider and directly tuned; guards the transmit divider and `-ERANGE`. `stream_gapless`: the C6 and the C5 on a coax link stream a tone to each other through `apps/osmosdr_serial` (receive by the CPU-paced estimator or by the C5's diagnostic-bus ring); no gap may be found in the recording. |
 | Smoke | `apps/*/sample.yaml` | build, and one board | Every app builds for its boards; `apps/capture` also boots on the S3 and the C6 and must print `esp-sdr rx: ready` (console harness); `apps/multiapp` boots into an app from its file on the FAT volume (pytest, `sample.esp_sdr.multiapp.hil`). |
 
@@ -61,7 +61,8 @@ Without the variable the cases are skipped and the unit tests stay at a few seco
 
 Each test has one id per board: `integration.esp_sdr.rx_api.c6`, `.c5` and `.s3`;
 `integration.esp_sdr.diag_api.c5` (the SoCs with a gapless diagnostic-bus ring; another SoC adds
-its id and `boards/<board>.conf` to that test). The C5 and the C6 both have a USB-Serial-JTAG
+its id and `boards/<board>.conf` to that test); `integration.esp_sdr.replay_api.c5` (the same for
+the DAC-engine replay). The C5 and the C6 both have a USB-Serial-JTAG
 console, deployed the same way:
 
 ```
@@ -79,6 +80,11 @@ would be -17 ppm; the bound is 5 ppm), the consumer's cost stays under the 6 cyc
 CPU has at 240 MHz, the receiver's noise reaches the pads (the ring is not a constant), and each
 step of the decimation ladder (250 to 15.625 kS/s) has the right rate, a gapless index and the
 right count.
+
+`esp_sdr_replay_api` runs about 10 s. It times the engine against the CPU cycle counter: a pass of
+n words takes n x 3 cycles at 80 MS/s and n x 6 at 40 MS/s (240 MHz CPU) plus a start of under 400
+cycles, and so do 255 passes in a row, which shows the passes follow back to back. Pointing the 40
+MS/s bit at bit 15 instead of 17 fails the two 40 MS/s cases (146363 cycles for 96000).
 
 - C6: flashed directly with twister's device testing. Opening the C6's USB-Serial-JTAG port
   resets the chip, and the suite finishes before a plain `--device-serial` attach after the

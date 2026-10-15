@@ -23,7 +23,8 @@ Contents
    * - ``include/``
      - ``esp_sdr/``: the API, ``esp_sdr.h``, ``esp_sdr_rx.h``,
        ``esp_sdr_tx.h``, ``esp_sdr_ring.h``, ``esp_sdr_paced.h``,
-       ``esp_sdr_diag.h``, ``ieee154_phy.h``, ``ieee154_esp_sdr.h``
+       ``esp_sdr_diag.h``, ``esp_sdr_replay.h``, ``ieee154_phy.h``,
+       ``ieee154_esp_sdr.h``
    * - ``apps/``
      - - ``capture``: capture survey on the console
        - ``stream``: VITA 49.2 RX and TX over USB (CDC-NCM)
@@ -76,7 +77,9 @@ The library
   (XIAO ESP32C6) and ESP32-C5 (C5-Zero): burst captures, and continuous
   CPU-paced receive and transmit up to 250 kS/s (``esp_sdr_paced.h``);
   the C5 also has a gapless 40 MS/s ring through the modem diagnostic
-  bus (``esp_sdr_diag.h``, ``CONFIG_ESP_SDR_DIAG``). ``capture``,
+  bus (``esp_sdr_diag.h``, ``CONFIG_ESP_SDR_DIAG``) and loops waveforms
+  through its DAC engine at 80 or 40 MS/s (``esp_sdr_replay.h``,
+  ``CONFIG_ESP_SDR_REPLAY``). ``capture``,
   ``rfprobe``, ``wpan`` (C6) and ``osmosdr_serial`` run on them.
 - **Tuning:** 100 to 6000 MHz in the API, but the PLL locks over a
   chip-specific range (about 1.8 to 2.8 GHz on the S3); below 2210 MHz

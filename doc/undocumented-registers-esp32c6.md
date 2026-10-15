@@ -223,7 +223,7 @@ windows (*upstream* `modules/lib/esp-sdr/main/common/ring_capture.c:96-131,
 1485-1507`): the 160 MHz CPU has 2 cycles per sample, too few to decimate the
 whole stream.
 
-Leads for a continuous C6 receive below 80 MS/s, none tried:
+Leads for a continuous C6 receive below 80 MS/s; the first one was tried and failed:
 
 - The modem diagnostic bus into PARL_IO. It works on the ESP32-C5, gapless: the dump engine runs
   free (source 15, count 0x1ffff, SRAM block handed back), the dump word is on
@@ -231,14 +231,17 @@ Leads for a continuous C6 receive below 80 MS/s, none tried:
   PARLIO RX at 40 MHz takes every second sample of the 80 MS/s bus as 4+4 bits (`doc/hardware-quirks.md`,
   "ESP32-C5"; ESPsoup, and before it
   [Twotoz/C5VRX](https://github.com/Twotoz/C5VRX/blob/a165e19db47ebd49051217d7c968a1b8220c20fb/docs/continuous-iq-findings.md)).
-  On the C6 a sweep of 128 selector settings (2026-10-12) found only sign-like lanes, with the
-  dump engine armed as the C6 `adctrig()` does it. The C5 recipe differs in the lane register
-  (the C5 value includes bit 24; the sweep wrote 0x000c2040 without it), in running the engine
-  free with the SRAM bank handed back, and in its selector pair at 0x600a9404/0x600a9408 where the
-  C6 has DUMP_DIAG_SEL0_REG/SEL1_REG at 0x600a9018/0x600a901c. Not tried on the C6 yet with
-  those differences; the C6 diag lines are enabled in IO_MUX_MODEM_DIAG_EN_REG (0x600900bc), for
-  which no C5 counterpart was found. Sampling below 80 MHz decimates without filtering, so the analog low-pass
-  has to be narrowed first.
+  On the C5 only the lane word matters: 0x600a9018 = lanes 24 to 27 with bit 24 set; without
+  bit 24 the bus carries no I/Q, while the engine's RUN, its source, the clock forces and
+  0x600a901c do not matter, and 0x600a9404/0x600a9408 read 0 (*measured* bench 2026-10-15,
+  `doc/hardware-quirks.md`). On the C6 nothing put the dump word on the bus (*measured* bench
+  2026-10-12 and 2026-10-15, a C5 DAC-engine tone as the source): DUMP_CONFIG_REG 0x000c2040
+  and 0x010c2040 (bit 24 latches), DUMP_DIAG_SEL0_REG 0 to 63, 0x400 | k << 5, 0x02202221 and
+  0x016da658, DUMP_DIAG_SEL1_REG 0, 0x32f2 and 0x02202221, source 15 with a trigger, clocks
+  forced, IO_MUX_MODEM_DIAG_EN_REG (0x600900bc) 0x000f03c0 or all ones, block 2 owned or
+  handed back. Lanes 0 to 15 stay constant in every setting; 16 to 22 and 27 to 31 toggle the
+  same way whatever the selectors (sign-like); SEL1 0x02202221 adds two clock-like lanes, 5
+  and 7. The C6's receive stays the IQ estimator.
 - The 802.11p clock mode: `phy_11p_set(1, m)` writes MODEM_SYSCON_WIFI_BB_CFG_REG
   (0x600a981c) bits 4:2 = 4 for m = 0, else 5, presumably for 10 and 5 MHz
   channels, and clears AGC_R30_REG (0x600a7030) bit 5 (*decompile* C6 `libphy.a`
@@ -330,6 +333,10 @@ Transmit side: run, loop, rate and count of a playback
   "Front end").
 - While the engine owns the block, CPU stores are dropped and loads return
   other data, as during a capture.
+
+The C5 has the same engine at the same address (`doc/hardware-quirks.md`, "ESP32-C5"): no rate
+bit gives 80 MS/s and bit 17 gives 40 MS/s there, as upstream has it; the repeat count in bits
+27:20 plays passes back to back, and repeat count 0 with DUMP_DAC_LOOP loops without a seam.
 
 No vendor blob or ROM of the C6, C5 or C61 writes this register. Only upstream
 code does: the C5 transmitter of its first upload (`emit_dma()`, removed in

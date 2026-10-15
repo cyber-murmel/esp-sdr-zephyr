@@ -42,6 +42,13 @@
  */
 
 /**
+ * @defgroup esp_sdr_replay DAC-engine replay
+ * @ingroup esp_sdr
+ * @brief Waveform loops at 80 or 40 MS/s through the modem DAC engine, ESP32-C5
+ * (esp_sdr_replay.h, CONFIG_ESP_SDR_REPLAY).
+ */
+
+/**
  * @defgroup ieee154 IEEE 802.15.4
  * @brief Software O-QPSK PHY and the esp_sdr radio driver (CONFIG_ESP_SDR_IEEE802154).
  */
