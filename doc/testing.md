@@ -19,6 +19,26 @@ runner has no boards, so the integration and regression tests and the console sm
 built there; run them on the desk as below. The twister reports of each job are kept as
 artifacts.
 
+### Git hooks
+
+`.pre-commit-config.yaml` runs the same checks locally with [pre-commit](https://pre-commit.com)
+(in the nix shell); `pre-commit install` once sets up both hooks. Each check runs only when its
+files are staged or pushed:
+
+| Hook | Check | When |
+| --- | --- | --- |
+| `svd2md` | the register pages match `doc/registers/*.svd` | commit |
+| `svdmerge` | those SVDs merge into Espressif's | commit |
+| `soapy` | the SoapySDR module builds (in `build-soapy/`) | commit |
+| `docs` | Doxygen and Sphinx with warnings as errors | push |
+| `unit-tests` | twister on `native_sim/native/64` (the shell has no 32-bit glibc) | push |
+| `build-boards` | twister `--build-only` for the boards | by hand |
+
+`pre-commit run --hook-stage manual <hook> --all-files` runs one on demand (`build-boards` only
+runs this way), and `SKIP=<hook>[,<hook>] git commit` (or `git push`) skips some, for example
+offline: `docs` fetches Zephyr's intersphinx inventory and `svdmerge` downloads Espressif's SVDs
+into `.cache/esp-sdr-zephyr/svd` in the west workspace the first time.
+
 ## Unit tests
 
 ```

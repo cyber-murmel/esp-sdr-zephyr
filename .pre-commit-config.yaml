@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Local runs of the CI checks (.github/workflows), for pre-commit (in the nix shell).
+# `pre-commit install` once sets up both hook types. Each hook runs only when the
+# files it checks are staged. On commit: the register pages and SVDs, the SoapySDR
+# module. On push: the documentation and the unit tests. By hand only (they take
+# long): the board builds, `pre-commit run --hook-stage manual build-boards -a`.
+# doc/testing.md has the table.
+# SKIP=<id>[,<id>] git commit skips a hook, e.g. offline (docs fetch Zephyr's
+# intersphinx inventory, svdmerge Espressif's SVDs on first use, into the west
+# workspace's .cache/).
+
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
+
+repos:
+  - repo: local
+    hooks:
+      # docs.yml "Register pages"
+      - id: svd2md
+        name: register pages up to date (svd2md --check)
+        entry: python3 doc/registers/svd2md.py --check
+        language: system
+        files: ^doc/(registers/|undocumented-registers-)
+        pass_filenames: false
+
+      - id: svdmerge
+        name: register SVDs merge into Espressif's (svdmerge)
+        entry: scripts/pre-commit/svdmerge.sh
+        language: system
+        files: ^doc/registers/
+        pass_filenames: false
+
+      # build.yml "SoapySDR module"
+      - id: soapy
+        name: SoapySDR module builds
+        entry: scripts/pre-commit/soapy.sh
+        language: system
+        files: ^apps/osmosdr/(soapy/|src/esdr_proto\.h$)
+        pass_filenames: false
+
+      # docs.yml "Build": Doxygen and Sphinx with warnings as errors
+      - id: docs
+        name: documentation builds (doxygen, sphinx -W)
+        entry: scripts/pre-commit/docs.sh
+        language: system
+        files: ^(doc/|include/|README\.rst$|VERSION$|apps/[^/]+/README\.rst$)
+        pass_filenames: false
+        stages: [pre-push, manual]
+
+      # build.yml "Unit tests", without the 32-bit native_sim (no multilib glibc in the nix shell)
+      - id: unit-tests
+        name: unit tests (twister, native_sim)
+        entry: scripts/pre-commit/twister.sh -p native_sim/native/64 -T apps -T tests
+        language: system
+        files: ^(apps/|include/|lib/|tests/|CMakeLists\.txt$|Kconfig$|zephyr/)
+        pass_filenames: false
+        stages: [pre-push, manual]
+
+      # build.yml "Build <board>"
+      - id: build-boards
+        name: apps and tests build for the boards (twister --build-only)
+        entry: >-
+          scripts/pre-commit/twister.sh --build-only -T apps -T tests
+          -p xiao_esp32s3/esp32s3/procpu -p xiao_esp32c6/esp32c6/hpcore
+          -p waveshare_esp32c5_zero/esp32c5/hpcore
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [manual]
