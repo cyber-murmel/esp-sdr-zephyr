@@ -1,0 +1,13 @@
+common:
+  tags:
+    - esp-sdr
+    - hardware
+  harness: ztest
+  timeout: 120
+
+tests:
+  # The SoCs with a DAC-engine replay; add a board here with its boards/<board>.conf when
+  # another SoC gets one.
+  integration.esp_sdr.replay_api.c5:
+    platform_allow:
+      - waveshare_esp32c5_zero/esp32c5/hpcore
