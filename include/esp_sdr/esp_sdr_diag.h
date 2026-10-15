@@ -168,6 +168,13 @@ bool esp_sdr_diag_active(void);
  */
 int esp_sdr_diag_level(uint8_t *lsb);
 
+/**
+ * @brief Bench hook: called by esp_sdr_diag_run() once the dump engine runs,
+ * before the pads and the ring start. Weak and empty; a bench application can
+ * override it to change or record modem registers.
+ */
+void esp_sdr_diag_armed_hook(void);
+
 /** @} */
 
 #ifdef __cplusplus

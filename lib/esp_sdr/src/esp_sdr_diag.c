@@ -245,6 +245,10 @@ static void dma_stop(void)
 	ahb_dma_ll_rx_disconnect_all(dma, DMA_CH);
 }
 
+__weak void esp_sdr_diag_armed_hook(void)
+{
+}
+
 int esp_sdr_diag_level(uint8_t *lsb)
 {
 	/* Histogram of the magnitudes in the bank's spare bytes: the caller's stack is small. */
@@ -363,6 +367,7 @@ int esp_sdr_diag_run(const struct esp_sdr_diag_cfg *cfg, struct esp_sdr_diag_sta
 	REG_WRITE(DUMP_USAGE_REG, saved);
 	__asm__ volatile("fence rw, rw" ::: "memory");
 	(void)REG_READ(DUMP_USAGE_REG);
+	esp_sdr_diag_armed_hook();
 
 	pads_route(pins, lsb);
 	ret = esp_intr_alloc(ETS_DMA_IN_CH0_INTR_SOURCE + DMA_CH, ESP_PRIO_TO_FLAGS(1), diag_isr, NULL,

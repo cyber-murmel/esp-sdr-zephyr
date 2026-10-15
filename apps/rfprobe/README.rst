@@ -10,7 +10,8 @@ Overview
 
 A bench tool for the radio itself, on the ESP32-S3, the ESP32-C6 and the ESP32-C5: tune
 through the library's frequency plan or program the PLL directly, loop a tone
-(S3), dump raw captures and read the analog I2C registers. The firmware only
+(S3), dump raw captures and read the analog I2C registers; on the C5 also the
+diagnostic-bus ring and the transmit paths. The firmware only
 moves data; ``tools/rfprobe.py`` does the analysis on the host. It found the
 usable LO range, the VCO window comparator, the fractional-N divider words and
 the C6's stale modem state (``doc/undocumented-registers-esp32s3.md``,
@@ -29,7 +30,8 @@ Building and flashing
    west build -d build/rfprobe-c6 -b xiao_esp32c6/esp32c6/hpcore esp-sdr-zephyr/apps/rfprobe
    west flash -d build/rfprobe-c6
 
-   # ESP32-C5 (Waveshare ESP32-C5-Zero): console on USB-Serial-JTAG, receive only
+   # ESP32-C5 (Waveshare ESP32-C5-Zero): console on USB-Serial-JTAG, with ESP_SDR_DIAG and
+   # ESP_SDR_REPLAY (boards/waveshare_esp32c5_zero_hpcore.conf)
    west build -d build/rfprobe-c5 -b waveshare_esp32c5_zero/esp32c5/hpcore esp-sdr-zephyr/apps/rfprobe
    west flash -d build/rfprobe-c5
 
@@ -60,6 +62,37 @@ Shell
                                little-endian words, then "end" (S3: 0, 1, 6; C6: 0 only,
                                80 MS/s; C5: 0 to 5, 80 to 4 MS/s)
    probe dump <block> [regs]   analog I2C registers 0..regs-1 of one block (read only)
+
+   C5 only:
+   probe diag level            the nibble window (lsb) the signal needs
+   probe diag run <s> [div] [lsb|-1] [edge] [R]
+                               the gapless diagnostic-bus ring for s seconds: byte rate, skips,
+                               ppm against the system timer, sink cost
+   probe diag snap [lsb|-1] [bytes] [edge]
+                               the first ring bytes (Q nibble low, I nibble high), base64
+   probe diag iq <R> [pairs] [lsb|-1]
+                               box16 and CIC output (2.5 MS/s / R), base64
+   probe diag poke [<addr> <clear> <set>]
+                               a register change applied once the dump engine runs (bench
+                               ablation); without arguments clears the list
+   probe diag regs             0x600a9000, 0x600a9400 and 0x600a9c00 (64 words each) as the
+                               last run had them right after the pokes
+   probe tx replay <Hz> [amp] [rate 0|1] [passes] [n] [power] [extra] [scale]
+                               a whole-cycle tone played by the DAC engine (80 or 40 MS/s);
+                               passes 0 loops until "probe tx stop", otherwise prints the
+                               cycles the passes took and holds the radio for "probe tx rearm"
+   probe tx rearm <ms>         restart the finite replay back to back for ms (restart hole)
+   probe tx dc <rate> <Hz> [ms] [amp] [interp] [power]
+                               the paced TX DC path fed from a tone table on the chip: rate
+                               kept, lateness
+   probe tx dcraw <rate> <Hz> [ms] [amp]
+                               the TX DC register from a tight loop: the path's rate ceiling
+   probe tx carrier <i> <q> [rx]
+                               a constant TX DC value until "probe tx stop"; rx bits turn
+                               receive parts back on (1 power, 2 clock, 4 pbus work mode)
+   probe tx cost <reg> [n]     CPU cycles per store and load of a register, the paced loop's
+                               parts
+   probe tx stop               stop a replay or carrier
    probe sleep <ms>            C6: deep sleep with a timer wakeup (USB drops meanwhile)
 
 Host tool
