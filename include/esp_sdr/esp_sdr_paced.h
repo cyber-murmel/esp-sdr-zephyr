@@ -90,7 +90,8 @@ typedef bool (*esp_sdr_tx_paced_input_t)(void *user, int16_t *i, int16_t *q);
  *
  * @param rate_hz Input rate; rate times @p interp must divide the CPU clock.
  * @param interp Interpolation factor: 1 (input straight to the DAC), 2, 4 or 8.
- * @param power Power step, 0 weakest to esp_sdr_tx_paced_power_max().
+ * @param power Power step, 0 weakest to esp_sdr_tx_paced_power_max(). No effect on the
+ *        ESP32-C5, whose level follows the samples only (doc/hardware-quirks.md).
  * @param input Called once per input sample from esp_sdr_tx_paced_poll().
  * @param user Passed to @p input.
  * @return 0, -EINVAL, -ERANGE outside the transmit range, -EAGAIN before
@@ -111,7 +112,7 @@ uint32_t esp_sdr_tx_paced_slack(void);
 /** @brief Turn the transmit chain off and release the radio; no-op when stopped. */
 void esp_sdr_tx_paced_stop(void);
 
-/** @brief Highest power step: 2 dB per step. */
+/** @brief Highest power step: 2 dB per step of the vendor tone's backoff (none on the C5). */
 unsigned int esp_sdr_tx_paced_power_max(void);
 
 /** @brief Transmit range in MHz: what the vendor tone path tunes (C6 2.4 GHz, C5 also 5 GHz). */

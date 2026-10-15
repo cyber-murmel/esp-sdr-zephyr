@@ -202,6 +202,23 @@
 #define TXDC_IQ          GENMASK(19, 0)
 #define TXDC_INJECT      BIT(26)
 
+/*
+ * DAC engine: plays words (I 9:0, Q 19:10) from the dump bank, as upstream's
+ * first C5 transmit (git show e605684:main/c5_main.c, emit_dma(), and
+ * main/continuous_replay.h). Repeat count 0 with LOOP set plays until RUN
+ * clears. DAC_TRIG_HALF is upstream's 40 MS/s bit.
+ */
+#define DAC_TRIG_REG     0x600a900cU
+#define DAC_TRIG_RUN     BIT(31)
+#define DAC_TRIG_REPEAT  GENMASK(27, 20)
+#define DAC_TRIG_LOOP    BIT(19)
+#define DAC_TRIG_DONE    BIT(18)
+#define DAC_TRIG_HALF    BIT(17)
+#define DAC_TRIG_COUNT   GENMASK(13, 0)
+/* DAC digital scale, one byte per branch in 23:16 and 15:8; the tone stop leaves it at full scale. */
+#define DAC_SCALE_REG    0x600a0c04U
+#define DAC_SCALE_M      GENMASK(23, 8)
+
 #else
 #error "esp_sdr: unsupported SoC"
 #endif
@@ -330,6 +347,13 @@ void esp_sdr_rx_resume(void);
  */
 uint32_t esp_sdr_dump_arm(uint32_t usage);
 void esp_sdr_dump_disarm(uint32_t saved);
+/*
+ * Transmit chain on through the vendor CW, its tone stopped so that the DAC
+ * takes data, at esp_sdr_freq_mhz and a power step 0 to 15 (esp_sdr_paced.c);
+ * off again, back to receive. Lock held.
+ */
+int esp_sdr_tx_chain_on(unsigned int power);
+void esp_sdr_tx_chain_off(void);
 void esp_sdr_tx_prepare(void);
 /* esp_sdr_tx_prepare() without the settle time. */
 void esp_sdr_tx_front_end(void);

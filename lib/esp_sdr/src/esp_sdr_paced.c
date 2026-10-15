@@ -200,22 +200,15 @@ void esp_sdr_tx_paced_range(uint32_t *min_mhz, uint32_t *max_mhz)
 #endif
 }
 
-int esp_sdr_tx_paced_start(uint32_t rate_hz, unsigned int interp, unsigned int power,
-			   esp_sdr_tx_paced_input_t input, void *user)
+int esp_sdr_tx_chain_on(unsigned int power)
 {
 	uint32_t min_mhz, max_mhz;
 
-	if (rate_hz == 0U || !(interp == 1U || interp == 2U || interp == 4U || interp == 8U) ||
-	    CPU_HZ % (rate_hz * interp) != 0U || power > TX_POWER_MAX || input == NULL) {
+	esp_sdr_tx_paced_range(&min_mhz, &max_mhz);
+	if (power > TX_POWER_MAX) {
 		return -EINVAL;
 	}
-	if (!esp_sdr_ready) {
-		return -EAGAIN;
-	}
-	esp_sdr_tx_paced_range(&min_mhz, &max_mhz);
-	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
 	if (esp_sdr_freq_mhz < min_mhz || esp_sdr_freq_mhz > max_mhz) {
-		k_mutex_unlock(&esp_sdr_lock);
 		return -ERANGE;
 	}
 	/*
@@ -237,6 +230,34 @@ int esp_sdr_tx_paced_start(uint32_t rate_hz, unsigned int interp, unsigned int p
 #else
 	phy_set_freq(txp.mhz, esp_sdr_fofs_khz);
 #endif
+	return 0;
+}
+
+void esp_sdr_tx_chain_off(void)
+{
+	esp_phy_wifi_tx_tone(0, txp.mhz, (TX_POWER_MAX - txp.power) * TX_BACKOFF_STEP);
+	/* Back to receive at the frequency in use. */
+	(void)esp_sdr_retune();
+}
+
+int esp_sdr_tx_paced_start(uint32_t rate_hz, unsigned int interp, unsigned int power,
+			   esp_sdr_tx_paced_input_t input, void *user)
+{
+	int ret;
+
+	if (rate_hz == 0U || !(interp == 1U || interp == 2U || interp == 4U || interp == 8U) ||
+	    CPU_HZ % (rate_hz * interp) != 0U || power > TX_POWER_MAX || input == NULL) {
+		return -EINVAL;
+	}
+	if (!esp_sdr_ready) {
+		return -EAGAIN;
+	}
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+	ret = esp_sdr_tx_chain_on(power);
+	if (ret != 0) {
+		k_mutex_unlock(&esp_sdr_lock);
+		return ret;
+	}
 	cycles_enable();
 	memset(&stats, 0, sizeof(stats));
 	fir_design(interp);
@@ -318,10 +339,8 @@ void esp_sdr_tx_paced_stop(void)
 		return;
 	}
 	sys_write32(txp.orig, TXDC_REG);
-	esp_phy_wifi_tx_tone(0, txp.mhz, (TX_POWER_MAX - txp.power) * TX_BACKOFF_STEP);
+	esp_sdr_tx_chain_off();
 	tx_on = false;
-	/* Back to receive at the frequency in use. */
-	(void)esp_sdr_retune();
 	k_mutex_unlock(&esp_sdr_lock);
 }
 void esp_sdr_paced_sync(void)

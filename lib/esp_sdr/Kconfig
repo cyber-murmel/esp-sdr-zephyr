@@ -9,10 +9,12 @@ config ESP_SDR
 	help
 	  Burst capture of raw baseband I/Q samples from the Wi-Fi receiver,
 	  ported from ESPARGOS esp-sdr. Reserves an SRAM bank for the capture
-	  engine (64 KiB on the S3, the 128 KiB block 2 on the C6). The ESP32-C6 captures at 80 MS/s only, and
-	  streams continuously, CPU-paced (ESP_SDR_PACED). The ESP32-C5 receives at 80 to 4 MS/s
-	  into its 128 KiB block 1, which splits the image around it; no
-	  transmit or ring support.
+	  engine (64 KiB on the S3, the 128 KiB block 2 on the C6). The
+	  ESP32-C6 captures at 80 MS/s only, and streams continuously,
+	  CPU-paced (ESP_SDR_PACED). The ESP32-C5 receives at 80 to 4 MS/s
+	  into its 128 KiB block 1, which splits the image around it, streams
+	  like the C6 or gapless through the diagnostic bus (ESP_SDR_DIAG),
+	  and loops waveforms through its DAC engine (ESP_SDR_REPLAY).
 
 if ESP_SDR
 
@@ -54,6 +56,15 @@ config ESP_SDR_DIAG
 	  ring in SRAM bank 1 collects 4 bits of I and 4 bits of Q at 40 MS/s
 	  without the CPU. Drives 8 pads as outputs while it runs. Takes the
 	  bank of the capture engine and the radio for the whole run.
+
+config ESP_SDR_REPLAY
+	bool "Loop replay through the DAC engine (ESP32-C5)"
+	depends on SOC_SERIES_ESP32C5 && ESP_SDR_PACED
+	help
+	  esp_sdr_replay_*(): the modem DAC engine plays up to 16383 words
+	  out of the dump bank at 80 or 40 MS/s, once, a number of times or
+	  endlessly, without the CPU. Periodic content only: the engine owns
+	  the bank while it plays.
 
 config ESP_SDR_BANK1
 	bool "Reserve a second dump bank"
