@@ -7,6 +7,32 @@ from `ESPARGOS esp-sdr <https://github.com/ESPARGOS/esp-sdr>`__ and
 extended; a west manifest repository and Zephyr module laid out like
 `example-application <https://github.com/zephyrproject-rtos/example-application>`__.
 
+.. WARNING::
+   **This project is neither intended nor qualified for productive use!**
+
+   The main purpose of this project is "Spaß am Gerät"
+
+   + This project views safe operating parameters as suggestions
+
+     - Radios may be driven beyond their design specifications
+
+     - Generated signals may not be compliant with your local regulations
+
+   + Be a good neighbor in the spectrum
+
+     - Don't perform radiative tests
+
+     - For development you can connect two devices throug coxial cable 
+       with a 30 to 60 dB attenuator
+
+   + The firmware may **permanently** alter the radios' analog characteristics
+
+     - Devices that ran any firmware from this project should be regarded as tainted
+
+     - This **disqualifies the device from any future use in certified products**
+
+     - It is recommended to mark any used devices in a visible way
+
 Contents
 --------
 
