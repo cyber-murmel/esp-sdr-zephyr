@@ -23,6 +23,12 @@ zephyr_library_sources_ifdef(CONFIG_ESP_SDR_TX_DAC src/esp_sdr_tx_dac.c)
 zephyr_library_sources_ifdef(CONFIG_ESP_SDR_TX_DAC_SIMD src/esp_sdr_pie.S)
 zephyr_library_sources_ifdef(CONFIG_ESP_SDR_RING src/esp_sdr_ring.c src/esp_sdr_ring_fir.S)
 zephyr_library_sources_ifdef(CONFIG_ESP_SDR_RING_FIR src/esp_sdr_ring_dot.S)
+zephyr_library_sources_ifdef(CONFIG_ESP_SDR_CHANCAP src/esp_sdr_chancap.c)
+zephyr_library_sources_ifdef(CONFIG_ESP_SDR_CHANCAP_SIMD src/esp_sdr_chancap_pie.S)
+if(CONFIG_ESP_SDR_CHANCAP)
+  # Per-sample loops of the channelizer and the sink.
+  set_source_files_properties(src/esp_sdr_chancap.c PROPERTIES COMPILE_OPTIONS "-O3;-ffp-contract=fast")
+endif()
 zephyr_library_include_directories(${ESP_SDR_UPSTREAM_DIR}/main/common)
 if(CONFIG_ESP_SDR_DIAG)
   # The hal's C5 glue leaves the PARLIO low-level headers out of the include path.

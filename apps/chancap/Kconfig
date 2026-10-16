@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+mainmenu "ESP-SDR chancap"
+
+config APP_FIRST_FREQ_HZ
+	int "Centre of channel 0 in Hz at boot"
+	default 2402000000
+
+config APP_SPACING_HZ
+	int "Channel spacing in Hz at boot"
+	default 2000000
+
+config APP_CHANNELS
+	int "Channels at boot"
+	range 1 16
+	default 8
+
+config APP_CHANNEL_RATE_HZ
+	int "Per-channel sample rate in Hz at boot"
+	default 2000000
+	help
+	  The spacing or twice it for a grid that divides 16 MHz (the filter
+	  bank); 16 MHz divided by an integer for other grids (a decimator
+	  per channel, 4 MS/s for IEEE 802.15.4).
+
+config APP_WB_THRESHOLD_DB
+	int "Wideband gate threshold in dB above its noise floor"
+	default 8
+
+config APP_CH_THRESHOLD_DB
+	int "Per-channel threshold in dB above the channel's noise floor"
+	default 10
+
+config APP_LOOKBACK_US
+	int "Samples before a trigger kept in a capture, us"
+	default 64
+
+config APP_HANG_US
+	int "Hold after the power drops, us"
+	default 250
+
+config APP_MAX_CAPTURE_US
+	int "Longest capture (and the chunk length with the per-channel gate off), us"
+	default 2400
+
+config APP_AUTOSTART
+	bool "Start capturing at boot"
+	default y
+
+config APP_RX_BW_MHZ
+	int "Receive filter bandwidth in MHz at boot (0: widest, -1: the PHY's setting)"
+	range -1 69
+	default 18
+	help
+	  Two-sided. The grid fills up to 16 MHz around the LO; the widest
+	  setting lets more of what lies beyond alias in, the narrowest
+	  (13 MHz) cuts the edge channels.
+
+config APP_RX_GAIN
+	int "Receive gain index at boot (-1: hardware AGC)"
+	range -1 82
+	default -1
+
+config APP_USB_BLOCKS
+	int "4 KiB blocks between the VRT encoder and USB"
+	default 3
+	help
+	  Internal RAM above the capture bank (USB DMA). Each holds two
+	  signal data packets.
+
+config APP_SAMPLES_PER_PACKET
+	int "Complex samples per signal data packet"
+	range 1 1000
+	default 500
+	help
+	  16-bit items: 500 samples plus the header and trailer words make
+	  2024 bytes, two per block.
+
+config APP_STREAM_ID_BASE
+	hex "VITA 49 stream identifier of channel 0; channel c uses base + c"
+	default 0x5d5d0200
+
+rsource "../common/Kconfig"
+
+source "samples/subsys/usb/common/Kconfig.sample_usbd"
+
+source "Kconfig.zephyr"

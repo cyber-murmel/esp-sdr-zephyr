@@ -113,6 +113,75 @@ config ESP_SDR_RING_FIR
 	  1 KiB of IRAM, which on the S3 comes out of the same SRAM as the
 	  DRAM image.
 
+config ESP_SDR_CHANCAP
+	bool "Channelized burst capture"
+	depends on ESP_SDR_RING && ESP_SPIRAM && SMP && SCHED_CPU_MASK
+	select ESP_SDR_RING_RAW
+	help
+	  esp_sdr_chancap_start(): the ring without decimation into a
+	  hand-over ring in SRAM bank 2, a channelizer (filter bank or
+	  decimator bank) and a detector per channel on the other CPU, one
+	  I/Q capture per packet per channel from a PSRAM slab to a callback
+	  thread. Design: doc/chancap.md.
+
+if ESP_SDR_CHANCAP
+
+config ESP_SDR_CHANCAP_SIMD
+	bool "Vector unit kernels for the 8-channel filter bank"
+	default y
+	help
+	  The branch sums, twiddles and the DFT of an 8-channel bank on the
+	  PIE (esp_sdr_chancap_pie.S), bit-exact with the C reference; other
+	  geometries and the decimator bank run the C code.
+
+config ESP_SDR_CHANCAP_SLAB_KB
+	int "Capture slab in PSRAM, KiB"
+	default 512
+	help
+	  Split at start into buffers of max_capture_us samples each.
+
+config ESP_SDR_CHANCAP_QUEUE
+	int "Finished captures waiting for the callback thread"
+	default 32
+
+config ESP_SDR_CHANCAP_RING_CPU
+	int "CPU of the ring loop; the channelizer and callback run on the other"
+	range 0 1
+	default 1
+
+config ESP_SDR_CHANCAP_DSP_PRIORITY
+	int "Preemptive priority of the channelizer thread (the callback thread one below)"
+	range 1 13
+	default 1
+	help
+	  The highest preemptive priority: above the Wi-Fi driver's tasks (3
+	  to 7), the USB stack's threads (8), the shell and the logging thread
+	  (14). The channelizer is the real-time work of its CPU and must not
+	  wait behind any of them, as the hand-over ring holds about 400 us.
+	  It sleeps a tick whenever it has caught up and after an overrun, so
+	  lower threads run even when the band is busier than it keeps up
+	  with. The callback thread runs one priority lower: finished
+	  captures leave while the channelizer sleeps. Nothing cooperative may
+	  run on the channelizer's CPU: the chancap images set
+	  CONFIG_SYSTEM_WORKQUEUE_PRIORITY=11 (the CDC-ACM class's work queue
+	  takes it too), CONFIG_USBD_THREAD_PREEMPTIBLE and
+	  CONFIG_UDC_DWC2_THREAD_PREEMPTIBLE, as each of those held the CPU
+	  for hundreds of microseconds per USB transfer burst.
+
+config ESP_SDR_CHANCAP_RING_STACK_SIZE
+	int "Ring thread stack (internal RAM above the capture bank)"
+	default 1536
+
+config ESP_SDR_CHANCAP_DSP_STACK_SIZE
+	int "Channelizer thread stack (internal RAM above the capture bank)"
+	default 3072
+
+config ESP_SDR_CHANCAP_OUT_STACK_SIZE
+	int "Callback thread stack (internal RAM above the capture bank)"
+	default 2048
+
+endif # ESP_SDR_CHANCAP
+
 config ESP_SDR_TX
 	bool "Transmit backend interface"
 	depends on SOC_SERIES_ESP32S3

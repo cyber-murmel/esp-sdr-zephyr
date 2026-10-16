@@ -48,9 +48,9 @@ Contents
          (`doc/ieee802154.md <doc/ieee802154.md>`__)
    * - ``include/``
      - ``esp_sdr/``: the API, ``esp_sdr.h``, ``esp_sdr_rx.h``,
-       ``esp_sdr_tx.h``, ``esp_sdr_ring.h``, ``esp_sdr_paced.h``,
-       ``esp_sdr_diag.h``, ``esp_sdr_replay.h``, ``esp_sdr_dsp.h``, ``ieee154_phy.h``,
-       ``ieee154_esp_sdr.h``
+       ``esp_sdr_tx.h``, ``esp_sdr_ring.h``, ``esp_sdr_chancap.h``,
+       ``esp_sdr_paced.h``, ``esp_sdr_diag.h``, ``esp_sdr_replay.h``,
+       ``esp_sdr_dsp.h``, ``ieee154_phy.h``, ``ieee154_esp_sdr.h``
    * - ``apps/``
      - - ``capture``: capture survey on the console
        - ``stream``: VITA 49.2 RX and TX over USB (CDC-NCM)
@@ -64,6 +64,8 @@ Contents
        - ``multiapp``: one firmware that runs the others
          (`doc/multiapp.md <doc/multiapp.md>`__)
        - ``micropython``: MicroPython REPL on USB, toward GNU Radio flowgraphs
+       - ``chancap``: one capture per packet per channel of a grid, as
+         VITA 49.2 over USB (`doc/chancap.md <doc/chancap.md>`__)
        - ``common``: USB with DFU, watchdogs, crash records
    * - ``tests/``
      - ``unit`` (host), ``integration`` (one board), ``regression`` (two
@@ -114,7 +116,9 @@ The library
   chip-specific range (about 1.8 to 2.8 GHz on the S3); below 2210 MHz
   through the 5/6 divider. ``-ERANGE`` when the VCO is out of range.
 - **Capture:** 256 to 16380 samples at 80, 40 or 16 MS/s, analog
-  low-pass filter, optional CIC decimation; gapless ring receive.
+  low-pass filter, optional CIC decimation; gapless ring receive, and on
+  it the channelized burst capture (``esp_sdr_chancap.h``,
+  ``CONFIG_ESP_SDR_CHANCAP``): a grid of channels, one capture per packet.
 - **Gain:** AGC or a fixed index; the fixed gain and TX power steps use
   ``librftest.a`` (``west blobs fetch esp-sdr-zephyr``, or
   ``CONFIG_ESP_SDR_RFTEST=n``).

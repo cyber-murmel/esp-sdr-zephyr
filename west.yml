@@ -23,10 +23,11 @@ manifest:
     # Zephyr with ESP32-S3 SMP (zephyrproject-rtos/zephyr#120082, rebased), the
     # CDC-NCM NTB aggregation the USB stream relies on, and the llext and
     # Xtensa changes apps/multiapp needs (doc/multiapp.md, "Zephyr changes"),
-    # and LVGL allocating from the MicroPython heap (apps/micropython).
+    # LVGL allocating from the MicroPython heap (apps/micropython), and the
+    # options that make the USB stack and DWC2 threads preemptible (apps/chancap).
     - name: zephyr
       remote: cyber-murmel
-      revision: b717e7df2a04cd4583131f8efd05c78897883ab1 # esp-sdr branch
+      revision: 03b033e2609da2cf66937c6500d0a0cc22781c4f # esp-sdr + preemptible USB
       path: modules/zephyr
       import:
         name-allowlist:

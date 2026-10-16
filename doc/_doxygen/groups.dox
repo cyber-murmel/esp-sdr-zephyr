@@ -35,6 +35,13 @@
  */
 
 /**
+ * @defgroup esp_sdr_chancap Channelized burst capture
+ * @ingroup esp_sdr
+ * @brief One I/Q capture per packet per channel of a uniform grid, from the ring on the
+ * other CPU, ESP32-S3 (esp_sdr_chancap.h, CONFIG_ESP_SDR_CHANCAP).
+ */
+
+/**
  * @defgroup esp_sdr_diag Diagnostic-bus ring
  * @ingroup esp_sdr
  * @brief Gapless 40 MS/s receive through the modem diagnostic bus and PARLIO, ESP32-C5

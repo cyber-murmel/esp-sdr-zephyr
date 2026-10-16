@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 592" width="100%" style="max-width: 760px; background-color: white;" role="img" aria-label="The channelizer runs only while the wideband gate sees power" font-family="sans-serif" font-size="13">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#8a8f98"/>
+    </marker>
+  </defs>
+  <rect width="760" height="592" fill="white"/>
+  <text x="24" y="34" font-size="15" font-weight="600" fill="#1f2328">The channelizer runs only while the wideband gate sees power</text>
+
+  <g fill="none" stroke="#8a8f98" stroke-width="1.25" marker-end="url(#arrow)">
+    <path d="M200 118V152"/>
+    <path d="M350 90H560V152"/>
+    <path d="M200 208V242"/>
+    <path d="M560 208V262H350"/>
+    <path d="M350 280H560V332"/>
+    <path d="M200 298V332"/>
+    <path d="M560 388V442H350"/>
+    <path d="M200 388V422"/>
+    <path d="M200 478V512"/>
+    <path d="M330 478V495H560V512"/>
+  </g>
+
+  <g fill="none" stroke="#8a8f98" stroke-width="1.25">
+    <rect x="50" y="62" width="300" height="56" rx="8"/>
+    <rect x="50" y="152" width="300" height="56" rx="8"/>
+    <rect x="410" y="152" width="300" height="56" rx="8"/>
+    <rect x="50" y="242" width="300" height="56" rx="8"/>
+    <rect x="50" y="332" width="300" height="56" rx="8"/>
+    <rect x="410" y="332" width="300" height="56" rx="8"/>
+    <rect x="50" y="512" width="300" height="56" rx="8"/>
+    <rect x="410" y="512" width="300" height="56" rx="8"/>
+  </g>
+  <rect x="50" y="422" width="300" height="56" rx="8" fill="#2f6fdb" fill-opacity="0.12" stroke="#2f6fdb" stroke-width="2"/>
+
+  <g text-anchor="middle" font-weight="600" fill="#1f2328">
+    <text x="200" y="86">Raw I/Q</text>
+    <text x="200" y="176">Raw delay line</text>
+    <text x="560" y="176">Wideband power gate</text>
+    <text x="200" y="266">Polyphase channelizer</text>
+    <text x="200" y="356">Per-channel ring buffers</text>
+    <text x="560" y="356">Per-channel detector</text>
+    <text x="200" y="446">Capture callback</text>
+    <text x="200" y="536">VRT over USB to the host</text>
+    <text x="560" y="536">On-chip consumer</text>
+  </g>
+  <g text-anchor="middle" font-size="11.5" fill="#5a6270">
+    <text x="200" y="102">raw input from the receive ring</text>
+    <text x="200" y="192">64 µs + filter length</text>
+    <text x="560" y="192">power average vs noise floor, hang time</text>
+    <text x="200" y="282">M channels, only while the gate is open</text>
+    <text x="200" y="372">one per channel, 4 MS/s for BLE</text>
+    <text x="560" y="372">threshold and hang time per channel</text>
+    <text x="200" y="462" fill="#1f2328">one capture per packet per channel</text>
+    <text x="200" y="552">bridge emits one GNU Radio PDU each</text>
+    <text x="560" y="552">demodulator or further filtering</text>
+    <text x="455" y="254">open / close</text>
+    <text x="455" y="298">channel samples</text>
+    <text x="455" y="434">packet start, end</text>
+  </g>
+</svg>

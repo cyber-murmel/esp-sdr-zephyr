@@ -1,0 +1,18 @@
+sample:
+  name: ESP-SDR chancap
+  description: >-
+    Channelized burst capture: one VITA 49.2 stream per channel of a uniform
+    grid over a vendor bulk endpoint, one capture per packet
+common:
+  tags:
+    - esp-sdr
+    - chancap
+  sysbuild: true
+  platform_allow:
+    - xiao_esp32s3/esp32s3/procpu
+  integration_platforms:
+    - xiao_esp32s3/esp32s3/procpu
+tests:
+  # Needs a host: run tools/chancap_bridge.py (see README).
+  sample.esp_sdr.chancap:
+    build_only: true

@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# The S3 runs an app that owns the USB OTG port, so this test is deployed with `west dfu`
+# (MCUboot, sysbuild.conf) and has the USB shell of the apps (apps/common).
+
+mainmenu "ESP-SDR chancap integration test"
+
+rsource "../../../apps/common/Kconfig"
+
+source "samples/subsys/usb/common/Kconfig.sample_usbd"
+
+source "Kconfig.zephyr"

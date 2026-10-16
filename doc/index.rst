@@ -31,6 +31,7 @@ The API reference of the library is generated with Doxygen:
    apps/ubertooth
    apps/multiapp
    apps/micropython
+   apps/chancap
 
 .. toctree::
    :maxdepth: 1
@@ -40,6 +41,7 @@ The API reference of the library is generated with Doxygen:
    undocumented-registers-esp32s3
    undocumented-registers-esp32c6
    signal_path
+   chancap
    ieee802154
    ieee802154-ack
    testing
