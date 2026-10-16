@@ -95,6 +95,24 @@ config ESP_SDR_RING_BOX4
 	  4 MS/s. About 1 KiB of IRAM, which on the S3 comes out of the same
 	  SRAM as the DRAM image: leave it out where that is tight.
 
+config ESP_SDR_RING_RAW
+	bool "Ring without decimation (the unpacked 16 MS/s stream to the sink)"
+	depends on ESP_SDR_RING
+	help
+	  ESP_SDR_RING_DECIM_RAW: the sink gets the whole stream as int16
+	  pairs in chunks of up to 512, with 64 pairs of history in front,
+	  for a consumer on the other CPU.
+
+config ESP_SDR_RING_FIR
+	bool "Ring decimation by 64 to 1024 (the two-stage FIR)"
+	depends on ESP_SDR_RING
+	default y
+	help
+	  ESP_SDR_RING_DECIM_MIN to ESP_SDR_RING_DECIM_MAX. An image that
+	  runs the ring only raw or by 4 can leave the filter out: about
+	  1 KiB of IRAM, which on the S3 comes out of the same SRAM as the
+	  DRAM image.
+
 config ESP_SDR_TX
 	bool "Transmit backend interface"
 	depends on SOC_SERIES_ESP32S3

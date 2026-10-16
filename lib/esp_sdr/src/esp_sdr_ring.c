@@ -286,23 +286,35 @@ struct fstage {
 	int16_t *h, *wi, *wq;
 };
 
+BUILD_ASSERT(IS_ENABLED(CONFIG_ESP_SDR_RING_FIR) || IS_ENABLED(CONFIG_ESP_SDR_RING_RAW) ||
+	     IS_ENABLED(CONFIG_ESP_SDR_RING_BOX4), "ring: no decimation mode enabled");
+
 /* Internal RAM for the vector loads: the high region above the capture bank. */
-static int16_t fs1_h[FS1_L] __aligned(16) ESP_SDR_HIGH_RAM;
 static int16_t fs1_wi[FS1_CAP] __aligned(16) ESP_SDR_HIGH_RAM;
 static int16_t fs1_wq[FS1_CAP] __aligned(16) ESP_SDR_HIGH_RAM;
+#if defined(CONFIG_ESP_SDR_RING_FIR) || defined(CONFIG_ESP_SDR_RING_BOX4)
+/* The decimated output of a chunk (the raw path hands the window itself to the sink). */
+static int16_t out_i[OUT_MAX] __aligned(16) ESP_SDR_HIGH_RAM;
+static int16_t out_q[OUT_MAX] __aligned(16) ESP_SDR_HIGH_RAM;
+#endif
+#if defined(CONFIG_ESP_SDR_RING_FIR)
+static int16_t fs1_h[FS1_L] __aligned(16) ESP_SDR_HIGH_RAM;
 static int16_t fs2_h[FS2_LMAX] __aligned(16) ESP_SDR_HIGH_RAM;
 static int16_t fs2_wi[FS2_CAP] __aligned(16) ESP_SDR_HIGH_RAM;
 static int16_t fs2_wq[FS2_CAP] __aligned(16) ESP_SDR_HIGH_RAM;
-static int16_t out_i[OUT_MAX] __aligned(16) ESP_SDR_HIGH_RAM;
-static int16_t out_q[OUT_MAX] __aligned(16) ESP_SDR_HIGH_RAM;
 
 static struct fstage fs1 = {.h = fs1_h, .wi = fs1_wi, .wq = fs1_wq};
 static struct fstage fs2 = {.h = fs2_h, .wi = fs2_wi, .wq = fs2_wq};
+#else
+/* Stage 1's window only, as the raw path's chunk buffer. */
+static struct fstage fs1 = {.wi = fs1_wi, .wq = fs1_wq};
+#endif
 static bool fir_rot;
 static const int16_t rot_masks[24] __aligned(16) = {
 	1, 0, -1, 0, 1, 0, -1, 0, 0, -1, 0, 1, 0, -1, 0, 1, 0, 1, 0, -1, 0, 1, 0, -1,
 };
 
+#if defined(CONFIG_ESP_SDR_RING_FIR)
 static float bessel_i0(float x)
 {
 	float s = 1.0f, t = 1.0f;
@@ -408,6 +420,7 @@ HOT static uint32_t fstage_run(struct fstage *s, int16_t *oi, int16_t *oq)
 	}
 	return no;
 }
+#endif /* CONFIG_ESP_SDR_RING_FIR */
 
 /* One ring word into stage 1 (the unaligned head and tail of a chunk). */
 HOT static void fir_scalar(uint32_t w)
@@ -570,6 +583,33 @@ static ALWAYS_INLINE void wmac_irq_release(void)
 		en |= BIT(ETS_WMAC_INUM);
 	}
 	__asm__ volatile("wsr.intenable %0\n\trsync" : : "r"(en) : "memory");
+}
+
+bool esp_sdr_ring_wmac_hold(void)
+{
+	unsigned int key = arch_irq_lock();
+	uint32_t en;
+	bool was;
+
+	__asm__ volatile("rsr.intenable %0" : "=r"(en));
+	was = (en & BIT(ETS_WMAC_INUM)) != 0U;
+	en &= ~BIT(ETS_WMAC_INUM);
+	__asm__ volatile("wsr.intenable %0\n\trsync" : : "r"(en) : "memory");
+	arch_irq_unlock(key);
+	return was;
+}
+
+void esp_sdr_ring_wmac_release(bool was_enabled)
+{
+	unsigned int key = arch_irq_lock();
+	uint32_t en;
+
+	if (was_enabled) {
+		__asm__ volatile("rsr.intenable %0" : "=r"(en));
+		en |= BIT(ETS_WMAC_INUM);
+		__asm__ volatile("wsr.intenable %0\n\trsync" : : "r"(en) : "memory");
+	}
+	arch_irq_unlock(key);
 }
 
 /* Per-stage cycles for esp_sdr_ring_bench(): unpack, stage 1, stage 2, sink. */
@@ -740,15 +780,111 @@ HOT static void box4_feed(const uint32_t *p, uint32_t a, uint32_t m)
 }
 #endif /* CONFIG_ESP_SDR_RING_BOX4 */
 
+#if defined(CONFIG_ESP_SDR_RING_RAW)
+/* The history in front of the sink's pairs, in raw_hist; at most ESP_SDR_RING_RAW_HISTORY. */
+static uint32_t raw_hist;
+/* History, a remainder below 8, a chunk, raw_move()'s rounding: stage 1's window holds it all. */
+BUILD_ASSERT(ESP_SDR_RING_RAW_HISTORY + 8U + FIR_CHUNK <= FS1_CAP, "ring: raw window too small");
+
+/*
+ * n int16 forward, dst below src (they may overlap), both 4-byte aligned; reads and writes up to
+ * the next 4-byte boundary. Not memmove(): that is the ROM's, at about 12 cycles a byte, 6 per
+ * pair here.
+ */
+HOT static inline void raw_move(int16_t *dst, const int16_t *src, uint32_t n)
+{
+	uint32_t *d = (uint32_t *)dst;
+	const uint32_t *s = (const uint32_t *)src;
+
+	for (uint32_t k = (n + 1U) / 2U; k != 0U; k--) {
+		*d++ = *s++;
+		/* Keeps the compiler from making the loop a memmove() call. */
+		__asm__ volatile("" ::: "memory");
+	}
+}
+
+/* Stage 1's window as the chunk buffer; wi[0] stays 8-aligned to the pair index for the mix. */
+static void raw_reset(uint64_t start)
+{
+	fs1.n = 0;
+	fs1.base = start;
+	raw_hist = 0;
+}
+
+/*
+ * m contiguous ring pairs from position a (no wrap), unpacked, to the sink in whole groups of 8;
+ * the rest (fewer than 8) waits in the window for the next chunk. The last
+ * ESP_SDR_RING_RAW_HISTORY pairs stay in front of the next chunk, for a sink that filters in
+ * place.
+ */
+HOT static void raw_feed(const uint32_t *p, uint32_t a, uint32_t m)
+{
+	while (m != 0U) {
+		uint32_t take = MIN(m, FIR_CHUNK), done = 0, g, n;
+		uint32_t t = prof ? ccount() : 0U;
+
+		while ((fs1.n & 7U) != 0U && done < take) {
+			fir_scalar(p[a + done++]);
+		}
+		/* The unpack reads 16 bytes ahead: never past the bank's end. */
+		g = (take - done) / 8U;
+		if (a + done + 8U * g + 4U > RING_PAIRS) {
+			g = g != 0U ? g - 1U : 0U;
+		}
+		if (g != 0U) {
+			esp_sdr_ring_unpack_iq10(p + a + done, fs1.wi + fs1.n, fs1.wq + fs1.n, g);
+			if (fir_rot) {
+				esp_sdr_ring_rot_fs4(fs1.wi + fs1.n, fs1.wq + fs1.n, g, rot_masks);
+			}
+			fs1.n += 8U * g;
+			done += 8U * g;
+		}
+		while (done < take) {
+			fir_scalar(p[a + done++]);
+		}
+		PROF(0, t);
+		n = (fs1.n - raw_hist) & ~7U;
+		if (n != 0U) {
+			/* Keep the history (a multiple of 8, so wi stays aligned) and the remainder. */
+			uint32_t h = MIN(raw_hist + n, ESP_SDR_RING_RAW_HISTORY);
+			uint32_t drop = raw_hist + n - h;
+
+			/* Lanes swapped as in the FIR path: wq holds I. */
+			rs.cfg->sink(rs.cfg->user, fs1.wq + raw_hist, fs1.wi + raw_hist, n,
+				     rs.out_index);
+			/* Stage 1's slot (unused in raw mode): the sink alone, the history after. */
+			PROF(1, t);
+			rs.out_index += n;
+			rs.st->samples += n;
+			raw_move(fs1.wi, fs1.wi + drop, fs1.n - drop);
+			raw_move(fs1.wq, fs1.wq + drop, fs1.n - drop);
+			fs1.base += drop;
+			fs1.n -= drop;
+			raw_hist = h;
+		}
+		PROF(3, t);
+		a += take;
+		m -= take;
+	}
+}
+#endif /* CONFIG_ESP_SDR_RING_RAW */
+
 /* m contiguous ring pairs from position a (no wrap) through both stages. */
 HOT static void fir_feed(const uint32_t *p, uint32_t a, uint32_t m)
 {
+#if defined(CONFIG_ESP_SDR_RING_RAW)
+	if (rs.log2d == 0U) {
+		raw_feed(p, a, m);
+		return;
+	}
+#endif
 #if defined(CONFIG_ESP_SDR_RING_BOX4)
 	if (rs.log2d == 2U) {
 		box4_feed(p, a, m);
 		return;
 	}
 #endif
+#if defined(CONFIG_ESP_SDR_RING_FIR)
 	while (m != 0U) {
 		uint32_t take = MIN(m, FIR_CHUNK), done = 0, g, k2;
 		uint32_t t = prof ? ccount() : 0U;
@@ -787,21 +923,52 @@ HOT static void fir_feed(const uint32_t *p, uint32_t a, uint32_t m)
 		a += take;
 		m -= take;
 	}
+#else
+	ARG_UNUSED(p);
+	ARG_UNUSED(a);
+	ARG_UNUSED(m);
+#endif
+}
+
+/* A decimation the image supports: a power of two (2^l) of an enabled mode. */
+static bool decim_ok(unsigned int d, unsigned int l)
+{
+	if ((1U << l) != d) {
+		return false;
+	}
+	if (IS_ENABLED(CONFIG_ESP_SDR_RING_BOX4) && d == ESP_SDR_RING_DECIM_BOX4) {
+		return true;
+	}
+	if (IS_ENABLED(CONFIG_ESP_SDR_RING_RAW) && d == ESP_SDR_RING_DECIM_RAW) {
+		return true;
+	}
+	return IS_ENABLED(CONFIG_ESP_SDR_RING_FIR) && d >= ESP_SDR_RING_DECIM_MIN &&
+	       d <= ESP_SDR_RING_DECIM_MAX;
 }
 
 static void fir_setup(unsigned int d)
 {
-	uint32_t d2 = d / 8U, l2 = MIN((18U * d2 + 7U) & ~7U, FS2_LMAX);
 
+#if defined(CONFIG_ESP_SDR_RING_RAW)
+	if (d == ESP_SDR_RING_DECIM_RAW) {
+		raw_reset(0);
+		return;
+	}
+#endif
 #if defined(CONFIG_ESP_SDR_RING_BOX4)
 	if (d == ESP_SDR_RING_DECIM_BOX4) {
 		b4_reset();
 		return;
 	}
 #endif
+#if defined(CONFIG_ESP_SDR_RING_FIR)
+	{
+		uint32_t d2 = d / 8U, l2 = MIN((18U * d2 + 7U) & ~7U, FS2_LMAX);
 
-	fstage_init(&fs1, 8U, FS1_L, 17U);
-	fstage_init(&fs2, d2, l2, 14U);
+		fstage_init(&fs1, 8U, FS1_L, 17U);
+		fstage_init(&fs2, d2, l2, 14U);
+	}
+#endif
 }
 
 HOT static void unit_abandon(struct unit *u)
@@ -848,7 +1015,8 @@ static inline bool bank_idle(unsigned int b)
 /* A unit that does not continue the filtered stream restarts it on the decimation grid. */
 HOT static bool unit_begin(struct unit *u)
 {
-	uint32_t dec = 1U << rs.log2d;
+	/* Raw: on the vector groups' grid of 8, for the mix's phase. */
+	uint32_t dec = MAX(1U << rs.log2d, 8U);
 
 	u->started = true;
 	if (u->index == rs.next_pair) {
@@ -864,14 +1032,22 @@ HOT static bool unit_begin(struct unit *u)
 	u->count -= (uint32_t)skip;
 	u->index += skip;
 	rs.out_index = u->index >> rs.log2d;
+#if defined(CONFIG_ESP_SDR_RING_RAW)
+	if (rs.log2d == 0U) {
+		raw_reset(u->index);
+		return true;
+	}
+#endif
 #if defined(CONFIG_ESP_SDR_RING_BOX4)
 	if (rs.log2d == 2U) {
 		b4_reset();
 		return true;
 	}
 #endif
+#if defined(CONFIG_ESP_SDR_RING_FIR)
 	fstage_reset(&fs1, u->index);
 	fstage_reset(&fs2, u->index / 8U);
+#endif
 	return true;
 }
 
@@ -1370,11 +1546,9 @@ int esp_sdr_ring_run(const struct esp_sdr_ring_cfg *cfg, struct esp_sdr_ring_sta
 	while ((1U << l) < d) {
 		l++;
 	}
-	if ((d < ESP_SDR_RING_DECIM_MIN &&
-	     !(IS_ENABLED(CONFIG_ESP_SDR_RING_BOX4) && d == ESP_SDR_RING_DECIM_BOX4)) ||
-	    d > ESP_SDR_RING_DECIM_MAX || (1U << l) != d ||
+	if (!decim_ok(d, l) ||
 	    cfg->sink == NULL || geom_init(&g_check, cfg->unit_pairs) != 0 ||
-	    (cfg->spare_bank && !geom_two_banks(&g_check))) {
+	    ((cfg->spare_bank || cfg->spare_bank_app) && !geom_two_banks(&g_check))) {
 		return -EINVAL;
 	}
 	if ((uintptr_t)__esp_sdr_bank0_start != DUMP_BANK0_ADDR) {
@@ -1389,8 +1563,8 @@ int esp_sdr_ring_run(const struct esp_sdr_ring_cfg *cfg, struct esp_sdr_ring_sta
 	memset(stats, 0, sizeof(*stats));
 	memset(&rs, 0, sizeof(rs));
 	(void)geom_init(&rs.g, cfg->unit_pairs);
-	rs.nbanks = cfg->spare_bank ? RING_BANKS - 1U : RING_BANKS;
-	rs.burst_ok = cfg->spare_bank;
+	rs.nbanks = (cfg->spare_bank || cfg->spare_bank_app) ? RING_BANKS - 1U : RING_BANKS;
+	rs.burst_ok = cfg->spare_bank && !cfg->spare_bank_app;
 	memset(&bst, 0, sizeof(bst));
 	rs.gen_cost = 2000U;
 	rs.cfg = cfg;
@@ -1433,9 +1607,7 @@ int esp_sdr_ring_bench(const struct esp_sdr_ring_cfg *cfg, unsigned int units,
 	while ((1U << l) < d) {
 		l++;
 	}
-	if ((d < ESP_SDR_RING_DECIM_MIN &&
-	     !(IS_ENABLED(CONFIG_ESP_SDR_RING_BOX4) && d == ESP_SDR_RING_DECIM_BOX4)) ||
-	    d > ESP_SDR_RING_DECIM_MAX || (1U << l) != d ||
+	if (!decim_ok(d, l) ||
 	    cfg->sink == NULL || units == 0U) {
 		return -EINVAL;
 	}

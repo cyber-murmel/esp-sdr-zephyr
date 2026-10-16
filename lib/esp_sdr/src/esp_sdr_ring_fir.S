@@ -2,7 +2,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * From upstream ESPARGOS esp-sdr (main/targets/esp32s3/s3_firdot.S, commit
- * 1fe5535), unchanged but for this header: vector kernels of the ring's
+ * 1fe5535), unchanged but for this header and the CONFIG_ESP_SDR_RING_FIR
+ * guard around the two filter kernels: vector kernels of the ring's
  * decimating FIR (src/esp_sdr_ring.c). Upstream's comments follow.
  */
 /*
@@ -67,6 +68,7 @@ esp_sdr_ring_unpack_iq10:
     retw.n
     .size   esp_sdr_ring_unpack_iq10, . - esp_sdr_ring_unpack_iq10
 
+#if defined(CONFIG_ESP_SDR_RING_FIR)
     .align  4
     .global esp_sdr_ring_fir_split
     .type   esp_sdr_ring_fir_split, @function
@@ -161,6 +163,7 @@ esp_sdr_ring_fir8_l32:
 .Lf8_done:
     retw.n
     .size   esp_sdr_ring_fir8_l32, . - esp_sdr_ring_fir8_l32
+#endif /* CONFIG_ESP_SDR_RING_FIR */
 
 
 /*

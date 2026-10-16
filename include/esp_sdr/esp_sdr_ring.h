@@ -51,6 +51,22 @@ extern "C" {
 #define ESP_SDR_RING_BOX4_FULL_SCALE  8192
 
 /**
+ * No decimation: the sink gets the whole 16 MS/s stream, unpacked to int16
+ * (the raw 10-bit words times 64, full scale ESP_SDR_RING_RAW_FULL_SCALE)
+ * in chunks of up to 512 pairs, the optional -fs/4 mix applied; the index
+ * is the pair index. The unpack costs about 3 of the 15 cycles per pair
+ * (4.6 with the mix): the sink has the rest, so it copies and counts, and
+ * leaves the processing to the other CPU. Needs CONFIG_ESP_SDR_RING_RAW.
+ *
+ * The ESP_SDR_RING_RAW_HISTORY pairs before i[0] and q[0] are readable too: the stream's
+ * previous pairs (stale after a gap or at the start of a run), for a sink that filters in
+ * place. i and q are 16-byte aligned, and n and the index are multiples of 8.
+ */
+#define ESP_SDR_RING_DECIM_RAW        1U
+#define ESP_SDR_RING_RAW_FULL_SCALE   32768
+#define ESP_SDR_RING_RAW_HISTORY      64U
+
+/**
  * Output callback, called from the ring loop with interrupts masked on its
  * CPU: copy the samples and return quickly, never block. @p index is the
  * output sample index of i[0] and q[0] since esp_sdr_ring_run() started;
@@ -60,7 +76,10 @@ typedef void (*esp_sdr_ring_sink_t)(void *user, const int16_t *i, const int16_t 
 				    uint64_t index);
 
 struct esp_sdr_ring_cfg {
-	/** ESP_SDR_RING_DECIM_MIN to ESP_SDR_RING_DECIM_MAX, a power of two, or ESP_SDR_RING_DECIM_BOX4. */
+	/**
+	 * ESP_SDR_RING_DECIM_MIN to ESP_SDR_RING_DECIM_MAX, a power of two, or
+	 * ESP_SDR_RING_DECIM_BOX4 or ESP_SDR_RING_DECIM_RAW.
+	 */
 	unsigned int decim;
 	/**
 	 * Mix by -fs/4 before filtering: the output is centred 4 MHz above
@@ -91,6 +110,12 @@ struct esp_sdr_ring_cfg {
 	 * 3000 pairs (-EINVAL otherwise).
 	 */
 	bool spare_bank;
+	/**
+	 * Like spare_bank, but bank 2 is the app's for the run
+	 * (esp_sdr_ring_burst_buf() gives its address): no bursts, the ring
+	 * neither reads nor writes it.
+	 */
+	bool spare_bank_app;
 };
 
 /** Default unit length: 768 us at 16 MS/s. */
@@ -156,9 +181,27 @@ struct esp_sdr_ring_stats {
  */
 int esp_sdr_ring_run(const struct esp_sdr_ring_cfg *cfg, struct esp_sdr_ring_stats *stats);
 
+/**
+ * @brief Hold off the Wi-Fi MAC interrupt on the calling CPU.
+ *
+ * The ring does this on its own CPU for a run. Its handler runs for hundreds of microseconds per
+ * packet the receiver decodes, and the HAL allocates it on the CPU that started Wi-Fi: a
+ * consumer of the ring's output on that other CPU calls this from a thread pinned there, for as
+ * long as the run lasts (the MAC needs no serving while the ring owns the radio).
+ *
+ * @return Whether the line was enabled, for esp_sdr_ring_wmac_release().
+ */
+bool esp_sdr_ring_wmac_hold(void);
+
+/** @brief Undo esp_sdr_ring_wmac_hold() on the same CPU. */
+void esp_sdr_ring_wmac_release(bool was_enabled);
+
 struct esp_sdr_ring_bench_result {
 	uint32_t pairs, samples;
-	/* Filter cycles per input pair x 100: all, and unpack, stage 1, stage 2, sink. */
+	/*
+	 * Filter cycles per input pair x 100: all, and unpack, stage 1, stage 2, sink. Raw mode:
+	 * unpack, the sink, nothing, the history kept for the sink.
+	 */
 	uint32_t cycles_x100, stage_x100[4];
 };
 
