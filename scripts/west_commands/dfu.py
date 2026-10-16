@@ -187,8 +187,16 @@ class Dfu(WestCommand):
         time.sleep(1.0)
         sh = Shell(shell_tty(sn))
         out = sh.cmd("app list") if args.storage is not None else sh.cmd("kernel version")
+        # The image written this way boots unconfirmed: without a confirm the trial watchdog
+        # resets it every half minute (there is no older image to revert to).
+        if not args.no_confirm:
+            state = sh.cmd("mcuboot confirm", 0.5) + sh.cmd("mcuboot")
+            if not re.search(r"^confirmed: *1", state, re.M):
+                sh.close()
+                self.die(f"{sn}: written with esptool, but the confirm failed:\n{state}")
         sh.close()
-        self.inf(f"{sn}: written with esptool\n{out.strip()}")
+        self.inf(f"{sn}: written with esptool{'' if args.no_confirm else ' and confirmed'}\n"
+                 f"{out.strip()}")
 
     def find_board(self, args):
         boards = usb_boards()
