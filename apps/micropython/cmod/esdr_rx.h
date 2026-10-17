@@ -35,6 +35,12 @@ int esdr_rx_start(unsigned int decim, bool shift_fs4, int16_t *buf, size_t cap, 
 		  bool monitor);
 
 /*
+ * As esdr_rx_start(), at a native rate (enum esp_sdr_rate: 80, 40 or 16 MS/s on the S3) in
+ * single-bank bursts of up to ESP_SDR_SAMPLES_MAX samples: contiguous within a burst only.
+ */
+int esdr_rx_start_burst(int rate, int16_t *buf, size_t cap, uint64_t count, bool monitor);
+
+/*
  * With monitor set, the capture also takes snapshots for displays: copies the newest @p n
  * samples (int16 I, Q; zeros before the first) of the last finished snapshot to @p dst, arms
  * the next one, and returns how many samples the capture has produced so far. A display

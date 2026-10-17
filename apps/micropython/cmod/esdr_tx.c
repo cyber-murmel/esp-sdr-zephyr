@@ -5,6 +5,12 @@
  * CPU 1, MicroPython shares CPU 0) generates or copies samples into the backend's ring whenever
  * less than about 50 ms are queued. The generator's parameters live in internal RAM, written by
  * the REPL's CPU and read here; a chunk may mix two settings, which is harmless.
+ *
+ * Periodic signals can instead loop from a DAC bank at the DAC's own 40 or 80 MS/s (loop
+ * playback, esdr_tx_loop_*()): no interpolation, no feeding, the full DAC bandwidth. A loop holds
+ * a whole number of periods in at most ESP_SDR_SAMPLES_MAX samples; a change is written into the
+ * idle bank and playback restarts on it. Loop sessions run in the MicroPython thread (the radio
+ * lock is a mutex its taker must release).
  */
 
 #include <errno.h>
@@ -55,6 +61,8 @@ static uint32_t phase;
 
 static atomic_t busy, stop_req;
 static struct esdr_tx_stats stats;
+/* A loop session is open (see the loop playback section). */
+static bool loop_on;
 static K_SEM_DEFINE(start_sem, 0, 1);
 static K_SEM_DEFINE(ready_sem, 0, 1);
 static K_SEM_DEFINE(done_sem, 0, 1);
@@ -72,6 +80,37 @@ static inline int16_t clip(int32_t v)
 	return (int16_t)(v > 32767 ? 32767 : (v < -32767 ? -32767 : v));
 }
 
+/* The waveform at phase @p ph (a full turn is 2^32), full scale +-32767. */
+static inline void wave_at(enum esdr_tx_wave w, uint32_t ph, int32_t *i, int32_t *q)
+{
+	*q = 0;
+	switch (w) {
+	case ESDR_WAVE_SIN:
+		*i = sine(ph);
+		*q = -sine(ph + 0x40000000U);
+		break;
+	case ESDR_WAVE_COS:
+		*i = sine(ph + 0x40000000U);
+		*q = sine(ph);
+		break;
+	case ESDR_WAVE_SQR:
+		*i = ph < 0x80000000U ? 32767 : -32767;
+		break;
+	case ESDR_WAVE_TRI: {
+		int32_t t = (int32_t)(ph >> 16) - 32768;   /* -32768 .. 32767 sawtooth */
+
+		*i = (t < 0 ? -t : t) * 2 - 32767;
+		break;
+	}
+	case ESDR_WAVE_SAW:
+		*i = (int32_t)(ph >> 16) - 32768;
+		break;
+	default:
+		*i = 32767;
+		break;
+	}
+}
+
 /* Next @p n generator samples. */
 static void generate(struct esp_sdr_iq16 *out, size_t n)
 {
@@ -82,33 +121,9 @@ static void generate(struct esp_sdr_iq16 *out, size_t n)
 	uint32_t inc = (uint32_t)(int32_t)(int64_t)(g.cycles * 4294967296.0f);
 
 	for (size_t k = 0; k < n; k++) {
-		int32_t i, q = 0;
+		int32_t i, q;
 
-		switch (g.wave) {
-		case ESDR_WAVE_SIN:
-			i = sine(phase);
-			q = -sine(phase + 0x40000000U);
-			break;
-		case ESDR_WAVE_COS:
-			i = sine(phase + 0x40000000U);
-			q = sine(phase);
-			break;
-		case ESDR_WAVE_SQR:
-			i = phase < 0x80000000U ? 32767 : -32767;
-			break;
-		case ESDR_WAVE_TRI: {
-			int32_t t = (int32_t)(phase >> 16) - 32768;   /* -32768 .. 32767 sawtooth */
-
-			i = (t < 0 ? -t : t) * 2 - 32767;
-			break;
-		}
-		case ESDR_WAVE_SAW:
-			i = (int32_t)(phase >> 16) - 32768;
-			break;
-		default:
-			i = 32767;
-			break;
-		}
+		wave_at(g.wave, phase, &i, &q);
 		out[k].i = clip(((i * amp) >> 14) + dci);
 		out[k].q = clip(((q * amp) >> 14) + dcq);
 		phase += inc;
@@ -339,7 +354,8 @@ bool esdr_tx_wait(int32_t timeout_ms)
 void esdr_tx_get_stats(struct esdr_tx_stats *out)
 {
 	*out = stats;
-	if (atomic_get(&busy)) {
+	/* A loop does not go through the streaming backend: its counters are another session's. */
+	if (atomic_get(&busy) && !loop_on) {
 		struct esp_sdr_tx_dac_stats ds;
 
 		esp_sdr_tx_dac_get_stats(&ds);
@@ -359,4 +375,212 @@ void esdr_tx_get_stats(struct esdr_tx_stats *out)
 		out->simd = ds.simd;
 	}
 	out->queued = esp_sdr_tx_dac_queued();
+}
+
+
+/* ---- loop playback at the DAC rate ---- */
+
+static int loop_bank;
+static const int16_t *loop_src;
+static size_t loop_len;
+static uint32_t loop_interp;
+
+void esdr_tx_period(float cycles, int32_t *k_out, uint32_t *n_out)
+{
+	/* Best k / n with n <= ESP_SDR_SAMPLES_MAX: continued fraction convergents of |cycles|,
+	 * then the best semiconvergent below the limit. */
+	const int64_t nmax = ESP_SDR_SAMPLES_MAX;
+	double x = fabs((double)cycles), target = x;
+	int64_t h0 = 0, h1 = 1, k0 = 1, k1 = 0;
+	int64_t bh = 0, bk = 1;
+
+	for (int it = 0; it < 40; it++) {
+		int64_t a = (int64_t)floor(x);
+		int64_t h2 = a * h1 + h0, k2 = a * k1 + k0;
+
+		if (k2 > nmax) {
+			int64_t t = (nmax - k0) / k1;
+			int64_t sh = t * h1 + h0, sk = t * k1 + k0;
+
+			if (t > 0 && fabs((double)sh / (double)sk - target) <
+					     fabs((double)bh / (double)bk - target)) {
+				bh = sh;
+				bk = sk;
+			}
+			break;
+		}
+		h0 = h1;
+		k0 = k1;
+		h1 = h2;
+		k1 = k2;
+		bh = h1;
+		bk = k1;
+		double frac = x - (double)a;
+
+		if (frac < 1e-12) {
+			break;
+		}
+		x = 1.0 / frac;
+	}
+	/* At least ESP_SDR_SAMPLES_MIN samples, a multiple of 4: whole repeats of the period. */
+	int64_t m = 1;
+
+	while (bk * m < ESP_SDR_SAMPLES_MIN || (bk * m) % 4 != 0) {
+		m++;
+	}
+	if (bk * m > nmax) {
+		m = 1;
+		while (bk * m < ESP_SDR_SAMPLES_MIN) {
+			m++;
+		}
+	}
+	*k_out = (int32_t)(cycles < 0 ? -bh * m : bh * m);
+	*n_out = (uint32_t)(bk * m);
+}
+
+/* One period of the generator: @p k whole cycles in @p n samples, exact phases. */
+static void loop_fill_gen(uint32_t *w, uint32_t n, int32_t k)
+{
+	struct esdr_tx_gen g = gen;
+	int32_t amp = (int32_t)(MIN(g.amp * scale, 1.99f) * 16384.0f);
+	int32_t dci = (int32_t)(g.dc_i * 32767.0f), dcq = (int32_t)(g.dc_q * 32767.0f);
+	/* The phase step k / n turns, as 2^32 * k / n = step + rest / n, accumulated exactly. */
+	uint64_t turn = ((uint64_t)((int64_t)k % (int64_t)n + (int64_t)n) % n) << 32;
+	uint32_t step = (uint32_t)(turn / n), rest = (uint32_t)(turn % n);
+	uint32_t ph = 0, acc = 0;
+
+	for (uint32_t j = 0; j < n; j++) {
+		int32_t i, q;
+
+		wave_at(g.wave, ph, &i, &q);
+		w[j] = esp_sdr_tx_word(clip(((i * amp) >> 14) + dci) >> 6,
+				       clip(((q * amp) >> 14) + dcq) >> 6);
+		ph += step;
+		acc += rest;
+		if (acc >= n) {
+			acc -= n;
+			ph++;
+		}
+	}
+}
+
+/* The buffer interpolated linearly by loop_interp, cyclically. */
+static uint32_t loop_fill_buf(uint32_t *w)
+{
+	int32_t s = (int32_t)(MIN(scale, 1.99f) * 16384.0f);
+	uint32_t L = loop_interp, o = 0;
+
+	for (size_t j = 0; j < loop_len; j++) {
+		size_t j1 = j + 1U == loop_len ? 0U : j + 1U;
+		int32_t i0 = (loop_src[2U * j] * s) >> 14, q0 = (loop_src[2U * j + 1U] * s) >> 14;
+		int32_t i1 = (loop_src[2U * j1] * s) >> 14, q1 = (loop_src[2U * j1 + 1U] * s) >> 14;
+
+		for (uint32_t t = 0; t < L; t++) {
+			w[o++] = esp_sdr_tx_word(clip(i0 + (i1 - i0) * (int32_t)t / (int32_t)L) >> 6,
+						 clip(q0 + (q1 - q0) * (int32_t)t / (int32_t)L) >> 6);
+		}
+	}
+	return o;
+}
+
+static int loop_play(int bank)
+{
+	size_t words;
+	uint32_t *w = esp_sdr_tx_loop_buf(bank, &words);
+	uint32_t n;
+
+	if (w == NULL) {
+		return -EINVAL;
+	}
+	if (loop_src != NULL) {
+		n = loop_fill_buf(w);
+	} else {
+		int32_t k;
+
+		esdr_tx_period(gen.cycles, &k, &n);
+		loop_fill_gen(w, n, k);
+	}
+	return esp_sdr_tx_loop_start(bank, n);
+}
+
+int esdr_tx_loop_start(uint32_t mhz, int32_t khz, uint32_t fs, int gain, const int16_t *buf,
+		       size_t len, uint32_t interp, const struct esdr_tx_gen *g, float scale_in)
+{
+	enum esp_sdr_rate rate = fs == 80000000U ? ESP_SDR_RATE_80MSPS : ESP_SDR_RATE_40MSPS;
+	int ret = esdr_rx_init();
+
+	if (ret != 0) {
+		return ret;
+	}
+	if (esdr_rx_busy() || !atomic_cas(&busy, 0, 1)) {
+		return -EBUSY;
+	}
+	if (buf != NULL && (len == 0U || interp == 0U || len * interp < ESP_SDR_SAMPLES_MIN ||
+			    len * interp > ESP_SDR_SAMPLES_MAX)) {
+		atomic_set(&busy, 0);
+		return -EINVAL;
+	}
+	tables();
+	loop_src = buf;
+	loop_len = len;
+	loop_interp = interp;
+	if (g != NULL) {
+		gen = *g;
+	}
+	scale = scale_in;
+	memset(&stats, 0, sizeof(stats));
+	k_sem_reset(&done_sem);
+	ret = esp_sdr_set_freq(mhz);
+	if (ret == 0) {
+		ret = esp_sdr_set_freq_offset(khz);
+	}
+	if (ret == 0) {
+		ret = esp_sdr_tx_set_gain(gain);
+	}
+	if (ret == 0) {
+		ret = esp_sdr_tx_loop_begin(rate);
+	}
+	if (ret != 0) {
+		atomic_set(&busy, 0);
+		return ret;
+	}
+	loop_on = true;
+	loop_bank = 0;
+	ret = loop_play(0);
+	if (ret != 0) {
+		esdr_tx_loop_stop();
+	}
+	return ret;
+}
+
+bool esdr_tx_looping(void)
+{
+	return loop_on;
+}
+
+int esdr_tx_loop_update(void)
+{
+	if (!loop_on) {
+		return -ENOTCONN;
+	}
+	/* The idle bank, then playback moves over to it. */
+	int b = ESP_SDR_BANKS > 1 ? 1 - loop_bank : 0;
+
+	if (ESP_SDR_BANKS == 1) {
+		esp_sdr_tx_loop_halt();
+	}
+	loop_bank = b;
+	return loop_play(b);
+}
+
+void esdr_tx_loop_stop(void)
+{
+	if (!loop_on) {
+		return;
+	}
+	esp_sdr_tx_loop_end();
+	loop_on = false;
+	loop_src = NULL;
+	atomic_set(&busy, 0);
+	k_sem_give(&done_sem);
 }

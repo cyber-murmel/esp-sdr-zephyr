@@ -18,15 +18,21 @@ What runs:
    * - In the export
      - On the board
    * - ``soapy.source`` (any ``driver=``)
-     - the board's receiver: 250, 125, 62.5, 31.25 or 15.625 kS/s (other rates are rounded to
-       the nearest), one RF gain index (any gain name sets it, as the host plugin
-       ``driver=esdr`` does), offset tuning
+     - the board's receiver: continuously at 250, 125, 62.5, 31.25 or 15.625 kS/s (offset
+       tuning), or at the native 80, 40 or 16 MS/s in bursts of 16380 samples, contiguous within
+       a burst (wideband displays, short captures; 40 and 80 MS/s open the analog filters to
+       +-18 MHz); other rates are rounded to the nearest; one RF gain index (any gain name sets
+       it, as the host plugin ``driver=esdr`` does)
    * - ``soapy.sink`` (any ``driver=``)
-     - the board's transmitter (the DAC, interpolated to 40 MS/s): input rates that divide
-       40 MS/s (others are rounded to the nearest such rate), gapless up to 500 kS/s; one
-       transmit gain step from 0 (weakest, the default) to 17, which any gain name sets
-       (clamped, as with ``driver=esdr``); a centre within 500 Hz of the frequency asked for.
-       Transmitting holds the radio: no receive flowgraph meanwhile
+     - the board's transmitter. A periodic signal (a ``sig_source_c`` tone that fits a loop
+       within 1 Hz, a repeating vector or file of up to 16380 samples at the DAC rate) loops
+       at the DAC's own 40 MS/s (80 MS/s for a rate of 80 MS/s) with the analog filters at
+       +-18 MHz: any tone in the band, no CPU, changes applied at once. Anything else streams
+       through the interpolating DAC backend, gapless up to 500 kS/s (a generated signal
+       streams at up to 500 kS/s whatever the flowgraph's rate). Rates divide 40 MS/s or are
+       80 MS/s (others are rounded); one transmit gain step from 0 (weakest, the default) to
+       17, which any gain name sets (clamped, as with ``driver=esdr``); a centre within 500 Hz
+       of the frequency asked for. Transmitting holds the radio: no receive flowgraph meanwhile
    * - ``analog.sig_source_c``
      - generated in C (sine table, 16 bits); frequency, amplitude, offset and waveform change
        at once while transmitting; square, triangle and sawtooth are real (Q is zero)
@@ -105,7 +111,9 @@ The C side, used by the stand-ins and useful on its own: ``init()``, ``tune()``,
 into a buffer, int16 I/Q), ``rx_latest()`` (the newest samples, for displays),
 ``sc16_to_fc32()``, ``psd()``, the drawing helpers, ``tx_start()`` / ``tx_gen()`` /
 ``tx_scale()`` / ``tx_wait()`` / ``tx_stop()`` / ``tx_stats()`` (transmit a generated signal
-or int16 I/Q from a buffer), ``tx_gain_max()``, ``fc32_to_sc16()``,
+or int16 I/Q from a buffer), ``tx_loop()`` / ``tx_period()`` (loop one period at the DAC rate),
+``tx_gain_max()``, ``fc32_to_sc16()``, ``channel_bw()`` and ``tx_lpf()`` (the analog filters),
+``BURST_RATES``,
 ``claim()`` / ``release()`` (a volume away from USB while
 writing), ``shell()`` (Zephyr shell commands, such as ``usj`` and ``mcuboot confirm``),
 ``crash()`` and ``reset_reason()`` (why the board last restarted), ``sd_info()``.

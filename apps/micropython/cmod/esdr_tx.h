@@ -61,4 +61,19 @@ bool esdr_tx_wait(int32_t timeout_ms);
 
 void esdr_tx_get_stats(struct esdr_tx_stats *stats);
 
+/*
+ * Loop playback at the DAC rate @p fs (40 or 80 MS/s): one period of the generator @p g (cycles
+ * per DAC sample; the nearest whole number of cycles in at most ESP_SDR_SAMPLES_MAX samples) or
+ * @p buf (@p len samples) interpolated by @p interp, until esdr_tx_loop_stop(). Call from one
+ * thread: the session holds the radio's mutex.
+ */
+int esdr_tx_loop_start(uint32_t mhz, int32_t khz, uint32_t fs, int gain, const int16_t *buf,
+		       size_t len, uint32_t interp, const struct esdr_tx_gen *g, float scale);
+/* After esdr_tx_set_gen() or esdr_tx_set_scale(): play the change. */
+int esdr_tx_loop_update(void);
+void esdr_tx_loop_stop(void);
+bool esdr_tx_looping(void);
+/* The loop period for @p cycles per sample: @p k whole cycles in @p n samples. */
+void esdr_tx_period(float cycles, int32_t *k, uint32_t *n);
+
 #endif /* ESDR_TX_H_ */

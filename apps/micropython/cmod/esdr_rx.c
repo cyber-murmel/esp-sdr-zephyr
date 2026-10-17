@@ -15,6 +15,7 @@
 
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_ring.h>
+#include <esp_sdr/esp_sdr_rx.h>
 
 #include <esp_attr.h>
 
@@ -29,7 +30,13 @@ static struct {
 	uint64_t want;
 	bool monitor;
 	struct esp_sdr_ring_cfg cfg;
+	/* A native rate (enum esp_sdr_rate) for bursts instead of the ring, else -1. */
+	int burst;
 } job;
+
+/* A burst converted for the sink, a chunk at a time (CPU 1 is not time critical in bursts). */
+#define BURST_CHUNK 256U
+static EXT_RAM_BSS_ATTR int16_t burst_i[BURST_CHUNK], burst_q[BURST_CHUNK];
 
 /* Sink state, touched only by the ring loop while it runs. */
 static struct {
@@ -115,6 +122,48 @@ static void sink(void *user, const int16_t *i, const int16_t *q, size_t n, uint6
 	}
 }
 
+/*
+ * Native rates: single-bank bursts, contiguous within a burst only. Captures into a buffer take
+ * full bursts back to back (each new one after the first is a gap); display-only runs capture
+ * only when a display has armed a snapshot.
+ */
+static void burst_loop(void)
+{
+	while (!atomic_get(&stop_req)) {
+		struct esp_sdr_rx_burst b;
+		size_t n = ESP_SDR_SAMPLES_MAX;
+
+		if (job.buf == NULL && job.want == UINT64_MAX) {
+			if (atomic_get(&snap_state) != 1) {
+				k_sleep(K_MSEC(2));
+				continue;
+			}
+			n = CLAMP(snap_want, ESP_SDR_SAMPLES_MIN, ESP_SDR_SAMPLES_MAX);
+		}
+		int ret = esp_sdr_rx_capture((enum esp_sdr_rate)job.burst, n, &b);
+
+		if (ret != 0) {
+			stats.errors++;
+			stats.last_status = ret;
+			k_sleep(K_MSEC(2));
+			continue;
+		}
+		if (stats.runs > 0U && job.buf != NULL) {
+			stats.gaps++;
+		}
+		stats.runs++;
+		for (size_t k = 0; k < b.count && !atomic_get(&stop_req); k += BURST_CHUNK) {
+			size_t m = MIN(BURST_CHUNK, b.count - k);
+
+			for (size_t j = 0; j < m; j++) {
+				burst_i[j] = (int16_t)(esp_sdr_rx_i(b.words[k + j]) * 32);
+				burst_q[j] = (int16_t)(esp_sdr_rx_q(b.words[k + j]) * 32);
+			}
+			sink(NULL, burst_i, burst_q, m, snk.expect);
+		}
+	}
+}
+
 static void rx_thread_fn(void *a, void *b, void *c)
 {
 	struct esp_sdr_ring_stats rst;
@@ -126,7 +175,11 @@ static void rx_thread_fn(void *a, void *b, void *c)
 	for (;;) {
 		(void)k_sem_take(&start_sem, K_FOREVER);
 		snk.stored = 0;
-		while (!atomic_get(&stop_req)) {
+		snk.expect = 0;
+		if (job.burst >= 0) {
+			burst_loop();
+		}
+		while (job.burst < 0 && !atomic_get(&stop_req)) {
 			/* Each run counts its output from 0. */
 			snk.expect = 0;
 			stats.runs++;
@@ -180,8 +233,8 @@ int esdr_rx_init(void)
 	return 0;
 }
 
-int esdr_rx_start(unsigned int decim, bool shift_fs4, int16_t *buf, size_t cap, uint64_t count,
-		  bool monitor)
+static int start_job(unsigned int decim, bool shift_fs4, int burst, int16_t *buf, size_t cap,
+		     uint64_t count, bool monitor)
 {
 	if (!atomic_cas(&busy, 0, 1)) {
 		return -EBUSY;
@@ -197,11 +250,26 @@ int esdr_rx_start(unsigned int decim, bool shift_fs4, int16_t *buf, size_t cap, 
 	job.cfg = (struct esp_sdr_ring_cfg){
 		.decim = decim, .shift_fs4 = shift_fs4, .sink = sink,
 	};
+	job.burst = burst;
 	memset(&stats, 0, sizeof(stats));
 	atomic_set(&stop_req, 0);
 	k_sem_reset(&done_sem);
 	k_sem_give(&start_sem);
 	return 0;
+}
+
+int esdr_rx_start(unsigned int decim, bool shift_fs4, int16_t *buf, size_t cap, uint64_t count,
+		  bool monitor)
+{
+	return start_job(decim, shift_fs4, -1, buf, cap, count, monitor);
+}
+
+int esdr_rx_start_burst(int rate, int16_t *buf, size_t cap, uint64_t count, bool monitor)
+{
+	if (esp_sdr_rx_rate_hz((enum esp_sdr_rate)rate) == 0U) {
+		return -EINVAL;
+	}
+	return start_job(0, false, rate, buf, cap, count, monitor);
 }
 
 void esdr_rx_stop(void)

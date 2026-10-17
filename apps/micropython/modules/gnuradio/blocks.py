@@ -264,7 +264,7 @@ class vector_source_c(gr.tx_source):
             v = complex(v)
             a[2 * k] = max(-32767, min(32767, int(v.real * 32767)))
             a[2 * k + 1] = max(-32767, min(32767, int(v.imag * 32767)))
-        self._buf = a
+        self._buf = bytearray(a)
         if self._tb is not None and self._tb._running:
             self._tb._sinks[0]._restart()
 

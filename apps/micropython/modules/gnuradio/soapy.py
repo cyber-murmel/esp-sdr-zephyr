@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """soapy.source for the board's own radio, set up as the host plugin "driver=esdr" is
-(apps/osmosdr/soapy): one RF gain index (any gain name sets it, clamped), the rates
-16 MS/s / 64 .. 1024, offset tuning. Any driver string is accepted: the board has one
-radio. Settings change between captures; while only displays take the stream (qtgui sinks),
-a change restarts it at once."""
+(apps/osmosdr/soapy): one RF gain index (any gain name sets it, clamped), the continuous rates
+16 MS/s / 64 .. 1024 with offset tuning, and the native rates 80, 40 and 16 MS/s in bursts
+(esdr.BURST_RATES: contiguous within 16380 samples, enough for displays and short captures).
+Any driver string is accepted: the board has one radio. Settings change between captures;
+while only displays take the stream (qtgui sinks), a change restarts it at once."""
 
 import esdr
 from gnuradio import gr
@@ -19,10 +20,16 @@ def _driver(device):
 
 
 def _snap_rate(rate):
-    best = min(esdr.RATES, key=lambda r: abs(r - rate))
+    rates = esdr.RATES + esdr.BURST_RATES
+    best = min(rates, key=lambda r: abs(r - rate))
     if abs(best - rate) > 0.5:
-        print("soapy: sample rate {} -> {} (rates: {})".format(rate, best, esdr.RATES))
+        print("soapy: sample rate {} -> {} (rates: {})".format(rate, best, rates))
+    if best in esdr.BURST_RATES:
+        print("soapy: {} S/s in bursts of {} samples".format(best, _BURST))
     return best
+
+
+_BURST = 16380
 
 
 class source(gr.basic_block):
@@ -99,13 +106,20 @@ class source(gr.basic_block):
 
     # -- runtime, called by gr.top_block --
     def _run(self, count):
-        self._centre = esdr.tune(self._freq)
+        burst = self._rate in esdr.BURST_RATES
+        # 40 MHz mode: the analog filters pass +-18 MHz, for wide bursts or a wide bandwidth.
+        esdr.channel_bw(2 if (burst and self._rate >= 40e6) or self._bw > 20e6 else 0)
+        # Bursts are not mixed down: the LO sits at the centre.
+        self._centre = esdr.tune(self._freq, offset=not burst)
         esdr.rx_gain(-1 if self._auto else self._gain)
         esdr.rx_bandwidth(self._bw)
         esdr.rx_start(self._rate, self._buf, count, monitor=self._monitor)
 
     def _start(self, tb):
         count = tb._items
+        if self._rate in esdr.BURST_RATES and count > _BURST:
+            print("soapy: {} samples at {} S/s: {} bursts, not contiguous".format(
+                count, self._rate, (count + _BURST - 1) // _BURST))
         self._buf = None
         if any(s._want_buffer() for s in tb._sinks):
             self._buf = _alloc(count)
@@ -151,27 +165,32 @@ def _alloc(count):
 # ---- transmit ----
 
 _DAC_HZ = 40000000
-# Measured gapless (esdr.tx_stats() restarts 0) up to this input rate: above it the DAC backend's
-# block fill takes longer than a block plays.
+# Streaming is gapless (esdr.tx_stats() restarts 0) up to this input rate: above it the DAC
+# backend's block fill takes longer than a block plays. Periodic signals loop at the DAC rate.
 _TX_RATE_MAX_OK = 500000
+# A loop is at most this many DAC samples (one bank).
+_LOOP_MAX = 16380
+_LOOP_MIN = 256
 
 
 def _snap_tx_rate(rate):
-    """The input rate nearest to rate that divides the 40 MS/s DAC rate by 2 or more."""
-    n0 = max(2, int(round(_DAC_HZ / float(rate))))
-    best = None
-    for d in range(0, n0):
-        for n in (n0 - d, n0 + d):
-            if n >= 2 and _DAC_HZ % n == 0:
-                r = _DAC_HZ // n
-                if best is None or abs(r - rate) < abs(best - rate):
-                    best = r
-        if best is not None and d > abs(best - rate) * n0 / max(1.0, float(rate)):
-            break
+    """The input rate nearest to rate that divides 40 MS/s, or 80 MS/s (the DAC's two rates)."""
+    rate = float(rate)
+    if rate >= 60e6:
+        best = 80000000
+    else:
+        n0 = max(1, int(round(_DAC_HZ / rate)))
+        best = None
+        for d in range(0, n0 + 1):
+            for n in (n0 - d, n0 + d):
+                if n >= 1 and _DAC_HZ % n == 0:
+                    r = _DAC_HZ // n
+                    if best is None or abs(r - rate) < abs(best - rate):
+                        best = r
+            if best is not None and (n0 - d) * (n0 + d) and d > abs(best - rate) * n0 / rate:
+                break
     if abs(best - rate) > 0.5:
-        print("soapy: transmit sample rate {} -> {} (40 MS/s over a whole number)".format(rate, best))
-    if best > _TX_RATE_MAX_OK:
-        print("soapy: transmit above {} S/s is not gapless on the board".format(_TX_RATE_MAX_OK))
+        print("soapy: transmit sample rate {} -> {} (40 MS/s over a whole number, or 80 MS/s)".format(rate, best))
     return best
 
 
@@ -179,7 +198,13 @@ class sink(gr.basic_block):
     """soapy.sink for the board's own radio, as the host plugin "driver=esdr": one transmit
     gain step 0 (weakest, the default) to esdr.tx_gain_max() that any gain name sets (clamped),
     a centre within 500 Hz of the frequency asked for. Transmitting holds the radio: no receive
-    flowgraph meanwhile. Settings changed while transmitting restart the transmission."""
+    flowgraph meanwhile. Settings changed while transmitting restart the transmission.
+
+    A periodic signal (an analog.sig_source_c tone, a repeating vector_source_c or file_source
+    short enough for one DAC bank) loops at the DAC's own rate, 40 MS/s (80 MS/s for a sample
+    rate of 80 MS/s), with the analog filters in their 40 MHz mode (+-18 MHz): any tone within
+    the band, no CPU. Other signals stream through the interpolating DAC backend, gapless up to
+    500 kS/s."""
 
     _kind = "txsink"
 
@@ -196,8 +221,12 @@ class sink(gr.basic_block):
         self._rate = 250000
         self._freq = 2.45e9
         self._gain = 0
+        self._bw = 0
         self._tb = None
+        self._loop = 0
+        self._stream_rate = 250000
         self.centre = None
+        self.mode = None
         esdr.init()
 
     # -- settings --
@@ -230,7 +259,8 @@ class sink(gr.basic_block):
         pass
 
     def set_bandwidth(self, channel, bandwidth):
-        pass
+        self._bw = float(bandwidth)
+        self._restart()
 
     def set_antenna(self, channel, name):
         pass
@@ -243,15 +273,70 @@ class sink(gr.basic_block):
             print("soapy: frequency correction not supported on the board")
 
     # -- runtime, called by gr.top_block --
+    def _dac_fs(self):
+        return 80000000 if self._rate == 80000000 else _DAC_HZ
+
+    def _loop_gen(self, gen, fs):
+        """gen with its cycles per DAC sample, or None when no loop holds it within 1 Hz."""
+        wave, cycles, amp, dci, dcq = gen
+        c = cycles * self._rate / fs
+        if abs(c) >= 0.5:
+            return None
+        k, n = esdr.tx_period(c)
+        if abs(c - k / n) * fs > 1.0:
+            return None
+        return (wave, c, amp, dci, dcq)
+
+    def _plan(self, args, scale):
+        """("loop", kwargs) or ("stream", kwargs) for this source."""
+        tb = self._tb
+        fs = self._dac_fs()
+        if not tb._items:
+            if "gen" in args:
+                g = self._loop_gen(args["gen"](scale), fs)
+                if g is not None:
+                    return "loop", {"gen": g}
+            elif args["repeat"] and fs % self._rate == 0:
+                n = len(args["buf"]) // 4
+                interp = fs // self._rate
+                if _LOOP_MIN <= n * interp <= _LOOP_MAX:
+                    return "loop", {"buf": args["buf"], "interp": interp, "scale": scale}
+        if "gen" in args:
+            # A generated signal is the same at any rate that holds it: stream it at the
+            # fastest gapless rate, or the flowgraph's if that is lower.
+            wave, cycles, amp, dci, dcq = args["gen"](scale)
+            rate = min(self._rate, _TX_RATE_MAX_OK)
+            c = cycles * self._rate / rate
+            if abs(c) < 0.45 or wave == 0:
+                self._stream_rate = rate
+                return "stream", {"gen": (wave, c, amp, dci, dcq)}
+        if self._rate * 2 > _DAC_HZ:
+            raise ValueError("soapy: {} S/s only for a periodic signal (a loop at the DAC rate)"
+                             .format(self._rate))
+        if self._rate > _TX_RATE_MAX_OK:
+            print("soapy: streaming above {} S/s is not gapless on the board".format(_TX_RATE_MAX_OK))
+        self._stream_rate = self._rate
+        if "gen" in args:
+            return "stream", {"gen": args["gen"](scale)}
+        return "stream", {"buf": args["buf"], "repeat": args["repeat"], "scale": scale}
+
     def _run(self):
         tb = self._tb
-        args = tb._source._tx_args()
-        scale = tb._tx_scale()
-        if "gen" in args:
-            kw = {"gen": args["gen"](scale)}
+        mode, kw = self._plan(tb._source._tx_args(), tb._tx_scale())
+        self.mode = mode
+        # The 40 MHz mode opens the analog filters to +-18 MHz: for loops (any tone in the DAC's
+        # band) or when the flowgraph asks for more than 20 MHz.
+        esdr.channel_bw(2 if mode == "loop" or self._bw > 20e6 else 0)
+        if mode == "loop":
+            self._loop = self._dac_fs()
+            self.centre = esdr.tx_loop(self._loop, self._freq, self._gain, **kw)
         else:
-            kw = {"buf": args["buf"], "repeat": args["repeat"], "scale": scale}
-        self.centre = esdr.tx_start(int(self._rate), self._freq, self._gain, count=tb._items, **kw)
+            self._loop = 0
+            count = tb._items
+            if count and self._stream_rate != self._rate:
+                # head counts samples at the flowgraph's rate.
+                count = max(1, count * self._stream_rate // self._rate)
+            self.centre = esdr.tx_start(int(self._stream_rate), self._freq, self._gain, count=count, **kw)
 
     def _start(self, tb):
         self._tb = tb
@@ -265,12 +350,27 @@ class sink(gr.basic_block):
             self._run()
 
     def _live(self):
-        args = self._tb._source._tx_args()
-        scale = self._tb._tx_scale()
-        if "gen" in args:
-            esdr.tx_gen(*args["gen"](scale))
-        else:
+        tb = self._tb
+        args = tb._source._tx_args()
+        scale = tb._tx_scale()
+        if "gen" not in args:
             esdr.tx_scale(scale)
+            return
+        if self._loop:
+            g = self._loop_gen(args["gen"](scale), self._loop)
+            if g is None:
+                # No longer loops exactly (a tone moved below the loop's resolution): stream it.
+                self._restart()
+                return
+            esdr.tx_gen(*g)
+        else:
+            wave, cycles, amp, dci, dcq = args["gen"](scale)
+            c = cycles * self._rate / self._stream_rate
+            if abs(c) >= 0.45 or self._loop_gen(args["gen"](scale), self._dac_fs()) is not None:
+                # Out of the streaming rate's band, or now loops exactly: start over.
+                self._restart()
+                return
+            esdr.tx_gen(wave, c, amp, dci, dcq)
 
     def _stop(self, tb):
         pass
