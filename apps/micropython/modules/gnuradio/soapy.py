@@ -146,3 +146,134 @@ def _alloc(count):
         except MemoryError:
             size = (size * 3 // 4) & ~3
     raise MemoryError("no room for a capture buffer")
+
+
+# ---- transmit ----
+
+_DAC_HZ = 40000000
+# Measured gapless (esdr.tx_stats() restarts 0) up to this input rate: above it the DAC backend's
+# block fill takes longer than a block plays.
+_TX_RATE_MAX_OK = 500000
+
+
+def _snap_tx_rate(rate):
+    """The input rate nearest to rate that divides the 40 MS/s DAC rate by 2 or more."""
+    n0 = max(2, int(round(_DAC_HZ / float(rate))))
+    best = None
+    for d in range(0, n0):
+        for n in (n0 - d, n0 + d):
+            if n >= 2 and _DAC_HZ % n == 0:
+                r = _DAC_HZ // n
+                if best is None or abs(r - rate) < abs(best - rate):
+                    best = r
+        if best is not None and d > abs(best - rate) * n0 / max(1.0, float(rate)):
+            break
+    if abs(best - rate) > 0.5:
+        print("soapy: transmit sample rate {} -> {} (40 MS/s over a whole number)".format(rate, best))
+    if best > _TX_RATE_MAX_OK:
+        print("soapy: transmit above {} S/s is not gapless on the board".format(_TX_RATE_MAX_OK))
+    return best
+
+
+class sink(gr.basic_block):
+    """soapy.sink for the board's own radio, as the host plugin "driver=esdr": one transmit
+    gain step 0 (weakest, the default) to esdr.tx_gain_max() that any gain name sets (clamped),
+    a centre within 500 Hz of the frequency asked for. Transmitting holds the radio: no receive
+    flowgraph meanwhile. Settings changed while transmitting restart the transmission."""
+
+    _kind = "txsink"
+
+    def __init__(self, device, type="fc32", nchan=1, dev_args="", stream_args="",
+                 tune_args=None, other_settings=None):
+        super().__init__("soapy_sink")
+        _driver(device)
+        if type not in _TYPES:
+            raise ValueError("stream type {} (fc32 or cs16)".format(type))
+        if nchan != 1:
+            raise ValueError("one channel")
+        self.in_itemsize = _TYPES[type]
+        self.out_itemsize = 0
+        self._rate = 250000
+        self._freq = 2.45e9
+        self._gain = 0
+        self._tb = None
+        self.centre = None
+        esdr.init()
+
+    # -- settings --
+    def set_sample_rate(self, channel, rate):
+        self._rate = _snap_tx_rate(rate)
+        self._restart()
+
+    def get_sample_rate(self, channel=0):
+        return self._rate
+
+    def set_frequency(self, channel, name_or_freq, freq=None):
+        self._freq = float(name_or_freq if freq is None else freq)
+        self._restart()
+
+    def get_frequency(self, channel=0, name=None):
+        return self._freq
+
+    def set_gain(self, channel, name_or_gain, gain=None):
+        value = float(name_or_gain if gain is None else gain)
+        step = int(max(0, min(esdr.tx_gain_max(), value)))
+        if step != value:
+            print("soapy: transmit gain {} -> step {} (0 .. {})".format(value, step, esdr.tx_gain_max()))
+        self._gain = step
+        self._restart()
+
+    def get_gain(self, channel=0, name=None):
+        return self._gain
+
+    def set_gain_mode(self, channel, automatic):
+        pass
+
+    def set_bandwidth(self, channel, bandwidth):
+        pass
+
+    def set_antenna(self, channel, name):
+        pass
+
+    def set_dc_offset(self, channel, offset):
+        pass
+
+    def set_frequency_correction(self, channel, ppm):
+        if ppm:
+            print("soapy: frequency correction not supported on the board")
+
+    # -- runtime, called by gr.top_block --
+    def _run(self):
+        tb = self._tb
+        args = tb._source._tx_args()
+        scale = tb._tx_scale()
+        if "gen" in args:
+            kw = {"gen": args["gen"](scale)}
+        else:
+            kw = {"buf": args["buf"], "repeat": args["repeat"], "scale": scale}
+        self.centre = esdr.tx_start(int(self._rate), self._freq, self._gain, count=tb._items, **kw)
+
+    def _start(self, tb):
+        self._tb = tb
+        for b in tb._chain:
+            b._tb = tb
+        self._run()
+
+    def _restart(self):
+        if self._tb is not None and self._tb._running and esdr.tx_busy():
+            esdr.tx_stop()
+            self._run()
+
+    def _live(self):
+        args = self._tb._source._tx_args()
+        scale = self._tb._tx_scale()
+        if "gen" in args:
+            esdr.tx_gen(*args["gen"](scale))
+        else:
+            esdr.tx_scale(scale)
+
+    def _stop(self, tb):
+        pass
+
+    def stats(self):
+        return esdr.tx_stats()

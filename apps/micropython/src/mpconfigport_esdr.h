@@ -17,6 +17,10 @@
 
 #define MICROPY_PY_BUILTINS_INPUT           (1)
 
+/* GRC exports carry complex constants (offsets, multiply_const_cc, vector_source_c data). */
+#undef MICROPY_PY_BUILTINS_COMPLEX
+#define MICROPY_PY_BUILTINS_COMPLEX         (1)
+
 /*
  * The Python heap: CONFIG_MICROPY_HEAP_SIZE of internal RAM, which the receive ring leaves
  * little of, plus CONFIG_APP_MP_PSRAM_HEAP_KB of PSRAM that esdr_port_init() adds at every

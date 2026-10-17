@@ -17,6 +17,12 @@
  *                              keeps the latest samples for rx_latest() (displays)
  *   rx_wait([timeout_ms]) -> done, rx_stop(), rx_busy(), rx_stats() -> dict
  *   sc16_to_fc32(src, dst, scale)  int16 pairs to float32 pairs times scale
+ *   tx_start(rate, hz, gain, buf=None, repeat=False, count=0, scale=1.0, gen=None) -> centre
+ *                              transmit buf (int16 I, Q) or the generator gen = (wave, cycles
+ *                              per sample, amp, dc_i, dc_q) at rate (divides 40 MS/s)
+ *   tx_gen(...), tx_scale(s)   change the generator or the buffer scale while transmitting
+ *   tx_wait([timeout_ms]) -> done, tx_stop(), tx_busy(), tx_stats() -> dict, tx_gain_max()
+ *   fc32_to_sc16(src, dst, scale)  float32 pairs times scale to clipped int16 pairs
  *   shell(cmd) -> str          a Zephyr shell command (usj, mcuboot confirm, ...)
  *   claim(mnt), release(mnt)   take a volume ("/FLASH:", "/SD:") from the USB host for
  *                              writing, give it back (src/usb_disks.h)
@@ -56,11 +62,14 @@
 #include "app_crash.h"
 #include "usb_disks.h"
 #include "esdr_rx.h"
+#include "esdr_tx.h"
 
 #define OFFSET_HZ (ESP_SDR_RING_RATE_HZ / 4U)
 
 /* The capture buffer, kept alive while the engine writes into it. */
 MP_REGISTER_ROOT_POINTER(mp_obj_t esdr_rx_buf);
+/* The transmit buffer, read by the feeder thread while it plays. */
+MP_REGISTER_ROOT_POINTER(mp_obj_t esdr_tx_buf);
 
 /*
  * ---- heap, added at every (soft) start ----
@@ -85,6 +94,7 @@ void esdr_port_init(void)
 	gc_add(fast_heap, fast_heap + sizeof(fast_heap));
 	gc_add(psram_heap, psram_heap + sizeof(psram_heap));
 	MP_STATE_PORT(esdr_rx_buf) = MP_OBJ_NULL;
+	MP_STATE_PORT(esdr_tx_buf) = MP_OBJ_NULL;
 }
 
 void esdr_port_deinit(void)
@@ -93,6 +103,9 @@ void esdr_port_deinit(void)
 	esdr_rx_stop();
 	(void)esdr_rx_wait(-1);
 	MP_STATE_PORT(esdr_rx_buf) = MP_OBJ_NULL;
+	esdr_tx_stop();
+	(void)esdr_tx_wait(3000);
+	MP_STATE_PORT(esdr_tx_buf) = MP_OBJ_NULL;
 #ifdef CONFIG_LVGL
 	/*
 	 * LVGL's state, displays and draw buffers included, was in the heap, which the port has
@@ -114,7 +127,7 @@ static void check(int ret)
 
 static void check_idle(void)
 {
-	if (esdr_rx_busy()) {
+	if (esdr_rx_busy() || esdr_tx_busy()) {
 		mp_raise_OSError(EBUSY);
 	}
 }
@@ -238,6 +251,9 @@ static mp_obj_t esdr_rx_start_fn(size_t n_args, const mp_obj_t *pos_args, mp_map
 		buf = bi.buf;
 		cap = bi.len / 4U;
 	}
+	if (esdr_tx_busy()) {
+		mp_raise_OSError(EBUSY);
+	}
 	check(esdr_rx_start(decim, args[ARG_offset].u_bool, buf, cap,
 			    (uint64_t)args[ARG_count].u_int, args[ARG_monitor].u_bool));
 	MP_STATE_PORT(esdr_rx_buf) = args[ARG_buf].u_obj;
@@ -309,6 +325,211 @@ static mp_obj_t esdr_rx_stats_fn(void)
 	return d;
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(esdr_rx_stats_obj, esdr_rx_stats_fn);
+
+/* ---- transmit ---- */
+
+static void tx_gen_from(struct esdr_tx_gen *g, mp_obj_t t)
+{
+	mp_obj_t *items;
+	size_t len;
+
+	mp_obj_get_array(t, &len, &items);
+	if (len != 5) {
+		mp_raise_ValueError(MP_ERROR_TEXT("gen: (wave, cycles, amp, dc_i, dc_q)"));
+	}
+	g->wave = (enum esdr_tx_wave)mp_obj_get_int(items[0]);
+	g->cycles = (float)mp_obj_get_float(items[1]);
+	g->amp = (float)mp_obj_get_float(items[2]);
+	g->dc_i = (float)mp_obj_get_float(items[3]);
+	g->dc_q = (float)mp_obj_get_float(items[4]);
+}
+
+/* tx_start(rate, hz, gain, buf=None, repeat=False, count=0, scale=1.0, gen=None) -> centre
+ * Transmits from the generator gen = (wave, cycles per sample, amp, dc_i, dc_q), or plays buf
+ * (int16 I, Q). rate divides 40 MS/s. The centre is within 500 Hz of hz. */
+static mp_obj_t esdr_tx_start_fn(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args)
+{
+	enum { ARG_rate, ARG_hz, ARG_gain, ARG_buf, ARG_repeat, ARG_count, ARG_scale, ARG_gen };
+	static const mp_arg_t allowed[] = {
+		{MP_QSTR_rate, MP_ARG_REQUIRED | MP_ARG_INT, {.u_int = 0}},
+		{MP_QSTR_hz, MP_ARG_REQUIRED | MP_ARG_OBJ, {.u_obj = MP_OBJ_NULL}},
+		{MP_QSTR_gain, MP_ARG_REQUIRED | MP_ARG_INT, {.u_int = 0}},
+		{MP_QSTR_buf, MP_ARG_OBJ, {.u_obj = mp_const_none}},
+		{MP_QSTR_repeat, MP_ARG_BOOL, {.u_bool = false}},
+		{MP_QSTR_count, MP_ARG_INT, {.u_int = 0}},
+		{MP_QSTR_scale, MP_ARG_OBJ, {.u_obj = mp_const_none}},
+		{MP_QSTR_gen, MP_ARG_OBJ, {.u_obj = mp_const_none}},
+	};
+	mp_arg_val_t args[MP_ARRAY_SIZE(allowed)];
+	struct esdr_tx_gen g = {ESDR_WAVE_COS, 0.0f, 0.0f, 0.0f, 0.0f};
+	const int16_t *buf = NULL;
+	size_t len = 0;
+
+	mp_arg_parse_all(n_args, pos_args, kw_args, MP_ARRAY_SIZE(allowed), allowed, args);
+	mp_int_t rate = args[ARG_rate].u_int;
+
+	if (rate < 2 || 40000000 % rate != 0 || 40000000 / rate < 2) {
+		mp_raise_ValueError(MP_ERROR_TEXT("rate: a divisor of 40 MS/s, at most 20 MS/s"));
+	}
+	if (args[ARG_count].u_int < 0) {
+		mp_raise_ValueError(MP_ERROR_TEXT("count < 0"));
+	}
+	double hz = mp_obj_get_float(args[ARG_hz].u_obj);
+
+	if (hz < ESP_SDR_FREQ_MIN_MHZ * 1e6 - 0.5e6 || hz > ESP_SDR_FREQ_MAX_MHZ * 1e6 + 0.5e6) {
+		mp_raise_ValueError(MP_ERROR_TEXT("frequency out of range"));
+	}
+	if (args[ARG_buf].u_obj != mp_const_none) {
+		mp_buffer_info_t bi;
+
+		mp_get_buffer_raise(args[ARG_buf].u_obj, &bi, MP_BUFFER_READ);
+		if (((uintptr_t)bi.buf & 1U) != 0U || bi.len < 4) {
+			mp_raise_ValueError(MP_ERROR_TEXT("buf: 16-bit aligned, one sample at least"));
+		}
+		buf = bi.buf;
+		len = bi.len / 4U;
+	} else if (args[ARG_gen].u_obj != mp_const_none) {
+		tx_gen_from(&g, args[ARG_gen].u_obj);
+	}
+	uint32_t mhz = (uint32_t)llround(hz / 1e6);
+	int32_t khz = (int32_t)llround((hz - (double)mhz * 1e6) / 1e3);
+	float scale = args[ARG_scale].u_obj == mp_const_none ? 1.0f
+							      : (float)mp_obj_get_float(args[ARG_scale].u_obj);
+
+	if (esdr_rx_busy()) {
+		mp_raise_OSError(EBUSY);
+	}
+	check(esdr_tx_start(mhz, khz, (uint32_t)rate, args[ARG_gain].u_int, buf, len,
+			    args[ARG_repeat].u_bool, &g, scale, (uint64_t)args[ARG_count].u_int));
+	MP_STATE_PORT(esdr_tx_buf) = args[ARG_buf].u_obj;
+	return mp_obj_new_float((mp_float_t)((double)mhz * 1e6 + (double)khz * 1e3));
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(esdr_tx_start_obj, 3, esdr_tx_start_fn);
+
+/* tx_gen(wave, cycles, amp, dc_i, dc_q): the generator's new settings, also while running. */
+static mp_obj_t esdr_tx_gen_fn(size_t n_args, const mp_obj_t *args)
+{
+	struct esdr_tx_gen g;
+	mp_obj_t t = mp_obj_new_tuple(n_args, args);
+
+	tx_gen_from(&g, t);
+	esdr_tx_set_gen(&g);
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_tx_gen_obj, 5, 5, esdr_tx_gen_fn);
+
+static mp_obj_t esdr_tx_scale_fn(mp_obj_t scale_in)
+{
+	esdr_tx_set_scale((float)mp_obj_get_float(scale_in));
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(esdr_tx_scale_obj, esdr_tx_scale_fn);
+
+static mp_obj_t esdr_tx_stop_fn(void)
+{
+	esdr_tx_stop();
+	if (!esdr_tx_wait(3000)) {
+		mp_raise_OSError(ETIMEDOUT);
+	}
+	MP_STATE_PORT(esdr_tx_buf) = MP_OBJ_NULL;
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(esdr_tx_stop_obj, esdr_tx_stop_fn);
+
+static mp_obj_t esdr_tx_busy_fn(void)
+{
+	return mp_obj_new_bool(esdr_tx_busy());
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(esdr_tx_busy_obj, esdr_tx_busy_fn);
+
+/* As rx_wait(): in short slices, stopping the transmission on an exception. */
+static mp_obj_t esdr_tx_wait_fn(size_t n_args, const mp_obj_t *args)
+{
+	mp_int_t timeout = n_args > 0 ? mp_obj_get_int(args[0]) : -1;
+	mp_uint_t t0 = mp_hal_ticks_ms();
+	bool done = false;
+	nlr_buf_t nlr;
+
+	if (nlr_push(&nlr) == 0) {
+		for (;;) {
+			done = esdr_tx_wait(20);
+			if (done || (timeout >= 0 && mp_hal_ticks_ms() - t0 >= (mp_uint_t)timeout)) {
+				break;
+			}
+			mp_handle_pending(true);
+		}
+		nlr_pop();
+	} else {
+		esdr_tx_stop();
+		(void)esdr_tx_wait(-1);
+		MP_STATE_PORT(esdr_tx_buf) = MP_OBJ_NULL;
+		nlr_jump(nlr.ret_val);
+	}
+	if (done) {
+		MP_STATE_PORT(esdr_tx_buf) = MP_OBJ_NULL;
+	}
+	return mp_obj_new_bool(done);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_tx_wait_obj, 0, 1, esdr_tx_wait_fn);
+
+static mp_obj_t esdr_tx_stats_fn(void)
+{
+	struct esdr_tx_stats s;
+	mp_obj_t d = mp_obj_new_dict(18);
+
+	esdr_tx_get_stats(&s);
+#define PUT(name, val) mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_##name), (val))
+	PUT(fed, mp_obj_new_int_from_ull(s.fed));
+	PUT(played, mp_obj_new_int_from_ull(s.played));
+	PUT(dropped, mp_obj_new_int_from_ull(s.dropped));
+	PUT(underruns, mp_obj_new_int_from_uint(s.underruns));
+	PUT(restarts, mp_obj_new_int_from_uint(s.restarts));
+	PUT(queued, mp_obj_new_int_from_uint(s.queued));
+	PUT(last_error, mp_obj_new_int(s.last_error));
+	PUT(errors, mp_obj_new_int_from_uint(s.errors));
+	PUT(switches, mp_obj_new_int_from_uint(s.switches));
+	PUT(fill_us_max, mp_obj_new_int_from_uint(s.fill_us_max));
+	PUT(wake_late_us_max, mp_obj_new_int_from_uint(s.wake_late_us_max));
+	PUT(idle_us_max, mp_obj_new_int_from_uint(s.idle_us_max));
+	PUT(switch_us_max, mp_obj_new_int_from_uint(s.switch_us_max));
+	PUT(slack_us_min, mp_obj_new_int(s.slack_us_min));
+	PUT(start_margin_us, mp_obj_new_int(s.start_margin_us));
+	PUT(simd, mp_obj_new_bool(s.simd));
+#undef PUT
+	return d;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(esdr_tx_stats_obj, esdr_tx_stats_fn);
+
+static mp_obj_t esdr_tx_gain_max_fn(void)
+{
+	return mp_obj_new_int(esp_sdr_tx_gain_max());
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(esdr_tx_gain_max_obj, esdr_tx_gain_max_fn);
+
+/* fc32_to_sc16(src, dst, scale): float32 pairs times scale to clipped int16 pairs, as many as
+ * both hold; returns that count of samples. */
+static mp_obj_t esdr_fc32_to_sc16(mp_obj_t src_in, mp_obj_t dst_in, mp_obj_t scale_in)
+{
+	mp_buffer_info_t src, dst;
+	float scale = (float)mp_obj_get_float(scale_in);
+
+	mp_get_buffer_raise(src_in, &src, MP_BUFFER_READ);
+	mp_get_buffer_raise(dst_in, &dst, MP_BUFFER_WRITE);
+	size_t n = MIN(src.len / 4U, dst.len / 2U) & ~1U;
+	const float *s = src.buf;
+	int16_t *o = dst.buf;
+
+	if ((((uintptr_t)s) & 3U) != 0U || (((uintptr_t)o) & 1U) != 0U) {
+		mp_raise_ValueError(MP_ERROR_TEXT("unaligned buffer"));
+	}
+	for (size_t k = 0; k < n; k++) {
+		float v = s[k] * scale;
+
+		o[k] = (int16_t)(v > 32767.0f ? 32767 : (v < -32767.0f ? -32767 : (int)v));
+	}
+	return mp_obj_new_int_from_uint(n / 2U);
+}
+static MP_DEFINE_CONST_FUN_OBJ_3(esdr_fc32_to_sc16_obj, esdr_fc32_to_sc16);
 
 /* sc16_to_fc32(src, dst, scale): as many pairs as both hold; returns that count. */
 static mp_obj_t esdr_sc16_to_fc32(mp_obj_t src_in, mp_obj_t dst_in, mp_obj_t scale_in)
@@ -477,6 +698,15 @@ static const mp_rom_map_elem_t esdr_globals_table[] = {
 	{MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_esdr)},
 	{MP_ROM_QSTR(MP_QSTR_init), MP_ROM_PTR(&esdr_init_obj)},
 	{MP_ROM_QSTR(MP_QSTR_tune), MP_ROM_PTR(&esdr_tune_obj)},
+	{MP_ROM_QSTR(MP_QSTR_tx_start), MP_ROM_PTR(&esdr_tx_start_obj)},
+	{MP_ROM_QSTR(MP_QSTR_tx_gen), MP_ROM_PTR(&esdr_tx_gen_obj)},
+	{MP_ROM_QSTR(MP_QSTR_tx_scale), MP_ROM_PTR(&esdr_tx_scale_obj)},
+	{MP_ROM_QSTR(MP_QSTR_tx_stop), MP_ROM_PTR(&esdr_tx_stop_obj)},
+	{MP_ROM_QSTR(MP_QSTR_tx_busy), MP_ROM_PTR(&esdr_tx_busy_obj)},
+	{MP_ROM_QSTR(MP_QSTR_tx_wait), MP_ROM_PTR(&esdr_tx_wait_obj)},
+	{MP_ROM_QSTR(MP_QSTR_tx_stats), MP_ROM_PTR(&esdr_tx_stats_obj)},
+	{MP_ROM_QSTR(MP_QSTR_tx_gain_max), MP_ROM_PTR(&esdr_tx_gain_max_obj)},
+	{MP_ROM_QSTR(MP_QSTR_fc32_to_sc16), MP_ROM_PTR(&esdr_fc32_to_sc16_obj)},
 	{MP_ROM_QSTR(MP_QSTR_rx_gain), MP_ROM_PTR(&esdr_rx_gain_obj)},
 	{MP_ROM_QSTR(MP_QSTR_rx_gain_max), MP_ROM_PTR(&esdr_rx_gain_max_obj)},
 	{MP_ROM_QSTR(MP_QSTR_rx_bandwidth), MP_ROM_PTR(&esdr_rx_bandwidth_obj)},

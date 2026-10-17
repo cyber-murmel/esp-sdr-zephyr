@@ -273,11 +273,28 @@ def run():
             raise
         h(signal.SIGINT, None)
     finally:
+        # The window closes with the loop, as when a desktop export exits: the export's
+        # closeEvent() stops the flowgraph (a no-op after its SIGINT handler did).
+        _close_window()
         # The bands keep their last picture: say so.
         if _head is not None:
             _header(True)
             lv.task_handler()
     return 0
+
+
+def _close_window():
+    close = getattr(type(root), "closeEvent", None) if root is not None else None
+    if close is None:
+        return
+    from PyQt5._nothing import Nothing
+
+    try:
+        close(root, Nothing())
+    except Exception as e:
+        import sys
+
+        sys.print_exception(e)
 
 
 def stats():

@@ -21,6 +21,21 @@ What runs:
      - the board's receiver: 250, 125, 62.5, 31.25 or 15.625 kS/s (other rates are rounded to
        the nearest), one RF gain index (any gain name sets it, as the host plugin
        ``driver=esdr`` does), offset tuning
+   * - ``soapy.sink`` (any ``driver=``)
+     - the board's transmitter (the DAC, interpolated to 40 MS/s): input rates that divide
+       40 MS/s (others are rounded to the nearest such rate), gapless up to 500 kS/s; one
+       transmit gain step from 0 (weakest, the default) to 17, which any gain name sets
+       (clamped, as with ``driver=esdr``); a centre within 500 Hz of the frequency asked for.
+       Transmitting holds the radio: no receive flowgraph meanwhile
+   * - ``analog.sig_source_c``
+     - generated in C (sine table, 16 bits); frequency, amplitude, offset and waveform change
+       at once while transmitting; square, triangle and sawtooth are real (Q is zero)
+   * - ``blocks.file_source`` (``gr_complex`` or ``short*2`` items), ``vector_source_c``
+     - read into memory before the transmission starts (the PSRAM heap: about a million
+       samples); host paths are looked up under ``/SD:``, then ``/FLASH:``
+   * - ``blocks.throttle``, ``blocks.multiply_const_cc`` (a real constant)
+     - in a transmit chain: throttle passes samples through (the radio sets the pace),
+       multiply_const scales them, also while transmitting
    * - ``blocks.head``, ``blocks.null_sink``
      - as in GNU Radio
    * - ``blocks.file_sink`` (``gr_complex`` or ``short*2`` items)
@@ -40,13 +55,18 @@ What runs:
        does not scroll
    * - The rest of a Qt GUI export (``PyQt5``, ``sip``, settings, styling)
      - accepted, does nothing; ``QApplication.exec_()`` runs the display until Ctrl-C, which
-       calls the export's own SIGINT handler
+       calls the export's own SIGINT handler; when the loop ends, the window closes as on a
+       desktop (the export's ``closeEvent()`` stops the flowgraph)
    * - ``signal``, ``threading.Event``, ``argparse``, ``eng_notation``, ``firdes``,
-       ``fft.window``
+       ``fft.window``, ``pmt``
      - stand-ins for what every export imports
 
-Not yet: transmit (``soapy.sink``, ``file_source``), signal processing blocks (filters,
-demodulators, ``throttle``), the other qtgui sinks (accepted, not drawn).
+A flowgraph either receives (one ``soapy.source``, an optional ``head``, sinks) or transmits
+(one chain from a signal source through ``throttle``, ``multiply_const_cc`` or ``head`` to
+``soapy.sink``).
+
+Not yet: signal processing blocks (filters, demodulators, ...), the other qtgui sinks
+(accepted, not drawn).
 
 Hardware
 ********
@@ -83,7 +103,9 @@ The ``esdr`` module
 The C side, used by the stand-ins and useful on its own: ``init()``, ``tune()``, ``rx_gain()``,
 ``rx_bandwidth()``, ``rx_start()`` / ``rx_wait()`` / ``rx_stop()`` / ``rx_stats()`` (capture
 into a buffer, int16 I/Q), ``rx_latest()`` (the newest samples, for displays),
-``sc16_to_fc32()``, ``psd()``, the drawing helpers,
+``sc16_to_fc32()``, ``psd()``, the drawing helpers, ``tx_start()`` / ``tx_gen()`` /
+``tx_scale()`` / ``tx_wait()`` / ``tx_stop()`` / ``tx_stats()`` (transmit a generated signal
+or int16 I/Q from a buffer), ``tx_gain_max()``, ``fc32_to_sc16()``,
 ``claim()`` / ``release()`` (a volume away from USB while
 writing), ``shell()`` (Zephyr shell commands, such as ``usj`` and ``mcuboot confirm``),
 ``crash()`` and ``reset_reason()`` (why the board last restarted), ``sd_info()``.

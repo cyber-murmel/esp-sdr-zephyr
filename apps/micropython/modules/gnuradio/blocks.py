@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""blocks: the sinks, head and file source that run on the board.
+"""blocks: the sinks, head, sources and pass-through blocks that run on the board.
 
 file_sink buffers the capture in the Python heap (PSRAM) and writes it when the flowgraph
 stops: a flash write during the capture would stall the receive ring. The file holds the
@@ -10,8 +10,14 @@ Recordings go to the SD card only: a "/SD:..." path is used as it is, any other 
 the host path an exported flowgraph carries, is placed under /SD: ("/tmp/rx.fc32" ->
 "/SD:/tmp/rx.fc32"). /FLASH: holds the scripts; writing captures there would stall the
 receive ring (flash writes park its CPU) and fill the 4 MB volume.
+
+file_source (transmit) reads the whole file into the heap before the transmission starts,
+from the path as given if it names a volume, else from under /SD: or, failing that, /FLASH:;
+fc32 samples become 16-bit, so 1.0 is full scale. throttle passes samples through (the radio
+sets the pace) and multiply_const_cc scales them in the transmit engine.
 """
 
+import gc
 import os
 
 import esdr
@@ -152,3 +158,173 @@ class file_sink(gr.basic_block):
         self.written = n
         if path != self._filename:
             print("file_sink: {} -> {}".format(self._filename, path))
+
+
+# ---- transmit ----
+
+
+def source_path(path):
+    """Where a flowgraph's input file is on the board (see the module docstring)."""
+    if _volume_of(path) is not None:
+        return path
+    rel = path if path.startswith("/") else "/" + path
+    for vol in _VOLUMES:
+        try:
+            os.stat(vol + rel)
+            return vol + rel
+        except OSError:
+            pass
+    raise OSError(2, "no such file on /SD: or /FLASH:: " + path)
+
+
+def _sc16_room():
+    gc.collect()
+    return (gc.mem_free() * 3 // 4) // 4
+
+
+class file_source(gr.tx_source):
+    def __init__(self, itemsize, filename, repeat=False, offset=0, len=0):
+        super().__init__("file_source")
+        if itemsize not in (gr.sizeof_gr_complex, 2 * gr.sizeof_short):
+            raise ValueError("file_source on the board: gr_complex or short*2 items")
+        self.out_itemsize = itemsize
+        self.open(filename, repeat, offset, len)
+
+    def open(self, filename, repeat=False, offset=0, len=0):
+        self._filename = filename
+        self._repeat = bool(repeat)
+        self._offset = int(offset)
+        self._len = int(len)
+        self._buf = None
+        self.path = None
+
+    def close(self):
+        self._buf = None
+
+    def set_begin_tag(self, tag):
+        pass
+
+    def seek(self, seek_point, whence):
+        return False
+
+    def _load(self):
+        path = source_path(self._filename)
+        isz = self.out_itemsize
+        items = max(0, os.stat(path)[6] // isz - self._offset)
+        if self._len:
+            items = min(items, self._len)
+        room = _sc16_room()
+        if items > room:
+            print("file_source: {} has {} samples, {} fit in memory".format(path, items, room))
+            items = room
+        if items == 0:
+            raise ValueError("file_source: no samples in " + path)
+        buf = bytearray(4 * items)
+        out = memoryview(buf)
+        chunk = bytearray(isz * 4096)
+        raw = memoryview(chunk)
+        with open(path, "rb") as f:
+            f.seek(self._offset * isz)
+            k = 0
+            while k < items:
+                n = min(4096, items - k)
+                got = f.readinto(raw[:n * isz]) // isz
+                if got <= 0:
+                    break
+                if isz == gr.sizeof_gr_complex:
+                    esdr.fc32_to_sc16(raw[:got * isz], out[4 * k:4 * (k + got)], 32767.0)
+                else:
+                    out[4 * k:4 * (k + got)] = raw[:got * isz]
+                k += got
+        self._buf = buf if k == items else buf[:4 * k]
+        self.path = path
+        if path != self._filename:
+            print("file_source: {} -> {}".format(self._filename, path))
+
+    def _tx_args(self):
+        if self._buf is None:
+            self._load()
+        return {"buf": self._buf, "repeat": self._repeat}
+
+
+class vector_source_c(gr.tx_source):
+    def __init__(self, data, repeat=False, vlen=1, tags=()):
+        super().__init__("vector_source_c")
+        if vlen != 1:
+            raise ValueError("vector_source_c on the board: vlen 1")
+        self.out_itemsize = gr.sizeof_gr_complex
+        self._repeat = bool(repeat)
+        self.set_data(data)
+
+    def set_data(self, data, tags=()):
+        import array
+
+        a = array.array("h", [0] * (2 * len(data)))
+        for k, v in enumerate(data):
+            v = complex(v)
+            a[2 * k] = max(-32767, min(32767, int(v.real * 32767)))
+            a[2 * k + 1] = max(-32767, min(32767, int(v.imag * 32767)))
+        self._buf = a
+        if self._tb is not None and self._tb._running:
+            self._tb._sinks[0]._restart()
+
+    def set_repeat(self, repeat):
+        self._repeat = bool(repeat)
+
+    def rewind(self):
+        pass
+
+    def _tx_args(self):
+        return {"buf": self._buf, "repeat": self._repeat}
+
+
+class throttle(gr.basic_block):
+    """Passes samples through: the radio sets the pace."""
+
+    _kind = "through"
+
+    def __init__(self, itemsize, samples_per_sec, ignore_tags=True, maximum_items_per_chunk=0):
+        super().__init__("throttle")
+        self.in_itemsize = self.out_itemsize = itemsize
+        self._rate = float(samples_per_sec)
+        self._tb = None
+
+    def set_sample_rate(self, rate):
+        self._rate = float(rate)
+
+    def sample_rate(self):
+        return self._rate
+
+    def set_maximum_items_per_chunk(self, n):
+        pass
+
+
+class multiply_const_cc(gr.basic_block):
+    """Scales the transmitted samples by a real constant (in the transmit engine)."""
+
+    _kind = "through"
+
+    def __init__(self, k, vlen=1):
+        super().__init__("multiply_const_cc")
+        if vlen != 1:
+            raise ValueError("multiply_const_cc on the board: vlen 1")
+        self.in_itemsize = self.out_itemsize = gr.sizeof_gr_complex
+        self._tb = None
+        self.set_k(k)
+
+    def set_k(self, k):
+        if isinstance(k, (list, tuple)):
+            k = k[0]
+        k = complex(k)
+        if k.imag:
+            raise ValueError("multiply_const_cc on the board: a real constant")
+        self._scale = k.real
+        if self._tb is not None:
+            self._tb._tx_live()
+
+    def k(self):
+        return self._scale
+
+
+def multiply_const_vcc(k):
+    return multiply_const_cc(k[0] if isinstance(k, (list, tuple)) else k)

@@ -49,11 +49,12 @@ endchoice
 
 config APP_MP_STACK_SIZE
 	int "MicroPython thread stack, bytes"
-	default 24576
+	default 16384
 	help
 	  In the SRAM above the ring banks (ESP_SDR_HIGH_RAM, about 38 KiB,
-	  shared with the ring and its thread). Bounds the recursion depth,
-	  about 300 bytes per Python call.
+	  shared with the ring, the transmit backend and their threads).
+	  Bounds the recursion depth, about 300 bytes per Python call. A
+	  GUI export with LVGL peaked at 11.9 KiB.
 
 config APP_MP_PSRAM_HEAP_KB
 	int "Python heap in PSRAM, KiB"
