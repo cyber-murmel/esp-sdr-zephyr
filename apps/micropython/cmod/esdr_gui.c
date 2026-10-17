@@ -4,8 +4,7 @@
  * Drawing for the qtgui stand-ins (modules/gnuradio/qtgui.py) on the board's display:
  * spectra (window, FFT, averaging, one value per screen column), I/Q columns, traces,
  * waterfall rows and scrolling in an RGB565 framebuffer (a bytearray whose colours the caller
- * stores byte-swapped, so the panel receives them big endian), and framebuffer regions to the
- * display. The work buffers are PSRAM: a display update is slow next to them.
+ * stores in LVGL's native order, for an lv.canvas). The work buffers are PSRAM.
  */
 
 #include <errno.h>
@@ -14,7 +13,6 @@
 
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
-#include <zephyr/drivers/display.h>
 
 #include <esp_attr.h>
 
@@ -326,88 +324,3 @@ static mp_obj_t esdr_fb_scroll(size_t n_args, const mp_obj_t *args)
 	return mp_const_none;
 }
 MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_fb_scroll_obj, 6, 6, esdr_fb_scroll);
-
-#if DT_HAS_CHOSEN(zephyr_display)
-static const struct device *display(void)
-{
-	const struct device *dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_display));
-
-	if (!device_is_ready(dev)) {
-		mp_raise_OSError(ENODEV);
-	}
-	return dev;
-}
-
-/* lcd_blit(fb, stride, x, y, w, h): the rectangle of the framebuffer to the same place. */
-static mp_obj_t esdr_lcd_blit(size_t n_args, const mp_obj_t *args)
-{
-	struct fb_rect r;
-	struct display_buffer_descriptor desc;
-	int ret;
-
-	ARG_UNUSED(n_args);
-	fb_rect(&r, args);
-	desc = (struct display_buffer_descriptor){
-		.buf_size = (uint32_t)r.stride * (uint32_t)r.h * 2U,
-		.width = (uint16_t)r.w,
-		.height = (uint16_t)r.h,
-		.pitch = (uint16_t)r.stride,
-	};
-	ret = display_write(display(), (uint16_t)r.x, (uint16_t)r.y, &desc,
-			    &r.px[r.y * r.stride + r.x]);
-	if (ret < 0) {
-		mp_raise_OSError(-ret);
-	}
-	return mp_const_none;
-}
-MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_lcd_blit_obj, 6, 6, esdr_lcd_blit);
-
-/* lcd_on(on): blanking off (True) or on; returns (width, height). */
-static mp_obj_t esdr_lcd_on(mp_obj_t on_in)
-{
-	const struct device *dev = display();
-	struct display_capabilities caps;
-	int ret = mp_obj_is_true(on_in) ? display_blanking_off(dev) : display_blanking_on(dev);
-	mp_obj_t wh[2];
-
-	if (ret < 0) {
-		mp_raise_OSError(-ret);
-	}
-	display_get_capabilities(dev, &caps);
-	wh[0] = MP_OBJ_NEW_SMALL_INT(caps.x_resolution);
-	wh[1] = MP_OBJ_NEW_SMALL_INT(caps.y_resolution);
-	return mp_obj_new_tuple(2, wh);
-}
-MP_DEFINE_CONST_FUN_OBJ_1(esdr_lcd_on_obj, esdr_lcd_on);
-#endif
-
-#if defined(CONFIG_INPUT)
-#include <zephyr/input/input.h>
-#include <zephyr/sys/atomic.h>
-
-/* The encoder's steps and the switch's presses since the last esdr.input(). */
-static atomic_t wheel, presses;
-
-static void input_cb(struct input_event *evt, void *user_data)
-{
-	ARG_UNUSED(user_data);
-	if (evt->type == INPUT_EV_REL && evt->code == INPUT_REL_WHEEL) {
-		atomic_add(&wheel, evt->value);
-	} else if (evt->type == INPUT_EV_KEY && evt->value != 0) {
-		atomic_inc(&presses);
-	}
-}
-INPUT_CALLBACK_DEFINE(NULL, input_cb, NULL);
-
-/* input() -> (steps, presses) since the last call. */
-static mp_obj_t esdr_input(void)
-{
-	mp_obj_t t[2] = {
-		MP_OBJ_NEW_SMALL_INT(atomic_set(&wheel, 0)),
-		MP_OBJ_NEW_SMALL_INT(atomic_set(&presses, 0)),
-	};
-
-	return mp_obj_new_tuple(2, t);
-}
-MP_DEFINE_CONST_FUN_OBJ_0(esdr_input_obj, esdr_input);
-#endif

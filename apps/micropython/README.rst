@@ -83,8 +83,8 @@ The ``esdr`` module
 The C side, used by the stand-ins and useful on its own: ``init()``, ``tune()``, ``rx_gain()``,
 ``rx_bandwidth()``, ``rx_start()`` / ``rx_wait()`` / ``rx_stop()`` / ``rx_stats()`` (capture
 into a buffer, int16 I/Q), ``rx_latest()`` (the newest samples, for displays),
-``sc16_to_fc32()``, ``psd()``, the drawing helpers, ``lcd_on()``, ``lcd_blit()``, ``input()``
-(encoder steps, switch presses), ``claim()`` / ``release()`` (a volume away from USB while
+``sc16_to_fc32()``, ``psd()``, the drawing helpers,
+``claim()`` / ``release()`` (a volume away from USB while
 writing), ``shell()`` (Zephyr shell commands, such as ``usj`` and ``mcuboot confirm``),
 ``crash()`` and ``reset_reason()`` (why the board last restarted), ``sd_info()``.
 
