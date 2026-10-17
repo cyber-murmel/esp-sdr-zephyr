@@ -24,7 +24,7 @@ def shell(dut: DeviceAdapter) -> Shell:
 
 
 def test_files(shell: Shell):
-    out = shell.exec_command("app list")
+    out = shell.exec_command("multiapp list")
     apps = [line for line in out if re.match(r"\w+\s+(\d+ bytes|-)", line)]
     assert len(apps) == 7, out
     for line in apps:
@@ -33,7 +33,7 @@ def test_files(shell: Shell):
 
 
 def test_hello_from_file(shell: Shell):
-    out = shell.exec_command("app info")
+    out = shell.exec_command("multiapp info")
     assert any(line.startswith("boot: hello, start 0") for line in out), out
     assert any(line.startswith("hello (file):") for line in out), out
 

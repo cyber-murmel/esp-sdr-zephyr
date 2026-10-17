@@ -425,7 +425,7 @@ XIAO ESP32-C6 on the other end of a 30 dB coax attenuator.
   PHY over at the next restart; the PC sees no disconnect then, and a
   `USBDEVFS_RESET` ioctl on the port's `/dev/bus/usb` node makes it
   enumerate.
-- **A reset with no crash record** (`app crash`, `link status`) is the TG0
+- **A reset with no crash record** (`multiapp crash`, `link status`) is the TG0
   watchdog's first stage: a CPU wedged with interrupts masked.
 - **Stacks.** With `CONFIG_INIT_STACKS`, `kernel thread stacks` after
   exercising every path; a measured peak up to 80 % of the size is enough

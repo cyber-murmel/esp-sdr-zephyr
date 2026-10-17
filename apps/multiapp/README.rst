@@ -43,7 +43,7 @@ Then, on the CDC-ACM shell:
 
 .. code-block:: none
 
-   uart:~$ app list
+   uart:~$ multiapp list
    hello          3448 bytes, file 3448 bytes
    capture        5124 bytes, file 5124 bytes
    rfprobe        8596 bytes, file 8596 bytes
@@ -51,14 +51,14 @@ Then, on the CDC-ACM shell:
    stream    30264 bytes, file 30264 bytes
    osmosdr       17900 bytes, file 17900 bytes
    link          81320 bytes, file 81320 bytes
-   uart:~$ app run rfprobe
+   uart:~$ multiapp run rfprobe
    rfprobe: rebooting into it (eject the drive first: the PC may not have written it out)
 
 and, on the shell of the boot into it:
 
 .. code-block:: none
 
-   uart:~$ app info
+   uart:~$ multiapp info
    host 0.1.0, build 8a61693d
    boot: rfprobe, start 0, USB profile 0x0
    rfprobe (file): text 3002 at 0x42167c5c, data 448, bss 4, rodata 872, 6067 bytes in heaps
@@ -67,10 +67,10 @@ and, on the shell of the boot into it:
    f 2437 ret 0
 
 The app's root commands (``probe`` here) answer as in the standalone app.
-``app run <name>`` reboots into the app unless no app runs yet and USB already
+``multiapp run <name>`` reboots into the app unless no app runs yet and USB already
 has its classes; ``CONFIG_MULTIAPP_AUTOSTART`` names an app to start at every
-boot. ``app info`` shows the host's build id, the stack its ``main()`` used and
-the loaded app's origin, sizes and commands; ``app crash`` what ended the
+boot. ``multiapp info`` shows the host's build id, the stack its ``main()`` used and
+the loaded app's origin, sizes and commands; ``multiapp crash`` what ended the
 previous boot (fatal error, watchdog, how far a boot into an app got) and the
 USB thread's stack use in the last DFU download.
 
@@ -78,7 +78,7 @@ Apps as files
 *************
 
 The upper 4 MB of the flash hold a FAT volume with one ``<name>.llext`` per
-app (``src/drive.c``). Every boot reads it before USB starts: ``app list``
+app (``src/drive.c``). Every boot reads it before USB starts: ``multiapp list``
 shows each app's file next to the built-in copy (``differs`` when they are
 not the same), and the boot's app is loaded from its file when the file is
 good, else from the built-in copy. "Good" is checked before llext sees the
@@ -89,7 +89,7 @@ copies (165 KB of flash); a boot then runs an app only from its file.
 
 In a boot without an app the PC sees the volume as a USB drive next to the
 shell. Copy files from ``build/multiapp/multiapp/llext/files/`` onto it, eject
-it (the PC may cache what it writes), then ``app run`` the app. Writes are
+it (the PC may cache what it writes), then ``multiapp run`` the app. Writes are
 slow, about 60 kB/s: every 4 KiB flash page is erased and rewritten. ``west
 dfu --storage`` writes the whole volume (``mkfat.py`` builds its image).
 

@@ -91,9 +91,9 @@ Getting started
    west flash
    west dfu --storage
 
-This puts multiapp on a XIAO ESP32S3. On its USB shell ``app list``
-shows the apps and ``app run <name>`` starts one, for example
-``app run osmosdr`` (`apps/multiapp/README.rst <apps/multiapp/README.rst>`__).
+This puts multiapp on a XIAO ESP32S3. On its USB shell ``multiapp list``
+shows the apps and ``multiapp run <name>`` starts one, for example
+``multiapp run osmosdr`` (`apps/multiapp/README.rst <apps/multiapp/README.rst>`__).
 Each app also builds on its own. Releases carry the multiapp image and
 the SoapySDR module for gqrx and GNU Radio.
 

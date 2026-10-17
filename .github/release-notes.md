@@ -22,7 +22,7 @@ For the Seeed XIAO ESP32S3 (8 MB flash) and an x86_64 Linux PC:
 3. Start osmosdr on the board, which reboots into it (again after every power cycle);
    `SoapySDRUtil --find=driver=esdr` then lists it:
    ```
-   printf 'app run osmosdr\r' > /dev/serial/by-id/usb-Zephyr_Project_ESP-SDR_multiapp_*
+   printf 'multiapp run osmosdr\r' > /dev/serial/by-id/usb-Zephyr_Project_ESP-SDR_multiapp_*
    ```
 4. Run `gqrx` from the same shell. In its I/O device configuration: device string
    `driver=esdr,soapy=1`, input rate 250000 (the most USB full speed carries).
@@ -36,5 +36,5 @@ SUBSYSTEM=="tty", ATTRS{idVendor}=="2fe3", MODE="660", GROUP="dialout", TAG+="ua
 ATTRS{idVendor}=="2fe3", ENV{ID_MM_DEVICE_IGNORE}="1"
 ```
 
-The other apps: `app list` and `app run <name>` on the board's USB shell
+The other apps: `multiapp list` and `multiapp run <name>` on the board's USB shell
 (`apps/multiapp/README.rst`).

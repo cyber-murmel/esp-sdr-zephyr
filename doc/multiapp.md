@@ -20,8 +20,8 @@ Usage: `apps/multiapp/README.rst`.
   `USBD_DEFINE_CLASS`, `SYS_INIT`, `LOG_MODULE_REGISTER`, `K_THREAD_STACK_DEFINE`, static memory
   slabs, `NET_BUF_POOL_DEFINE`) do not work in an extension as written: its sections do not join
   the host's.
-- **Exit is a reboot.** The Wi-Fi PHY, ring and DAC state cannot be torn down cleanly. `app run`
-  with an app loaded leaves the name in RTC memory and resets.
+- **Exit is a reboot.** The Wi-Fi PHY, ring and DAC state cannot be torn down cleanly.
+  `multiapp run` with an app loaded leaves the name in RTC memory and resets.
 
 ## How it works
 
@@ -74,12 +74,12 @@ Usage: `apps/multiapp/README.rst`.
   (`ESP_SDR_HIGH_BUF_DEFINE()`, `ESP_SDR_HIGH_STACK_DEFINE()`) become host objects in
   `multiapp_area`, 24 KB of the high region (`AREA` in `multiapp_extension()`). osmosdr takes
   23 KB; the 802.15.4 driver gets it in the other boots
-  (`CONFIG_ESP_SDR_IEEE802154_HIGH_RAM_APP`). `app run` reboots when the profile or the area owner
-  changes.
+  (`CONFIG_ESP_SDR_IEEE802154_HIGH_RAM_APP`). `multiapp run` reboots when the profile or the area
+  owner changes.
 - **The apps as files** (`src/drive.c`). A FAT volume in the upper 4 MB of the flash, which the
   board's 4 MB partition table leaves out (partition `fat` at 0x400000, flash disk `FLASH`),
   holds `<name>.llext`. The host mounts it read-only at boot, before USB starts and before an app
-  runs, compares every file with the built-in copy (`app list`), and reads the boot's app whole
+  runs, compares every file with the built-in copy (`multiapp list`), and reads the boot's app whole
   into a PSRAM buffer (`CONFIG_MULTIAPP_FILE_MAX_KB`); llext then loads it from there. The FATFS
   object, the flash disk cache and the drive's SCSI buffer are in bank 0, which the ring
   overwrites once an app runs: nothing touches the volume after that. Reads go in 256-byte
@@ -89,11 +89,11 @@ Usage: `apps/multiapp/README.rst`.
   extensions' imports, the headers both sides compile against and the compiler). The host checks
   it before llext reads the file: a truncated, damaged or foreign file (built for another host)
   is refused and the built-in copy runs (`CONFIG_MULTIAPP_EMBEDDED`, default y; without it the
-  image is 165 KB smaller and such a boot comes up without an app). `app info` says where the app
-  came from.
+  image is 165 KB smaller and such a boot comes up without an app). `multiapp info` says where the
+  app came from.
 - **The drive.** A boot without an app (no request, no autostart, or an app that failed to
   start) registers USB mass storage on the volume next to the shell and DFU, for copying app
-  files from the PC; boots with an app unregister it, and `app run` from a drive boot reboots
+  files from the PC; boots with an app unregister it, and `multiapp run` from a drive boot reboots
   into the app. The PC must eject the drive first: the host cannot see what the PC still caches.
   `west dfu --storage` writes the build's volume image (`mkfat.py`: deterministic FAT12, 4 KiB
   clusters on the erase page, long names) to the DFU target `fat`, and `west dfu --esptool`
@@ -109,8 +109,8 @@ fewest static receive buffers (2, no A-MPDU receive; system heap peak 12216 byte
 app's `main()` stack in PSRAM. The high region has 1.2 of its 37.75 KB free (DAC, ring, area), the
 area 0.5 KB. Log queue 256 messages, link's shell stack 3072 bytes. Internal RAM stacks are
 sized so their peak with every app exercised is at most 80 % (`kernel thread stacks`; main's in
-`app info`, the USB thread's in the last DFU download in `app crash`): main 1120 of 1536, USB
-thread 1008 of 1280, drive thread 880 of 1152 while the PC copies 2 MB.
+`multiapp info`, the USB thread's in the last DFU download in `multiapp crash`): main 1120 of 1536,
+USB thread 1008 of 1280, drive thread 880 of 1152 while the PC copies 2 MB.
 
 ## Measured on the XIAO
 
@@ -200,4 +200,4 @@ rfprobe 56, wpan 60, osmosdr 68, stream 108, link 92; 197 symbols in the union.
 - The local Zephyr commits above, until upstream.
 - link throughput between two boards is untested.
 - The PC's write cache: files copied onto the drive reach the flash only when the PC writes them
-  out, which ejecting guarantees; `app run` reminds of it in a drive boot.
+  out, which ejecting guarantees; `multiapp run` reminds of it in a drive boot.

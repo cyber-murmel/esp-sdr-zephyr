@@ -45,7 +45,7 @@ void *multiapp_app_fn(const char *name);
 /* What an app's app_usb_init() calls: nothing to do (include/multiapp/ext.h). */
 int multiapp_ext_usb_init(void);
 
-/* Measure main()'s stack use as it returns, for "app info". */
+/* Measure main()'s stack use as it returns, for "multiapp info". */
 void multiapp_note_main_stack(void);
 
 /*
