@@ -54,7 +54,11 @@ What runs:
    * - QT GUI Range, Chooser (combo box and radio buttons), Check Box, Push Button, Label,
        Entry (shown, not editable)
      - LVGL widgets; the rotary encoder moves between them (turn), its switch edits or
-       presses the selected one, and the export's setters run (a frequency variable retunes)
+       presses the selected one, and the export's setters run (a frequency variable retunes;
+       a waterfall keeps its history). On a Range of more than 100 steps a fast turn takes
+       bigger steps (n detents between two display updates move n * n steps). A value the
+       flowgraph refuses, such as a frequency outside the range the PLL locks over (about 1.8
+       to 2.8 GHz, it varies from chip to chip), stops the slider at the last value that works
    * - ``QVBoxLayout``, ``QHBoxLayout``, ``QGridLayout`` (GUI hints ``row, col, rowspan,
        colspan``), ``QTabWidget`` (GUI hint ``tab@n``)
      - placed on the 320x240 screen; a tab widget shows one page at a time; a scroll area

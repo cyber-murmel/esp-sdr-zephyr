@@ -99,8 +99,12 @@ class _sink(gr.basic_block):
         return 0, LABEL, self._w, self._h - LABEL
 
     def _setup(self):
+        self._fbo.fill(_gui.BG)
+        self._head()
+
+    def _head(self):
         fb = self._fbo
-        fb.fill(_gui.BG)
+        fb.fill_rect(0, 0, self._w, LABEL, _gui.BG)
         fb.text(self._label()[: self._w // 8], 0, 1, _gui.FG)
         fb.hline(0, LABEL - 1, self._w, _gui.DIM)
 
@@ -193,6 +197,14 @@ class waterfall_sink_c(_spectrum):
     def set_intensity_range(self, imin, imax):
         self._imin = float(imin)
         self._imax = float(imax)
+
+    def set_frequency_range(self, fc, bw):
+        # A retune keeps the history: only the label changes.
+        self._fc = float(fc)
+        self._bw = float(bw)
+        if self._h:
+            self._head()
+            self._canvas.invalidate()
 
     def _setup(self):
         super()._setup()
@@ -310,7 +322,12 @@ class Range:
 
 
 class RangeWidget:
-    """A QT GUI Range variable: a label and a slider; the encoder edits the slider."""
+    """A QT GUI Range variable: a label and a slider; the encoder edits the slider. On a slider
+    of more than ACCEL steps (a frequency in 1 MHz steps), n steps of the knob between two
+    passes of the display loop move n * n steps. A value the slot refuses (a frequency the
+    radio cannot tune) is not taken: the slider stops at the last value towards it that works."""
+
+    ACCEL = 100
 
     _flex = False
     _h = _gui.ROW
@@ -327,12 +344,44 @@ class RangeWidget:
         _gui.variable(self)
 
     def set_index(self, i):
-        """The slider moved to step i: the value changes, the slot runs."""
+        """Step i: the value changes, the slot runs."""
         i = max(0, min(self.steps, int(i)))
-        if i == self.index:
-            return
+        if i != self.index:
+            good = self.index
+            try:
+                self._take(i)
+            except Exception as e:
+                print("{}: {} refused: {!r}".format(self.label, _gui.eng(self._at(i)), e))
+                # The furthest step towards i the slot takes.
+                bad = i
+                ok = False
+                while abs(bad - good) > 1:
+                    mid = (good + bad) // 2
+                    try:
+                        self._take(mid)
+                        good = mid
+                        ok = True
+                    except Exception:
+                        bad = mid
+                        ok = False
+                if not ok:
+                    self._take(good)
+        if self._slider is not None:
+            self._slider.set_value(self.index, False)
+
+    def _turned(self, i):
+        # The knob moved the slider to step i since the last pass of the display loop.
+        n = int(i) - self.index
+        if self.steps > self.ACCEL and abs(n) > 1:
+            n *= abs(n)
+        self.set_index(self.index + n)
+
+    def _at(self, i):
+        return self.type(self.r.min + i * self.r.step)
+
+    def _take(self, i):
         self.index = i
-        self.value = self.type(self.r.min + i * self.r.step)
+        self.value = self._at(i)
         self._show()
         self.slot(self.value)
 
@@ -349,12 +398,13 @@ class RangeWidget:
         sl.set_pos(x + w - max(40, w // 2 - 10) - 10, y + 9)
         sl.set_range(0, self.steps)
         sl.set_value(self.index, False)
-        _gui.on(sl, lv.EVENT.VALUE_CHANGED, self.set_index, sl.get_value)
+        _gui.on(sl, lv.EVENT.VALUE_CHANGED, self._turned, sl.get_value, latest=True)
         _gui.add_to_group(sl)
         self._slider = sl
         self._show()
 
     _text = None
+    _slider = None
 
     def __getattr__(self, name):
         return Nothing()

@@ -171,12 +171,19 @@ def _up():
         dev = dev.get_next()
 
 
-def on(obj, event, handler, getter=None):
+def on(obj, event, handler, getter=None, latest=False):
     """Call handler(getter()) when the LVGL object gets the event, after task_handler(): the
-    callback inside LVGL only records."""
+    callback inside LVGL only records. latest: of the events before then only the last counts
+    (the steps of a slider while the knob turns)."""
 
     def cb(e):
-        _changed.append((handler, getter() if getter else None))
+        value = getter() if getter else None
+        if latest:
+            for k in range(len(_changed)):
+                if _changed[k][0] is handler:
+                    _changed[k] = (handler, value)
+                    return
+        _changed.append((handler, value))
 
     obj.add_event_cb(cb, event, None)
     return cb
