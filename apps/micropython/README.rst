@@ -42,7 +42,7 @@ What runs:
      - buffered in PSRAM during the capture and written to the SD card when the flowgraph
        stops; host paths are placed under ``/SD:`` (``/tmp/rx.fc32`` ->
        ``/SD:/tmp/rx.fc32``), readable with ``numpy.fromfile()``
-   * - ``qtgui.freq_sink_c``, ``waterfall_sink_c``, ``time_sink_c``
+   * - ``qtgui.freq_sink_c``, ``waterfall_sink_c``, ``time_sink_c``, ``const_sink_c``
      - drawn on the ST7789V display (LVGL canvases filled by C helpers), placed as the
        export's layouts place them
    * - QT GUI Range, Chooser (combo box and radio buttons), Check Box, Push Button, Label,

@@ -37,9 +37,19 @@ static struct {
 	uint64_t expect;
 } snk;
 
-/* The latest samples for displays (I, Q packed per word), and how many were produced. */
-static EXT_RAM_BSS_ATTR uint32_t mon[ESDR_MON_SAMPLES];
+/*
+ * Snapshots for displays (I, Q packed per word), taken on demand: writing every sample to PSRAM
+ * from this CPU stalls behind the display's PSRAM traffic on the other one and the ring loses
+ * input (250 kS/s with LVGL running). esdr_rx_latest() hands out the last finished snapshot and
+ * arms the next one in the other buffer, so the sink writes only what displays read.
+ * snap_state 1: the sink fills mon[snap_fill] up to snap_want samples, then publishes it as
+ * snap_pub (samples << 1 | buffer, -1 none) and returns to 0. Only the REPL's CPU arms, while
+ * idle.
+ */
+static EXT_RAM_BSS_ATTR uint32_t mon[2][ESDR_MON_SAMPLES];
 static atomic_t mon_w;
+static atomic_t snap_state, snap_pub;
+static uint32_t snap_fill, snap_want, snap_got, snap_want_max;
 
 static atomic_t busy;
 static atomic_t stop_req;
@@ -63,13 +73,20 @@ static void sink(void *user, const int16_t *i, const int16_t *q, size_t n, uint6
 	snk.expect = index + n;
 
 	if (job.monitor) {
-		uint32_t w = (uint32_t)atomic_get(&mon_w);
+		atomic_add(&mon_w, (atomic_val_t)n);
+		if (atomic_get(&snap_state) == 1) {
+			uint32_t *m = &mon[snap_fill][snap_got];
+			size_t take = MIN(n, (size_t)(snap_want - snap_got));
 
-		for (size_t k = 0; k < n; k++) {
-			mon[(w + k) & (ESDR_MON_SAMPLES - 1U)] =
-				(uint32_t)(uint16_t)i[k] | ((uint32_t)(uint16_t)q[k] << 16);
+			for (size_t k = 0; k < take; k++) {
+				m[k] = (uint32_t)(uint16_t)i[k] | ((uint32_t)(uint16_t)q[k] << 16);
+			}
+			snap_got += (uint32_t)take;
+			if (snap_got >= snap_want) {
+				atomic_set(&snap_pub, (atomic_val_t)((snap_got << 1) | snap_fill));
+				atomic_set(&snap_state, 0);
+			}
 		}
-		atomic_set(&mon_w, (atomic_val_t)(w + n));
 	}
 
 	uint64_t left = job.want - snk.stored;
@@ -174,6 +191,9 @@ int esdr_rx_start(unsigned int decim, bool shift_fs4, int16_t *buf, size_t cap, 
 	job.want = count != 0U ? count : UINT64_MAX;
 	job.monitor = monitor;
 	atomic_set(&mon_w, 0);
+	atomic_set(&snap_state, 0);
+	atomic_set(&snap_pub, -1);
+	snap_want_max = 0;
 	job.cfg = (struct esp_sdr_ring_cfg){
 		.decim = decim, .shift_fs4 = shift_fs4, .sink = sink,
 	};
@@ -220,20 +240,30 @@ void esdr_rx_get_stats(struct esdr_rx_stats *out)
 
 uint64_t esdr_rx_latest(int16_t *dst, size_t n)
 {
-	uint32_t w = (uint32_t)atomic_get(&mon_w);
 	uint32_t *out = (uint32_t *)dst;
+	atomic_val_t pub = atomic_get(&snap_pub);
+	int ready = pub < 0 ? -1 : (int)(pub & 1);
+	size_t have = pub < 0 ? 0U : (size_t)(pub >> 1);
 	size_t lead = 0;
 
 	if (n > ESDR_MON_SAMPLES) {
 		n = ESDR_MON_SAMPLES;
 	}
-	/* Fewer samples than asked for so far: silence first. */
-	if (w < n) {
-		lead = n - w;
+	/* The last finished snapshot, its newest samples; silence first if it is shorter. */
+	if (have < n) {
+		lead = n - have;
 		memset(out, 0, lead * sizeof(*out));
 	}
-	for (size_t k = lead; k < n; k++) {
-		out[k] = mon[(w - (uint32_t)n + (uint32_t)k) & (ESDR_MON_SAMPLES - 1U)];
+	if (ready >= 0) {
+		memcpy(&out[lead], &mon[ready][have - (n - lead)], (n - lead) * sizeof(*out));
 	}
-	return w;
+	/* Arm the next one in the other buffer, as long as the largest display asked for. */
+	snap_want_max = MAX(snap_want_max, (uint32_t)n);
+	if (atomic_get(&busy) && job.monitor && atomic_get(&snap_state) == 0) {
+		snap_fill = ready < 0 ? 0U : (uint32_t)(1 - ready);
+		snap_want = snap_want_max;
+		snap_got = 0;
+		atomic_set(&snap_state, 1);
+	}
+	return (uint32_t)atomic_get(&mon_w);
 }

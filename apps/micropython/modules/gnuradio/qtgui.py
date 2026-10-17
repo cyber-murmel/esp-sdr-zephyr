@@ -250,6 +250,42 @@ class time_sink_c(_sink):
         esdr.fb_trace(buf, self._w, x, y, w, h, self._q, self._ymin, self._ymax, _gui.TRACE[1])
 
 
+class const_sink_c(_sink):
+    """A constellation of the latest samples, square, centred in the band."""
+
+    _draws = True
+
+    def __init__(self, size, name, nconnections=1, parent=None):
+        super().__init__("const_sink_c", "c", name)
+        self._size = max(16, min(esdr.MON_SAMPLES, int(size)))
+        self._src = bytearray(4 * self._size)
+        self._x = (-2.0, 2.0)
+        self._y = (-2.0, 2.0)
+
+    def set_x_axis(self, xmin, xmax):
+        self._x = (float(xmin), float(xmax))
+
+    def set_y_axis(self, ymin, ymax):
+        self._y = (float(ymin), float(ymax))
+
+    def set_nsamps(self, n):
+        self._size = max(16, min(esdr.MON_SAMPLES, int(n)))
+        self._src = bytearray(4 * self._size)
+
+    def _draw(self):
+        esdr.rx_latest(self._src)
+        fb, buf = self._fbo, self._buf
+        x, y, w, h = self._plot()
+        fb.fill_rect(x, y, w, h, _gui.BG)
+        side = min(w, h)
+        x0 = x + (w - side) // 2
+        fb.hline(x0, y + side // 2, side, _gui.DIM)
+        fb.vline(x0 + side // 2, y, side, _gui.DIM)
+        fs = esdr.FULL_SCALE
+        esdr.fb_points(buf, self._w, x0, y, side, side, self._src, self._x[0] * fs,
+                       self._x[1] * fs, self._y[0] * fs, self._y[1] * fs, _gui.TRACE[0])
+
+
 def _quiet(name):
     class sink(_sink):
         def __init__(self, *args, **kwargs):
@@ -258,7 +294,6 @@ def _quiet(name):
     return sink
 
 
-const_sink_c = _quiet("const_sink_c")
 number_sink = _quiet("number_sink")
 histogram_sink_f = _quiet("histogram_sink_f")
 vector_sink_f = _quiet("vector_sink_f")

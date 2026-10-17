@@ -324,3 +324,39 @@ static mp_obj_t esdr_fb_scroll(size_t n_args, const mp_obj_t *args)
 	return mp_const_none;
 }
 MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_fb_scroll_obj, 6, 6, esdr_fb_scroll);
+
+/*
+ * fb_points(fb, stride, x, y, w, h, samples, xmin, xmax, ymin, ymax, colour): a constellation,
+ * one dot per sample (int16 I, Q pairs, in sample units) inside the rectangle.
+ */
+static mp_obj_t esdr_fb_points(size_t n_args, const mp_obj_t *args)
+{
+	struct fb_rect r;
+	size_t len;
+	const int16_t *v;
+	float xmin = (float)mp_obj_get_float(args[7]);
+	float xmax = (float)mp_obj_get_float(args[8]);
+	float ymin = (float)mp_obj_get_float(args[9]);
+	float ymax = (float)mp_obj_get_float(args[10]);
+	uint16_t colour = (uint16_t)mp_obj_get_int(args[11]);
+
+	ARG_UNUSED(n_args);
+	fb_rect(&r, args);
+	v = buffer(args[6], &len, MP_BUFFER_READ, 2);
+	if (!(xmax > xmin) || !(ymax > ymin)) {
+		mp_raise_ValueError(MP_ERROR_TEXT("fb_points: xmax > xmin, ymax > ymin"));
+	}
+	float sx = (float)(r.w - 1) / (xmax - xmin);
+	float sy = (float)(r.h - 1) / (ymax - ymin);
+
+	for (size_t k = 0; k + 1U < len / 2U; k += 2U) {
+		int px = (int)(((float)v[k] - xmin) * sx);
+		int py = r.h - 1 - (int)(((float)v[k + 1U] - ymin) * sy);
+
+		if (px >= 0 && px < r.w && py >= 0 && py < r.h) {
+			r.px[(r.y + py) * r.stride + r.x + px] = colour;
+		}
+	}
+	return mp_const_none;
+}
+MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_fb_points_obj, 12, 12, esdr_fb_points);

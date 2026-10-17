@@ -35,13 +35,14 @@ int esdr_rx_start(unsigned int decim, bool shift_fs4, int16_t *buf, size_t cap, 
 		  bool monitor);
 
 /*
- * With monitor set, the capture also keeps its latest samples in a ring for displays:
- * copies the latest  n of them (int16 I, Q; zeros before the first) to  dst and returns
- * how many samples the capture has produced so far.
+ * With monitor set, the capture also takes snapshots for displays: copies the newest @p n
+ * samples (int16 I, Q; zeros before the first) of the last finished snapshot to @p dst, arms
+ * the next one, and returns how many samples the capture has produced so far. A display
+ * calling it once per update shows samples at most one update old.
  */
 uint64_t esdr_rx_latest(int16_t *dst, size_t n);
 
-/* Monitor ring length in samples. */
+/* Longest snapshot in samples. */
 #define ESDR_MON_SAMPLES 8192U
 
 /* Asks a running capture to end; esdr_rx_busy() turns false once it has. */
