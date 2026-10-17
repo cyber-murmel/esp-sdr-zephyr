@@ -15,6 +15,7 @@
 
 #include <zephyr/app_version.h>
 #include <zephyr/kernel.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/base64.h>
 #include <zephyr/sys/util.h>
@@ -138,6 +139,25 @@ static int cmd_raw(const struct shell *sh, size_t argc, char **argv)
 #endif
 	k_busy_wait(RAW_SETTLE_US);
 	shell_print(sh, "raw %ld %ld", mhz, khz);
+	return 0;
+}
+
+/*
+ * cbw <0..2>: the PHY's channel bandwidth mode, applied by retuning to the current frequency;
+ * 2 (40 MHz) opens the analog filters to about +-18 MHz.
+ */
+static int cmd_cbw(const struct shell *sh, size_t argc, char **argv)
+{
+	int ret;
+
+	if (busy(sh)) {
+		return -EBUSY;
+	}
+	ret = esp_sdr_set_channel_bw((unsigned int)arg(argv, argc, 1, 0));
+	if (ret == 0) {
+		ret = esp_sdr_set_freq(esp_sdr_get_freq());
+	}
+	shell_print(sh, "cbw %ld ret %d", arg(argv, argc, 1, 0), ret);
 	return 0;
 }
 
@@ -928,10 +948,277 @@ static int cmd_tx_cost(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+/*
+ * tx paint: an image in a receiver's waterfall (spectrum painting). One row at a time, bottom
+ * row first, each pixel set in it a tone: column j at (j - w / 2) whole cycles in n words, so
+ * 125 kHz apart for n = 320 at 40 MS/s (one column of a 320 column, 40 MS/s waterfall), 3125 Hz
+ * for n = 12800. Newman phases keep the sum's crest factor down; every row is scaled to the
+ * same peak. A long period holding only low tones is summed on a coarse grid of PAINT_U points
+ * and interpolated linearly (images beyond PAINT_U / 2 tones, outside a narrow receiver's view),
+ * a short one sample by sample with phase accumulators; either takes a millisecond or so. A
+ * thread plays the rows until "tx stop"; each row change stops and restarts the replay (the
+ * engine owns its buffer while it plays), so the row fill is all the transmitter's pause.
+ */
+#define PAINT_W_MAX 256U
+#define PAINT_H_MAX 128U
+#define PAINT_TAB 1024U
+#define PAINT_U   256U
+
+static uint8_t paint_img[PAINT_H_MAX][PAINT_W_MAX / 8U];
+static uint16_t paint_w, paint_h;
+static int16_t paint_cos[PAINT_TAB];
+/* Bank words behind the played ones that a row fill uses as scratch (SRAM is short on the C5). */
+#define PAINT_SCRATCH (3U * PAINT_W_MAX + 2U * PAINT_U)
+static struct esp_sdr_replay_cfg paint_cfg;
+static uint32_t paint_row_ms, paint_gap_ms;
+static long paint_amp;
+static atomic_t paint_run;
+static uint32_t paint_rows, paint_fill_us;
+static K_THREAD_STACK_DEFINE(paint_stack, 2048);
+static struct k_thread paint_thread;
+static K_SEM_DEFINE(paint_done, 0, 1);
+
+/* The sum of the m tones at their phases ph (a full turn is 2^32). */
+static inline void paint_sum(const uint32_t *ph, uint32_t m, int32_t *si, int32_t *sq)
+{
+	int32_t a = 0, b = 0;
+
+	for (uint32_t i = 0; i < m; i++) {
+		uint32_t x = ph[i] >> 22;
+
+		a += paint_cos[x];
+		b += paint_cos[(x + 3U * PAINT_TAB / 4U) & (PAINT_TAB - 1U)];
+	}
+	*si = a;
+	*sq = b;
+}
+
+static void paint_fill(uint32_t *buf, uint16_t row)
+{
+	uint32_t n = (uint32_t)paint_cfg.count;
+	/* Scratch behind the n words: phase steps, phases, start phases, coarse sums. */
+	uint32_t *inc = &buf[n], *ph = inc + PAINT_W_MAX, *st = ph + PAINT_W_MAX;
+	int32_t *ci = (int32_t *)(st + PAINT_W_MAX), *cq = ci + PAINT_U;
+	bool coarse = n % PAINT_U == 0U && n / PAINT_U >= 8U;
+	uint32_t m = 0;
+	int32_t peak = 1;
+
+	for (uint16_t j = 0; j < paint_w; j++) {
+		if (!(paint_img[row][j / 8U] & (0x80U >> (j % 8U)))) {
+			continue;
+		}
+		/* k cycles per period (negative: below the LO), Newman phase j^2 / (2 w) turns. */
+		int32_t k = (int32_t)j - (int32_t)(paint_w / 2U);
+
+		/* The coarse grid holds tones up to a quarter of its points (images stay away). */
+		coarse = coarse && abs(k) < (int32_t)(PAINT_U / 4U);
+		inc[m] = (uint32_t)k;
+		st[m] = (uint32_t)(((uint64_t)j * j << 32) / (2U * paint_w));
+		m++;
+	}
+	for (uint32_t i = 0; i < m; i++) {
+		int32_t k = (int32_t)inc[i];
+
+		/* k / points turns per point: exact on the coarse grid (a power of two). */
+		inc[i] = coarse ? (uint32_t)k << 24 : (uint32_t)(((int64_t)k << 32) / (int64_t)n);
+	}
+
+	if (coarse) {
+		uint32_t l = n / PAINT_U;
+
+		memcpy(ph, st, m * sizeof(uint32_t));
+		for (uint32_t u = 0; u < PAINT_U; u++) {
+			paint_sum(ph, m, &ci[u], &cq[u]);
+			peak = MAX(peak, MAX(abs(ci[u]), abs(cq[u])));
+			for (uint32_t i = 0; i < m; i++) {
+				ph[i] += inc[i];
+			}
+		}
+		for (uint32_t t = 0; t < n; t++) {
+			uint32_t u = t / l, f = t % l, v = (u + 1U) & (PAINT_U - 1U);
+			int32_t si = ci[u] + (ci[v] - ci[u]) * (int32_t)f / (int32_t)l;
+			int32_t sq = cq[u] + (cq[v] - cq[u]) * (int32_t)f / (int32_t)l;
+
+			buf[t] = esp_sdr_replay_word(si * paint_amp / peak, sq * paint_amp / peak);
+		}
+		return;
+	}
+
+	/* Sample by sample, two passes: the peak, then the words. */
+	for (int pass = 0; pass < 2; pass++) {
+		memcpy(ph, st, m * sizeof(uint32_t));
+		for (uint32_t t = 0; t < n; t++) {
+			int32_t si, sq;
+
+			paint_sum(ph, m, &si, &sq);
+			if (pass == 0) {
+				peak = MAX(peak, MAX(abs(si), abs(sq)));
+			} else {
+				buf[t] = esp_sdr_replay_word(si * paint_amp / peak, sq * paint_amp / peak);
+			}
+			for (uint32_t i = 0; i < m; i++) {
+				ph[i] += inc[i];
+			}
+		}
+	}
+}
+
+static void paint_fn(void *a, void *b, void *c)
+{
+	ARG_UNUSED(a);
+	ARG_UNUSED(b);
+	ARG_UNUSED(c);
+
+	for (;;) {
+		k_thread_suspend(k_current_get());
+		while (atomic_get(&paint_run)) {
+			for (int r = paint_h - 1; r >= 0 && atomic_get(&paint_run); r--) {
+				size_t words;
+				uint32_t *buf;
+
+				uint32_t t0 = k_cycle_get_32();
+
+				esp_sdr_replay_stop();
+				buf = esp_sdr_replay_buf(&words);
+				paint_fill(buf, (uint16_t)r);
+				paint_fill_us = MAX(paint_fill_us,
+						    k_cyc_to_us_floor32(k_cycle_get_32() - t0));
+				if (esp_sdr_replay_start(&paint_cfg) != 0) {
+					atomic_set(&paint_run, 0);
+					break;
+				}
+				paint_rows++;
+				k_sleep(K_MSEC(paint_row_ms));
+			}
+			/* A pause between the passes, transmitter off. */
+			esp_sdr_replay_stop();
+			for (uint32_t t = 0; t < paint_gap_ms && atomic_get(&paint_run); t += 50U) {
+				k_sleep(K_MSEC(MIN(50U, paint_gap_ms - t)));
+			}
+		}
+		esp_sdr_replay_stop();
+		k_sem_give(&paint_done);
+	}
+}
+
+static void paint_stop(void)
+{
+	if (atomic_cas(&paint_run, 1, 0)) {
+		(void)k_sem_take(&paint_done, K_SECONDS(5));
+	}
+}
+
+/* tx paint size <w> <h>: a new, blank image. */
+static int cmd_tx_paint_size(const struct shell *sh, size_t argc, char **argv)
+{
+	long w = arg(argv, argc, 1, 0), h = arg(argv, argc, 2, 0);
+
+	if (w < 1 || w > (long)PAINT_W_MAX || h < 1 || h > (long)PAINT_H_MAX) {
+		shell_error(sh, "paint: w 1..%u, h 1..%u", PAINT_W_MAX, PAINT_H_MAX);
+		return -EINVAL;
+	}
+	paint_stop();
+	memset(paint_img, 0, sizeof(paint_img));
+	paint_w = (uint16_t)w;
+	paint_h = (uint16_t)h;
+	shell_print(sh, "paint size %u %u", paint_w, paint_h);
+	return 0;
+}
+
+/* tx paint row <r> <hex>: row r's pixels, most significant bit first (leftmost). */
+static int cmd_tx_paint_row(const struct shell *sh, size_t argc, char **argv)
+{
+	long r = arg(argv, argc, 1, -1);
+	const char *hex = argv[2];
+	size_t len = strlen(hex);
+
+	if (r < 0 || r >= (long)paint_h || len > PAINT_W_MAX / 4U) {
+		shell_error(sh, "paint: row 0..%d, at most %u hex digits", paint_h - 1, PAINT_W_MAX / 4U);
+		return -EINVAL;
+	}
+	memset(paint_img[r], 0, sizeof(paint_img[r]));
+	for (size_t i = 0; i < len; i++) {
+		char ch = hex[i];
+		uint8_t v = (uint8_t)(ch >= 'a' ? ch - 'a' + 10 : (ch >= 'A' ? ch - 'A' + 10 : ch - '0'));
+
+		paint_img[r][i / 2U] |= (uint8_t)((v & 0xFU) << (i % 2U ? 0 : 4));
+	}
+	return 0;
+}
+
+/* tx paint run <row ms> [amp] [rate 0|1] [n] [scale] [gap ms]: play the image until "tx stop". */
+static int cmd_tx_paint_run(const struct shell *sh, size_t argc, char **argv)
+{
+	static bool started;
+	long ms = arg(argv, argc, 1, 100);
+	long amp = arg(argv, argc, 2, 400);
+	long n = arg(argv, argc, 4, 320);
+
+	paint_stop();
+	if (busy(sh)) {
+		return -EBUSY;
+	}
+	if (paint_w == 0U || ms < 1 || amp < 1 || amp > 511 || n < (long)ESP_SDR_SAMPLES_MIN ||
+	    n > (long)(ESP_SDR_REPLAY_MAX - PAINT_SCRATCH) || n <= (long)paint_w) {
+		shell_error(sh, "paint: an image first; amp 1..511, n %u..%u and above w",
+			    ESP_SDR_SAMPLES_MIN, ESP_SDR_REPLAY_MAX - PAINT_SCRATCH);
+		return -EINVAL;
+	}
+	paint_cfg = (struct esp_sdr_replay_cfg){
+		.rate = (enum esp_sdr_rate)arg(argv, argc, 3, ESP_SDR_RATE_40MSPS),
+		.count = (size_t)n,
+		.passes = 0,
+		.power = 15,
+		.scale = (uint8_t)arg(argv, argc, 5, 2),
+	};
+	/* At most 128 tones of 128: the sums stay in 16 bits' worth per branch. */
+	for (uint32_t t = 0; t < PAINT_TAB; t++) {
+		paint_cos[t] = (int16_t)lround(128.0 * cos(TWO_PI * (double)t / (double)PAINT_TAB));
+	}
+	paint_row_ms = (uint32_t)ms;
+	paint_gap_ms = (uint32_t)MAX(0, arg(argv, argc, 6, 0));
+	paint_amp = amp;
+	paint_rows = 0;
+	paint_fill_us = 0;
+	k_sem_reset(&paint_done);
+	if (!started) {
+		k_thread_create(&paint_thread, paint_stack, K_THREAD_STACK_SIZEOF(paint_stack),
+				paint_fn, NULL, NULL, NULL, K_PRIO_PREEMPT(8), 0, K_NO_WAIT);
+		k_thread_name_set(&paint_thread, "paint");
+		started = true;
+		k_sleep(K_MSEC(1));
+	}
+	atomic_set(&paint_run, 1);
+	k_thread_resume(&paint_thread);
+	shell_print(sh, "paint %ux%u, %u ms a row, %u ms between passes, tones %ld Hz apart",
+		    paint_w, paint_h, paint_row_ms, paint_gap_ms,
+		    lround((paint_cfg.rate == ESP_SDR_RATE_40MSPS ? 40e6 : 80e6) / (double)n));
+	return 0;
+}
+
+/* tx paint state: rows played so far. */
+static int cmd_tx_paint_state(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	shell_print(sh, "paint %s rows %u, longest row change %u us (transmitter off)",
+		    atomic_get(&paint_run) ? "on" : "off", paint_rows, paint_fill_us);
+	return 0;
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(paint_cmds,
+	SHELL_CMD_ARG(size, NULL, "<w> <h>: a new blank image", cmd_tx_paint_size, 3, 0),
+	SHELL_CMD_ARG(row, NULL, "<r> <hex>: row r, MSB first", cmd_tx_paint_row, 3, 0),
+	SHELL_CMD_ARG(run, NULL, "<row ms> [amp] [rate 0|1] [n] [scale] [gap ms]: play until tx stop",
+		      cmd_tx_paint_run, 2, 5),
+	SHELL_CMD(state, NULL, "rows played", cmd_tx_paint_state),
+	SHELL_SUBCMD_SET_END);
+
 static int cmd_tx_stop(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
+	paint_stop();
 	esp_sdr_replay_stop();
 	if (carrier_on) {
 		esp_sdr_tx_paced_stop();
@@ -954,6 +1241,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(tx_cmds,
 	SHELL_CMD_ARG(cost, NULL, "<reg> [n]: cycles per store and load", cmd_tx_cost, 1, 2),
 	SHELL_CMD_ARG(rearm, NULL, "<ms>: restart a finite replay back to back", cmd_tx_rearm,
 		      1, 1),
+	SHELL_CMD(paint, &paint_cmds, "an image in a waterfall, row by row", NULL),
 	SHELL_CMD(stop, NULL, "stop the replay", cmd_tx_stop),
 	SHELL_SUBCMD_SET_END);
 #endif
@@ -963,6 +1251,8 @@ SHELL_STATIC_SUBCMD_SET_CREATE(probe_cmds,
 	SHELL_CMD_ARG(raw, NULL, "<PLL MHz> [kHz]: program the PLL directly", cmd_raw, 2, 1),
 	SHELL_CMD_ARG(lpf, NULL, "<rx> [txa [txb]]: low-pass codes, -1 PHY, 0 widest", cmd_lpf,
 		      2, 2),
+	SHELL_CMD_ARG(cbw, NULL, "<0..2>: channel bandwidth mode (2: 40 MHz filters)", cmd_cbw,
+		      2, 0),
 	SHELL_CMD_ARG(gain, NULL, "<rx index|-1> [tx step]", cmd_gain, 2, 1),
 #if defined(CONFIG_SOC_SERIES_ESP32S3)
 	SHELL_CMD(tone, &tone_cmds, "loop a tone", NULL),
