@@ -1,0 +1,26 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * Flash layout of this application, for the application and its MCUboot
+ * (sysbuild/mcuboot.overlay), which must agree on it: Espressif's 4 MB default
+ * table (two 1792 KiB slots, MicroPython with LVGL needs more than the
+ * board's 1344 KiB) instead of the board's AMP table, whose APP CPU slots go
+ * unused (the S3 runs SMP), and the upper half of the 8 MB flash as the FAT
+ * volume "FLASH". The volume stays where apps/multiapp keeps it.
+ */
+
+&flash0 {
+	/delete-node/ partitions;
+};
+
+#include <espressif/partitions_0x0_default_4M.dtsi>
+
+&flash0 {
+	partitions {
+		fat_partition: partition@400000 {
+			compatible = "zephyr,mapped-partition";
+			label = "fat";
+			reg = <0x400000 DT_SIZE_M(4)>;
+		};
+	};
+};

@@ -28,6 +28,7 @@ The API reference of the library is generated with Doxygen:
    apps/wpan
    apps/rfprobe
    apps/multiapp
+   apps/micropython
 
 .. toctree::
    :maxdepth: 1

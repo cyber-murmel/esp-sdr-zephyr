@@ -1,0 +1,7 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * MCUboot uses the application's flash layout.
+ */
+
+#include "../boards/xiao_esp32s3_partitions.dtsi"

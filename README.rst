@@ -61,6 +61,7 @@ Contents
        - ``rfprobe``: bench probe (tuning, tones, registers)
        - ``multiapp``: one firmware that runs the others
          (`doc/multiapp.md <doc/multiapp.md>`__)
+       - ``micropython``: MicroPython REPL on USB, toward GNU Radio flowgraphs
        - ``common``: USB with DFU, watchdogs, crash records
    * - ``tests/``
      - ``unit`` (host), ``integration`` (one board), ``regression`` (two

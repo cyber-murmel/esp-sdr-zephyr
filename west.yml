@@ -14,6 +14,10 @@ manifest:
       url-base: https://github.com/ESPARGOS
     - name: espressif
       url-base: https://github.com/espressif
+    - name: eliben
+      url-base: https://github.com/eliben
+    - name: micropython
+      url-base: https://github.com/micropython
 
   projects:
     # Zephyr with ESP32-S3 SMP (zephyrproject-rtos/zephyr#120082, rebased), the
@@ -52,3 +56,29 @@ manifest:
       remote: espressif
       revision: 3c8ac0fdfec83740b783e200862c8d0c056de0ad
       path: modules/lib/esp-dsp
+    # MicroPython, with its Zephyr port as the application's main program
+    # (apps/micropython). v1.29.0.
+    - name: micropython
+      remote: micropython
+      revision: 0fd6c573ea815774668bbb16b8e197c8822368b2
+      path: modules/micropython
+    # The frozen modules' library (argparse, upysh, ...), where the port expects it.
+    - name: micropython-lib
+      remote: micropython
+      revision: ee4bb8ff139e24c42b739935fbd8ec7c4d061e02
+      path: modules/micropython/lib/micropython-lib
+    # LVGL at the revision Zephyr pins (listed here, not imported, so that it can be fetched on its
+    # own), the binding for MicroPython adapted for Zephyr (cyber-murmel/mp-lvgl-example), and the
+    # C parser its generator needs (the revision its own west.yml pins).
+    - name: lvgl
+      remote: zephyrproject-rtos
+      revision: d1fe35d350a1503db2ec7fd4dfff8e0cc26eea7e
+      path: modules/lib/gui/lvgl
+    - name: lv_binding_micropython
+      remote: cyber-murmel
+      revision: ded0cd857fc8b813753facfbae011ac5e74961f6 # mp-lvgl branch + two local commits, not pushed yet
+      path: modules/lib/gui/lv_binding_micropython
+    - name: pycparser
+      remote: eliben
+      revision: 3cf6bf5eb16f5eadd4a058e41596145c407a79ad
+      path: modules/lib/gui/lv_binding_micropython/pycparser

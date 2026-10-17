@@ -1,0 +1,14 @@
+sample:
+  name: ESP-SDR MicroPython
+  description: >-
+    MicroPython as the main program, REPL on the USB CDC-ACM port
+common:
+  tags: esp-sdr
+  sysbuild: true
+  platform_allow:
+    - xiao_esp32s3/esp32s3/procpu
+  integration_platforms:
+    - xiao_esp32s3/esp32s3/procpu
+tests:
+  sample.esp_sdr.micropython:
+    build_only: true

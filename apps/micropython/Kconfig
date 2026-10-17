@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+mainmenu "ESP-SDR MicroPython"
+
+# The symbols of modules/micropython/ports/zephyr/Kconfig that mpy_port.cmake and
+# the port's sources use (USB and the file systems of MicroPython itself left out).
+menu "MicroPython Options"
+
+config MICROPY_CONFIGFILE
+	string "Configuration file"
+	default "mpconfigport_esdr.h"
+
+config MICROPY_HEAP_SIZE
+	int "Heap size"
+	default 131072
+
+config MICROPY_FROZEN_MODULES
+	bool "Enable Frozen Modules"
+	default y
+
+config MICROPY_FROZEN_MANIFEST
+	string "Path to Frozen Modules manifest.py"
+	depends on MICROPY_FROZEN_MODULES
+	default "manifest.py"
+
+choice MICROPY_CONFIG_ROM_LEVEL
+	prompt  "MicroPython Features level"
+	default MICROPY_CONFIG_ROM_LEVEL_EXTRA_FEATURES
+
+	config MICROPY_CONFIG_ROM_LEVEL_MINIMUM
+		bool "Disable all optional features"
+
+	config MICROPY_CONFIG_ROM_LEVEL_CORE_FEATURES
+		bool "Only enable core features"
+
+	config MICROPY_CONFIG_ROM_LEVEL_BASIC_FEATURES
+		bool "Enable most common features"
+
+	config MICROPY_CONFIG_ROM_LEVEL_EXTRA_FEATURES
+		bool "Enable convenience features"
+
+	config MICROPY_CONFIG_ROM_LEVEL_FULL_FEATURES
+		bool "Enable all common features"
+
+	config MICROPY_CONFIG_ROM_LEVEL_EVERYTHING
+		bool "Enable everything"
+
+endchoice
+
+config APP_MP_STACK_SIZE
+	int "MicroPython thread stack, bytes"
+	default 24576
+	help
+	  In the SRAM above the ring banks (ESP_SDR_HIGH_RAM, about 38 KiB,
+	  shared with the ring and its thread). Bounds the recursion depth,
+	  about 300 bytes per Python call.
+
+config APP_MP_PSRAM_HEAP_KB
+	int "Python heap in PSRAM, KiB"
+	default 5120
+	help
+	  Added to the internal heap at every start. Captures (file_sink) are
+	  buffered here; the rest of the 8 MiB PSRAM is the Wi-Fi heap and the
+	  transmit ring.
+
+endmenu # MicroPython Options
+
+rsource "../common/Kconfig"
+
+# USB device identity (VID, PID, strings) for the sample USB helper.
+source "samples/subsys/usb/common/Kconfig.sample_usbd"
+
+source "Kconfig.zephyr"

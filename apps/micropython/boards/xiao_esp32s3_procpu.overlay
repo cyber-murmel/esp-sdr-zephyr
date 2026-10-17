@@ -1,0 +1,153 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * The peripherals as in cyber-murmel/mp-lvgl-example (app/boards/xiao_esp32s3_procpu.overlay):
+ * an SD card and an ST7789V display sharing SPI2, plus the internal FAT volume "FLASH".
+ */
+
+#include <zephyr/dt-bindings/display/panel.h>
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+
+/ {
+	chosen {
+		zephyr,console = &cdc_acm_uart0;
+		zephyr,shell-uart = &cdc_acm_uart0;
+		zephyr,display = &display;
+	};
+
+	/* The scripts' volume, block device "FLASH" (as in apps/multiapp). */
+	fat_disk: fat_disk {
+		compatible = "zephyr,flash-disk";
+		partition = <&fat_partition>;
+		disk-name = "FLASH";
+		cache-size = <4096>;
+	};
+
+	/*
+	 * Mounted by _boot.py (zephyr.FileSystem): /FLASH: always, /SD: if a card mounts. FLASH
+	 * is formatted on first use.
+	 */
+	fstab {
+		compatible = "zephyr,fstab";
+
+		sd_fs: sd_fs {
+			compatible = "zephyr,fstab,fatfs";
+			mount-point = "/SD:";
+			disk-access;
+			/* Never formatted: usb_disks.c sets FS_MOUNT_FLAG_NO_FORMAT (fat_fs.c refuses the
+			 * property while FLASH is formatted on mount). */
+		};
+
+		flash_fs: flash_fs {
+			compatible = "zephyr,fstab,fatfs";
+			mount-point = "/FLASH:";
+			disk-access;
+		};
+	};
+
+	/* Rotary encoder (D3, D4) and its switch (D5), as in mp-lvgl-example: esdr.input(). */
+	qdec {
+		compatible = "gpio-qdec";
+		gpios = <&gpio0 4 (GPIO_PULL_UP | GPIO_ACTIVE_HIGH)>,
+			<&gpio0 5 (GPIO_PULL_UP | GPIO_ACTIVE_HIGH)>;
+		steps-per-period = <4>;
+		zephyr,axis = <INPUT_REL_WHEEL>;
+		sample-time-us = <2000>;
+		idle-timeout-ms = <200>;
+	};
+
+	buttons {
+		compatible = "gpio-keys";
+
+		button_0 {
+			gpios = <&gpio0 6 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			zephyr,code = <INPUT_KEY_0>;
+		};
+	};
+
+	/* The encoder and its switch as LVGL's encoder input device (lv.INDEV_TYPE.ENCODER). */
+	lvgl_encoder {
+		compatible = "zephyr,lvgl-encoder-input";
+		rotation-input-code = <INPUT_REL_WHEEL>;
+		button-input-code = <INPUT_KEY_0>;
+	};
+
+	/* ST7789V 320x240: CS D2, D/C D1, reset D0. */
+	mipi_dbi_spi {
+		compatible = "zephyr,mipi-dbi-spi";
+		spi-dev = <&spi2>;
+		dc-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&gpio0 1 GPIO_ACTIVE_LOW>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		display: st7789v@0 {
+			compatible = "sitronix,st7789v";
+			reg = <0>;
+			/* Through the GPIO matrix (writes only): 40 MHz at most. */
+			mipi-max-frequency = <DT_FREQ_M(40)>;
+			mipi-mode = "MIPI_DBI_MODE_SPI_4WIRE";
+			width = <320>;
+			height = <240>;
+			x-offset = <0>;
+			y-offset = <0>;
+			vcom = <0x20>;
+			gctrl = <0x35>;
+			mdac = <0xA0>; /* RGB order, swap XY, mirror Y */
+			lcm = <0x2c>;
+			pixel-format = <PANEL_PIXEL_FORMAT_RGB_565>;
+			gamma = <0x01>;
+			porch-param = [0c 0c 00 33 33];
+			cmd2en-param = [5a 69 02 01];
+			pwctrl1-param = [a4 a1];
+			pvgam-param = [d0 00 02 07 0a 28 32 44 42 06 0e 12 14 17];
+			nvgam-param = [d0 00 02 07 0a 28 31 54 47 0e 1c 17 1b 1e];
+			ram-param = [00 f0];
+			rgb-param = [40 02 14];
+		};
+	};
+};
+
+zephyr_udc0: &usb_otg {
+	status = "okay";
+
+	/* The REPL's console while OTG owns the USB port. */
+	cdc_acm_uart0: cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+		label = "ESP-SDR MicroPython REPL";
+	};
+};
+
+/* 1792 KiB slots and the FAT volume in the upper 4 MB. */
+#include "xiao_esp32s3_partitions.dtsi"
+
+/*
+ * SPI2 (SCK D8, MISO D9, MOSI D10), shared by the display (CS 0) and the SD card (CS 1). No
+ * DMA: the Python heap, which FatFs hands its buffers from, is PSRAM. SD at 12 MHz: these pins
+ * reach SPI2 through the GPIO matrix, whose input delay plus the card's output delay (up to
+ * 14 ns) must fit half a clock period; the driver does not shift the sampling (input_delay_ns
+ * 0), and SD over SPI is full duplex (no dummy compensation).
+ */
+&spi2 {
+	status = "okay";
+	cs-gpios = <&gpio0 3 GPIO_ACTIVE_LOW>, <&gpio1 12 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+
+	sd_spi: sdhc@1 {
+		compatible = "zephyr,sdhc-spi-slot";
+		reg = <1>;
+		status = "okay";
+		spi-max-frequency = <12000000>;
+
+		mmc {
+			compatible = "zephyr,sdmmc-disk";
+			disk-name = "SD";
+			status = "okay";
+		};
+	};
+};
+
+/* GPIO44 is UART0's RX pin; the console is CDC-ACM. */
+&uart0 {
+	status = "disabled";
+};
