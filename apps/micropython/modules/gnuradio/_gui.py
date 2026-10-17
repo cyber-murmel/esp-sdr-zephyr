@@ -54,6 +54,7 @@ _vars = []
 _timers = []
 _title = ""
 _quit = False
+interrupted = False  # run() ended on Ctrl-C (the launcher tells the console's from the knob's)
 root = None  # the flowgraph's top-level widget (PyQt5.Qt.QWidget): its layouts hold the controls
 lv = None
 _active = []
@@ -241,9 +242,10 @@ def _dispatch():
 
 def run():
     """QApplication.exec_(): redraw the sinks until quit() or Ctrl-C."""
-    global _quit, _relayout
+    global _quit, _relayout, interrupted
     _quit = False
     _relayout = False
+    interrupted = False
     if lv is None or _head is None:
         show()
     due = [time.ticks_ms()] * len(_active)
@@ -275,6 +277,7 @@ def run():
     except KeyboardInterrupt:
         import signal
 
+        interrupted = True
         h = signal._handlers.get(signal.SIGINT)
         if not callable(h):
             raise

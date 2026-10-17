@@ -1,0 +1,7 @@
+{
+  "name": "Tone",
+  "description": "Transmits a tone at the weakest gain step; the knob sets its offset (+-100 kHz) and the frequency (2.401 to 2.482 GHz, the 2.4 GHz ISM band).",
+  "category": "transmit",
+  "author": "esp-sdr",
+  "revision": 2
+}

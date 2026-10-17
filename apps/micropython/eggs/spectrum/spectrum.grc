@@ -1,0 +1,42 @@
+options:
+  parameters:
+    author: esp-sdr
+    description: Spectrum, waterfall and samples of 250 kHz; the knob tunes from 1.8 to 2.8 GHz.
+    generate_options: qt_gui
+    id: spectrum
+    title: Spectrum
+    run: 'True'
+    run_options: prompt
+  states: {coordinate: [8, 8], rotation: 0, state: enabled}
+blocks:
+- name: samp_rate
+  id: variable
+  parameters: {value: '250e3'}
+  states: {coordinate: [184, 12], rotation: 0, state: enabled}
+- name: freq
+  id: variable_qtgui_range
+  parameters: {label: Frequency, start: 1.8e9, stop: 2.8e9, step: 1e6, value: 2.44e9, widget: counter_slider}
+  states: {coordinate: [300, 12], rotation: 0, state: enabled}
+- name: soapy_hackrf_source_0
+  id: soapy_hackrf_source
+  parameters: {dev_args: '', samp_rate: samp_rate, center_freq: freq, gain: '16', vga: '16', amp: 'False', bandwidth: '0', type: fc32}
+  states: {coordinate: [16, 160], rotation: 0, state: enabled}
+- name: qtgui_freq_sink_x_0
+  id: qtgui_freq_sink_x
+  parameters: {type: complex, fftsize: '1024', fc: freq, bw: samp_rate, name: '"Spectrum"', ymin: '-120', ymax: '0'}
+  states: {coordinate: [400, 120], rotation: 0, state: enabled}
+- name: qtgui_waterfall_sink_x_0
+  id: qtgui_waterfall_sink_x
+  parameters: {type: complex, fftsize: '1024', fc: freq, bw: samp_rate, name: '"Waterfall"', int_min: '-90', int_max: '-40'}
+  states: {coordinate: [400, 240], rotation: 0, state: enabled}
+- name: qtgui_time_sink_x_0
+  id: qtgui_time_sink_x
+  parameters: {type: complex, size: '1024', srate: samp_rate, name: '"Samples"'}
+  states: {coordinate: [400, 360], rotation: 0, state: enabled}
+connections:
+- [soapy_hackrf_source_0, '0', qtgui_freq_sink_x_0, '0']
+- [soapy_hackrf_source_0, '0', qtgui_waterfall_sink_x_0, '0']
+- [soapy_hackrf_source_0, '0', qtgui_time_sink_x_0, '0']
+metadata:
+  file_format: 1
+  grc_version: 3.10.12.0

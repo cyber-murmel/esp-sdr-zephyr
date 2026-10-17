@@ -1,0 +1,7 @@
+{
+  "name": "Waterfall",
+  "description": "A gapless waterfall of 250 kHz; the knob tunes from 1.8 to 2.8 GHz and sets the level (the top of the colour scale).",
+  "category": "receive",
+  "author": "esp-sdr",
+  "revision": 2
+}

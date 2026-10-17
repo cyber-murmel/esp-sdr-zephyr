@@ -1,0 +1,7 @@
+{
+  "name": "Receiver",
+  "description": "Waterfall and spectrum on one tab, LNA gain and RF amp on the other, at 125 kS/s; the knob tunes from 1.8 to 2.8 GHz.",
+  "category": "receive",
+  "author": "esp-sdr",
+  "revision": 2
+}

@@ -1,0 +1,7 @@
+{
+  "name": "Wideband",
+  "description": "A waterfall of 40 MHz from bursts at 40 MS/s; the knob tunes from 1.8 to 2.8 GHz and sets the level (the top of the colour scale).",
+  "category": "receive",
+  "author": "esp-sdr",
+  "revision": 2
+}

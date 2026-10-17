@@ -22,6 +22,21 @@ include(${MICROPY_DIR}/extmod/extmod.cmake)
 if (CONFIG_MICROPY_FROZEN_MODULES)
     cmake_path(ABSOLUTE_PATH CONFIG_MICROPY_FROZEN_MANIFEST BASE_DIRECTORY ${CMAKE_CURRENT_LIST_DIR})
     set(MICROPY_FROZEN_MANIFEST ${CONFIG_MICROPY_FROZEN_MANIFEST})
+
+    # The bundled apps (eggs/): their metadata.json files as the module the launcher lists
+    # them from, eggs/__init__.py in $(EGGS_INDEX_DIR) for the manifest. Configuring again
+    # when an app comes, goes or changes its metadata.
+    set(MICROPY_MANIFEST_EGGS_INDEX_DIR ${CMAKE_CURRENT_BINARY_DIR}/eggs_index)
+    file(GLOB egg_metadata CONFIGURE_DEPENDS ${CMAKE_CURRENT_LIST_DIR}/eggs/*/metadata.json)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${egg_metadata}
+                 ${CMAKE_CURRENT_LIST_DIR}/tools/eggs_index.py)
+    execute_process(
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/tools/eggs_index.py
+                ${CMAKE_CURRENT_LIST_DIR}/eggs ${MICROPY_MANIFEST_EGGS_INDEX_DIR}/eggs/__init__.py
+        RESULT_VARIABLE eggs_index_result)
+    if (eggs_index_result)
+        message(FATAL_ERROR "tools/eggs_index.py failed (${eggs_index_result})")
+    endif()
 endif()
 
 # Zephyr's flags, for the qstr scan and (LVGL) the binding generator's preprocessing.

@@ -37,6 +37,9 @@
  *   reset_reason() -> str      why the chip last started (power-on, brownout, watchdogs)
  *   crash() -> dict or None    what ended the previous boot (fatal error, watchdog, double
  *                              exception)
+ *   next_app([path]) -> str    the app main.py starts after the next soft reset (launcher.py);
+ *                              without an argument returns it and forgets it
+ *   home() -> bool             whether the knob was held for the launcher since the last call
  */
 
 #include <errno.h>
@@ -44,10 +47,13 @@
 #include <string.h>
 
 #include <zephyr/devicetree.h>
+#include <zephyr/input/input.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sd/sd.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/shell/shell_dummy.h>
+#include <zephyr/sys/atomic.h>
+#include <zephyr/sys/reboot.h>
 
 #include <esp_attr.h>
 #include <esp_system.h>
@@ -65,6 +71,7 @@
 #include "py/nlr.h"
 #include "py/obj.h"
 #include "py/runtime.h"
+#include "shared/runtime/interrupt_char.h"
 
 #include "app_crash.h"
 #include "usb_disks.h"
@@ -77,6 +84,59 @@
 MP_REGISTER_ROOT_POINTER(mp_obj_t esdr_rx_buf);
 /* The transmit buffer, read by the feeder thread while it plays. */
 MP_REGISTER_ROOT_POINTER(mp_obj_t esdr_tx_buf);
+
+/*
+ * ---- the launcher (modules/launcher.py) ----
+ *
+ * The app to start survives the soft reset launcher.start() makes, outside the heap. Holding
+ * the knob (the LVGL encoder's switch) for KNOB_HOME_MS ends what runs as Ctrl-C does, flagged
+ * so that the launcher shows its menu rather than the REPL. When no Ctrl-C can help (the REPL
+ * waits for input, keyboard interrupts are off, what runs ignored a hold KNOB_AGAIN_MS ago),
+ * holding the knob restarts the board. A hold counts for the launcher for KNOB_FRESH_MS: a
+ * hold whose Ctrl-C an app swallowed does not turn a later Ctrl-C from the console into one.
+ */
+
+#define KNOB_HOME_MS  1500
+#define KNOB_AGAIN_MS 5000
+#define KNOB_FRESH_MS 15000
+#define KNOB_NODE     DT_COMPAT_GET_ANY_STATUS_OKAY(zephyr_lvgl_encoder_input)
+
+static char next_app[128];
+static atomic_t knob_home;
+static int64_t knob_time;
+
+#if DT_NODE_EXISTS(KNOB_NODE)
+static void knob_held(struct k_work *work)
+{
+	int64_t now = k_uptime_get();
+
+	ARG_UNUSED(work);
+	if (mp_interrupt_char < 0 ||
+	    (atomic_get(&knob_home) != 0 && now - knob_time < KNOB_AGAIN_MS)) {
+		sys_reboot(SYS_REBOOT_COLD);
+	}
+	knob_time = now;
+	(void)atomic_set(&knob_home, 1);
+	mp_hal_signal_event();
+	mp_sched_keyboard_interrupt();
+}
+
+static K_WORK_DELAYABLE_DEFINE(knob_work, knob_held);
+
+static void knob_input(struct input_event *evt, void *user_data)
+{
+	ARG_UNUSED(user_data);
+	if (evt->type != INPUT_EV_KEY || evt->code != DT_PROP(KNOB_NODE, button_input_code)) {
+		return;
+	}
+	if (evt->value != 0) {
+		(void)k_work_reschedule(&knob_work, K_MSEC(KNOB_HOME_MS));
+	} else {
+		(void)k_work_cancel_delayable(&knob_work);
+	}
+}
+INPUT_CALLBACK_DEFINE(NULL, knob_input, NULL);
+#endif
 
 /*
  * ---- heap, added at every (soft) start ----
@@ -102,6 +162,7 @@ void esdr_port_init(void)
 	gc_add(psram_heap, psram_heap + sizeof(psram_heap));
 	MP_STATE_PORT(esdr_rx_buf) = MP_OBJ_NULL;
 	MP_STATE_PORT(esdr_tx_buf) = MP_OBJ_NULL;
+	(void)atomic_clear(&knob_home);
 }
 
 void esdr_port_deinit(void)
@@ -804,6 +865,43 @@ static mp_obj_t esdr_shell(mp_obj_t cmd_in)
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(esdr_shell_obj, esdr_shell);
 
+/* next_app([path]) -> str: with a path, the app main.py starts after the next soft reset;
+ * without, that app ("" for none), forgotten. */
+static mp_obj_t esdr_next_app(size_t n_args, const mp_obj_t *args)
+{
+	char out[sizeof(next_app)];
+	const char *path;
+	size_t len;
+
+	if (n_args == 0) {
+		/* Forgotten first: whatever the string does, the next soft reset starts the menu. */
+		strcpy(out, next_app);
+		next_app[0] = '\0';
+		return mp_obj_new_str_from_cstr(out);
+	}
+	if (!mp_obj_is_str(args[0])) {
+		mp_raise_TypeError(MP_ERROR_TEXT("path must be a str"));
+	}
+	path = mp_obj_str_get_data(args[0], &len);
+	if (len >= sizeof(next_app) || memchr(path, '\0', len) != NULL) {
+		mp_raise_ValueError(MP_ERROR_TEXT("path too long or with a NUL"));
+	}
+	memcpy(next_app, path, len);
+	next_app[len] = '\0';
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_next_app_obj, 0, 1, esdr_next_app);
+
+/* home() -> bool: the knob was held since the last call, recently enough that the Ctrl-C
+ * which ended the app was the knob's: "back to the launcher". */
+static mp_obj_t esdr_home(void)
+{
+	bool held = atomic_clear(&knob_home) != 0;
+
+	return mp_obj_new_bool(held && k_uptime_get() - knob_time < KNOB_FRESH_MS);
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(esdr_home_obj, esdr_home);
+
 /* esdr_gui.c */
 extern const mp_obj_fun_builtin_fixed_t esdr_rx_latest_obj, esdr_iq_cols_obj;
 extern const mp_obj_fun_builtin_var_t esdr_psd_obj, esdr_fb_trace_obj, esdr_fb_wf_row_obj,
@@ -860,6 +958,8 @@ static const mp_rom_map_elem_t esdr_globals_table[] = {
 	{MP_ROM_QSTR(MP_QSTR_shell), MP_ROM_PTR(&esdr_shell_obj)},
 	{MP_ROM_QSTR(MP_QSTR_crash), MP_ROM_PTR(&esdr_crash_obj)},
 	{MP_ROM_QSTR(MP_QSTR_reset_reason), MP_ROM_PTR(&esdr_reset_reason_obj)},
+	{MP_ROM_QSTR(MP_QSTR_next_app), MP_ROM_PTR(&esdr_next_app_obj)},
+	{MP_ROM_QSTR(MP_QSTR_home), MP_ROM_PTR(&esdr_home_obj)},
 	{MP_ROM_QSTR(MP_QSTR_sd_info), MP_ROM_PTR(&esdr_sd_info_obj)},
 	{MP_ROM_QSTR(MP_QSTR_claim), MP_ROM_PTR(&esdr_claim_obj)},
 	{MP_ROM_QSTR(MP_QSTR_release), MP_ROM_PTR(&esdr_release_obj)},

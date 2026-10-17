@@ -1,0 +1,49 @@
+options:
+  parameters:
+    author: esp-sdr
+    description: Waterfall and spectrum on one tab, LNA gain and RF amp on the other, at 125 kS/s; the knob tunes from 1.8 to 2.8 GHz.
+    generate_options: qt_gui
+    id: receiver
+    title: Receiver
+    run: 'True'
+    run_options: prompt
+  states: {coordinate: [8, 8], rotation: 0, state: enabled}
+blocks:
+- name: samp_rate
+  id: variable
+  parameters: {value: '125000'}
+  states: {coordinate: [184, 12], rotation: 0, state: enabled}
+- name: tabs
+  id: qtgui_tab_widget
+  parameters: {num_tabs: '2', label0: '"RX"', label1: '"Settings"', gui_hint: '1,0,1,2'}
+  states: {coordinate: [300, 12], rotation: 0, state: enabled}
+- name: freq
+  id: variable_qtgui_range
+  parameters: {label: Frequency, start: 1.8e9, stop: 2.8e9, step: 1e6, value: 2.44e9, widget: counter_slider, gui_hint: '0,0,1,2'}
+  states: {coordinate: [420, 12], rotation: 0, state: enabled}
+- name: lna
+  id: variable_qtgui_chooser
+  parameters: {label: LNA gain, type: int, value: '16', num_opts: '3', option0: '0', option1: '16', option2: '32', label0: '0 dB', label1: '16 dB', label2: '32 dB', widget: radio_buttons, orient: Qt.QVBoxLayout, gui_hint: 'tabs@1: 0,0,1,1'}
+  states: {coordinate: [540, 12], rotation: 0, state: enabled}
+- name: amp_en
+  id: variable_qtgui_check_box
+  parameters: {label: RF amp, type: bool, value: 'False', true: 'True', false: 'False', gui_hint: 'tabs@1: 0,1,1,1'}
+  states: {coordinate: [660, 12], rotation: 0, state: enabled}
+- name: soapy_hackrf_source_0
+  id: soapy_hackrf_source
+  parameters: {dev_args: '', samp_rate: samp_rate, center_freq: freq, gain: lna, vga: '16', amp: amp_en, bandwidth: '0', type: fc32}
+  states: {coordinate: [16, 160], rotation: 0, state: enabled}
+- name: qtgui_waterfall_sink_x_0
+  id: qtgui_waterfall_sink_x
+  parameters: {type: complex, fftsize: '1024', fc: freq, bw: samp_rate, name: '"Waterfall"', int_min: '-90', int_max: '-40', gui_hint: 'tabs@0: 0,0,1,1'}
+  states: {coordinate: [400, 240], rotation: 0, state: enabled}
+- name: qtgui_freq_sink_x_0
+  id: qtgui_freq_sink_x
+  parameters: {type: complex, fftsize: '1024', fc: freq, bw: samp_rate, name: '"Spectrum"', ymin: '-120', ymax: '0', gui_hint: 'tabs@0: 0,1,1,1'}
+  states: {coordinate: [400, 120], rotation: 0, state: enabled}
+connections:
+- [soapy_hackrf_source_0, '0', qtgui_freq_sink_x_0, '0']
+- [soapy_hackrf_source_0, '0', qtgui_waterfall_sink_x_0, '0']
+metadata:
+  file_format: 1
+  grc_version: 3.10.12.0

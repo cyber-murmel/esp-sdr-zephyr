@@ -1,0 +1,7 @@
+{
+  "name": "Constellation",
+  "description": "The received samples as a constellation, next to their spectrum, at 250 kS/s; the knob tunes from 1.8 to 2.8 GHz.",
+  "category": "receive",
+  "author": "esp-sdr",
+  "revision": 2
+}

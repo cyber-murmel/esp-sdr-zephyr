@@ -5,7 +5,9 @@
 # SPDX-License-Identifier: GPL-3.0
 #
 # GNU Radio Python Flow Graph
-# Title: TX tone
+# Title: Tone
+# Author: esp-sdr
+# Description: Transmits a tone at the weakest gain step; the knob sets its offset (+-100 kHz) and the frequency (2.401 to 2.482 GHz, the 2.4 GHz ISM band).
 # GNU Radio version: 3.10.12.0
 
 from PyQt5 import Qt
@@ -26,12 +28,12 @@ import threading
 
 
 
-class tx_tone(gr.top_block, Qt.QWidget):
+class tone(gr.top_block, Qt.QWidget):
 
     def __init__(self):
-        gr.top_block.__init__(self, "TX tone", catch_exceptions=True)
+        gr.top_block.__init__(self, "Tone", catch_exceptions=True)
         Qt.QWidget.__init__(self)
-        self.setWindowTitle("TX tone")
+        self.setWindowTitle("Tone")
         qtgui.util.check_set_qss()
         try:
             self.setWindowIcon(Qt.QIcon.fromTheme('gnuradio-grc'))
@@ -49,7 +51,7 @@ class tx_tone(gr.top_block, Qt.QWidget):
         self.top_grid_layout = Qt.QGridLayout()
         self.top_layout.addLayout(self.top_grid_layout)
 
-        self.settings = Qt.QSettings("gnuradio/flowgraphs", "tx_tone")
+        self.settings = Qt.QSettings("gnuradio/flowgraphs", "tone")
 
         try:
             geometry = self.settings.value("geometry")
@@ -62,18 +64,18 @@ class tx_tone(gr.top_block, Qt.QWidget):
         ##################################################
         # Variables
         ##################################################
-        self.tone = tone = 50e3
         self.samp_rate = samp_rate = 250000
+        self.offset = offset = 50e3
         self.freq = freq = 2.44e9
 
         ##################################################
         # Blocks
         ##################################################
 
-        self._tone_range = qtgui.Range(-100e3, 100e3, 1e3, 50e3, 200)
-        self._tone_win = qtgui.RangeWidget(self._tone_range, self.set_tone, "Tone", "counter_slider", float, QtCore.Qt.Horizontal)
-        self.top_layout.addWidget(self._tone_win)
-        self._freq_range = qtgui.Range(2.4e9, 2.5e9, 1e6, 2.44e9, 200)
+        self._offset_range = qtgui.Range(-100e3, 100e3, 1e3, 50e3, 200)
+        self._offset_win = qtgui.RangeWidget(self._offset_range, self.set_offset, "Offset", "counter_slider", float, QtCore.Qt.Horizontal)
+        self.top_layout.addWidget(self._offset_win)
+        self._freq_range = qtgui.Range(2.401e9, 2.482e9, 1e6, 2.44e9, 200)
         self._freq_win = qtgui.RangeWidget(self._freq_range, self.set_freq, "Frequency", "counter_slider", float, QtCore.Qt.Horizontal)
         self.top_layout.addWidget(self._freq_win)
         self.soapy_hackrf_sink_0 = None
@@ -89,7 +91,7 @@ class tx_tone(gr.top_block, Qt.QWidget):
         self.soapy_hackrf_sink_0.set_frequency(0, freq)
         self.soapy_hackrf_sink_0.set_gain(0, 'AMP', False)
         self.soapy_hackrf_sink_0.set_gain(0, 'VGA', min(max(0, 0.0), 47.0))
-        self.analog_sig_source_x_0 = analog.sig_source_c(samp_rate, analog.GR_COS_WAVE, tone, 0.5, 0, 0)
+        self.analog_sig_source_x_0 = analog.sig_source_c(samp_rate, analog.GR_COS_WAVE, offset, 0.5, 0, 0)
 
 
         ##################################################
@@ -99,19 +101,12 @@ class tx_tone(gr.top_block, Qt.QWidget):
 
 
     def closeEvent(self, event):
-        self.settings = Qt.QSettings("gnuradio/flowgraphs", "tx_tone")
+        self.settings = Qt.QSettings("gnuradio/flowgraphs", "tone")
         self.settings.setValue("geometry", self.saveGeometry())
         self.stop()
         self.wait()
 
         event.accept()
-
-    def get_tone(self):
-        return self.tone
-
-    def set_tone(self, tone):
-        self.tone = tone
-        self.analog_sig_source_x_0.set_frequency(self.tone)
 
     def get_samp_rate(self):
         return self.samp_rate
@@ -120,6 +115,13 @@ class tx_tone(gr.top_block, Qt.QWidget):
         self.samp_rate = samp_rate
         self.analog_sig_source_x_0.set_sampling_freq(self.samp_rate)
         self.soapy_hackrf_sink_0.set_sample_rate(0, self.samp_rate)
+
+    def get_offset(self):
+        return self.offset
+
+    def set_offset(self, offset):
+        self.offset = offset
+        self.analog_sig_source_x_0.set_frequency(self.offset)
 
     def get_freq(self):
         return self.freq
@@ -131,7 +133,7 @@ class tx_tone(gr.top_block, Qt.QWidget):
 
 
 
-def main(top_block_cls=tx_tone, options=None):
+def main(top_block_cls=tone, options=None):
 
     qapp = Qt.QApplication(sys.argv)
 

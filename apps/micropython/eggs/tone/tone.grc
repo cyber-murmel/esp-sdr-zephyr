@@ -1,0 +1,36 @@
+options:
+  parameters:
+    author: esp-sdr
+    description: Transmits a tone at the weakest gain step; the knob sets its offset (+-100 kHz) and the frequency (2.401 to 2.482 GHz, the 2.4 GHz ISM band).
+    generate_options: qt_gui
+    id: tone
+    title: Tone
+    run: 'True'
+    run_options: prompt
+  states: {coordinate: [8, 8], rotation: 0, state: enabled}
+blocks:
+- name: samp_rate
+  id: variable
+  parameters: {value: '250000'}
+  states: {coordinate: [184, 12], rotation: 0, state: enabled}
+- name: offset
+  id: variable_qtgui_range
+  parameters: {label: Offset, start: '-100e3', stop: '100e3', step: '1e3', value: '50e3', widget: counter_slider}
+  states: {coordinate: [300, 12], rotation: 0, state: enabled}
+- name: freq
+  id: variable_qtgui_range
+  parameters: {label: Frequency, start: 2.401e9, stop: 2.482e9, step: 1e6, value: 2.44e9, widget: counter_slider}
+  states: {coordinate: [420, 12], rotation: 0, state: enabled}
+- name: analog_sig_source_x_0
+  id: analog_sig_source_x
+  parameters: {type: complex, samp_rate: samp_rate, waveform: analog.GR_COS_WAVE, freq: offset, amp: '0.5', offset: '0', phase: '0'}
+  states: {coordinate: [16, 160], rotation: 0, state: enabled}
+- name: soapy_hackrf_sink_0
+  id: soapy_hackrf_sink
+  parameters: {dev_args: '', samp_rate: samp_rate, center_freq: freq, amp: 'False', vga: '0', bandwidth: '0', type: fc32}
+  states: {coordinate: [300, 160], rotation: 0, state: enabled}
+connections:
+- [analog_sig_source_x_0, '0', soapy_hackrf_sink_0, '0']
+metadata:
+  file_format: 1
+  grc_version: 3.10.12.0

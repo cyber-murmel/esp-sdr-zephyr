@@ -8,7 +8,8 @@ Overview
 
 MicroPython (upstream v1.29.0, its Zephyr port) as the main program of the XIAO ESP32S3, with a
 ``gnuradio`` stand-in that runs flowgraphs exported from GNU Radio Companion unmodified: copy the
-``.py`` file GRC writes to the board and run it.
+``.py`` file GRC writes to the board and run it, or start it from the launcher's menu as an app
+(`Launcher and apps`_).
 
 What runs:
 
@@ -64,9 +65,9 @@ What runs:
      - placed on the 320x240 screen; a tab widget shows one page at a time; a scroll area
        does not scroll
    * - The rest of a Qt GUI export (``PyQt5``, ``sip``, settings, styling)
-     - accepted, does nothing; ``QApplication.exec_()`` runs the display until Ctrl-C, which
-       calls the export's own SIGINT handler; when the loop ends, the window closes as on a
-       desktop (the export's ``closeEvent()`` stops the flowgraph)
+     - accepted, does nothing; ``QApplication.exec_()`` runs the display until Ctrl-C (or the
+       knob held for 1.5 s), which calls the export's own SIGINT handler; when the loop ends,
+       the window closes as on a desktop (the export's ``closeEvent()`` stops the flowgraph)
    * - ``signal``, ``threading.Event``, ``argparse``, ``eng_notation``, ``firdes``,
        ``fft.window``, ``pmt``
      - stand-ins for what every export imports
@@ -92,7 +93,8 @@ Storage and USB
 ***************
 
 - ``/FLASH:``: a 4 MB FAT volume in the upper half of the flash, formatted on first use. It
-  holds the scripts and is the working directory (``boot.py``, ``main.py`` run from it).
+  holds the scripts and apps (``apps/``) and is the working directory (``boot.py``,
+  ``main.py`` run from it).
 - ``/SD:``: the SD card, if one mounts (FAT or exFAT; it is never formatted).
 - Both are USB drives (mass storage, LUN 0 FLASH, LUN 1 SD card). While the board writes a
   volume (a ``file_sink`` at the end of a capture) the host sees the medium removed, for at
@@ -104,8 +106,51 @@ Running an export::
 
    >>> exec(open("rx_gui.py").read())
 
-or name it ``main.py`` to run it at boot. ``mpremote`` and ``pyboard.py`` work too, but they
-soft-reset the board when they connect.
+or name it ``main.py`` to run it at boot instead of the launcher. ``mpremote`` and
+``pyboard.py`` work too, but they soft-reset the board when they connect (into the raw REPL,
+which does not start the launcher).
+
+Launcher and apps
+*****************
+
+The board starts into a menu of apps; the knob selects one and starts it. An app is laid out
+as in the `badge.team hatchery <https://badge.team/docs/hatchery/>`__: a folder whose
+``__init__.py`` runs the app when imported, and whose ``metadata.json`` describes it:
+
+.. code-block:: json
+
+   {
+     "name": "Waterfall",
+     "description": "A gapless waterfall of 250 kHz.",
+     "category": "receive",
+     "author": "esp-sdr",
+     "revision": 1
+   }
+
+``category`` is the menu's section (``receive`` and ``transmit`` come first), ``"hidden": true``
+keeps an app out of the menu. ``tools/mkegg.py flowgraph.grc --category receive`` makes the
+folder of a GRC flowgraph: the flowgraph, its export (``grcc``, unmodified), an ``__init__.py``
+that runs the export's ``main()``, and the metadata from the flowgraph's options (title,
+description, author). Run it again after changing the flowgraph; the revision goes up when the
+export changes.
+
+The menu lists:
+
+- the apps bundled with the firmware, ``eggs/``: Spectrum, Waterfall (250 kS/s, gapless),
+  Wideband (40 MS/s bursts), Constellation, Receiver (tabs, radio buttons, a check box) and
+  Tone (transmits). They are frozen; ``tools/eggs_index.py`` turns their ``metadata.json``
+  files into the index the menu reads;
+- the folders in ``apps/`` on the FLASH and SD drives: copy an app's folder there over USB.
+
+Each app runs in a fresh interpreter: the launcher keeps the choice across a soft reset
+(``esdr.next_app()``), ``main.py`` runs the app, and when the app ends another soft reset
+brings the menu back with the app selected. An app that fails shows its error until the knob
+is pressed; the traceback is on the console.
+
+Holding the knob for 1.5 s ends an app and returns to the menu, as Ctrl-C does (a GRC export's
+SIGINT handler stops the flowgraph). Ctrl-C on the console ends an app or the menu into the
+REPL. Holding the knob while nothing runs (the REPL waits), or again within 5 s when an app
+ignored the first hold, restarts the board.
 
 The ``esdr`` module
 *******************
@@ -120,7 +165,9 @@ or int16 I/Q from a buffer), ``tx_loop()`` / ``tx_period()`` (loop one period at
 ``BURST_RATES``,
 ``claim()`` / ``release()`` (a volume away from USB while
 writing), ``shell()`` (Zephyr shell commands, such as ``usj`` and ``mcuboot confirm``),
-``crash()`` and ``reset_reason()`` (why the board last restarted), ``sd_info()``.
+``crash()`` and ``reset_reason()`` (why the board last restarted), ``sd_info()``,
+``next_app()`` and ``home()`` (the launcher: the app the next soft reset starts, whether the
+knob ended the app).
 
 Building and flashing
 *********************
