@@ -12,6 +12,8 @@
 
 #include <zephyr/ztest.h>
 
+#include <test_rng.h>
+
 #include "le_conn.h"
 #include "ubt_le.h"
 /* the vendored upstream code, only to cross-check against: it defines u8 and friends */
@@ -22,22 +24,12 @@
 
 #define ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
 
-/* ---- random numbers ---- */
-
-static uint64_t rng;
-
-static uint32_t rnd(void)
-{
-	rng ^= rng << 13;
-	rng ^= rng >> 7;
-	rng ^= rng << 17;
-	return (uint32_t)(rng >> 32);
-}
+/* ---- random numbers (tests/common/include/test_rng.h) ---- */
 
 static void before_each(void *fixture)
 {
 	ARG_UNUSED(fixture);
-	rng = 0x9e3779b97f4a7c15ULL;
+	test_rng_seed(0x9e3779b97f4a7c15ULL);
 }
 
 ZTEST_SUITE(ubertooth_le, NULL, NULL, before_each, NULL, NULL);
@@ -203,7 +195,7 @@ static void st_bit(struct stream *st, unsigned int bit)
 static void st_noise(struct stream *st, unsigned int n)
 {
 	while (n--) {
-		st_bit(st, rnd() & 1);
+		st_bit(st, test_rng_u32() & 1);
 	}
 }
 
@@ -377,7 +369,7 @@ ZTEST(ubertooth_le, test_helpers)
 	unsigned int i;
 
 	for (i = 0; i < 2000; i++) {
-		uint32_t v = rnd(), r = 0, r24 = 0;
+		uint32_t v = test_rng_u32(), r = 0, r24 = 0;
 		unsigned int pc = 0, b;
 
 		for (b = 0; b < 32; b++) {
@@ -420,8 +412,8 @@ ZTEST(ubertooth_le, test_golden_vectors)
 		for (i = 0; i < ARRAY_LEN(le_vecs); i++) {
 			const struct le_vec *v = &le_vecs[i];
 			struct stream st;
-			uint32_t t0 = rnd(), t_pre, exp_start;
-			unsigned int lead = 33 + rnd() % 120;
+			uint32_t t0 = test_rng_u32(), t_pre, exp_start;
+			unsigned int lead = 33 + test_rng_u32() % 120;
 			const usb_pkt_rx *p = &cap.pk[0];
 
 			le_setup(v->mhz, v->aa, v->crc_init);
@@ -561,7 +553,7 @@ ZTEST(ubertooth_le, test_aa_tolerance)
 
 					mask |= 1u << (trial == 0 ? e
 								  : (trial == 1 ? 31 - e
-										: rnd() % 32));
+										: test_rng_u32() % 32));
 				}
 				aa_rx = v->aa ^ mask;
 				for (k = 0; k < 32; k++) {
@@ -740,7 +732,7 @@ ZTEST(ubertooth_le, test_truncation_to_the_usb_packet)
 		pdu[0] = 0x02;
 		pdu[1] = (uint8_t)len;
 		for (i = 0; i < len; i++) {
-			pdu[2 + i] = (uint8_t)(rnd());
+			pdu[2 + i] = (uint8_t)(test_rng_u32());
 		}
 		ref_crc_bytes(ref_crc(0xabcdef, pdu, 2 + len), crc);
 		le_setup(2436, 0x8f1e3a71, 0xabcdef);
@@ -771,7 +763,7 @@ ZTEST(ubertooth_le, test_length_bounds)
 	pdu[0] = 0x02;
 	pdu[1] = 255;
 	for (i = 0; i < 255; i++) {
-		pdu[2 + i] = (uint8_t)rnd();
+		pdu[2 + i] = (uint8_t)test_rng_u32();
 	}
 	le_setup(2440, 0x12345678, 0x111111);
 	st_init(&st, 1);
@@ -816,7 +808,7 @@ ZTEST(ubertooth_le, test_noise_and_false_hits)
 			st_init(&st, base);
 			st_noise(&st, 10000);
 			base = st.t;
-			chunk = 1 + rnd() % 300;
+			chunk = 1 + test_rng_u32() % 300;
 			feed(&le, &st, chunk);
 		}
 		/* 200000 random symbols hit a tolerance 0 correlator with probability 5e-5 */
@@ -892,7 +884,7 @@ ZTEST(ubertooth_le, test_false_hit_does_not_hide_the_next_packet)
 		pdu1[0] = 0x02;
 		pdu1[1] = 100;
 		for (i = 0; i < 100; i++) {
-			pdu1[2 + i] = (uint8_t)rnd();
+			pdu1[2 + i] = (uint8_t)test_rng_u32();
 		}
 		le_setup(v->mhz, v->aa, v->crc_init);
 		(void)ref_air(b1, v->aa, ref_idx(v->mhz), pdu1, 102, v->crc_init, true);
@@ -1001,7 +993,7 @@ ZTEST(ubertooth_le, test_gaps_in_the_stream)
 			st.s[st.n].bit = bits[i];
 			st.s[st.n].pwr = 100;
 			st.n++;
-			t += 3 + (rnd() % 3); /* 3, 4 or 5 */
+			t += 3 + (test_rng_u32() % 3); /* 3, 4 or 5 */
 		}
 		st.t = t;
 		st_noise(&st, 20);
@@ -1040,7 +1032,7 @@ ZTEST(ubertooth_le, test_chunking_is_irrelevant)
 				unsigned int n = ref_air(bits, UBT_LE_ADV_AA, 37, v->pdu,
 							 v->pdu_len, UBT_LE_ADV_CRC_INIT, true);
 
-				st_noise(&st, 1 + rnd() % 200);
+				st_noise(&st, 1 + test_rng_u32() % 200);
 				st_bits(&st, bits, n);
 			}
 			st_noise(&st, 100);
@@ -1054,7 +1046,7 @@ ZTEST(ubertooth_le, test_chunking_is_irrelevant)
 			}
 			le_setup(2402, UBT_LE_ADV_AA, UBT_LE_ADV_CRC_INIT);
 			ubt_le_set_tolerance(&le, tol);
-			zassert_equal(feed(&le, &st, 1 + rnd() % 70), 6, "tol %u", tol);
+			zassert_equal(feed(&le, &st, 1 + test_rng_u32() % 70), 6, "tol %u", tol);
 			for (i = 0; i < nref; i++) {
 				zassert_mem_equal(&cap.pk[i], &ref[i], sizeof(usb_pkt_rx));
 				zassert_equal(cap.info[i].t_start, ref_start[i]);
@@ -1253,7 +1245,7 @@ static void promisc_run(const struct simconn *c, unsigned int scan_mhz, uint32_t
 		while (i < st.n) {
 			unsigned int r;
 
-			chunk = 20 + rnd() % 80;
+			chunk = 20 + test_rng_u32() % 80;
 			if (chunk > st.n - i) {
 				chunk = st.n - i;
 			}
@@ -1532,7 +1524,7 @@ ZTEST(ubertooth_le, test_promisc_interval_estimate)
 				/* every `miss`th visit is skipped, jitter of a few us on the rest
 				 */
 				t += visit * (1 + (miss != 0 && (k % (miss + 2)) == 1 ? 1 : 0));
-				ubt_promisc_packet(&pm, 2440, t + rnd() % 60, &p);
+				ubt_promisc_packet(&pm, 2440, t + test_rng_u32() % 60, &p);
 				steps++;
 			}
 			zassert_equal(pm.phase, UBT_PM_HOP_A, "interval %u miss %u after %u visits",
@@ -1750,11 +1742,11 @@ ZTEST(ubertooth_le, test_conn_channel_selection)
 	for (trial = 0; trial < 300; trial++) {
 		uint8_t chm[5];
 		le_channel_remapping_t remap;
-		unsigned int hop = 5 + rnd() % 12;
+		unsigned int hop = 5 + test_rng_u32() % 12;
 		unsigned int n_used;
 
 		for (i = 0; i < 5; i++) {
-			chm[i] = (uint8_t)rnd();
+			chm[i] = (uint8_t)test_rng_u32();
 		}
 		chm[4] &= 0x1f;
 		if (trial % 3 == 0) { /* sparse maps */
@@ -1868,7 +1860,7 @@ struct csim {
 
 static unsigned int pct(void)
 {
-	return rnd() % 100;
+	return test_rng_u32() % 100;
 }
 
 static uint64_t scale(uint64_t ticks, int ppm)
@@ -1969,7 +1961,7 @@ static void sim_packet(struct csim *s, const struct mpkt *m, unsigned int mhz)
 		return;
 	}
 	p.mhz = (uint16_t)mhz;
-	p.t = m->ts + rnd() % 21; /* the demodulator's timestamp noise: 0 to 2 us late */
+	p.t = m->ts + test_rng_u32() % 21; /* the demodulator's timestamp noise: 0 to 2 us late */
 	p.pdu = m->pdu;
 	p.len = (uint16_t)(2 + m->plen);
 	p.crc_ok = true;
@@ -2068,7 +2060,7 @@ static void conn_run(const struct cc *cs, struct cres *res)
 	/* the master's anchors, in our clock: it starts in the transmit window and drifts */
 	ws = connect_end + LE_TICKS_PER_UNIT + (uint64_t)cs->win_offset * LE_TICKS_PER_UNIT;
 	interval = (uint64_t)cs->interval * LE_TICKS_PER_UNIT;
-	anchor = ws + rnd() % 10000;
+	anchor = ws + test_rng_u32() % 10000;
 	for (ev = 0; ev < cs->events && !res->ended; ev++) {
 		struct mpkt pk[4];
 		unsigned int n = 0, i, mhz;
@@ -2085,7 +2077,7 @@ static void conn_run(const struct cc *cs, struct cres *res)
 				anchor += step +
 					  scale((uint64_t)cs->upd_woff * LE_TICKS_PER_UNIT,
 						cs->drift_ppm) +
-					  (span > 4000 ? rnd() % (span - 4000) : 0);
+					  (span > 4000 ? test_rng_u32() % (span - 4000) : 0);
 				interval = (uint64_t)cs->upd_interval * LE_TICKS_PER_UNIT;
 			} else {
 				anchor += step;
@@ -2104,7 +2096,7 @@ static void conn_run(const struct cc *cs, struct cres *res)
 		for (i = 0; i < (md ? 4u : 2u); i++) {
 			bool master = (i & 1) == 0;
 			bool more = md && i < 2;
-			uint8_t hdr = (uint8_t)(0x01 | ((rnd() & 1) << 2) | ((rnd() & 1) << 3));
+			uint8_t hdr = (uint8_t)(0x01 | ((test_rng_u32() & 1) << 2) | ((test_rng_u32() & 1) << 3));
 			unsigned int plen = 0;
 
 			if (master && i == 0 && cs->upd_at != 0 && ev >= cs->upd_at &&
@@ -2122,12 +2114,12 @@ static void conn_run(const struct cc *cs, struct cres *res)
 				memcpy(payload, ctrl_terminate, 2);
 				hdr = (uint8_t)(0x03 | (hdr & 0x0c));
 				plen = 2;
-			} else if (master && (rnd() % 4) == 0) {
+			} else if (master && (test_rng_u32() % 4) == 0) {
 				unsigned int k;
 
-				plen = 1 + rnd() % 27;
+				plen = 1 + test_rng_u32() % 27;
 				for (k = 0; k < plen; k++) {
-					payload[k] = (uint8_t)rnd();
+					payload[k] = (uint8_t)test_rng_u32();
 				}
 				hdr = (uint8_t)(0x02 | (hdr & 0x0c));
 			}
@@ -2208,7 +2200,7 @@ ZTEST(ubertooth_le, test_conn_follows_all_intervals)
 			cs.timeout = timeout_for(intervals[i]);
 			cs.win_offset = woff;
 			cs.hop = 5 + i;
-			cs.drift_ppm = (int)(rnd() % 61) - 30;
+			cs.drift_ppm = (int)(test_rng_u32() % 61) - 30;
 			cs.sca = 5 + (i % 3);
 			cs.events = intervals[i] > 800 ? 40 : 150;
 			conn_run(&cs, &r);
@@ -2245,7 +2237,7 @@ ZTEST(ubertooth_le, test_conn_survives_packet_loss)
 			cs.slave_miss_pct = 10;
 			cs.md_pct = 20;
 			cs.events = intervals[k] >= 800 ? 120 : 400;
-			cs.drift_ppm = (int)(rnd() % 101) - 50;
+			cs.drift_ppm = (int)(test_rng_u32() % 101) - 50;
 			cs.sca = 4;
 			cs.hop = 5 + k * 3;
 			conn_run(&cs, &r);

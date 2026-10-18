@@ -10,24 +10,17 @@
 
 #include <zephyr/ztest.h>
 
+#include <test_rng.h>
+
 #include "bch.h"
 
 #define RNG_SEED 0x9e3779b97f4a7c15ULL
-static uint64_t rng;
 static struct bch_code code;
-
-static uint32_t rnd(void)
-{
-	rng ^= rng << 13;
-	rng ^= rng >> 7;
-	rng ^= rng << 17;
-	return (uint32_t)(rng >> 32);
-}
 
 static void before_each(void *fixture)
 {
 	ARG_UNUSED(fixture);
-	rng = RNG_SEED;
+	test_rng_seed(RNG_SEED);
 }
 
 ZTEST_SUITE(link_bch, NULL, NULL, before_each, NULL, NULL);
@@ -50,7 +43,7 @@ static void positions(unsigned int *pos, unsigned int e, unsigned int len)
 		bool dup;
 
 		do {
-			pos[j] = rnd() % len;
+			pos[j] = test_rng_u32() % len;
 			dup = false;
 			for (unsigned int q = 0; q < j; q++) {
 				dup |= pos[q] == pos[j];
@@ -107,7 +100,7 @@ ZTEST(link_bch, test_correct_up_to_t)
 						unsigned int pos[BCH_T_MAX];
 
 						for (unsigned int i = 0; i < k; i++) {
-							d[i] = (uint8_t)rnd();
+							d[i] = (uint8_t)test_rng_u32();
 						}
 						bch_encode(&code, d, k, par);
 						memcpy(ref, d, k);
@@ -143,7 +136,7 @@ ZTEST(link_bch, test_more_than_t_never_clean)
 			int ret;
 
 			for (unsigned int i = 0; i < kmax; i++) {
-				d[i] = (uint8_t)rnd();
+				d[i] = (uint8_t)test_rng_u32();
 			}
 			bch_encode(&code, d, kmax, par);
 			positions(pos, t + 1U, 8U * kmax + r);

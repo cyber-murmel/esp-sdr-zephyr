@@ -301,7 +301,7 @@ let
        cc -O2 -Wall -Isrc -I../../include src/qam.c src/rs.c src/hamming.c tools/qam_sim.c \
          -lm -o ../../qam_sim
        cc -O2 -Wall -Isrc -I../../include src/ofdm.c src/ofdm_frame.c src/qam.c src/rs.c \
-         src/hamming.c tools/ofdm_sim.c -lm -o ../../ofdm_sim)
+         src/bch.c src/hamming.c tools/ofdm_sim.c -lm -o ../../ofdm_sim)
       runHook postBuild
     '';
     installPhase = ''

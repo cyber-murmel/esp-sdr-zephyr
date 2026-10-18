@@ -14,5 +14,5 @@ project(ubertooth_specan_unit)
 set(UBT_SRC ${CMAKE_CURRENT_LIST_DIR}/../../../apps/ubertooth/src)
 
 target_sources(app PRIVATE src/main.c ${UBT_SRC}/ubt_specan.c)
-target_include_directories(app PRIVATE ${UBT_SRC})
+target_include_directories(app PRIVATE ${UBT_SRC} ${CMAKE_CURRENT_LIST_DIR}/../../../include)
 set_source_files_properties(${UBT_SRC}/ubt_specan.c PROPERTIES COMPILE_OPTIONS "-U__ZEPHYR__")

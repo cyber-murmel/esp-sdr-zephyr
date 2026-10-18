@@ -18,21 +18,9 @@
 #include <esp_sdr/esp_sdr_chancap.h>
 
 #include "app.h"
+#include "app_shell.h"
 
 extern struct k_heap _system_heap;
-
-static int parse_long(const struct shell *sh, const char *s, long min, long max, long *out)
-{
-	char *end;
-	long v = strtol(s, &end, 0);
-
-	if (*s == '\0' || *end != '\0' || v < min || v > max) {
-		shell_error(sh, "bad value: %s (%ld to %ld)", s, min, max);
-		return -EINVAL;
-	}
-	*out = v;
-	return 0;
-}
 
 static int parse_onoff(const struct shell *sh, const char *s, bool *out)
 {
@@ -122,7 +110,7 @@ static int cmd_bench(const struct shell *sh, size_t argc, char **argv)
 	long pairs = 8192;
 	int ret;
 
-	if (argc > 1 && parse_long(sh, argv[1], 512, 1 << 20, &pairs) != 0) {
+	if (argc > 1 && app_shell_long(sh, argv[1], 512, 1 << 20, &pairs) != 0) {
 		return -EINVAL;
 	}
 	ret = esp_sdr_chancap_bench(&cc_settings()->cfg, (uint32_t)(pairs & ~511L), &r);
@@ -162,7 +150,7 @@ static int set_spacing(const struct shell *sh, const char *v)
 {
 	long x;
 
-	if (parse_long(sh, v, 1000, 16000000, &x) != 0) {
+	if (app_shell_long(sh, v, 1000, 16000000, &x) != 0) {
 		return -EINVAL;
 	}
 	cc_settings()->cfg.spacing_hz = (uint32_t)x;
@@ -173,7 +161,7 @@ static int set_channels(const struct shell *sh, const char *v)
 {
 	long x;
 
-	if (parse_long(sh, v, 1, ESP_SDR_CHANCAP_CHANNELS_MAX, &x) != 0) {
+	if (app_shell_long(sh, v, 1, ESP_SDR_CHANCAP_CHANNELS_MAX, &x) != 0) {
 		return -EINVAL;
 	}
 	cc_settings()->cfg.n_channels = (uint16_t)x;
@@ -184,7 +172,7 @@ static int set_rate(const struct shell *sh, const char *v)
 {
 	long x;
 
-	if (parse_long(sh, v, 1000, 16000000, &x) != 0) {
+	if (app_shell_long(sh, v, 1000, 16000000, &x) != 0) {
 		return -EINVAL;
 	}
 	cc_settings()->cfg.channel_rate_hz = (uint32_t)x;
@@ -195,7 +183,7 @@ static int set_db(const struct shell *sh, const char *v, int16_t *out)
 {
 	long x;
 
-	if (parse_long(sh, v, 0, 60, &x) != 0) {
+	if (app_shell_long(sh, v, 0, 60, &x) != 0) {
 		return -EINVAL;
 	}
 	*out = (int16_t)x;
@@ -228,7 +216,7 @@ static int set_us(const struct shell *sh, const char *v, uint32_t *out, long max
 {
 	long x;
 
-	if (parse_long(sh, v, 0, max, &x) != 0) {
+	if (app_shell_long(sh, v, 0, max, &x) != 0) {
 		return -EINVAL;
 	}
 	*out = (uint32_t)x;
@@ -275,7 +263,7 @@ static int set_rxgain(const struct shell *sh, const char *v)
 {
 	long g = -1;
 
-	if (strcmp(v, "auto") != 0 && parse_long(sh, v, 0, esp_sdr_rx_gain_max(), &g) != 0) {
+	if (strcmp(v, "auto") != 0 && app_shell_long(sh, v, 0, esp_sdr_rx_gain_max(), &g) != 0) {
 		return -EINVAL;
 	}
 	cc_settings()->rx_gain = (int)g;
@@ -286,7 +274,7 @@ static int set_bw(const struct shell *sh, const char *v)
 {
 	long x;
 
-	if (parse_long(sh, v, -1, 69, &x) != 0) {
+	if (app_shell_long(sh, v, -1, 69, &x) != 0) {
 		return -EINVAL;
 	}
 	cc_settings()->rx_bw_mhz = (int)x;

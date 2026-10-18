@@ -120,7 +120,7 @@ ZTEST(ubertooth_tx, test_sine_lut)
 	for (int amp = 100; amp <= 511; amp += 137) {
 		gfsk_lut_init(&lut, amp, false);
 		for (unsigned int i = 0; i < GFSK_LUT_SIZE; i++) {
-			double a = 2.0 * TXREF_PI * i / GFSK_LUT_SIZE;
+			double a = ESP_SDR_TAU * i / GFSK_LUT_SIZE;
 			int wi = txref_i(lut.w[i]), wq = txref_q(lut.w[i]);
 
 			zassert_true(fabs(wi - amp * cos(a)) <= 0.51 &&
@@ -144,7 +144,7 @@ ZTEST(ubertooth_tx, test_rows_follow_the_closed_form)
 	for (unsigned int h = 0; h < 8; h++) {
 		double b[3] = {(h & 4) ? 1 : -1, (h & 2) ? 1 : -1, (h & 1) ? 1 : -1};
 		double ph = tab_ble.phi0[h] / 4294967296.0, acc = 0;
-		double s = sqrt(log(2.0)) / (2.0 * TXREF_PI * 0.5);
+		double s = sqrt(log(2.0)) / (ESP_SDR_TAU * 0.5);
 
 		ARG_UNUSED(s);
 		/* phi0 = D (b_prev G(2T) + b_cur G(T)), D = 0.25 turn */
@@ -315,7 +315,7 @@ ZTEST(ubertooth_tx, test_error_vector_against_the_ideal_model)
 	gfsk_mod_gen(&mod, wbuf, 0, mod.total);
 	txref_phase(&rb, 250000.0, IF_HZ, 0.5, mod.total, ph);
 	for (unsigned int n = b.ramp; n < mod.total - b.ramp; n++) {
-		double a = 2.0 * TXREF_PI * ph[n];
+		double a = ESP_SDR_TAU * ph[n];
 		double di = txref_i(wbuf[n]) - GFSK_MOD_AMP * cos(a),
 		       dq = txref_q(wbuf[n]) - GFSK_MOD_AMP * sin(a);
 
@@ -408,7 +408,7 @@ ZTEST(ubertooth_tx, test_spectrum_occupancy_and_mask)
 		}
 		txref_phase(&rb, 250000.0, IF_HZ, 0.5, mod.total, ph);
 		for (unsigned int n = 0; n < mod.total; n++) {
-			double a = 2.0 * TXREF_PI * ph[n];
+			double a = ESP_SDR_TAU * ph[n];
 
 			/* the ideal as DAC words at the same amplitude (the ramps are not compared)
 			 */
@@ -636,7 +636,7 @@ ZTEST(ubertooth_tx, test_ramps)
 		if (ramps[r] >= 16U) {
 			for (unsigned int n = 0; n < ramps[r]; n += 7U) {
 				double want = GFSK_MOD_AMP * 0.5 *
-					      (1.0 - cos(TXREF_PI * (n + 0.5) / ramps[r]));
+					      (1.0 - cos(ESP_SDR_TAU / 2.0 * (n + 0.5) / ramps[r]));
 				double rad = hypot(txref_i(wbuf[n]), txref_q(wbuf[n]));
 
 				zassert_within(rad, want, 0.012 * GFSK_MOD_AMP,
@@ -671,7 +671,7 @@ ZTEST(ubertooth_tx, test_loop_bank_is_seamless)
 	rb = ref_of(&b);
 	txref_phase(&rb, 250000.0, IF_HZ, 0.5, 32000, ph);
 	for (unsigned int n = 0; n < 32000U; n++) {
-		double a = 2.0 * TXREF_PI * ph[n];
+		double a = ESP_SDR_TAU * ph[n];
 		double di = txref_i(wbuf[n]) - GFSK_MOD_AMP * cos(a),
 		       dq = txref_q(wbuf[n]) - GFSK_MOD_AMP * sin(a);
 

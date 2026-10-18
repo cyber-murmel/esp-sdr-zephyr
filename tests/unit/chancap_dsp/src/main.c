@@ -21,7 +21,7 @@ static int16_t xi[N_IN], xq[N_IN];
 static void tone(double hz, double amp, double phase0)
 {
 	for (unsigned int n = 0; n < N_IN; n++) {
-		double ph = phase0 + 2.0 * CHANCAP_PI * hz * (double)n / FS;
+		double ph = phase0 + ESP_SDR_TAU * hz * (double)n / FS;
 
 		xi[n] = (int16_t)lround(amp * cos(ph));
 		xq[n] = (int16_t)lround(amp * sin(ph));
@@ -60,7 +60,7 @@ static void direct_channel(const struct chancap_pfb *p, unsigned int c, unsigned
 	chancap_design_lowpass(h, p->l, 0.05f, chancap_kaiser_beta(50.0f));
 	for (unsigned int t = 0; t < p->l; t++) {
 		unsigned int at = n - t;
-		double ph = -2.0 * CHANCAP_PI * f * (double)at / FS;
+		double ph = -ESP_SDR_TAU * f * (double)at / FS;
 		double vi = xi[at] * cos(ph) - xq[at] * sin(ph);
 		double vq = xi[at] * sin(ph) + xq[at] * cos(ph);
 
@@ -177,8 +177,8 @@ static void check_tones(unsigned int m, unsigned int d, bool odd)
 			}
 		}
 		/* The offset tone sits at off in the channel's output. */
-		zassert_within(step * fout / (2.0 * CHANCAP_PI), off, 2000.0,
-			       "channel %u: %.0f Hz", c, step * fout / (2.0 * CHANCAP_PI));
+		zassert_within(step * fout / ESP_SDR_TAU, off, 2000.0,
+			       "channel %u: %.0f Hz", c, step * fout / ESP_SDR_TAU);
 	}
 	printk("pfb m %u d %u odd %d: every channel within 1 dB, others below -40 dB\n", m, d, odd);
 }
@@ -213,7 +213,7 @@ static void ddc_direct(const struct chancap_ddc *c, int num, unsigned int den, u
 	chancap_design_lowpass(h, CHANCAP_DDC_L, 0.075f, chancap_kaiser_beta(40.0f));
 	for (unsigned int t = 0; t < CHANCAP_DDC_L; t++) {
 		unsigned int at = n - t;
-		double ph = -2.0 * CHANCAP_PI * f * (double)at / FS;
+		double ph = -ESP_SDR_TAU * f * (double)at / FS;
 		double vi = xi[at] * cos(ph) - xq[at] * sin(ph);
 		double vq = xi[at] * sin(ph) + xq[at] * cos(ph);
 
@@ -294,7 +294,7 @@ ZTEST(chancap_dsp, test_ddc_tone)
 	}
 	pw /= (double)(j1 - j0);
 	zassert_within(10.0 * log10(pw / ref), 0.0, 1.0, "%.1f dB", 10.0 * log10(pw / ref));
-	zassert_within(atan2(sn, cs) * 4e6 / (2.0 * CHANCAP_PI), 200000.0, 2000.0, "offset");
+	zassert_within(atan2(sn, cs) * 4e6 / ESP_SDR_TAU, 200000.0, 2000.0, "offset");
 	/* A tone on the neighbouring 802.15.4 channel (5 MHz away) is rejected. */
 	tone(200000.0, TONE_A, 0.0);
 	pw = 0.0;

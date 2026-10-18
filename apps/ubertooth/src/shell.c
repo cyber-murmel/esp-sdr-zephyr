@@ -14,6 +14,7 @@
 
 #include <esp_attr.h>
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_dsp.h>
 #include <esp_sdr/esp_sdr_rx.h>
 
 #include "ubt_mode.h"
@@ -110,53 +111,12 @@ static int cmd_rx_stats(const struct shell *sh, size_t argc, char **argv)
 
 /* ---- spectrum of the stream ------------------------------------------------------------- */
 
-#define PI_F       3.14159265f
 #define FFT_N      256U
 #define SPEC_GROUP 8U /* bins per printed line: 125 kHz */
 
 static EXT_RAM_BSS_ATTR float fre[FFT_N], fim[FFT_N], twr[FFT_N / 2U], twi[FFT_N / 2U];
 static EXT_RAM_BSS_ATTR float acc[FFT_N];
 static EXT_RAM_BSS_ATTR int16_t blk_i[FFT_N], blk_q[FFT_N];
-
-static void fft(float *re, float *im)
-{
-	unsigned int j = 0;
-
-	for (unsigned int i = 1; i < FFT_N; i++) {
-		unsigned int bit = FFT_N >> 1;
-
-		for (; (j & bit) != 0U; bit >>= 1) {
-			j ^= bit;
-		}
-		j ^= bit;
-		if (i < j) {
-			float t = re[i];
-
-			re[i] = re[j];
-			re[j] = t;
-			t = im[i];
-			im[i] = im[j];
-			im[j] = t;
-		}
-	}
-	for (unsigned int len = 2; len <= FFT_N; len <<= 1) {
-		unsigned int step = FFT_N / len;
-
-		for (unsigned int i = 0; i < FFT_N; i += len) {
-			for (unsigned int k = 0; k < len / 2U; k++) {
-				float wr = twr[k * step];
-				float wi = twi[k * step];
-				float xr = re[i + k + len / 2U] * wr - im[i + k + len / 2U] * wi;
-				float xi = re[i + k + len / 2U] * wi + im[i + k + len / 2U] * wr;
-
-				re[i + k + len / 2U] = re[i + k] - xr;
-				im[i + k + len / 2U] = im[i + k] - xi;
-				re[i + k] += xr;
-				im[i + k] += xi;
-			}
-		}
-	}
-}
 
 /* Average power spectrum of the running stream into acc[], mean I/Q into mi/mq; frames done. */
 static unsigned int spectrum(unsigned int frames, double *mi, double *mq)
@@ -166,10 +126,7 @@ static unsigned int spectrum(unsigned int frames, double *mi, double *mq)
 
 	*mi = 0.0;
 	*mq = 0.0;
-	for (unsigned int k = 0; k < FFT_N / 2U; k++) {
-		twr[k] = cosf(-2.0f * PI_F * (float)k / (float)FFT_N);
-		twi[k] = sinf(-2.0f * PI_F * (float)k / (float)FFT_N);
-	}
+	esp_sdr_fft_twiddles(twr, twi, FFT_N);
 	memset(acc, 0, sizeof(acc));
 	while (done < frames && k_uptime_get() < t_end) {
 		uint32_t first;
@@ -183,14 +140,14 @@ static unsigned int spectrum(unsigned int frames, double *mi, double *mq)
 			continue;
 		}
 		for (unsigned int k = 0; k < FFT_N; k++) {
-			float w = 0.5f - 0.5f * cosf(2.0f * PI_F * (float)k / (float)FFT_N);
+			float w = esp_sdr_window(ESP_SDR_WINDOW_HANN, k, FFT_N);
 
 			fre[k] = w * (float)blk_i[k];
 			fim[k] = w * (float)blk_q[k];
 			*mi += blk_i[k];
 			*mq += blk_q[k];
 		}
-		fft(fre, fim);
+		esp_sdr_fft(fre, fim, FFT_N, twr, twi, FFT_N);
 		for (unsigned int k = 0; k < FFT_N; k++) {
 			acc[k] += fre[k] * fre[k] + fim[k] * fim[k];
 		}

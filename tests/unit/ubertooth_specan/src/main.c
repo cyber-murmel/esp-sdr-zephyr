@@ -16,10 +16,11 @@
 
 #include <zephyr/ztest.h>
 
+#include <esp_sdr/esp_sdr_dsp.h>
+
 #include "ubt_specan.h"
 
 #define CAP     UBT_SPECAN_CAPTURE
-#define PI      3.14159265358979323846
 #define FS_FULL 512.0
 /* The calibration constant the tests pretend a measurement gave: 0 dBFS is -30 dBm. */
 #define FS_DBM  (-30.0)
@@ -44,7 +45,7 @@ static double urand(void)
 
 static double grand(void)
 {
-	return sqrt(-2.0 * log(urand())) * cos(2.0 * PI * urand());
+	return sqrt(-2.0 * log(urand())) * cos(ESP_SDR_TAU * urand());
 }
 
 static void before_each(void *fixture)
@@ -89,8 +90,8 @@ static void synth(uint32_t *w, const struct tone *t, unsigned int nt, double sig
 		double db = t[k].dbfs + (use_rolloff ? rolloff_db(t[k].mhz) : 0.0);
 
 		amp[k] = FS_FULL * pow(10.0, db / 20.0);
-		phase[k] = 2.0 * PI * urand();
-		step[k] = 2.0 * PI * t[k].mhz / 80.0;
+		phase[k] = ESP_SDR_TAU * urand();
+		step[k] = ESP_SDR_TAU * t[k].mhz / 80.0;
 	}
 	for (unsigned int n = 0; n < CAP; n++) {
 		double i = dc_i, q = dc_q;
@@ -131,7 +132,7 @@ static void fft_dbl(double *re, double *im, unsigned int n)
 	for (unsigned int len = 2; len <= n; len <<= 1) {
 		for (unsigned int i = 0; i < n; i += len) {
 			for (unsigned int k = 0; k < len / 2; k++) {
-				double a = -2.0 * PI * k / len, c = cos(a), s = sin(a);
+				double a = -ESP_SDR_TAU * k / len, c = cos(a), s = sin(a);
 				unsigned int x = i + k, y = i + k + len / 2;
 				double tr = re[y] * c - im[y] * s, ti = re[y] * s + im[y] * c;
 
@@ -256,8 +257,8 @@ ZTEST(ubertooth_specan, test_reference_fft_contract)
 
 	/* a tone at bin 37, amplitude 8000: lands at the bit reversed place with amplitude 8000 */
 	for (unsigned int n = 0; n < UBT_SPECAN_N; n++) {
-		buf[2U * n] = (int16_t)lround(8000.0 * cos(2.0 * PI * 37.0 * n / 256.0));
-		buf[2U * n + 1U] = (int16_t)lround(8000.0 * sin(2.0 * PI * 37.0 * n / 256.0));
+		buf[2U * n] = (int16_t)lround(8000.0 * cos(ESP_SDR_TAU * 37.0 * n / 256.0));
+		buf[2U * n + 1U] = (int16_t)lround(8000.0 * sin(ESP_SDR_TAU * 37.0 * n / 256.0));
 	}
 	ubt_specan_fft_ref(buf);
 	{
@@ -275,8 +276,8 @@ ZTEST(ubertooth_specan, test_reference_fft_contract)
 		for (unsigned int b = 0; b < 7U; b++) {
 			r |= ((i >> b) & 1U) << (6U - b);
 		}
-		zassert_within(ubt_specan_w256[2U * i], 32767.0 * cos(2.0 * PI * r / 256.0), 1.0);
-		zassert_within(ubt_specan_w256[2U * i + 1U], 32767.0 * sin(2.0 * PI * r / 256.0),
+		zassert_within(ubt_specan_w256[2U * i], 32767.0 * cos(ESP_SDR_TAU * r / 256.0), 1.0);
+		zassert_within(ubt_specan_w256[2U * i + 1U], 32767.0 * sin(ESP_SDR_TAU * r / 256.0),
 			       1.0);
 	}
 	zassert_equal((uintptr_t)ubt_specan_w256 % 16U, 0U, "aligned for the vector kernel");

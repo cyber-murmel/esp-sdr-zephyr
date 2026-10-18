@@ -6,7 +6,7 @@
  * ADC, mix by -fs/4, every 4th sample), then the real demodulator. Prints symbol and packet
  * error rates against SNR for variants of the demodulator's parameters.
  *
- *   cc -O2 -Wall -DGFSK_TUNABLE -I../src ../src/gfsk_demod.c ../src/ubt_rssi.c gfsk_sim.c \
+ *   cc -O2 -Wall -DGFSK_TUNABLE -I../src -I../../../include ../src/gfsk_demod.c ../src/ubt_rssi.c gfsk_sim.c \
  *      -lm -o gfsk_sim
  *   MOD=ble SNRS=8:20:1 ./gfsk_sim                 (BER table, one line per SNR)
  *   MOD=br CFO=100000 PPM=-100 SWEEP=disc:1,2 ./gfsk_sim
@@ -29,10 +29,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <esp_sdr/esp_sdr_dsp.h>
+
 #include "gfsk_demod.h"
 
 #define FS16   16.0e6
-#define TWO_PI 6.28318530717958647692
 
 /* ---------------------------------------------------------------------------------------- */
 /* Environment, random numbers                                                              */
@@ -80,9 +81,9 @@ static double randn(void)
 	u = rnd01();
 	v = rnd01();
 	r = sqrt(-2.0 * log(u));
-	spare = r * sin(TWO_PI * v);
+	spare = r * sin(ESP_SDR_TAU * v);
 	have = 1;
-	return r * cos(TWO_PI * v);
+	return r * cos(ESP_SDR_TAU * v);
 }
 
 /* ---------------------------------------------------------------------------------------- */
@@ -156,7 +157,7 @@ static double gauss_taps[2 * GH + 1];
 
 static void gauss_init(double bt)
 {
-	double sigma = sqrt(log(2.0)) / (TWO_PI * bt * 1.0e6) * FS16; /* in samples */
+	double sigma = sqrt(log(2.0)) / (ESP_SDR_TAU * bt * 1.0e6) * FS16; /* in samples */
 	double sum = 0;
 
 	for (int j = -GH; j <= GH; j++) {
@@ -204,22 +205,22 @@ static void modulate(struct cf *dst, size_t len, const uint8_t *bits, uint32_t n
 				acc += gauss_taps[j + GH] * nrz[m];
 			}
 		}
-		phi += TWO_PI * (h * 1.0e6 / 2.0 * acc) / FS16;
+		phi += ESP_SDR_TAU * (h * 1.0e6 / 2.0 * acc) / FS16;
 		if (ramp) {
 			double x = (double)n;
 
 			if (x < t0 - 16) {
 				env = 0;
 			} else if (x < t0) {
-				env = 0.5 - 0.5 * cos(M_PI * (x - (t0 - 16)) / 16.0);
+				env = 0.5 - 0.5 * cos(ESP_SDR_TAU / 2.0 * (x - (t0 - 16)) / 16.0);
 			} else if (x > tend + 16) {
 				env = 0;
 			} else if (x > tend) {
-				env = 0.5 + 0.5 * cos(M_PI * (x - tend) / 16.0);
+				env = 0.5 + 0.5 * cos(ESP_SDR_TAU / 2.0 * (x - tend) / 16.0);
 			}
 		}
 		if (env > 0) {
-			double ang = phi + TWO_PI * f_hz * (double)(base + (int64_t)n) / FS16 + phase0;
+			double ang = phi + ESP_SDR_TAU * f_hz * (double)(base + (int64_t)n) / FS16 + phase0;
 
 			dst[n].re += (float)(amp * env * cos(ang));
 			dst[n].im += (float)(amp * env * sin(ang));
@@ -239,10 +240,10 @@ struct biquad {
 /* 4th order Butterworth low pass, two sections. */
 static void lpf_design(struct biquad s[2], double fc)
 {
-	double w = tan(M_PI * fc / FS16);
+	double w = tan(ESP_SDR_TAU / 2.0 * fc / FS16);
 
 	for (int k = 0; k < 2; k++) {
-		double th = M_PI * (2 * k + 1) / 8.0 + M_PI / 2.0; /* pole angles */
+		double th = ESP_SDR_TAU / 2.0 * (2 * k + 1) / 8.0 + ESP_SDR_TAU / 4.0; /* pole angles */
 		double q = -1.0 / (2.0 * cos(th));
 		double n = 1.0 + w / q + w * w;
 
@@ -300,7 +301,7 @@ static void ref_demod(struct stream *st, const struct params *p, const float *yi
 		      size_t len)
 {
 	enum { RH = 40 };
-	double bw = env_f("RBW", 0.6), sigma = sqrt(log(2.0)) / (TWO_PI * bw * 1e6) * FS16;
+	double bw = env_f("RBW", 0.6), sigma = sqrt(log(2.0)) / (ESP_SDR_TAU * bw * 1e6) * FS16;
 	double taps[2 * RH + 1], sum = 0;
 	double *di = malloc(len * sizeof(double)), *dq = malloc(len * sizeof(double));
 	double *ph = calloc(len, sizeof(double));
@@ -311,7 +312,7 @@ static void ref_demod(struct stream *st, const struct params *p, const float *yi
 		sum += taps[j + RH];
 	}
 	for (size_t n = 0; n < len; n++) {
-		double a = -TWO_PI * f * (double)n / FS16;
+		double a = -ESP_SDR_TAU * f * (double)n / FS16;
 
 		di[n] = yi[n] * cos(a) - yq[n] * sin(a);
 		dq[n] = yi[n] * sin(a) + yq[n] * cos(a);
@@ -391,7 +392,7 @@ static void make_stream(struct stream *st, const struct params *p, int nb)
 			s1 = len;
 		}
 		modulate(x + s0, s1 - s0, bu[b].bits, bu[b].nsym, bu[b].t16 - (double)s0, ts16, p->h,
-			 p->sigoff ? 0.0 : amp, -3.0e6 + p->cfo, TWO_PI * rnd01(), (int64_t)s0, 1);
+			 p->sigoff ? 0.0 : amp, -3.0e6 + p->cfo, ESP_SDR_TAU * rnd01(), (int64_t)s0, 1);
 	}
 	if (p->aci_db > -200.0) {
 		/* continuous neighbour with random data */
@@ -402,7 +403,7 @@ static void make_stream(struct stream *st, const struct params *p, int nb)
 			rb[k] = rnd32() & 1U;
 		}
 		modulate(x, len, rb, (uint32_t)nsym, 16.0 * rnd01(), 16.0, p->h,
-			 amp * pow(10.0, p->aci_db / 20.0), (-3.0 + p->aci_off) * 1.0e6, TWO_PI * rnd01(),
+			 amp * pow(10.0, p->aci_db / 20.0), (-3.0 + p->aci_off) * 1.0e6, ESP_SDR_TAU * rnd01(),
 			 0, 0);
 		free(rb);
 	}
@@ -415,9 +416,9 @@ static void make_stream(struct stream *st, const struct params *p, int nb)
 
 		for (int j = 0; j <= WT; j++) {
 			double m = j - WT / 2.0;
-			double s = m == 0 ? 2.0 * fc : sin(TWO_PI * fc * m) / (M_PI * m);
+			double s = m == 0 ? 2.0 * fc : sin(ESP_SDR_TAU * fc * m) / (ESP_SDR_TAU / 2.0 * m);
 
-			taps[j] = s * (0.54 - 0.46 * cos(TWO_PI * j / WT));
+			taps[j] = s * (0.54 - 0.46 * cos(ESP_SDR_TAU * j / WT));
 			sum += taps[j] * taps[j];
 		}
 		for (size_t n = 0; n < len + WT; n++) {
@@ -433,7 +434,7 @@ static void make_stream(struct stream *st, const struct params *p, int nb)
 			}
 			/* complex noise: unit power per complex sample after normalisation */
 			g = sqrt(pw / (2.0 * sum));
-			ang = TWO_PI * p->wfc * 1e6 * (double)n / FS16;
+			ang = ESP_SDR_TAU * p->wfc * 1e6 * (double)n / FS16;
 			x[n].re += (float)(g * (a * cos(ang) - b * sin(ang)));
 			x[n].im += (float)(g * (a * sin(ang) + b * cos(ang)));
 		}

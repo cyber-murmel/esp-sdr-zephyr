@@ -14,5 +14,6 @@ set(UBT_SRC ${CMAKE_CURRENT_LIST_DIR}/../../../apps/ubertooth/src)
 set(UBT_LE_SRC ${UBT_SRC}/ubt_le.c ${UBT_SRC}/le_conn.c ${UBT_SRC}/upstream/bluetooth_le.c)
 
 target_sources(app PRIVATE src/main.c ${UBT_LE_SRC})
-target_include_directories(app PRIVATE ${UBT_SRC} src)
+target_include_directories(app PRIVATE ${UBT_SRC} src
+  ${CMAKE_CURRENT_LIST_DIR}/../../../include ${CMAKE_CURRENT_LIST_DIR}/../../common/include)
 set_source_files_properties(${UBT_LE_SRC} PROPERTIES COMPILE_OPTIONS "-U__ZEPHYR__")

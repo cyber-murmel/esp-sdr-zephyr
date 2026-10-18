@@ -21,10 +21,10 @@ manifest:
 
   projects:
     # Zephyr with ESP32-S3 SMP (zephyrproject-rtos/zephyr#120082, rebased), the
-    # CDC-NCM NTB aggregation the USB stream relies on, and the llext and
-    # Xtensa changes apps/multiapp needs (doc/multiapp.md, "Zephyr changes"),
-    # LVGL allocating from the MicroPython heap (apps/micropython), and the
-    # options that make the USB stack and DWC2 threads preemptible (apps/chancap).
+    # CDC-NCM NTB aggregation the USB stream relies on, the llext and Xtensa
+    # changes apps/multiapp needs (doc/multiapp.md, "Zephyr changes"), LVGL
+    # allocating from the MicroPython heap (apps/micropython) and the options
+    # that make the USB stack and DWC2 threads preemptible (apps/chancap).
     - name: zephyr
       remote: cyber-murmel
       revision: 03b033e2609da2cf66937c6500d0a0cc22781c4f # esp-sdr + preemptible USB

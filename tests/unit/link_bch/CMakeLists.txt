@@ -12,5 +12,6 @@ project(link_bch_unit)
 set(BCH_SRC ${CMAKE_CURRENT_LIST_DIR}/../../../apps/link/src/bch.c)
 
 target_sources(app PRIVATE src/main.c ${BCH_SRC})
-target_include_directories(app PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../../../apps/link/src)
+target_include_directories(app PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../../../apps/link/src
+  ${CMAKE_CURRENT_LIST_DIR}/../../../include ${CMAKE_CURRENT_LIST_DIR}/../../common/include)
 set_source_files_properties(${BCH_SRC} PROPERTIES COMPILE_OPTIONS "-U__ZEPHYR__")

@@ -30,6 +30,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include <esp_sdr/esp_sdr_dsp.h>
+
 #define CHANCAP_M_MAX     16U /* channels of one PFB */
 #define CHANCAP_K_MAX     16U /* taps per branch */
 #define CHANCAP_L_MAX     (CHANCAP_M_MAX * CHANCAP_K_MAX)
@@ -40,7 +42,6 @@
 #define CHANCAP_H_ONE     (1 << CHANCAP_H_SHIFT)
 /* Input and output full scale: the ring's 10-bit words times 64. */
 #define CHANCAP_FULL_SCALE 32768
-#define CHANCAP_PI         3.14159265358979323846
 
 static inline int16_t chancap_sat16(int64_t v)
 {
@@ -76,8 +77,8 @@ static inline void chancap_design_lowpass(int16_t *h, unsigned int l, float fc, 
 
 	for (unsigned int n = 0; n < l; n++) {
 		float t = (float)n - mid, r = 2.0f * t / ((float)l - 1.0f);
-		float sinc = t == 0.0f ? 2.0f * fc : sinf(2.0f * (float)CHANCAP_PI * fc * t) /
-								((float)CHANCAP_PI * t);
+		float sinc = t == 0.0f ? 2.0f * fc : sinf(ESP_SDR_TAU_F * fc * t) /
+								((ESP_SDR_TAU_F / 2.0f) * t);
 		float win = chancap_bessel_i0(beta * sqrtf(1.0f - r * r)) / i0b;
 
 		w[n] = sinc * win;
@@ -182,13 +183,13 @@ static inline bool chancap_pfb_init(struct chancap_pfb *p, unsigned int m, unsig
 	 * stacking (in the taps above).
 	 */
 	for (unsigned int i = 0; i < m; i++) {
-		double a = odd ? -CHANCAP_PI * (double)i / (double)m : 0.0;
+		double a = odd ? -(ESP_SDR_TAU / 2.0) * (double)i / (double)m : 0.0;
 
 		p->br[i] = (int16_t)lround(cos(a) * CHANCAP_TW_ONE);
 		p->bi[i] = (int16_t)lround(sin(a) * CHANCAP_TW_ONE);
 		for (unsigned int c = 0; c < m; c++) {
 			int mc = (int)c - (int)(m / 2U);
-			double w = -2.0 * CHANCAP_PI * (double)mc * (double)i / (double)m;
+			double w = -ESP_SDR_TAU * (double)mc * (double)i / (double)m;
 
 			p->wr[c][i] = (int16_t)lround(cos(w) * CHANCAP_TW_ONE);
 			p->wi[c][i] = (int16_t)lround(sin(w) * CHANCAP_TW_ONE);
@@ -196,8 +197,8 @@ static inline bool chancap_pfb_init(struct chancap_pfb *p, unsigned int m, unsig
 	}
 	/* m = 8: b_i on lanes 0..3, b_i W^i = exp(-j 3 pi i / 8) on lanes 4..7. */
 	for (unsigned int k = 0; k < 8; k++) {
-		double a = k < 4U ? -CHANCAP_PI * (double)k / 8.0
-				  : -3.0 * CHANCAP_PI * (double)(k - 4U) / 8.0;
+		double a = k < 4U ? -(ESP_SDR_TAU / 2.0) * (double)k / 8.0
+				  : -3.0 * (ESP_SDR_TAU / 2.0) * (double)(k - 4U) / 8.0;
 
 		p->t8r[k] = (int16_t)lround(cos(a) * CHANCAP_TW_ONE);
 		p->t8i[k] = (int16_t)lround(sin(a) * CHANCAP_TW_ONE);
@@ -207,7 +208,7 @@ static inline bool chancap_pfb_init(struct chancap_pfb *p, unsigned int m, unsig
 	for (unsigned int j = 0; j < p->rot_n; j++) {
 		for (unsigned int c = 0; c < m; c++) {
 			double mc2 = 2.0 * ((double)c - (double)(m / 2U)) + (odd ? 1.0 : 0.0);
-			double w = -CHANCAP_PI * mc2 * (double)j * (double)d / (double)m;
+			double w = -(ESP_SDR_TAU / 2.0) * mc2 * (double)j * (double)d / (double)m;
 
 			p->rr[j][c] = (int16_t)lround(cos(w) * CHANCAP_TW_ONE);
 			p->ri[j][c] = (int16_t)lround(sin(w) * CHANCAP_TW_ONE);
@@ -546,7 +547,7 @@ static inline bool chancap_ddc_init(struct chancap_ddc *c, int num, unsigned int
 	c->d = d;
 	c->period = den;
 	for (unsigned int n = 0; n < den; n++) {
-		double w = -2.0 * CHANCAP_PI * (double)num * (double)n / (double)den;
+		double w = -ESP_SDR_TAU * (double)num * (double)n / (double)den;
 
 		c->cr[n] = (int16_t)lround(cos(w) * CHANCAP_TW_ONE);
 		c->ci[n] = (int16_t)lround(sin(w) * CHANCAP_TW_ONE);

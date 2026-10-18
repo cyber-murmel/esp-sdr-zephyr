@@ -14,7 +14,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define TXREF_PI 3.14159265358979323846
+#include <esp_sdr/esp_sdr_dsp.h>
 
 /* DAC word fields (esp_sdr_tx_word(): I in bits 9:0, Q in bits 19:10). */
 static inline int txref_i(uint32_t w)
@@ -37,13 +37,13 @@ static inline int txref_bit(const uint8_t *bits, unsigned int i, int msb_first)
  * = 0 (T = 1). */
 static inline double txref_pulse(double x, double bt)
 {
-	const double s = sqrt(log(2.0)) / (2.0 * TXREF_PI * bt);
+	const double s = sqrt(log(2.0)) / (ESP_SDR_TAU * bt);
 	double r = 0;
 
 	for (int k = 0; k < 2; k++) {
 		double y = x + (k == 0 ? 0.5 : -0.5);
 		double v = y * 0.5 * erfc(-y / s / sqrt(2.0)) +
-			   s * exp(-0.5 * y * y / (s * s)) / sqrt(2.0 * TXREF_PI);
+			   s * exp(-0.5 * y * y / (s * s)) / sqrt(ESP_SDR_TAU);
 
 		r += k == 0 ? v : -v;
 	}
@@ -122,7 +122,7 @@ static inline void txref_freq(const uint32_t *w, size_t n, double *f)
 		double a = txref_i(w[k]), b = txref_q(w[k]), c = txref_i(w[k - 1]),
 		       d = txref_q(w[k - 1]);
 
-		f[k] = atan2(b * c - a * d, a * c + b * d) * 40e6 / (2.0 * TXREF_PI);
+		f[k] = atan2(b * c - a * d, a * c + b * d) * 40e6 / (ESP_SDR_TAU);
 	}
 	f[0] = n > 1 ? f[1] : 0.0;
 }
@@ -166,7 +166,7 @@ static inline void txref_fft(double *re, double *im, size_t n)
 		}
 	}
 	for (size_t len = 2; len <= n; len <<= 1) {
-		double ang = -2.0 * TXREF_PI / (double)len;
+		double ang = -ESP_SDR_TAU / (double)len;
 		double wr = cos(ang), wi = sin(ang);
 
 		for (size_t i = 0; i < n; i += len) {
@@ -203,7 +203,7 @@ static inline void txref_psd(const uint32_t *w, size_t n, size_t nfft, double *r
 		im[k] = 0;
 	}
 	for (size_t k = 0; k < n; k++) {
-		double x = 2.0 * TXREF_PI * (double)k / (double)(n - 1);
+		double x = ESP_SDR_TAU * (double)k / (double)(n - 1);
 		double win =
 			0.35875 - 0.48829 * cos(x) + 0.14128 * cos(2 * x) - 0.01168 * cos(3 * x);
 
