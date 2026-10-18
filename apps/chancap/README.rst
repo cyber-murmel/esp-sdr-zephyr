@@ -70,7 +70,28 @@ them as ``.npz`` (``iq`` as complex float, full scale 1.0, and the metadata
 as JSON), ``--zmq tcp://*:5555`` publishes the serialized PDUs for a
 gr-zeromq "ZMQ SUB Message Source". The PDU metadata keys are ``rx_time``,
 ``rx_freq``, ``rx_rate``, ``channel``, ``start_index``, ``power_db``,
-``noise_db``, ``truncated`` and ``chunk``.
+``noise_db``, ``truncated`` and ``chunk``. It reads the bulk data as one
+stream: a read need not end where the board's 4 KiB block did, and a word
+that cannot start a packet is skipped and counted.
+
+``tools/ble_pcap.py`` turns the captures of the BLE grid into pcap for
+Wireshark (``LINKTYPE_BLUETOOTH_LE_LL_WITH_PHDR``): it demodulates LE 1M,
+finds the advertising access address (or ``--aa``, with ``--crc-init``),
+dewhitens with the channel's index and checks the CRC, using
+``apps/ubertooth/tools/le_ref.py`` for the link layer bits. The radio header
+carries the RF channel, the access address's bit errors and the CRC result;
+the power fields stay unset (the board knows dBFS, not dBm).
+
+.. code-block:: console
+
+   ble_pcap.py -w ble.pcap --seconds 60 --print   # a file, a line per packet
+   ble_pcap.py -w - --seconds 0 | wireshark -k -i -   # live
+   ble_pcap.py --npz DIR -w ble.pcap              # chancap_bridge.py --save's files
+
+On the bench (the C5 advertising through the RF switch, 2026-10-18), Wireshark
+shows its ``ADV_SCAN_IND`` with the CRC valid, along with the advertisers
+nearby; about a third of the C5's advertisements on channel 37 come through,
+the rest are lost to channelizer overruns (see Limits).
 
 Limits
 ******

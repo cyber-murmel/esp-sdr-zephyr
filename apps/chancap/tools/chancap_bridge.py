@@ -92,15 +92,44 @@ def open_bulk_in(dev):
     raise RuntimeError("no vendor bulk IN interface")
 
 
-def split_packets(block):
-    """Whole VRT packets of a block (the board never splits one across blocks)."""
-    at = 0
-    while at + 4 <= len(block):
-        size = struct.unpack(">I", block[at:at + 4])[0] & 0xFFFF
-        if size == 0 or at + 4 * size > len(block):
-            raise ValueError(f"packet size {size} words at byte {at} of {len(block)}")
-        yield block[at:at + 4 * size]
-        at += 4 * size
+class PacketStream:
+    """The bulk IN data as one byte stream of VRT packets. The board never splits a packet
+    across its 4 KiB blocks, but host reads need not line up with the blocks (a short block
+    that ends on a 64-byte boundary runs on into the next read when its zero-length packet
+    goes missing), so a packet's tail carries over to the next read. A word that cannot start
+    one of the board's packets (type, size up to a block, a stream ID of ours) is skipped,
+    counted in skipped_words, until one can."""
+
+    def __init__(self, base=STREAM_BASE):
+        self.buf = b""
+        self.base = base
+        self.skipped_words = 0
+
+    def _size(self, at):
+        hdr, sid = struct.unpack_from(">II", self.buf, at)
+        size = hdr & 0xFFFF
+        if hdr >> 28 not in vrt_rx.WITH_STREAM_ID or not 3 <= size <= BLOCK // 4 or \
+           not 0 <= sid - self.base <= 255:
+            return 0
+        return size
+
+    def feed(self, data):
+        """Whole packets the data completes."""
+        self.buf += data
+        at = 0
+        out = []
+        while len(self.buf) - at >= 8:
+            size = self._size(at)
+            if size == 0:
+                at += 4
+                self.skipped_words += 1
+                continue
+            if len(self.buf) - at < 4 * size:
+                break
+            out.append(self.buf[at:at + 4 * size])
+            at += 4 * size
+        self.buf = self.buf[at:]
+        return out
 
 
 class Stream:
@@ -207,6 +236,7 @@ def main():
         os.makedirs(args.save, exist_ok=True)
 
     streams = {}
+    ps = PacketStream(args.base)
     captures = 0
     blocks = 0
     nbytes = 0
@@ -221,41 +251,37 @@ def main():
                 continue
             blocks += 1
             nbytes += len(block)
-            try:
-                for raw in split_packets(block):
+            for raw in ps.feed(block):
+                try:
                     p = vrt_rx.parse(raw)
-                    sid = p.get("stream_id")
-                    if sid is None:
-                        continue
-                    ch = sid - args.base
-                    if ch < 0 or ch > 255:
-                        continue
-                    st = streams.setdefault(ch, Stream(ch))
-                    cap = st.take(p)
-                    if cap is None:
-                        continue
-                    captures += 1
-                    if args.print:
-                        t = cap['rx_time'][0] + cap['rx_time'][1]
-                        print(f"ch {cap['channel']:2d} t {t:12.6f} s"
-                              f" idx {cap['start_index']:12d} n {cap['n']:6d}"
-                              f" {cap['n'] / max(cap['rx_rate'], 1) * 1e6:8.1f} us"
-                              f" {cap['power_db']:6.1f} dBFS (floor {cap['noise_db']:6.1f})"
-                              f"{' truncated' if cap['truncated'] else ''}"
-                              f"{' chunk' if cap['chunk'] else ''}")
-                    if args.save:
-                        meta = {k: v for k, v in cap.items() if k != "iq"}
-                        np.savez(os.path.join(args.save, f"{captures:06d}_ch{cap['channel']}.npz"),
-                                 iq=cap["iq"], meta=json.dumps(meta))
-                    if pub is not None:
-                        pub.send(pdu_bytes(cap))
-            except ValueError as e:
-                errors += 1
-                print(f"bad block: {e}", file=sys.stderr)
+                except (ValueError, IndexError, struct.error) as e:
+                    errors += 1
+                    print(f"bad packet: {e}", file=sys.stderr)
+                    continue
+                ch = p["stream_id"] - args.base
+                st = streams.setdefault(ch, Stream(ch))
+                cap = st.take(p)
+                if cap is None:
+                    continue
+                captures += 1
+                if args.print:
+                    t = cap['rx_time'][0] + cap['rx_time'][1]
+                    print(f"ch {cap['channel']:2d} t {t:12.6f} s"
+                          f" idx {cap['start_index']:12d} n {cap['n']:6d}"
+                          f" {cap['n'] / max(cap['rx_rate'], 1) * 1e6:8.1f} us"
+                          f" {cap['power_db']:6.1f} dBFS (floor {cap['noise_db']:6.1f})"
+                          f"{' truncated' if cap['truncated'] else ''}"
+                          f"{' chunk' if cap['chunk'] else ''}")
+                if args.save:
+                    meta = {k: v for k, v in cap.items() if k != "iq"}
+                    np.savez(os.path.join(args.save, f"{captures:06d}_ch{cap['channel']}.npz"),
+                             iq=cap["iq"], meta=json.dumps(meta))
+                if pub is not None:
+                    pub.send(pdu_bytes(cap))
             now = time.monotonic()
             if now - last_report >= 1.0 and not args.print:
                 print(f"{captures} captures, {blocks} blocks, {nbytes / 1024:.0f} kB, "
-                      f"{errors} errors", file=sys.stderr)
+                      f"{errors} errors, {ps.skipped_words} words skipped", file=sys.stderr)
                 last_report = now
     except KeyboardInterrupt:
         pass
@@ -263,8 +289,9 @@ def main():
         usb.util.release_interface(dev, intf)
     gaps = sum(s.gaps for s in streams.values())
     print(f"{captures} captures on {len(streams)} channels, {blocks} blocks, "
-          f"{nbytes / 1024:.0f} kB, {gaps} counter gaps, {errors} errors")
-    return 0 if captures and not gaps and not errors else 1
+          f"{nbytes / 1024:.0f} kB, {gaps} counter gaps, {errors} errors, "
+          f"{ps.skipped_words} words skipped")
+    return 0 if captures and not gaps and not errors and not ps.skipped_words else 1
 
 
 if __name__ == "__main__":
