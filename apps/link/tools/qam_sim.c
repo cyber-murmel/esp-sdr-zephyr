@@ -18,6 +18,8 @@
 #include <string.h>
 #include <time.h>
 
+#include <esp_sdr/esp_sdr_dsp.h>
+
 #include "qam.h"
 #include "hamming.h"
 #include "rs.h"
@@ -33,7 +35,7 @@ static double gauss(void)
 {
 	double u = (rand() + 1.0) / (RAND_MAX + 2.0), v = (rand() + 1.0) / (RAND_MAX + 2.0);
 
-	return sqrt(-2.0 * log(u)) * cos(2.0 * M_PI * v);
+	return sqrt(-2.0 * log(u)) * cos(ESP_SDR_TAU * v);
 }
 
 static int rs_selftest(void)
@@ -108,7 +110,7 @@ static void channel(const uint32_t *f, size_t len, const struct chan *c)
 	if (getenv("SEG")) {
 		printf("true start %zu (and +%zu)\n", (len - off) % len, len);
 	}
-	double ph = 2.0 * M_PI * rand() / RAND_MAX, sig = 0.0, prev[2][2] = {{0}};
+	double ph = ESP_SDR_TAU * rand() / RAND_MAX, sig = 0.0, prev[2][2] = {{0}};
 	double fr = c->cfo_hz / 80e6;
 	static double xi[WIN], xq[WIN];
 
@@ -123,7 +125,7 @@ static void channel(const uint32_t *f, size_t len, const struct chan *c)
 		prev[1][1] = prev[0][1];
 		prev[0][0] = i;
 		prev[0][1] = q;
-		ph += 2.0 * M_PI * fr + c->pn_rad * gauss();
+		ph += ESP_SDR_TAU * fr + c->pn_rad * gauss();
 		xi[n] = c->gain * (yi * cos(ph) - yq * sin(ph));
 		xq[n] = c->gain * (yi * sin(ph) + yq * cos(ph));
 		sig += xi[n] * xi[n] + xq[n] * xq[n];

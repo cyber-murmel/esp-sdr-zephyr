@@ -23,6 +23,7 @@
 #include <esp_rom_sys.h>
 
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_dsp.h>
 #include <esp_sdr/esp_sdr_rx.h>
 #include <esp_sdr/esp_sdr_tx.h>
 #if defined(CONFIG_ESP_SDR_DIAG)
@@ -41,8 +42,6 @@
 #include <esp_sleep.h>
 #include <zephyr/sys/poweroff.h>
 #endif
-
-#define TWO_PI 6.28318530717958647692
 
 /* Vendor and ROM calls, as lib/esp_sdr uses them (doc/undocumented-registers-*.md). */
 extern void regi2c_enter_critical(void);
@@ -201,9 +200,8 @@ static int cmd_tone_on(const struct shell *sh, size_t argc, char **argv)
 	long amp = arg(argv, argc, 2, 400);
 	enum esp_sdr_rate rate = (enum esp_sdr_rate)arg(argv, argc, 3, ESP_SDR_RATE_80MSPS);
 	double fs = (double)esp_sdr_tx_rate_hz(rate);
-	double best = INFINITY;
-	size_t words, n = 0;
-	long cycles = 0;
+	size_t words, n;
+	long cycles;
 	uint32_t *bank;
 	int ret;
 
@@ -220,24 +218,10 @@ static int cmd_tone_on(const struct shell *sh, size_t argc, char **argv)
 		return ret;
 	}
 	bank = esp_sdr_tx_loop_buf(0, &words);
-	words = MIN(words, ESP_SDR_SAMPLES_MAX);
-	/* The period length whose whole number of cycles comes closest to hz. */
-	for (size_t len = words; len >= ESP_SDR_SAMPLES_MIN; len--) {
-		long c = lround((double)hz * (double)len / fs);
-		double err = fabs((double)c * fs / (double)len - (double)hz);
-
-		if (err < best) {
-			best = err;
-			n = len;
-			cycles = c;
-			if (err < 1.0) {
-				break;
-			}
-		}
-	}
+	n = esp_sdr_tone_period((double)hz, fs, ESP_SDR_SAMPLES_MIN,
+				MIN(words, ESP_SDR_SAMPLES_MAX), &cycles);
 	for (size_t k = 0; k < n; k++) {
-		double cyc = (double)cycles * (double)k / (double)n;
-		double ph = TWO_PI * (cyc - floor(cyc));
+		double ph = esp_sdr_tone_phase(cycles, k, n);
 
 		bank[k] = esp_sdr_tx_word((int16_t)lround((double)amp * cos(ph)),
 					  (int16_t)lround((double)amp * sin(ph)));
@@ -575,9 +559,8 @@ static int cmd_tx_replay(const struct shell *sh, size_t argc, char **argv)
 	};
 	double fs = cfg.rate == ESP_SDR_RATE_40MSPS ? 40e6 : 80e6;
 	long nmax = arg(argv, argc, 5, 16000);
-	double best = INFINITY;
-	size_t words, n = 0;
-	long cycles = 0;
+	size_t words, n;
+	long cycles;
 	uint32_t *buf, dt = 0;
 	int ret;
 
@@ -596,23 +579,11 @@ static int cmd_tx_replay(const struct shell *sh, size_t argc, char **argv)
 		n = (size_t)nmax;
 		cycles = lround((double)hz * (double)n / fs);
 	} else {
-		for (size_t len = (size_t)nmax; len >= ESP_SDR_SAMPLES_MIN; len--) {
-			long c = lround((double)hz * (double)len / fs);
-			double err = fabs((double)c * fs / (double)len - (double)hz);
-
-			if (err < best) {
-				best = err;
-				n = len;
-				cycles = c;
-				if (err < 1.0) {
-					break;
-				}
-			}
-		}
+		n = esp_sdr_tone_period((double)hz, fs, ESP_SDR_SAMPLES_MIN, (size_t)nmax,
+					&cycles);
 	}
 	for (size_t k = 0; k < n; k++) {
-		double cyc = (double)cycles * (double)k / (double)n;
-		double ph = TWO_PI * (cyc - floor(cyc));
+		double ph = esp_sdr_tone_phase(cycles, k, n);
 
 		buf[k] = esp_sdr_replay_word(lround((double)amp * cos(ph)),
 					     lround((double)amp * sin(ph)));
@@ -697,8 +668,7 @@ static int cmd_tx_dc(const struct shell *sh, size_t argc, char **argv)
 	unsigned int power = (unsigned int)arg(argv, argc, 6, 2);
 	struct esp_sdr_paced_stats st;
 	uint32_t *tab, c0, dt;
-	long cycles = 0;
-	double best = INFINITY;
+	long cycles;
 	size_t words;
 	unsigned int key;
 	int ret;
@@ -711,23 +681,9 @@ static int cmd_tx_dc(const struct shell *sh, size_t argc, char **argv)
 		return -EINVAL;
 	}
 	tab = esp_sdr_replay_buf(&words);
-	dc.len = 0;
-	for (size_t len = MIN(words, 16000U); len >= 16U; len--) {
-		long c = lround((double)hz * (double)len / (double)rate);
-		double err = fabs((double)c * (double)rate / (double)len - (double)hz);
-
-		if (err < best) {
-			best = err;
-			dc.len = len;
-			cycles = c;
-			if (err < 1.0) {
-				break;
-			}
-		}
-	}
+	dc.len = esp_sdr_tone_period((double)hz, (double)rate, 16U, MIN(words, 16000U), &cycles);
 	for (size_t k = 0; k < dc.len; k++) {
-		double cyc = (double)cycles * (double)k / (double)dc.len;
-		double ph = TWO_PI * (cyc - floor(cyc));
+		double ph = esp_sdr_tone_phase(cycles, k, dc.len);
 
 		tab[k] = ((uint32_t)(uint16_t)lround((double)amp * cos(ph))) |
 			 ((uint32_t)(uint16_t)lround((double)amp * sin(ph)) << 16);
@@ -742,7 +698,7 @@ static int cmd_tx_dc(const struct shell *sh, size_t argc, char **argv)
 	key = irq_lock();
 	esp_sdr_paced_sync();
 	c0 = esp_sdr_paced_cycles();
-	dt = (uint32_t)((uint64_t)ms * (CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ * 1000U));
+	dt = (uint32_t)((uint64_t)ms * (ESP_SDR_CPU_HZ / 1000U));
 	while (esp_sdr_paced_cycles() - c0 < dt) {
 		(void)esp_sdr_tx_paced_poll();
 	}
@@ -770,7 +726,7 @@ static int cmd_tx_dcraw(const struct shell *sh, size_t argc, char **argv)
 	long hz = arg(argv, argc, 2, 500000);
 	uint32_t ms = (uint32_t)arg(argv, argc, 3, 2000);
 	long amp = arg(argv, argc, 4, 128);
-	uint32_t cpu = CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ * 1000000U, step, t, c0, dt, upper;
+	uint32_t cpu = ESP_SDR_CPU_HZ, step, t, c0, dt, upper;
 	uint32_t late = 0, late_max = 0, n = 0;
 	volatile uint32_t *reg = (volatile uint32_t *)TXDC_REG_BENCH;
 	uint32_t *tab;
@@ -808,8 +764,7 @@ static int cmd_tx_dcraw(const struct shell *sh, size_t argc, char **argv)
 	upper = *reg & ~GENMASK(19, 0);
 	irq_unlock(key);
 	for (size_t k = 0; k < len; k++) {
-		double cyc = (double)cycles * (double)k / (double)len;
-		double ph = TWO_PI * (cyc - floor(cyc));
+		double ph = esp_sdr_tone_phase(cycles, k, len);
 
 		tab[k] = upper | esp_sdr_replay_word(lround((double)amp * cos(ph)),
 						     lround((double)amp * sin(ph)));
@@ -1173,7 +1128,8 @@ static int cmd_tx_paint_run(const struct shell *sh, size_t argc, char **argv)
 	};
 	/* At most 128 tones of 128: the sums stay in 16 bits' worth per branch. */
 	for (uint32_t t = 0; t < PAINT_TAB; t++) {
-		paint_cos[t] = (int16_t)lround(128.0 * cos(TWO_PI * (double)t / (double)PAINT_TAB));
+		paint_cos[t] =
+			(int16_t)lround(128.0 * cos(ESP_SDR_TAU * (double)t / (double)PAINT_TAB));
 	}
 	paint_row_ms = (uint32_t)ms;
 	paint_gap_ms = (uint32_t)MAX(0, arg(argv, argc, 6, 0));

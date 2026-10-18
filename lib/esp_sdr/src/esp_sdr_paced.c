@@ -15,13 +15,13 @@
 #include <zephyr/sys/util.h>
 
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_dsp.h>
 #include <esp_sdr/esp_sdr_paced.h>
 
 #include "esp_sdr_priv.h"
 
 LOG_MODULE_DECLARE(esp_sdr, CONFIG_ESP_SDR_LOG_LEVEL);
 
-#define CPU_HZ (CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ * 1000000U)
 /* One estimator run (IQE_COUNT_MAX inputs at 80 MHz) lasts 65536 CPU cycles: restart well before. */
 #define IQE_RUN_CYCLES 60000U
 #define FIR_TAPS 8U
@@ -74,7 +74,8 @@ int esp_sdr_rx_paced_start(uint32_t rate_hz)
 {
 	uint32_t c0;
 
-	if (rate_hz < 10000U || CPU_HZ % rate_hz != 0U || ESP_SDR_PACED_INPUT_HZ % rate_hz != 0U) {
+	if (rate_hz < 10000U || ESP_SDR_CPU_HZ % rate_hz != 0U ||
+	    ESP_SDR_PACED_INPUT_HZ % rate_hz != 0U) {
 		return -EINVAL;
 	}
 	if (!esp_sdr_ready) {
@@ -84,7 +85,7 @@ int esp_sdr_rx_paced_start(uint32_t rate_hz)
 	esp_sdr_rx_prepare();
 	cycles_enable();
 	memset(&stats, 0, sizeof(stats));
-	rxp.step = CPU_HZ / rate_hz;
+	rxp.step = ESP_SDR_CPU_HZ / rate_hz;
 	rxp.rearm_every = MAX(1U, IQE_RUN_CYCLES / rxp.step);
 	rxp.left = rxp.rearm_every;
 	rxp.pi = 0;
@@ -165,15 +166,13 @@ static struct {
 /* Blackman-windowed sinc low-pass at the input Nyquist frequency, split into L phases (Q15). */
 static void fir_design(uint32_t l)
 {
-	const double pi = 3.14159265358979323846;
 	uint32_t n = l * FIR_TAPS;
 	double h[FIR_MAX_L * FIR_TAPS], sum = 0.0;
 
 	for (uint32_t k = 0; k < n; k++) {
 		double x = ((double)k - (double)(n - 1U) / 2.0) / (double)l;
 
-		h[k] = (fabs(x) < 1e-9 ? 1.0 : sin(pi * x) / (pi * x)) *
-		       (0.42 - 0.5 * cos(2.0 * pi * k / (n - 1U)) + 0.08 * cos(4.0 * pi * k / (n - 1U)));
+		h[k] = esp_sdr_sinc(x) * (double)esp_sdr_window(ESP_SDR_WINDOW_BLACKMAN, k, n - 1U);
 		sum += h[k];
 	}
 	for (uint32_t ph = 0; ph < l; ph++) {
@@ -246,7 +245,7 @@ int esp_sdr_tx_paced_start(uint32_t rate_hz, unsigned int interp, unsigned int p
 	int ret;
 
 	if (rate_hz == 0U || !(interp == 1U || interp == 2U || interp == 4U || interp == 8U) ||
-	    CPU_HZ % (rate_hz * interp) != 0U || power > TX_POWER_MAX || input == NULL) {
+	    ESP_SDR_CPU_HZ % (rate_hz * interp) != 0U || power > TX_POWER_MAX || input == NULL) {
 		return -EINVAL;
 	}
 	if (!esp_sdr_ready) {
@@ -271,7 +270,7 @@ int esp_sdr_tx_paced_start(uint32_t rate_hz, unsigned int interp, unsigned int p
 	txp.orig = sys_read32(TXDC_REG);
 	txp.upper = (txp.orig & ~TXDC_IQ) | TXDC_INJECT;
 	txp.next = txp.upper;
-	txp.step = CPU_HZ / (rate_hz * interp);
+	txp.step = ESP_SDR_CPU_HZ / (rate_hz * interp);
 	txp.target = cycles() + txp.step;
 	tx_on = true;
 	return 0;

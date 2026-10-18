@@ -371,17 +371,7 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 			    s.prof_us[4] / s.decode_n, s.prof_us[5] / s.decode_n,
 			    s.sense_engine_us, s.window_engine_us);
 	}
-	{
-		struct app_crash cr;
-
-		if (app_crash_last(&cr)) {
-			shell_print(sh, "last crash: %s reason %u on cpu %u in %s at %u ms: pc 0x%08x "
-				    "a0 0x%08x ps 0x%08x exccause %u excvaddr 0x%08x",
-				    cr.reason == APP_CRASH_WATCHDOG ? "watchdog" : "fatal", cr.reason,
-				    cr.cpu, cr.thread, cr.uptime_ms, cr.pc, cr.a0, cr.ps, cr.exccause,
-				    cr.excvaddr);
-		}
-	}
+	(void)app_crash_print(sh);
 	for (int m = 0; m < QAM_MODS; m++) {
 		char line[128];
 		int len = snprintf(line, sizeof(line), "%-7s", mod_names[m]);

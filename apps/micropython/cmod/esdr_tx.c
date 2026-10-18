@@ -22,6 +22,7 @@
 
 #include <esp_attr.h>
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_dsp.h>
 #include <esp_sdr/esp_sdr_tx.h>
 
 #include "esdr_rx.h"
@@ -254,7 +255,8 @@ static void tables(void)
 		return;
 	}
 	for (uint32_t k = 0; k <= SINE_N; k++) {
-		sine_tab[k] = (int16_t)lroundf(32767.0f * sinf(6.28318530718f * (float)k / (float)SINE_N));
+		sine_tab[k] =
+			(int16_t)lroundf(32767.0f * sinf(ESP_SDR_TAU_F * (float)k / (float)SINE_N));
 	}
 	ready = true;
 }

@@ -295,7 +295,7 @@ let
     buildInputs = [ pkgs.libusb1 ];
     buildPhase = ''
       runHook preBuild
-      cc -O2 -Wall -Iapps/osmosdr/src -I${lib.getDev pkgs.libusb1}/include/libusb-1.0 \
+      cc -O2 -Wall -Iinclude -Iapps/osmosdr/src -I${lib.getDev pkgs.libusb1}/include/libusb-1.0 \
         apps/osmosdr/tools/esdr_usb.c -lusb-1.0 -lm -o esdr_usb
       (cd apps/link
        cc -O2 -Wall -Isrc -I../../include src/qam.c src/rs.c src/hamming.c tools/qam_sim.c \

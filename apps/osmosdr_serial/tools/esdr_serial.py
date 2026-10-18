@@ -10,6 +10,7 @@ The port is opened raw, without touching DTR/RTS: that would reset the board.
 """
 
 import argparse
+import math
 import os
 import struct
 import sys
@@ -163,7 +164,7 @@ def transmit(d, rate, seconds, tone=50000, bits=8, freq=2437000000, gain=8):
     """Transmit a tone for @p seconds of samples (as fast as the device takes them, which is
     real time). Returns the number of samples and the elapsed time."""
     n = int(rate * seconds)
-    ph = 2 * np.pi * tone / rate * np.arange(n)
+    ph = math.tau * tone / rate * np.arange(n)
     if bits == 16:
         v = np.empty(2 * n, np.int16)
         v[0::2], v[1::2] = 16000 * np.cos(ph), 16000 * np.sin(ph)

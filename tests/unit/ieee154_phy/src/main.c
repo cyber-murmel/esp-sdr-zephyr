@@ -17,31 +17,15 @@
 #include <zephyr/ztest.h>
 
 #include <esp_sdr/ieee154_phy.h>
+#include <test_rng.h>
 
 #define AMP 1500
 #define FS  4e6
 /* 64 chips/byte, 2 samples/chip, longest PSDU. */
 #define MAXS ((6 + IEEE154_PHY_PSDU_MAX) * 128 + 4)
-#define PI   3.14159265358979323846
 
 /* Deterministic xorshift64, reseeded at the start of every test. */
 #define RNG_SEED 88172645463325252ULL
-static uint64_t rs;
-static uint32_t rnd(void)
-{
-	rs ^= rs << 13;
-	rs ^= rs >> 7;
-	rs ^= rs << 17;
-	return (uint32_t)(rs >> 32);
-}
-static double urand(void)
-{
-	return (rnd() + 1.0) / 4294967297.0;
-}
-static double gauss(void)
-{
-	return sqrt(-2 * log(urand())) * cos(2 * PI * urand());
-}
 
 static uint8_t expect[IEEE154_PHY_PSDU_MAX];
 static uint8_t expect_len;
@@ -63,7 +47,7 @@ static void cb(const uint8_t *p, uint8_t len, int lqi, void *user)
 static void impair(int16_t *iq, size_t n, int noise, double snr_db, double cfo_hz, double dc)
 {
 	double sigma = noise ? AMP / sqrt(2 * pow(10, snr_db / 10)) : 0;
-	double dphi = 2 * PI * cfo_hz / FS;
+	double dphi = ESP_SDR_TAU * cfo_hz / FS;
 
 	for (size_t k = 0; k < n; k++) {
 		double c = cos(gphase), s = sin(gphase);
@@ -71,8 +55,8 @@ static void impair(int16_t *iq, size_t n, int noise, double snr_db, double cfo_h
 		double ri, rq;
 
 		gphase += dphi;
-		ri = i * c - q * s + dc + sigma * gauss();
-		rq = i * s + q * c + dc * 0.5 + sigma * gauss();
+		ri = i * c - q * s + dc + sigma * test_rng_gauss();
+		rq = i * s + q * c + dc * 0.5 + sigma * test_rng_gauss();
 		iq[2 * k] = (int16_t)lrint(ri);
 		iq[2 * k + 1] = (int16_t)lrint(rq);
 	}
@@ -88,12 +72,12 @@ static double run_point(int nframes, int noise, double snr_db, double cfo, doubl
 
 	*dups = 0;
 	for (int f = 0; f < nframes; f++) {
-		int plen = 3 + (int)(rnd() % 123); /* payload 3..125 */
+		int plen = 3 + (int)(test_rng_u32() % 123); /* payload 3..125 */
 		uint8_t psdu[IEEE154_PHY_PSDU_MAX];
 		size_t len, ns, lead, trail, tot;
 
 		for (int i = 0; i < plen; i++) {
-			psdu[i] = (uint8_t)rnd();
+			psdu[i] = (uint8_t)test_rng_u32();
 		}
 		len = ieee154_phy_append_fcs(psdu, (size_t)plen);
 		ns = ieee154_phy_modulate(psdu, (uint8_t)len, AMP, frame, MAXS);
@@ -107,7 +91,7 @@ static double run_point(int nframes, int noise, double snr_db, double cfo, doubl
 		 * where within a symbol): varying it is what the dup-delivery
 		 * regression below relies on to visit many tracker phases.
 		 */
-		lead = 1500 + rnd() % 256;
+		lead = 1500 + test_rng_u32() % 256;
 		trail = 200;
 		tot = lead + ns + trail;
 
@@ -141,7 +125,7 @@ static void *suite_setup(void)
 static void before_each(void *fixture)
 {
 	ARG_UNUSED(fixture);
-	rs = RNG_SEED;
+	test_rng_seed(RNG_SEED);
 	gphase = 0;
 	got = 0;
 	bad = 0;
@@ -223,7 +207,7 @@ ZTEST(ieee154_phy, test_rejects_bad_fcs)
 	size_t len;
 
 	for (int i = 0; i < 40; i++) {
-		psdu[i] = (uint8_t)rnd();
+		psdu[i] = (uint8_t)test_rng_u32();
 	}
 	len = ieee154_phy_append_fcs(psdu, 40);
 	memcpy(expect, psdu, len);

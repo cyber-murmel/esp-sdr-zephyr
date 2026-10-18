@@ -23,6 +23,7 @@ lists the first such k for the tone it found; pick a tone that keeps them large.
 
 import argparse
 import json
+import math
 import sys
 
 import numpy as np
@@ -82,7 +83,7 @@ def analyse(x, fs, block=64, step_deg=30.0, dip=0.3):
     x = x - x.mean()
     tc, fk, peak = track_freq(x, fs)
     n = len(x) // block * block
-    phi = 2 * np.pi * np.cumsum(np.interp(np.arange(n), tc, fk)) / fs
+    phi = math.tau * np.cumsum(np.interp(np.arange(n), tc, fk)) / fs
     m = (x[:n] * np.exp(-1j * phi)).reshape(-1, block).mean(axis=1)
     amp = np.abs(m)
     nb = len(m)
@@ -137,7 +138,7 @@ def selftest():
     fs, n, a = 250e3, 1 << 20, 10.0
     t = np.arange(n)
     f = 53e3 + 2e3 * t / n  # warm-up drift
-    x = a * np.exp(2j * np.pi * np.cumsum(f) / fs) + (5 + 3j)
+    x = a * np.exp(1j * math.tau * np.cumsum(f) / fs) + (5 + 3j)
     x = x + rng.normal(0, a * 1.4, n) + 1j * rng.normal(0, a * 1.4, n)
     r = analyse(x, fs)
     assert is_clean(r), r

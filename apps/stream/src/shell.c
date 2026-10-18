@@ -16,7 +16,9 @@
 #include <esp_attr.h>
 
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_dsp.h>
 
+#include "app_shell.h"
 #include "vrt_rx.h"
 
 #if defined(CONFIG_APP_TX)
@@ -53,8 +55,6 @@ static int cmd_mem(const struct shell *sh, size_t argc, char **argv)
  */
 #define TX_RATE        ESP_SDR_RATE_40MSPS
 #define TX_BUF_SAMPLES 2048U /* 51 us at 40 MS/s; RAM below the capture bank is tight */
-#define FM_TWO_PI      6.28318530717958647692
-#define FM_TWO_PI_F    6.28318530717958647692f
 /* PSRAM: only CPU copies read it, the DAC plays from the bank. */
 static EXT_RAM_BSS_ATTR uint32_t tx_buf[TX_BUF_SAMPLES];
 
@@ -79,9 +79,9 @@ static int cmd_fm(const struct shell *sh, size_t argc, char **argv)
 
 	/* Instantaneous offset dev_hz * sin(2 pi fm_hz t), integrated to phase. */
 	for (size_t n = 0; n < TX_BUF_SAMPLES; n++) {
-		double inst_hz = dev_hz * sin(FM_TWO_PI * fm_hz * (double)n / fs);
+		double inst_hz = dev_hz * sin(ESP_SDR_TAU * fm_hz * (double)n / fs);
 
-		phase += FM_TWO_PI * inst_hz / fs;
+		phase += ESP_SDR_TAU * inst_hz / fs;
 		tx_buf[n] = esp_sdr_tx_word((int16_t)lround((double)amp * cos(phase)),
 					    (int16_t)lround((double)amp * sin(phase)));
 	}
@@ -95,31 +95,6 @@ static int cmd_fm(const struct shell *sh, size_t argc, char **argv)
 		    TX_BUF_SAMPLES, (unsigned int)(fs / 1e6), esp_sdr_get_freq(), fm_hz, dev_hz,
 		    amp);
 	return 0;
-}
-
-/*
- * Period length for a seamless tone: the n in [MIN, TX_BUF_SAMPLES] whose
- * whole number of cycles comes closest to the requested frequency.
- */
-static size_t tone_period(double req, double fs, long *cycles)
-{
-	size_t best_n = TX_BUF_SAMPLES;
-	double best_err = INFINITY;
-
-	for (size_t n = TX_BUF_SAMPLES; n >= ESP_SDR_SAMPLES_MIN; n--) {
-		long c = lround(req * (double)n / fs);
-		double err = fabs((double)c * fs / (double)n - req);
-
-		if (err < best_err) {
-			best_err = err;
-			best_n = n;
-			*cycles = c;
-			if (err < 1.0) {
-				break;
-			}
-		}
-	}
-	return best_n;
 }
 
 /*
@@ -148,9 +123,9 @@ static int cmd_tonetx(const struct shell *sh, size_t argc, char **argv)
 		shell_error(sh, "amplitude must be 1..511 and |hz| below %.0f", fs / 2.0);
 		return -EINVAL;
 	}
-	n = tone_period(req, fs, &cycles);
+	n = esp_sdr_tone_period(req, fs, ESP_SDR_SAMPLES_MIN, TX_BUF_SAMPLES, &cycles);
 	for (size_t k = 0; k < n; k++) {
-		double phase = FM_TWO_PI * (double)cycles * (double)k / (double)n;
+		double phase = esp_sdr_tone_phase(cycles, k, n);
 
 		tx_buf[k] = esp_sdr_tx_word((int16_t)lround((double)amp * cos(phase)),
 					    (int16_t)lround((double)amp * sin(phase)));
@@ -220,7 +195,7 @@ static int cmd_tonerx(const struct shell *sh, size_t argc, char **argv)
 	}
 
 	float power_dbfs = 10.0f * log10f(MAX(sum_sq / (float)b.count / (512.0f * 512.0f), 1e-12f));
-	float avg_freq = sum_delta / (float)(b.count - 1) * fs / (float)FM_TWO_PI;
+	float avg_freq = sum_delta / (float)(b.count - 1) * fs / (float)ESP_SDR_TAU;
 
 	shell_print(sh, "tonerx: %u samples, %.1f dBFS, avg freq %+.0f Hz", (unsigned int)b.count,
 		    (double)power_dbfs, (double)avg_freq);
@@ -281,7 +256,7 @@ static int cmd_fsktx(const struct shell *sh, size_t argc, char **argv)
 			float freq = ((frame[byte] >> b) & 1) ? FSK_DEV_HZ : -FSK_DEV_HZ;
 
 			for (size_t s = 0; s < spb; s++) {
-				phase += FM_TWO_PI_F * freq / fs;
+				phase += ESP_SDR_TAU_F * freq / fs;
 				tx_buf[bit * spb + s] =
 					esp_sdr_tx_word((int16_t)(400.0f * cosf(phase)),
 							(int16_t)(400.0f * sinf(phase)));
@@ -417,24 +392,11 @@ static int cmd_fskrx(const struct shell *sh, size_t argc, char **argv)
 #define SDR_TX_CMD
 #endif
 
-static int parse_long(const struct shell *sh, const char *s, long min, long max, long *out)
-{
-	char *end;
-	long v = strtol(s, &end, 0);
-
-	if (*s == '\0' || *end != '\0' || v < min || v > max) {
-		shell_error(sh, "bad value: %s (%ld to %ld)", s, min, max);
-		return -EINVAL;
-	}
-	*out = v;
-	return 0;
-}
-
 static int set_freq(const struct shell *sh, const char *value)
 {
 	long mhz;
 
-	if (parse_long(sh, value, ESP_SDR_FREQ_MIN_MHZ, ESP_SDR_FREQ_MAX_MHZ, &mhz) != 0) {
+	if (app_shell_long(sh, value, ESP_SDR_FREQ_MIN_MHZ, ESP_SDR_FREQ_MAX_MHZ, &mhz) != 0) {
 		return -EINVAL;
 	}
 	return esp_sdr_set_freq((uint32_t)mhz);
@@ -445,7 +407,7 @@ static int set_rxgain(const struct shell *sh, const char *value)
 	long g = ESP_SDR_RX_GAIN_AUTO;
 
 	if (strcmp(value, "auto") != 0 &&
-	    parse_long(sh, value, ESP_SDR_RX_GAIN_AUTO, esp_sdr_rx_gain_max(), &g) != 0) {
+	    app_shell_long(sh, value, ESP_SDR_RX_GAIN_AUTO, esp_sdr_rx_gain_max(), &g) != 0) {
 		return -EINVAL;
 	}
 	return esp_sdr_rx_set_gain((int)g);
@@ -468,7 +430,7 @@ static int set_txgain(const struct shell *sh, const char *value)
 {
 	long step;
 
-	if (parse_long(sh, value, 0, esp_sdr_tx_gain_max(), &step) != 0) {
+	if (app_shell_long(sh, value, 0, esp_sdr_tx_gain_max(), &step) != 0) {
 		return -EINVAL;
 	}
 	return esp_sdr_tx_set_gain((int)step);

@@ -27,6 +27,7 @@
 #include <zephyr/sys/util.h>
 
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_dsp.h>
 #include <esp_sdr/esp_sdr_ring.h>
 #include <esp_sdr/esp_sdr_tx.h>
 
@@ -756,7 +757,7 @@ static int radio_apply(const struct sdr_settings *s, bool force)
 	}
 	/* The NCO shifts the residual down: rotate by -residual. */
 	{
-		double w = -2.0 * 3.14159265358979323846 * residual / (double)s->rate_hz;
+		double w = -ESP_SDR_TAU * residual / (double)s->rate_hz;
 
 		snk.nco = fabs(residual) > 0.5;
 		snk.rc = (float)cos(w);
@@ -777,7 +778,7 @@ static void tx_session(const struct sdr_settings *s, uint32_t gen)
 	uint32_t mhz;
 	int32_t khz;
 	double residual = lo_plan((double)s->freq_hz, s->corr_ppb, &mhz, &khz);
-	double w = 2.0 * 3.14159265358979323846 * residual / (double)s->rate_hz;
+	double w = ESP_SDR_TAU * residual / (double)s->rate_hz;
 	int ret;
 
 	/* The real LO lies residual below the wanted one: rotate the samples up by it. */

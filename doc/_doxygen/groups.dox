@@ -64,3 +64,10 @@
  * @ingroup ieee154
  * @brief Counters, measurements and traces of the esp_sdr_154 device (ieee154_esp_sdr.h).
  */
+
+/**
+ * @defgroup esp_sdr_dsp Signal processing helpers
+ * @ingroup esp_sdr
+ * @brief The turn constant, windows, sinc, FFT and whole-cycle tones, header only and free of
+ * Zephyr (esp_sdr_dsp.h).
+ */

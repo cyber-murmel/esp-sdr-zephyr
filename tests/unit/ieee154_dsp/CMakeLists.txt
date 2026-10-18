@@ -17,4 +17,5 @@ target_sources(app PRIVATE
   ${IEEE154_DIR}/ieee154_phy.c)
 target_include_directories(app PRIVATE
   ${CMAKE_CURRENT_LIST_DIR}/../../../include
-  ${IEEE154_DIR})
+  ${IEEE154_DIR}
+  ${CMAKE_CURRENT_LIST_DIR}/../../common/include)

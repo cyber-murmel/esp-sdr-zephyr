@@ -16,7 +16,6 @@
 
 #include "esp_sdr_priv.h"
 
-#define CPU_HZ (CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ * 1000000U)
 /* Upstream's scale for replay: the full scale the tone stop leaves clips. */
 #define SCALE_DEFAULT 15U
 
@@ -79,7 +78,7 @@ int esp_sdr_replay_start(const struct esp_sdr_replay_cfg *cfg)
 
 int esp_sdr_replay_wait(uint32_t timeout_us, uint32_t *cycles)
 {
-	uint32_t limit = timeout_us * (CPU_HZ / 1000000U), dt;
+	uint32_t limit = timeout_us * (ESP_SDR_CPU_HZ / 1000000U), dt;
 	unsigned int key;
 	bool done;
 

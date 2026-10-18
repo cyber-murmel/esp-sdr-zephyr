@@ -185,7 +185,7 @@ def main():
 
     # Complex tone, paced at the sample rate.
     n_packets = int(args.seconds * args.rate / SAMPLES_PER_PACKET)
-    step = 2 * math.pi * args.tone / args.rate
+    step = math.tau * args.tone / args.rate
     t0 = time.perf_counter()
     n = 0
     for k in range(n_packets):

@@ -22,13 +22,14 @@
 #include <string.h>
 #include <time.h>
 
+#include <esp_sdr/esp_sdr_dsp.h>
+
 #include "ofdm.h"
 #include "ofdm_frame.h"
 #include "rs.h"
 
 #define FS     80000000U
 #define WIN    16380U
-#define TWO_PI 6.28318530717958647692
 
 static uint32_t frame[WIN], win[WIN];
 static uint8_t bits[WIN], got[WIN], hdr[OFDM_HDR_BITS_MAX / 8], hgot[OFDM_HDR_BITS_MAX / 8];
@@ -61,7 +62,7 @@ static double randn(void)
 {
 	double u1 = (rand() + 1.0) / ((double)RAND_MAX + 2.0), u2 = rand() / (double)RAND_MAX;
 
-	return sqrt(-2.0 * log(u1)) * cos(TWO_PI * u2);
+	return sqrt(-2.0 * log(u1)) * cos(ESP_SDR_TAU * u2);
 }
 
 static unsigned int bit_at(const uint8_t *b, size_t i)
@@ -86,7 +87,7 @@ static int check_fft(void)
 		double re = 0.0, im = 0.0;
 
 		for (unsigned int t = 0; t < n; t++) {
-			double a = -TWO_PI * (double)k * (double)t / (double)n;
+			double a = -ESP_SDR_TAU * (double)k * (double)t / (double)n;
 
 			re += x[t].re * cos(a) - x[t].im * sin(a);
 			im += x[t].re * sin(a) + x[t].im * cos(a);
@@ -113,7 +114,7 @@ static void channel(size_t len, unsigned int off, double snr_db, double cfo_hz, 
 	enum { TAPS = 31 };
 	static const double taps_mp[3][2] = {{1.0, 0.0}, {0.25, -0.1}, {0.0, 0.08}};
 	static double fr[2 * WIN + TAPS], fq[2 * WIN + TAPS];
-	double h[TAPS], p = 0.0, ns, ph = TWO_PI * cfo_hz / FS, hs = 0.0;
+	double h[TAPS], p = 0.0, ns, ph = ESP_SDR_TAU * cfo_hz / FS, hs = 0.0;
 	unsigned int nfull = rx_div * WIN + TAPS;
 	int ntaps = mp ? 3 : 1;
 
@@ -121,8 +122,9 @@ static void channel(size_t len, unsigned int off, double snr_db, double cfo_hz, 
 	for (int k = 0; k < TAPS; k++) {
 		double x = k - (TAPS - 1) / 2.0, fc = 0.45 / rx_div;
 
-		h[k] = (x == 0.0 ? 2.0 * fc : sin(TWO_PI * fc * x) / (M_PI * x)) *
-		       (0.5 - 0.5 * cos(TWO_PI * k / (TAPS - 1)));
+		h[k] = (x == 0.0 ? 2.0 * fc
+				 : sin(ESP_SDR_TAU * fc * x) / (ESP_SDR_TAU / 2.0 * x)) *
+		       (0.5 - 0.5 * cos(ESP_SDR_TAU * k / (TAPS - 1)));
 		hs += h[k];
 	}
 	for (int k = 0; k < TAPS; k++) {
@@ -411,7 +413,8 @@ int main(int argc, char **argv)
 					pa = atan2f(wk2.trk.im, wk2.trk.re);
 					aa = atan2f(ctx.w0.trk.im, ctx.w0.trk.re) +
 					     atan2f(ctx.w0.rate.im, ctx.w0.rate.re);
-					d = fabsf(remainderf(pa - aa, 6.2831853f)) * 57.29578f;
+					d = fabsf(remainderf(pa - aa, ESP_SDR_TAU_F)) *
+					    (360.0f / ESP_SDR_TAU_F);
 					pe_sum += d;
 					pe_max = d > pe_max ? d : pe_max;
 					ofdm_rx_part(&ctx, &wk2, win, mod, mid, ctx.ndata, got + off, &err);

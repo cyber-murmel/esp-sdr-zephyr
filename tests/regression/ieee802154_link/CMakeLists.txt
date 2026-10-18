@@ -26,3 +26,4 @@ if(CONFIG_USB_DEVICE_STACK_NEXT)
 endif()
 
 target_sources(app PRIVATE ${WPAN_DIR}/src/main.c)
+target_include_directories(app PRIVATE ${WPAN_DIR}/../common/include)

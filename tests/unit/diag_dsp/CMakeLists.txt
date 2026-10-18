@@ -9,4 +9,7 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(diag_dsp_unit)
 
 target_sources(app PRIVATE src/main.c)
-target_include_directories(app PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../../../lib/esp_sdr/src)
+target_include_directories(app PRIVATE
+  ${CMAKE_CURRENT_LIST_DIR}/../../../lib/esp_sdr/src
+  ${CMAKE_CURRENT_LIST_DIR}/../../../include
+  ${CMAKE_CURRENT_LIST_DIR}/../../common/include)

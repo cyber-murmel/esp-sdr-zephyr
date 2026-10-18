@@ -14,6 +14,7 @@
 #include <zephyr/sys/util.h>
 
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_dsp.h>
 
 #include <esp_attr.h>
 
@@ -326,8 +327,6 @@ int esp_sdr_tx_play(enum esp_sdr_rate rate, const uint32_t *words, size_t count)
 	return esp_sdr_tx_play_for(rate, words, count, 0, NULL);
 }
 
-#define SWEEP_TWO_PI 6.28318530717958647692
-
 /*
  * Fill bank[0..n) with a chirp starting at t (s): frequency f0 + k t. Phase
  * is taken from absolute time, so segments line up across the synthesis
@@ -336,12 +335,12 @@ int esp_sdr_tx_play(enum esp_sdr_rate rate, const uint32_t *words, size_t count)
 static void sweep_fill(volatile uint32_t *bank, size_t n, double t, double fs, double f0,
 		       double k, float amp)
 {
-	double phase = fmod(SWEEP_TWO_PI * (f0 * t + 0.5 * k * t * t), SWEEP_TWO_PI);
+	double phase = fmod(ESP_SDR_TAU * (f0 * t + 0.5 * k * t * t), ESP_SDR_TAU);
 	double f = f0 + k * t;
 	float zr = cosf((float)phase), zi = sinf((float)phase);
-	float wr = cosf((float)(SWEEP_TWO_PI * f / fs)), wi = sinf((float)(SWEEP_TWO_PI * f / fs));
-	float cr = cosf((float)(SWEEP_TWO_PI * k / (fs * fs)));
-	float ci = sinf((float)(SWEEP_TWO_PI * k / (fs * fs)));
+	float wr = cosf((float)(ESP_SDR_TAU * f / fs)), wi = sinf((float)(ESP_SDR_TAU * f / fs));
+	float cr = cosf((float)(ESP_SDR_TAU * k / (fs * fs)));
+	float ci = sinf((float)(ESP_SDR_TAU * k / (fs * fs)));
 
 	for (size_t j = 0; j < n; j++) {
 		float tr;

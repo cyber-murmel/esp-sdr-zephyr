@@ -110,7 +110,8 @@ Host tool
 
 .. code-block:: console
 
-   cc -O2 -Iesp-sdr-zephyr/apps/osmosdr/src esp-sdr-zephyr/apps/osmosdr/tools/esdr_usb.c \
+   cc -O2 -Iesp-sdr-zephyr/include -Iesp-sdr-zephyr/apps/osmosdr/src \
+      esp-sdr-zephyr/apps/osmosdr/tools/esdr_usb.c \
       -lusb-1.0 -lm -o esdr_usb
    ./esdr_usb -s <serial> info
    ./esdr_usb -s <serial> test-in        # USB throughput in; test-out for out

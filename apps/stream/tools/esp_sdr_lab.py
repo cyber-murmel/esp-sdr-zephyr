@@ -24,6 +24,7 @@ instead: bursts at their VITA timestamps, zeros in between.
 import argparse
 import glob
 import json
+import math
 import os
 import re
 import socket
@@ -486,11 +487,11 @@ def gr_signal(kind, rate, seconds, offset, span, amp):
     else:
         # Linear chirp offset-span/2 .. offset+span/2 once over the run: a sawtooth
         # instantaneous frequency into an FM modulator.
-        # Phase pi: GNU Radio's sawtooth otherwise starts mid-ramp and wraps halfway.
+        # Phase tau / 2: GNU Radio's sawtooth otherwise starts mid-ramp and wraps halfway.
         saw = analog.sig_source_f(rate, analog.GR_SAW_WAVE, 1.0 / seconds, span, offset - span / 2,
-                                  np.pi)
+                                  math.tau / 2)
         head = blocks.head(gr.sizeof_float, n)
-        fm = analog.frequency_modulator_fc(2 * np.pi / rate)
+        fm = analog.frequency_modulator_fc(math.tau / rate)
         gain = blocks.multiply_const_cc(amp)
         snk = blocks.vector_sink_c()
         tb.connect(saw, head, fm, gain, snk)
@@ -519,10 +520,10 @@ def paint_image(path, rate, line_s, width=None, amp=0.5, flip=False, offset=0.0,
     spec = np.zeros((rows.shape[0] * reps, nfft), dtype=np.float32)
     spec[:, nfft // 4:nfft // 4 + w] = np.repeat(rows ** 2, reps, axis=0)
     rng = np.random.default_rng(seed)
-    bins = spec * np.exp(2j * np.pi * rng.random(spec.shape, dtype=np.float32))
+    bins = spec * np.exp(1j * math.tau * rng.random(spec.shape, dtype=np.float32))
     iq = np.fft.ifft(np.fft.ifftshift(bins, axes=1), axis=1).ravel()
     if offset:
-        iq *= np.exp(2j * np.pi * offset / rate * np.arange(len(iq)))
+        iq *= np.exp(1j * math.tau * offset / rate * np.arange(len(iq)))
     iq *= amp / max(np.abs(iq).max(), 1e-12)
     meta = {"image": os.path.abspath(path), "image_px": [w, rows.shape[0]], "nfft": nfft,
             "line_s": reps * nfft / rate, "line_repeats": reps, "bandwidth_hz": rate / 2,

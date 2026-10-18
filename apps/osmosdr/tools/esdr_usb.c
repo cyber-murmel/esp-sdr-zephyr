@@ -5,7 +5,8 @@
  * receive stream to a file. libusb with asynchronous bulk transfers, the
  * way libhackrf streams.
  *
- *   cc -O2 -Wall -I../src -I<libusb include> esdr_usb.c -lusb-1.0 -o esdr_usb
+ *   cc -O2 -Wall -I../../../include -I../src -I<libusb include> esdr_usb.c -lusb-1.0 -lm \
+ *      -o esdr_usb
  *
  *   esdr_usb [-s serial] info
  *   esdr_usb [-s serial] test-in  [-t seconds]
@@ -31,6 +32,8 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+
+#include <esp_sdr/esp_sdr_dsp.h>
 
 #include "esdr_proto.h"
 
@@ -261,11 +264,11 @@ static void tx_fill(struct stream *s, uint8_t *buf, int len)
 	for (int k = 0; k + item <= len; k += item) {
 		double fi = s->amp * cos(s->phase), fq = s->amp * sin(s->phase);
 
-		s->phase += 2.0 * M_PI * s->tone_hz / s->rate;
-		if (s->phase > M_PI) {
-			s->phase -= 2.0 * M_PI;
-		} else if (s->phase < -M_PI) {
-			s->phase += 2.0 * M_PI;
+		s->phase += ESP_SDR_TAU * s->tone_hz / s->rate;
+		if (s->phase > ESP_SDR_TAU / 2.0) {
+			s->phase -= ESP_SDR_TAU;
+		} else if (s->phase < -ESP_SDR_TAU / 2.0) {
+			s->phase += ESP_SDR_TAU;
 		}
 		if (item == 4) {
 			int16_t vi = (int16_t)lrint(fi * 32767.0), vq = (int16_t)lrint(fq * 32767.0);

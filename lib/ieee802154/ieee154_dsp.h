@@ -15,6 +15,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <esp_sdr/esp_sdr_dsp.h>
 #include <esp_sdr/esp_sdr_rx.h>
 #include <esp_sdr/esp_sdr_tx.h>
 #include <esp_sdr/ieee154_phy.h>
@@ -45,18 +46,19 @@ struct ieee154_dsp_tx {
 /* DAC words of every slot kind at amplitude amp (of 511); conj mirrors the spectrum. */
 static inline void ieee154_dsp_tmpl_init(ieee154_dsp_tmpl_t *tmpl, float amp, bool conj)
 {
-	const float pi = 3.14159265f;
-
 	for (int p = 0; p < 2; p++) {
 		for (int c = 0; c < 3; c++) {
 			for (int v = 0; v < 3; v++) {
 				for (unsigned int t = 0; t < IEEE154_DSP_SLOT; t++) {
 					float cur = c == 0 ? 0.0f : (c == 2 ? 1.0f : -1.0f);
 					float prv = v == 0 ? 0.0f : (v == 2 ? 1.0f : -1.0f);
-					float a = cur * sinf(pi * (float)t / 40.0f);
-					float b = prv * sinf(pi * (float)(t + 20U) / 40.0f);
+					float x = ESP_SDR_TAU_F * (float)t;
+					float y = ESP_SDR_TAU_F * (float)(t + 20U);
+					float a = cur * sinf(x / 80.0f);
+					float b = prv * sinf(y / 80.0f);
 					float i = p == 0 ? a : b, q = p == 0 ? b : a;
-					float th = 2.0f * pi * (float)IEEE154_DSP_LO_OFFSET_MHZ / 40.0f *
+					float th = ESP_SDR_TAU_F *
+						   (float)IEEE154_DSP_LO_OFFSET_MHZ / 40.0f *
 						   (float)t;
 					float ri = amp * (i * cosf(th) - q * sinf(th));
 					float rq = amp * (i * sinf(th) + q * cosf(th));
@@ -207,8 +209,8 @@ static inline size_t ieee154_dsp_mix_decimate(const uint32_t *w, size_t n, int16
 /*
  * Carrier offset in Hz of an O-QPSK signal in 4 MS/s I/Q (2 samples per
  * chip): x[n] conj(x[n - 2]) turns by +-90 degrees per chip (MSK) plus
- * 2 pi f 0.5 us; its square loses the sign, so the mean square points at
- * 180 degrees + 4 pi f 0.5 us. Uses samples above half the mean power (the
+ * tau f 0.5 us; its square loses the sign, so the mean square points at
+ * 180 degrees + 2 tau f 0.5 us. Uses samples above half the mean power (the
  * signal, when it fills most of the block); unambiguous within +-500 kHz.
  * Sets *power to the mean |x|^2 and *used to the samples counted.
  */
@@ -254,8 +256,8 @@ static inline float ieee154_dsp_cfo(const int16_t *iq, size_t n, float *power, s
 	if (cnt == 0U) {
 		return 0.0f;
 	}
-	/* arg(-S) = 4 pi f T, T = 0.5 us */
-	return (float)(atan2(-si, -sr) / (4.0 * 3.14159265358979 * 0.5e-6));
+	/* arg(-S) = 2 tau f T, T = 0.5 us */
+	return (float)(atan2(-si, -sr) / (2.0 * ESP_SDR_TAU * 0.5e-6));
 }
 
 /*
@@ -298,7 +300,7 @@ static inline float ieee154_dsp_freq(const int16_t *iq, size_t n)
 		cnt++;
 	}
 	/* One sample is 0.25 us. */
-	return cnt != 0U ? (float)(sum / (double)cnt / (2.0 * 3.14159265358979 * 0.25e-6)) : 0.0f;
+	return cnt != 0U ? (float)(sum / (double)cnt / (ESP_SDR_TAU * 0.25e-6)) : 0.0f;
 }
 
 /*
@@ -326,7 +328,7 @@ static inline void ieee154_dsp_steps(const int16_t *iq, size_t n, uint32_t hist[
 			continue;
 		}
 		double a = atan2(xq * yi - xi * yq, xi * yi + xq * yq);
-		int b = (int)((a + 3.14159265358979) / (3.14159265358979 / 4.0));
+		int b = (int)((a + ESP_SDR_TAU / 2.0) / (ESP_SDR_TAU / 8.0));
 
 		hist[b < 0 ? 0 : (b > 7 ? 7 : b)]++;
 	}

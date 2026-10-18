@@ -20,33 +20,17 @@
 #include <zephyr/ztest.h>
 
 #include <esp_sdr/ieee154_phy.h>
+#include <test_rng.h>
 #include <ieee154_dsp.h>
 
 #define AMP          300.0
 #define FRAMES       60  /* pass/fail cases: fewer than the table's, still exact at these margins */
 #define TABLE_FRAMES 200 /* per point of the decimator table */
-#define PI           3.14159265358979323846
 
 static ieee154_dsp_tmpl_t tmpl;
 static struct ieee154_dsp_tx tx = {.tmpl = (const ieee154_dsp_tmpl_t *)&tmpl};
 
 #define RNG_SEED 88172645463325252ULL
-static uint64_t rs;
-static uint32_t rnd(void)
-{
-	rs ^= rs << 13;
-	rs ^= rs >> 7;
-	rs ^= rs << 17;
-	return (uint32_t)(rs >> 32);
-}
-static double urand(void)
-{
-	return (rnd() + 1.0) / 4294967297.0;
-}
-static double gauss(void)
-{
-	return sqrt(-2 * log(urand())) * cos(2 * PI * urand());
-}
 
 static uint8_t expect[IEEE154_PHY_PSDU_MAX];
 static uint8_t expect_len;
@@ -120,13 +104,13 @@ static double run(int dec, double snr_db, double cfo_hz, int frames)
 
 	for (int f = 0; f < frames; f++) {
 		uint8_t psdu[IEEE154_PHY_PSDU_MAX];
-		int plen = 3 + (int)(rnd() % 123);
+		int plen = 3 + (int)(test_rng_u32() % 123);
 		uint64_t n40;
-		size_t lead = 200 + rnd() % 64, n16, nout;
-		double ph = urand() * 2 * PI;
+		size_t lead = 200 + test_rng_u32() % 64, n16, nout;
+		double ph = test_rng_uniform() * ESP_SDR_TAU;
 
 		for (int i = 0; i < plen; i++) {
-			psdu[i] = (uint8_t)rnd();
+			psdu[i] = (uint8_t)test_rng_u32();
 		}
 		expect_len = (uint8_t)ieee154_phy_append_fcs(psdu, (size_t)plen);
 		memcpy(expect, psdu, expect_len);
@@ -151,9 +135,9 @@ static double run(int dec, double snr_db, double cfo_hz, int frames)
 					     s10(dac[a + 1] >> 10) * fr;
 				}
 			}
-			th = ph + 2 * PI * cfo_hz * (double)m / 16e6;
-			ri = vi * cos(th) - vq * sin(th) + sigma * gauss() + 20;
-			rq = vi * sin(th) + vq * cos(th) + sigma * gauss() - 15;
+			th = ph + ESP_SDR_TAU * cfo_hz * (double)m / 16e6;
+			ri = vi * cos(th) - vq * sin(th) + sigma * test_rng_gauss() + 20;
+			rq = vi * sin(th) + vq * cos(th) + sigma * test_rng_gauss() - 15;
 			words[m] = rx_word(ri, rq);
 		}
 		nout = dec == 0 ? ieee154_dsp_mix_decimate(words, n16, iq, 1)
@@ -183,7 +167,7 @@ static void *suite_setup(void)
 static void before_each(void *fixture)
 {
 	ARG_UNUSED(fixture);
-	rs = RNG_SEED;
+	test_rng_seed(RNG_SEED);
 	ieee154_phy_rx_reset();
 }
 
@@ -264,7 +248,7 @@ ZTEST(ieee154_dsp, test_cfo_estimator_accuracy)
 	uint8_t psdu[IEEE154_PHY_PSDU_MAX];
 
 	for (int i = 0; i < 100; i++) {
-		psdu[i] = (uint8_t)rnd();
+		psdu[i] = (uint8_t)test_rng_u32();
 	}
 	ieee154_dsp_tx_build(&tx, psdu, (uint8_t)ieee154_phy_append_fcs(psdu, 100));
 	ieee154_dsp_tx_gen(&tx, dac, 0, (uint32_t)ieee154_dsp_tx_samples(&tx));
@@ -280,11 +264,11 @@ ZTEST(ieee154_dsp, test_cfo_estimator_accuracy)
 			vi = s10(dac[a]) * (1 - fr) + s10(dac[a + 1]) * fr;
 			vq = s10(dac[a] >> 10) * (1 - fr) + s10(dac[a + 1] >> 10) * fr;
 			/* Sender's carrier feedthrough: 20 % at the channel centre (+4 MHz). */
-			vi += 0.2 * AMP * cos(2 * PI * 4e6 * (double)m / 16e6 + 0.3);
-			vq += 0.2 * AMP * sin(2 * PI * 4e6 * (double)m / 16e6 + 0.3);
-			th = 2 * PI * offs[o] * (double)m / 16e6;
-			words[m] = rx_word(vi * cos(th) - vq * sin(th) + sigma * gauss(),
-					   vi * sin(th) + vq * cos(th) + sigma * gauss());
+			vi += 0.2 * AMP * cos(ESP_SDR_TAU * 4e6 * (double)m / 16e6 + 0.3);
+			vq += 0.2 * AMP * sin(ESP_SDR_TAU * 4e6 * (double)m / 16e6 + 0.3);
+			th = ESP_SDR_TAU * offs[o] * (double)m / 16e6;
+			words[m] = rx_word(vi * cos(th) - vq * sin(th) + sigma * test_rng_gauss(),
+					   vi * sin(th) + vq * cos(th) + sigma * test_rng_gauss());
 		}
 		nout = ieee154_dsp_mix_decimate(words, n16, iq, 1);
 		f = ieee154_dsp_cfo(iq, nout, &p, &used);

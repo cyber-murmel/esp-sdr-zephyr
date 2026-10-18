@@ -9,17 +9,11 @@
 
 #include <zephyr/ztest.h>
 
+#include <test_rng.h>
+
 #include "rs.h"
 
 #define RNG_SEED 0x9e3779b97f4a7c15ULL
-static uint64_t rs_rng;
-static uint32_t rnd(void)
-{
-	rs_rng ^= rs_rng << 13;
-	rs_rng ^= rs_rng >> 7;
-	rs_rng ^= rs_rng << 17;
-	return (uint32_t)(rs_rng >> 32);
-}
 
 /* e distinct positions in [0, RS_N), each XORed with a random non-zero byte. */
 static void corrupt(uint8_t *cw, unsigned int e)
@@ -31,21 +25,21 @@ static void corrupt(uint8_t *cw, unsigned int e)
 	}
 	/* Partial Fisher-Yates: the first e entries end up a random, distinct subset. */
 	for (unsigned int i = 0; i < e; i++) {
-		unsigned int j = i + rnd() % (unsigned int)(RS_N - i);
+		unsigned int j = i + test_rng_u32() % (unsigned int)(RS_N - i);
 		uint8_t t = pos[i];
 
 		pos[i] = pos[j];
 		pos[j] = t;
 	}
 	for (unsigned int i = 0; i < e; i++) {
-		cw[pos[i]] ^= (uint8_t)(1U + rnd() % 255U); /* never 0 */
+		cw[pos[i]] ^= (uint8_t)(1U + test_rng_u32() % 255U); /* never 0 */
 	}
 }
 
 static void before_each(void *fixture)
 {
 	ARG_UNUSED(fixture);
-	rs_rng = RNG_SEED;
+	test_rng_seed(RNG_SEED);
 }
 
 ZTEST_SUITE(link_rs, NULL, NULL, before_each, NULL, NULL);
@@ -53,7 +47,7 @@ ZTEST_SUITE(link_rs, NULL, NULL, before_each, NULL, NULL);
 static void random_payload(uint8_t *cw)
 {
 	for (int i = 0; i < RS_K; i++) {
-		cw[i] = (uint8_t)rnd();
+		cw[i] = (uint8_t)test_rng_u32();
 	}
 }
 

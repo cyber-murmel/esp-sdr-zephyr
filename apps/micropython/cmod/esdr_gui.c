@@ -16,6 +16,8 @@
 
 #include <esp_attr.h>
 
+#include <esp_sdr/esp_sdr_dsp.h>
+
 #include "py/obj.h"
 #include "py/runtime.h"
 
@@ -36,86 +38,22 @@ static float win_sum;
 /* gnuradio.fft.window kinds: 0 Hamming, 1 Hann, 2 Blackman, 3 rectangular, others Blackman-Harris. */
 static void tables(uint32_t n, int kind)
 {
-	const float two_pi = 6.28318530718f;
-
 	if (tw_n != n) {
-		for (uint32_t k = 0; k < n / 2U; k++) {
-			tw_cos[k] = cosf(-two_pi * (float)k / (float)n);
-			tw_sin[k] = sinf(-two_pi * (float)k / (float)n);
-		}
+		esp_sdr_fft_twiddles(tw_cos, tw_sin, n);
 		tw_n = n;
 	}
 	if (win_n != n || win_kind != kind) {
+		enum esp_sdr_window shape = kind >= 0 && kind <= ESP_SDR_WINDOW_RECT
+						    ? (enum esp_sdr_window)kind
+						    : ESP_SDR_WINDOW_BLACKMAN_HARRIS;
+
 		win_sum = 0.0f;
 		for (uint32_t k = 0; k < n; k++) {
-			float x = two_pi * (float)k / (float)(n - 1U);
-			float w;
-
-			switch (kind) {
-			case 0:
-				w = 0.54f - 0.46f * cosf(x);
-				break;
-			case 1:
-				w = 0.5f - 0.5f * cosf(x);
-				break;
-			case 2:
-				w = 0.42f - 0.5f * cosf(x) + 0.08f * cosf(2.0f * x);
-				break;
-			case 3:
-				w = 1.0f;
-				break;
-			default:
-				w = 0.35875f - 0.48829f * cosf(x) + 0.14128f * cosf(2.0f * x) -
-				    0.01168f * cosf(3.0f * x);
-				break;
-			}
-			win[k] = w;
-			win_sum += w;
+			win[k] = esp_sdr_window(shape, k, n - 1U);
+			win_sum += win[k];
 		}
 		win_n = n;
 		win_kind = kind;
-	}
-}
-
-/* In place, radix 2, n a power of two. */
-static void fft(uint32_t n)
-{
-	for (uint32_t i = 1, j = 0; i < n; i++) {
-		uint32_t bit = n >> 1;
-
-		for (; (j & bit) != 0U; bit >>= 1) {
-			j ^= bit;
-		}
-		j ^= bit;
-		if (i < j) {
-			float t = fft_re[i];
-
-			fft_re[i] = fft_re[j];
-			fft_re[j] = t;
-			t = fft_im[i];
-			fft_im[i] = fft_im[j];
-			fft_im[j] = t;
-		}
-	}
-	for (uint32_t len = 2; len <= n; len <<= 1) {
-		uint32_t half = len >> 1;
-		uint32_t step = n / len;
-
-		for (uint32_t i = 0; i < n; i += len) {
-			for (uint32_t k = 0; k < half; k++) {
-				float wr = tw_cos[k * step];
-				float wi = tw_sin[k * step];
-				uint32_t a = i + k;
-				uint32_t b = a + half;
-				float xr = fft_re[b] * wr - fft_im[b] * wi;
-				float xi = fft_re[b] * wi + fft_im[b] * wr;
-
-				fft_re[b] = fft_re[a] - xr;
-				fft_im[b] = fft_im[a] - xi;
-				fft_re[a] += xr;
-				fft_im[a] += xi;
-			}
-		}
 	}
 }
 
@@ -170,7 +108,7 @@ static mp_obj_t esdr_psd(size_t n_args, const mp_obj_t *args)
 		fft_re[k] = (float)src[2U * k] * win[k] / FULL_SCALE;
 		fft_im[k] = (float)src[2U * k + 1U] * win[k] / FULL_SCALE;
 	}
-	fft(n);
+	esp_sdr_fft(fft_re, fft_im, n, tw_cos, tw_sin, n);
 
 	float norm = 1.0f / (win_sum * win_sum);
 
