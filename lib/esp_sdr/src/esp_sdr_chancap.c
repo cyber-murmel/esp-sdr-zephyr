@@ -995,11 +995,18 @@ static void run_restart(uint64_t pair)
 	}
 }
 
-static void run_stop(void)
+/*
+ * The channelizer stops: open captures end. cut: by an overrun, a resync or a stop, so a
+ * capture whose detector still saw power is truncated; else the wideband gate closed after
+ * its hang, the band quiet that long, and the captures end whole (their own hang has about
+ * run out too).
+ */
+static void run_stop(bool cut)
 {
 	rs.running = false;
 	for (unsigned int c = 0; c < rs.n; c++) {
-		capture_finish(c, chs[c].det.open, !((unsigned int)atomic_get(&gates) & GATE_CH));
+		capture_finish(c, cut && chs[c].det.open,
+			       !((unsigned int)atomic_get(&gates) & GATE_CH));
 	}
 }
 
@@ -1314,7 +1321,7 @@ static bool dsp_block(uint64_t written)
 			rs.st.pairs_run += SUB_PAIRS;
 			did = true;
 		} else if (rs.running) {
-			run_stop();
+			run_stop(false);
 		}
 		rs.run_pair += SUB_PAIRS;
 	}
@@ -1334,7 +1341,7 @@ static void dsp_resync(uint64_t written)
 	uint64_t start = written & ~(uint64_t)(BLOCK_PAIRS - 1U);
 
 	if (rs.running) {
-		run_stop();
+		run_stop(true);
 	}
 	rs.gate_sub = start >> SUB_SHIFT;
 	rs.run_pair = start;
@@ -1396,7 +1403,7 @@ static void dsp_thread_fn(void *p1, void *p2, void *p3)
 		(void)dsp_block(written);
 	}
 	if (rs.running) {
-		run_stop();
+		run_stop(true);
 	}
 	esp_sdr_ring_wmac_release(wmac);
 }
@@ -1982,7 +1989,7 @@ int esp_sdr_chancap_bench(const struct esp_sdr_chancap_cfg *cfg, uint32_t pairs,
 	}
 	res->kernels_match = res->mismatches == 0U;
 	if (rs.running) {
-		run_stop();
+		run_stop(true);
 	}
 	{
 		struct capbuf *b;
