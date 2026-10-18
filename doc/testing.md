@@ -13,11 +13,13 @@ end to end under twister (that one is deployed by hand, see below). Four tiers:
 ## Continuous integration
 
 `.github/workflows/build.yml` runs on every push and pull request. It builds every app and test
-for each board it allows (`xiao_esp32s3/esp32s3/procpu` and `xiao_esp32c6/esp32c6/hpcore`, one job
-each) and builds and runs the unit tests on `native_sim` and `native_sim/native/64`. A GitHub
-runner has no boards, so the integration and regression tests and the console smoke test are only
-built there; run them on the desk as below. The twister reports of each job are kept as
-artifacts.
+for each board it allows (`xiao_esp32s3/esp32s3/procpu`, `xiao_esp32c6/esp32c6/hpcore` and
+`waveshare_esp32c5_zero/esp32c5/hpcore`, one job each) and builds and runs the unit tests on
+`native_sim` and `native_sim/native/64`. A GitHub runner has no boards, so the integration and
+regression tests and the console smoke test are only built there; run them on the desk as below.
+The twister reports of each job are kept as artifacts. The unit test job also measures code
+coverage (see [Coverage](#coverage)): its summary page shows a table per source file, and the
+`coverage` artifact holds gcovr's HTML report.
 
 ### Git hooks
 
@@ -54,6 +56,27 @@ fatal.
 `tests/unit/link_rs` builds `apps/link/src/rs.c` with `-U__ZEPHYR__`, so its host branch is
 compiled instead of the ESP-IDF one. The suites draw their random input from
 `tests/common/include/test_rng.h` (xorshift64 and normal deviates), seeded before each case.
+
+### Coverage
+
+```
+NIX_HARDENING_ENABLE= esp-sdr-zephyr/scripts/run-unit-tests.sh \
+  --coverage --coverage-basedir . --coverage-formats html
+esp-sdr-zephyr/scripts/coverage-summary.py esp-sdr-zephyr/twister-out/coverage_summary.json
+```
+
+Coverage builds without optimization. The nix shell's compiler wrapper defines
+`_FORTIFY_SOURCE` regardless, and glibc's warning about that is fatal under `-Werror`; the empty
+`NIX_HARDENING_ENABLE` turns the wrapper's hardening off for the run (Ubuntu's gcc, as in CI,
+defines it only when optimizing).
+
+Twister builds the suites with `CONFIG_COVERAGE`, runs them and has gcovr merge the results (the
+script runs twister from the repository root): `twister-out/coverage/index.html` per file and
+line, and `twister-out/coverage_summary.json` for `scripts/coverage-summary.py`, which prints the
+Markdown table CI puts on the job's summary page. The test sources themselves (`tests/`) are left
+out. Coverage counts only the files some unit test compiles; the script lists the C sources under
+`lib/` and `apps/` that none does (the radio drivers and the app glue, which only the integration
+and regression tests reach on the boards).
 
 ### Sweep tables
 
