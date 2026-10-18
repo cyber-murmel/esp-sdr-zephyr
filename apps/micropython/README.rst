@@ -9,7 +9,8 @@ Overview
 MicroPython (upstream v1.29.0, its Zephyr port) as the main program of the XIAO ESP32S3, with a
 ``gnuradio`` stand-in that runs flowgraphs exported from GNU Radio Companion unmodified: copy the
 ``.py`` file GRC writes to the board and run it, or start it from the launcher's menu as an app
-(`Launcher and apps`_).
+(`Launcher and apps`_). The same app builds headless for the ESP32-C5-Zero, the bench's
+coordinator, which also drives the bench's RF switch (`The ESP32-C5 image`_).
 
 What runs:
 
@@ -71,13 +72,72 @@ What runs:
    * - ``signal``, ``threading.Event``, ``argparse``, ``eng_notation``, ``firdes``,
        ``fft.window``, ``pmt``
      - stand-ins for what every export imports
+   * - ``digital.gfsk_mod``
+     - as GNU Radio's (Gaussian filter, frequency modulator), in C, a packet at a time
+   * - ``digital.gfsk_demod`` with ``digital.correlate_access_code_bb_ts``
+     - a burst receiver in C (`Packet flowgraphs`_) that delivers what the correlator does:
+       the payload after the access code and the two lengths of
+       ``header_format_default``, up to 255 bytes
+   * - ``digital.protocol_formatter_bb`` (``header_format_default``),
+       ``blocks.tagged_stream_mux``, ``blocks.repack_bits_bb``
+     - on each packet of a packet flowgraph
+   * - ``pdu.pdu_to_tagged_stream``, ``pdu.tagged_stream_to_pdu`` (byte items)
+     - a PDU becomes a burst on the air; a received frame a PDU, with ``snr`` (dB),
+       ``rssi`` (dBFS), ``freq_offset`` (Hz) and ``errors`` (access code bit errors) in its
+       metadata
+   * - Message ports and connections, ``blocks.message_strobe``, ``message_debug``,
+       ``msg_pair_to_var``, QT GUI Msg Push Button, embedded Python blocks with message
+       ports only
+     - messages pass as in GNU Radio, queued and handed over in order by the Qt GUI loop;
+       a strobe fires from that loop; an embedded Python block runs as it is
 
-A flowgraph either receives (one ``soapy.source``, an optional ``head``, sinks) or transmits
+A flowgraph either receives (one ``soapy.source``, an optional ``head``, sinks), transmits
 (one chain from a signal source through ``throttle``, ``multiply_const_cc`` or ``head`` to
-``soapy.sink``).
+``soapy.sink``), or is a packet flowgraph.
 
-Not yet: signal processing blocks (filters, demodulators, ...), the other qtgui sinks
+Not yet: other signal processing blocks (filters, demodulators, ...), the other qtgui sinks
 (accepted, not drawn).
+
+Packet flowgraphs
+=================
+
+A flowgraph with the packet blocks shares the radio between a receive chain, ``soapy.source``
+-> ``gfsk_demod`` -> ``correlate_access_code_bb_ts`` -> (``repack_bits_bb`` ...) ->
+``tagged_stream_to_pdu``, and a transmit chain, ``pdu_to_tagged_stream`` -> (header and
+payload through ``protocol_formatter_bb`` and ``tagged_stream_mux``) -> ``gfsk_mod`` ->
+(``multiply_const_cc``) -> ``soapy.sink``; either may be missing, the rest are message blocks
+(``modules/gnuradio/_link.py``). It runs in the Qt GUI loop (a Qt GUI export).
+
+- The radio receives or transmits, never both (half duplex, as the host plugin). It receives
+  into a ring in memory, which the receiver reads at every pass of the loop (on the C5 the
+  radio engine runs the receiver itself). A PDU into ``pdu_to_tagged_stream`` becomes a burst:
+  the receiver stops, the packet is modulated, the burst plays at ``soapy.sink``'s frequency
+  and gain, the receiver starts again, about 20 ms plus the burst later. A burst waits while a
+  frame comes in (up to 0.3 s) and for 40 ms after one (the peer turns round: the C5 listens
+  again some 25 ms after its burst), and waiting bursts go out newest first (a reply before
+  what waited).
+- The receiver follows the peer's carrier: a frame's carrier offset moves the receive tuning
+  (not the transmitter's, so that two boards do not chase each other), at the receiver's next
+  start. Two boards' crystals differ by up to some 10 ppm (25 kHz between the bench's S3 and
+  C5), which leaves one tone at the edge of the C5's receiver and costs it bits. The
+  ``freq_offset`` a PDU carries is the peer's carrier against the frequency set.
+- On the S3, a receive run that started while the display drew can lose input for as long as
+  it lasts (the ring filter's writes to PSRAM wait behind the display's); one that keeps
+  losing samples starts again when idle.
+- Continuous receive rates only (250 kS/s down), the same rate both ways, up to 500 kS/s.
+- The receiver (``digital/_fsk.py``, in C in ``cmod/esdr_fsk.c``): a discriminator, its sum
+  over a symbol, and per sampling phase a search for the access code's last 32 bits against
+  the mean of that phase's last 32 symbols. Around a hit, the phase that correlates best with
+  the whole code wins; the code gives the carrier offset and the deviation and is sliced again
+  against that offset (at most ``threshold`` errors). Carrier offsets of the order of the
+  deviation are fine (tens of kHz between two boards' crystals); no lock-in time beyond the
+  code, no timing tracking (frames up to 255 bytes). Real GNU Radio's ``gfsk_demod`` wants the
+  offset well inside the deviation.
+- Put a preamble in the access code (``0101...``, 32 bits) and keep the code balanced (as
+  many ones as zeros): the receiver measures the offset over the code.
+- GNU Radio's ``gfsk_mod`` holds a packet's last few bits in its filter until the next packet
+  comes: end packets with a couple of padding bytes when the flowgraph is to run in GNU Radio
+  as well (the board flushes the filter).
 
 Hardware
 ********
@@ -137,9 +197,9 @@ export changes.
 The menu lists:
 
 - the apps bundled with the firmware, ``eggs/``: Spectrum, Waterfall (250 kS/s, gapless),
-  Wideband (40 MS/s bursts), Constellation, Receiver (tabs, radio buttons, a check box) and
-  Tone (transmits). They are frozen; ``tools/eggs_index.py`` turns their ``metadata.json``
-  files into the index the menu reads;
+  Wideband (40 MS/s bursts), Constellation, Receiver (tabs, radio buttons, a check box), Tone
+  (transmits) and Data link (two-way messages, `Data link`_). They are frozen;
+  ``tools/eggs_index.py`` turns their ``metadata.json`` files into the index the menu reads;
 - the folders in ``apps/`` on the FLASH and SD drives: copy an app's folder there over USB.
 
 Each app runs in a fresh interpreter: the launcher keeps the choice across a soft reset
@@ -152,6 +212,54 @@ SIGINT handler stops the flowgraph). Ctrl-C on the console ends an app or the me
 REPL. Holding the knob while nothing runs (the REPL waits), or again within 5 s when an app
 ignored the first hold, restarts the board.
 
+Without a display
+=================
+
+On a board without a display (no LVGL in the firmware, the C5), or with a file
+``/FLASH:/headless`` on the S3, a Qt GUI export runs on the console
+(``modules/gnuradio/_console.py``): ``QApplication.exec_()`` lists the controls of every tab
+page with numbers, prints QT GUI Label values as they change, and runs the display loop's work
+(timers, packet radios, messages) from a timer while lines typed at the console work the
+controls::
+
+   N           press push button N, toggle check box N, choose radio button N
+   N VALUE     set range N, choose N's option (label or index), set entry N, check box N
+               to 1 or 0; for a QT GUI Msg Push Button, send VALUE instead of its own value
+   ?           the controls again
+   !STATEMENT  run a Python statement
+
+Ctrl-C ends the flowgraph as the knob does (the export's SIGINT handler). Sinks are not shown.
+
+Data link
+=========
+
+``eggs/datalink``: text messages between two boards running it, or a board and a GNU Radio
+peer running the same flowgraph. The flowgraph is GNU Radio's packet chain (`Packet
+flowgraphs`_) around an embedded Python block, the link layer, which runs as it is on the
+board and in GNU Radio:
+
+- 2-GFSK at 250 kS/s, 25 kbaud (10 samples a symbol), +-25 kHz deviation, BT 0.5.
+- A frame: ``header_format_default``'s header (a 64-bit access code, a 32-bit ``0101``
+  preamble and a balanced sync word, then the length twice), then kind, the sender's id (2
+  bytes), a sequence number, the text (up to 40 bytes) or, in an acknowledgement, the SNR the
+  receiver measured; CRC-32 (little-endian) and two padding bytes. A short message takes about
+  12 ms on the air.
+- Stop and wait: a message goes again after 0.4 to 0.6 s without an acknowledgement, five
+  times at most; a repeated message is acknowledged again and shown once. Auto sends a
+  numbered message every 2 s (+-20 %).
+- The Link tab: the text to send (turn to it, press, turn, press), Send, Auto, and four lines:
+  RX the last message heard (sender id, number, text), TX messages sent, acknowledged, sent
+  again and lost, Link the SNR, level and carrier offset of the last frame and frames whose
+  CRC failed, Peer the SNR the peer measured, the round trip time and this board's id (random
+  at every start). The Radio tab: frequency (2.401 to 2.482 GHz), transmit gain step (8 by
+  default: through the bench's RF switch the S3's weakest step does not reach the C5) and
+  receive gain.
+- On the bench (an S3 and the C5 through the RF switch, gain step 8 both ways): every message
+  acknowledged one way and the other, an occasional repeat; both in Auto with texts, about one
+  message in 30 lost to collisions. Round trip about 0.3 s.
+- ``tests/host/test_datalink.py`` runs the export with the stand-ins against a simulated
+  peer, ``tests/host/test_fsk.py`` the modem.
+
 The ``esdr`` module
 *******************
 
@@ -162,12 +270,15 @@ into a buffer, int16 I/Q), ``rx_latest()`` (the newest samples, for displays),
 ``tx_scale()`` / ``tx_wait()`` / ``tx_stop()`` / ``tx_stats()`` (transmit a generated signal
 or int16 I/Q from a buffer), ``tx_loop()`` / ``tx_period()`` (loop one period at the DAC rate),
 ``tx_gain_max()``, ``fc32_to_sc16()``, ``channel_bw()`` and ``tx_lpf()`` (the analog filters),
-``BURST_RATES``,
+``BURST_RATES``, ``rx_start(wrap=True)`` and ``rx_count()`` (capture into a ring),
+``fsk_rx_init()`` / ``fsk_rx()`` / ``fsk_rx_reset()`` / ``fsk_rx_state()`` and ``fsk_mod()``
+(the packet modem, ``cmod/esdr_link.c``),
 ``claim()`` / ``release()`` (a volume away from USB while
 writing), ``shell()`` (Zephyr shell commands, such as ``usj`` and ``mcuboot confirm``),
 ``crash()`` and ``reset_reason()`` (why the board last restarted), ``sd_info()``,
 ``next_app()`` and ``home()`` (the launcher: the app the next soft reset starts, whether the
-knob ended the app).
+knob ended the app). The C5's ``esdr`` (``cmod/esdr_c5.c``) has the radio part for packet
+flowgraphs, ``rx_lsb()``, ``fsk_frames()`` and ``first_start()``; its docstring lists it.
 
 Building and flashing
 *********************
@@ -189,6 +300,61 @@ Without DFU access, hand the USB port to the USB-Serial-JTAG from the REPL
 
 ``tools/check_capture.py`` checks a recording on the host (length, level, DC, strongest line).
 
+The ESP32-C5 image
+******************
+
+The same app builds for the Waveshare ESP32-C5-Zero (``waveshare_esp32c5_zero/esp32c5/hpcore``),
+the bench's coordinator: MicroPython without a display on the USB-Serial-JTAG console, the radio
+for packet flowgraphs, the bench's RF switch from Python, and the bundled apps that run headless
+(``CONFIG_APP_EGGS``: Data link). It is the C5's normal firmware.
+
+.. code-block:: console
+
+   west build -d build/micropython-c5 -b waveshare_esp32c5_zero/esp32c5/hpcore esp-sdr-zephyr/apps/micropython
+   west flash -d build/micropython-c5 --esp-device /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_<MAC>-if00
+
+Simple boot, no MCUboot and no DFU (as for the C5's other apps). Every open of a
+USB-Serial-JTAG port that changes DTR or RTS resets the chip: open it with both lines asserted
+(pyserial: set ``dtr`` and ``rts`` before ``open()``), as ``mpremote`` does not.
+
+- **Radio** (``cmod/esdr_c5.c``, the C5's ``esdr`` module): receive through the
+  diagnostic-bus ring (``esp_sdr_diag.h``, 40 MB/s, box16 and CIC to the continuous rates 250 to
+  15.625 kS/s), transmit through the CPU-paced TX DC path (``esp_sdr_paced.h``, 4 times
+  interpolated); half duplex. The packet receiver runs inside the ring's consumer, so the
+  samples need no buffer in RAM: ``rx_start(rate, fsk=state)`` and ``fsk_frames()``. A burst
+  plays inside ``tx_start()`` with interrupts locked. The C5's level follows the samples only:
+  the transmit gain steps 0 to 17 scale them, 1 dB a step. ``rx_lsb()`` picks the bus's 4-bit
+  window (a signal above 8 << n of the ADC's 512 counts wraps). The ring's pads are GPIO 3 to
+  7 and the test points 23 to 25: GPIO 0 to 2 and 8 to 10 drive the RF switch.
+- **Memory**: no PSRAM. The Python heap is 20 KiB static, the upper half of SRAM block 1 less
+  an 8 KiB guard (56 KiB), which the dump engine owns only while it captures (this image never
+  captures: no ``rx_capture``, no automatic window), and what the libc heap has left less 4
+  KiB: about 89 KiB free at a fresh prompt. A packet flowgraph's burst buffer (21 KiB, a 64-byte
+  packet) is taken when ``gnuradio`` is first imported, while the heap is still in one piece.
+  The Wi-Fi driver gets 40 KiB of kernel heap.
+- **Headless**: the launcher lists the apps and stays in the REPL; ``launcher.run("datalink")``
+  starts one, Ctrl-C ends it. A Qt GUI flowgraph's controls are on the console (`Without a
+  display`_).
+
+The RF switch
+=============
+
+``rfswitch`` (``modules_c5/rfswitch.py``) drives the bench's 8x8 RF switch on ``machine.Pin``:
+side A on GPIO 0, 1, 2 and side B on GPIO 8, 9, 10, bits A, B, C of the port number minus one.
+
+.. code-block:: pycon
+
+   >>> import rfswitch
+   >>> rfswitch.select(a=4, b=1)   # the C5 (A4) to the S3 (B1)
+   (4, 1)
+   >>> rfswitch.select(b=5)        # side B to the 50 ohm load, side A stays
+   (4, 5)
+   >>> rfswitch.path()
+   (4, 5)
+
+At the board's first start ``_boot.py`` selects A4-B1, or the path a file ``/FLASH:/rfswitch``
+holds ("4 1"); soft resets keep the pins as they are.
+
 How it is built
 ***************
 
@@ -201,3 +367,6 @@ How it is built
 - ``src/setjmp.S`` replaces the ROM's ``setjmp``, whose window spill traps into Zephyr on every
   ``try`` and garbage collection.
 - USB is the shared device of ``apps/common``: CDC-ACM console, mass storage, DFU.
+- ``prj.conf`` has what both boards share, ``boards/<board>.conf`` the rest; the C5 builds
+  ``cmod/esdr_c5.c`` instead of the S3's engines and helpers, freezes ``manifest_c5.py`` and
+  runs MicroPython from the port's own ``main()``.

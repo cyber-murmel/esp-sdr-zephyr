@@ -12,6 +12,7 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/sys/atomic.h>
+#include <zephyr/sys/barrier.h>
 
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_ring.h>
@@ -29,6 +30,8 @@ static struct {
 	size_t cap;
 	uint64_t want;
 	bool monitor;
+	/* buf is a ring: no end at cap. */
+	bool wrap;
 	struct esp_sdr_ring_cfg cfg;
 	/* A native rate (enum esp_sdr_rate) for bursts instead of the ring, else -1. */
 	int burst;
@@ -38,10 +41,11 @@ static struct {
 #define BURST_CHUNK 256U
 static EXT_RAM_BSS_ATTR int16_t burst_i[BURST_CHUNK], burst_q[BURST_CHUNK];
 
-/* Sink state, touched only by the ring loop while it runs. */
+/* Sink state, touched only by the ring loop while it runs; stored also read by the REPL's CPU. */
 static struct {
 	uint64_t stored;
 	uint64_t expect;
+	size_t wpos;
 } snk;
 
 /*
@@ -102,7 +106,15 @@ static void sink(void *user, const int16_t *i, const int16_t *q, size_t n, uint6
 	if (left < m) {
 		m = (size_t)left;
 	}
-	if (job.buf != NULL) {
+	if (job.buf != NULL && job.wrap) {
+		for (size_t k = 0; k < m; k++) {
+			job.buf[2 * snk.wpos] = i[k];
+			job.buf[2 * snk.wpos + 1] = q[k];
+			if (++snk.wpos == job.cap) {
+				snk.wpos = 0;
+			}
+		}
+	} else if (job.buf != NULL) {
 		size_t room = job.cap - (size_t)snk.stored;
 
 		if (room < m) {
@@ -115,8 +127,11 @@ static void sink(void *user, const int16_t *i, const int16_t *q, size_t n, uint6
 			out[2 * k + 1] = q[k];
 		}
 	}
+	/* The ring is filled before the count says so: the reader on the other CPU. */
+	barrier_dmem_fence_full();
 	snk.stored += m;
-	if (snk.stored >= job.want || (job.buf != NULL && snk.stored >= job.cap)) {
+	if (snk.stored >= job.want ||
+	    (job.buf != NULL && !job.wrap && snk.stored >= job.cap)) {
 		atomic_set(&stop_req, 1);
 		esp_sdr_ring_stop();
 	}
@@ -176,6 +191,7 @@ static void rx_thread_fn(void *a, void *b, void *c)
 		(void)k_sem_take(&start_sem, K_FOREVER);
 		snk.stored = 0;
 		snk.expect = 0;
+		snk.wpos = 0;
 		if (job.burst >= 0) {
 			burst_loop();
 		}
@@ -234,13 +250,14 @@ int esdr_rx_init(void)
 }
 
 static int start_job(unsigned int decim, bool shift_fs4, int burst, int16_t *buf, size_t cap,
-		     uint64_t count, bool monitor)
+		     uint64_t count, bool monitor, bool wrap)
 {
 	if (!atomic_cas(&busy, 0, 1)) {
 		return -EBUSY;
 	}
 	job.buf = buf;
 	job.cap = cap;
+	job.wrap = wrap && buf != NULL;
 	job.want = count != 0U ? count : UINT64_MAX;
 	job.monitor = monitor;
 	atomic_set(&mon_w, 0);
@@ -259,9 +276,22 @@ static int start_job(unsigned int decim, bool shift_fs4, int burst, int16_t *buf
 }
 
 int esdr_rx_start(unsigned int decim, bool shift_fs4, int16_t *buf, size_t cap, uint64_t count,
-		  bool monitor)
+		  bool monitor, bool wrap)
 {
-	return start_job(decim, shift_fs4, -1, buf, cap, count, monitor);
+	return start_job(decim, shift_fs4, -1, buf, cap, count, monitor, wrap);
+}
+
+uint64_t esdr_rx_count(void)
+{
+	/* Two 32-bit halves: read until they agree with a second read. */
+	uint64_t a, b;
+
+	do {
+		a = snk.stored;
+		barrier_dmem_fence_full();
+		b = snk.stored;
+	} while (a != b);
+	return a;
 }
 
 int esdr_rx_start_burst(int rate, int16_t *buf, size_t cap, uint64_t count, bool monitor)
@@ -269,7 +299,7 @@ int esdr_rx_start_burst(int rate, int16_t *buf, size_t cap, uint64_t count, bool
 	if (esp_sdr_rx_rate_hz((enum esp_sdr_rate)rate) == 0U) {
 		return -EINVAL;
 	}
-	return start_job(0, false, rate, buf, cap, count, monitor);
+	return start_job(0, false, rate, buf, cap, count, monitor, false);
 }
 
 void esdr_rx_stop(void)

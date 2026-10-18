@@ -13,11 +13,15 @@
  *   RATES                      the continuous rates, 16 MS/s / 64 .. 1024
  *   BURST_RATES                80, 40, 16 MS/s: rx_start() takes single-bank bursts at
  *                              these, contiguous within a burst only (16380 samples)
- *   rx_start(rate, buf=None, count=0, offset=True, monitor=False)
+ *   rx_start(rate, buf=None, count=0, offset=True, monitor=False, wrap=False)
  *                              capture into buf (int16 I, Q interleaved) or only count;
  *                              count 0: until rx_stop() or the buffer is full; monitor
- *                              keeps the latest samples for rx_latest() (displays)
+ *                              keeps the latest samples for rx_latest() (displays); wrap:
+ *                              buf is a ring, sample k at k % its length, until rx_stop()
  *   rx_wait([timeout_ms]) -> done, rx_stop(), rx_busy(), rx_stats() -> dict
+ *   rx_count() -> int          samples the capture has stored so far
+ *   fsk_rx_init(), fsk_rx(), fsk_rx_reset(), fsk_rx_state(), fsk_mod()
+ *                              the packet modem (esdr_link.c)
  *   sc16_to_fc32(src, dst, scale)  int16 pairs to float32 pairs times scale
  *   tx_start(rate, hz, gain, buf=None, repeat=False, count=0, scale=1.0, gen=None) -> centre
  *                              transmit buf (int16 I, Q) or the generator gen = (wave, cycles
@@ -306,13 +310,14 @@ static MP_DEFINE_CONST_FUN_OBJ_1(esdr_rx_bandwidth_obj, esdr_rx_bandwidth);
 
 static mp_obj_t esdr_rx_start_fn(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args)
 {
-	enum { ARG_rate, ARG_buf, ARG_count, ARG_offset, ARG_monitor };
+	enum { ARG_rate, ARG_buf, ARG_count, ARG_offset, ARG_monitor, ARG_wrap };
 	static const mp_arg_t allowed[] = {
 		{MP_QSTR_rate, MP_ARG_REQUIRED | MP_ARG_OBJ, {.u_obj = MP_OBJ_NULL}},
 		{MP_QSTR_buf, MP_ARG_OBJ, {.u_obj = mp_const_none}},
 		{MP_QSTR_count, MP_ARG_INT, {.u_int = 0}},
 		{MP_QSTR_offset, MP_ARG_KW_ONLY | MP_ARG_BOOL, {.u_bool = true}},
 		{MP_QSTR_monitor, MP_ARG_KW_ONLY | MP_ARG_BOOL, {.u_bool = false}},
+		{MP_QSTR_wrap, MP_ARG_KW_ONLY | MP_ARG_BOOL, {.u_bool = false}},
 	};
 	mp_arg_val_t args[MP_ARRAY_SIZE(allowed)];
 	int16_t *buf = NULL;
@@ -339,13 +344,17 @@ static mp_obj_t esdr_rx_start_fn(size_t n_args, const mp_obj_t *pos_args, mp_map
 		mp_raise_OSError(EBUSY);
 	}
 	if (native >= 0) {
+		if (args[ARG_wrap].u_bool) {
+			mp_raise_ValueError(MP_ERROR_TEXT("wrap: the continuous rates only"));
+		}
 		check(esdr_rx_start_burst(native, buf, cap, (uint64_t)args[ARG_count].u_int,
 					  args[ARG_monitor].u_bool));
 		MP_STATE_PORT(esdr_rx_buf) = args[ARG_buf].u_obj;
 		return mp_const_none;
 	}
 	check(esdr_rx_start(decim, args[ARG_offset].u_bool, buf, cap,
-			    (uint64_t)args[ARG_count].u_int, args[ARG_monitor].u_bool));
+			    (uint64_t)args[ARG_count].u_int, args[ARG_monitor].u_bool,
+			    args[ARG_wrap].u_bool));
 	MP_STATE_PORT(esdr_rx_buf) = args[ARG_buf].u_obj;
 	return mp_const_none;
 }
@@ -359,6 +368,12 @@ static mp_obj_t esdr_rx_stop_fn(void)
 	return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(esdr_rx_stop_obj, esdr_rx_stop_fn);
+
+static mp_obj_t esdr_rx_count_fn(void)
+{
+	return mp_obj_new_int_from_ull(esdr_rx_count());
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(esdr_rx_count_obj, esdr_rx_count_fn);
 
 static mp_obj_t esdr_rx_busy_fn(void)
 {
@@ -902,6 +917,10 @@ static mp_obj_t esdr_home(void)
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(esdr_home_obj, esdr_home);
 
+/* esdr_link.c */
+extern const mp_obj_fun_builtin_fixed_t esdr_fsk_rx_reset_obj, esdr_fsk_rx_state_obj;
+extern const mp_obj_fun_builtin_var_t esdr_fsk_rx_init_obj, esdr_fsk_rx_obj, esdr_fsk_mod_obj;
+
 /* esdr_gui.c */
 extern const mp_obj_fun_builtin_fixed_t esdr_rx_latest_obj, esdr_iq_cols_obj;
 extern const mp_obj_fun_builtin_var_t esdr_psd_obj, esdr_fb_trace_obj, esdr_fb_wf_row_obj,
@@ -952,6 +971,12 @@ static const mp_rom_map_elem_t esdr_globals_table[] = {
 	{MP_ROM_QSTR(MP_QSTR_rx_start), MP_ROM_PTR(&esdr_rx_start_obj)},
 	{MP_ROM_QSTR(MP_QSTR_rx_stop), MP_ROM_PTR(&esdr_rx_stop_obj)},
 	{MP_ROM_QSTR(MP_QSTR_rx_busy), MP_ROM_PTR(&esdr_rx_busy_obj)},
+	{MP_ROM_QSTR(MP_QSTR_rx_count), MP_ROM_PTR(&esdr_rx_count_obj)},
+	{MP_ROM_QSTR(MP_QSTR_fsk_rx_init), MP_ROM_PTR(&esdr_fsk_rx_init_obj)},
+	{MP_ROM_QSTR(MP_QSTR_fsk_rx), MP_ROM_PTR(&esdr_fsk_rx_obj)},
+	{MP_ROM_QSTR(MP_QSTR_fsk_rx_reset), MP_ROM_PTR(&esdr_fsk_rx_reset_obj)},
+	{MP_ROM_QSTR(MP_QSTR_fsk_rx_state), MP_ROM_PTR(&esdr_fsk_rx_state_obj)},
+	{MP_ROM_QSTR(MP_QSTR_fsk_mod), MP_ROM_PTR(&esdr_fsk_mod_obj)},
 	{MP_ROM_QSTR(MP_QSTR_rx_wait), MP_ROM_PTR(&esdr_rx_wait_obj)},
 	{MP_ROM_QSTR(MP_QSTR_rx_stats), MP_ROM_PTR(&esdr_rx_stats_obj)},
 	{MP_ROM_QSTR(MP_QSTR_sc16_to_fc32), MP_ROM_PTR(&esdr_sc16_to_fc32_obj)},

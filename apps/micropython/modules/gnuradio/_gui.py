@@ -8,7 +8,10 @@ owns an RGB565 buffer shown by an lv.canvas; the esdr C helpers draw into it. QA
 press), and Ctrl-C runs the flowgraph's SIGINT handler as Qt would.
 
 Colours are native RGB565: the display glue swaps the bytes when it flushes. LVGL runs only in
-this thread; slider events are recorded inside LVGL and handed to the slots outside it."""
+this thread; slider events are recorded inside LVGL and handed to the slots outside it.
+
+Without a display (no LVGL in the firmware) or with a file /FLASH:/headless, the console takes
+the display's place (gnuradio/_console.py)."""
 
 import time
 
@@ -52,6 +55,7 @@ PALETTE = _palette()
 _sinks = []
 _vars = []
 _timers = []
+_pollers = []
 _title = ""
 _quit = False
 interrupted = False  # run() ended on Ctrl-C (the launcher tells the console's from the knob's)
@@ -66,6 +70,26 @@ _relayout = False
 # Redraws per sink name, and the time the loop spent drawing (ms), for stats().
 _frames = {}
 _busy = [0, 0]
+_headless = None
+
+
+def headless():
+    """No display: the firmware has no LVGL, or /FLASH:/headless asks for the console."""
+    global _headless
+    if _headless is None:
+        import os
+
+        try:
+            os.stat("/FLASH:/headless")
+            _headless = True
+        except OSError:
+            try:
+                import lvgl  # noqa: F401
+
+                _headless = False
+            except ImportError:
+                _headless = True
+    return _headless
 
 
 class Signal:
@@ -95,6 +119,7 @@ def reset(top=None):
     _sinks.clear()
     _vars.clear()
     _timers.clear()
+    _pollers.clear()
     _changed.clear()
     _frames.clear()
     _title = ""
@@ -130,6 +155,15 @@ def timer(t, on=True):
         _timers.append(t)
     elif not on and t in _timers:
         _timers.remove(t)
+
+
+def poll(fn, on=True):
+    """Call fn at every pass of the loop (a packet flowgraph's radio, message dispatch); the same
+    object again to stop."""
+    if on and fn not in _pollers:
+        _pollers.append(fn)
+    elif not on and fn in _pollers:
+        _pollers.remove(fn)
 
 
 def quit():
@@ -224,6 +258,8 @@ def _header(stopped=False):
 
 
 def show():
+    if headless():
+        return
     _up()
     _layout()
     lv.refr_now(None)
@@ -243,6 +279,10 @@ def _dispatch():
 def run():
     """QApplication.exec_(): redraw the sinks until quit() or Ctrl-C."""
     global _quit, _relayout, interrupted
+    if headless():
+        from gnuradio import _console
+
+        return _console.run()
     _quit = False
     _relayout = False
     interrupted = False
@@ -265,6 +305,15 @@ def run():
                 if t._ms and time.ticks_diff(now, t._next) >= 0:
                     t._next = time.ticks_add(now, t._ms)
                     t.timeout.emit()
+            for fn in _pollers[:]:
+                try:
+                    fn()
+                except Exception as e:
+                    # A failing engine stops rather than failing again at every pass.
+                    import sys
+
+                    sys.print_exception(e)
+                    poll(fn, False)
             lv.task_handler()
             _dispatch()
             if _relayout:

@@ -17,6 +17,11 @@
 
 #define MICROPY_PY_BUILTINS_INPUT           (1)
 
+/* The port's 512 bytes left too little C stack below the limit for printing the traceback of a
+ * deep recursion (it overflowed the ESP32-C5's main stack). */
+#undef MICROPY_STACK_CHECK_MARGIN
+#define MICROPY_STACK_CHECK_MARGIN          (1024)
+
 /* GRC exports carry complex constants (offsets, multiply_const_cc, vector_source_c data). */
 #undef MICROPY_PY_BUILTINS_COMPLEX
 #define MICROPY_PY_BUILTINS_COMPLEX         (1)

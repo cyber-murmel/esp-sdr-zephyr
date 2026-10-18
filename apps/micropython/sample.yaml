@@ -1,14 +1,21 @@
 sample:
   name: ESP-SDR MicroPython
   description: >-
-    MicroPython as the main program, REPL on the USB CDC-ACM port
+    MicroPython as the main program: on the XIAO ESP32S3 with the display, REPL on the USB
+    CDC-ACM port; headless on the ESP32-C5-Zero, the bench's coordinator, REPL on
+    USB-Serial-JTAG
 common:
   tags: esp-sdr
-  sysbuild: true
-  platform_allow:
-    - xiao_esp32s3/esp32s3/procpu
-  integration_platforms:
-    - xiao_esp32s3/esp32s3/procpu
+  build_only: true
 tests:
   sample.esp_sdr.micropython:
-    build_only: true
+    sysbuild: true
+    platform_allow:
+      - xiao_esp32s3/esp32s3/procpu
+    integration_platforms:
+      - xiao_esp32s3/esp32s3/procpu
+  sample.esp_sdr.micropython.c5:
+    platform_allow:
+      - waveshare_esp32c5_zero/esp32c5/hpcore
+    integration_platforms:
+      - waveshare_esp32c5_zero/esp32c5/hpcore

@@ -29,10 +29,15 @@ int esdr_rx_init(void);
 
 /*
  * Starts a capture of @p count samples (0: until esdr_rx_stop() or the buffer is full) at
- * 16 MS/s / @p decim. @p buf holds @p cap samples (int16 I, Q), or is NULL to only count.
+ * 16 MS/s / @p decim. @p buf holds @p cap samples (int16 I, Q), or is NULL to only count. With
+ * @p wrap the buffer is a ring: sample k lands at k % cap and the capture goes on until stopped
+ * (esdr_rx_count() tells how far it got).
  */
 int esdr_rx_start(unsigned int decim, bool shift_fs4, int16_t *buf, size_t cap, uint64_t count,
-		  bool monitor);
+		  bool monitor, bool wrap);
+
+/* Samples the capture has stored (or counted) so far. */
+uint64_t esdr_rx_count(void);
 
 /*
  * As esdr_rx_start(), at a native rate (enum esp_sdr_rate: 80, 40 or 16 MS/s on the S3) in

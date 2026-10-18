@@ -67,6 +67,17 @@ def test_main_writes_only_on_change(tmp_path, run_main):
     assert read_index(out)["tone"]["revision"] == 3
 
 
+def test_only(tmp_path, run_main):
+    eggs = tmp_path / "eggs"
+    egg(eggs, "tone", {"name": "Tone"})
+    egg(eggs, "datalink", {"name": "Data link"})
+    out = tmp_path / "gen" / "eggs" / "__init__.py"
+    run_main(eggs_index, "--only", "datalink", eggs, out)
+    assert read_index(out) == {"datalink": {"name": "Data link"}}
+    with pytest.raises(SystemExit):
+        eggs_index.index(eggs, ["missing"])
+
+
 def test_bundled_apps_are_valid():
     idx = eggs_index.index(REPO / "apps/micropython/eggs")
     assert {"receive", "transmit"} <= {meta.get("category") for meta in idx.values()}

@@ -408,3 +408,42 @@ class RangeWidget:
 
     def __getattr__(self, name):
         return Nothing()
+
+
+def _msg_push_button_base():
+    from PyQt5 import Qt
+
+    return Qt.QPushButton
+
+
+class MsgPushButton(_msg_push_button_base(), gr.basic_block):
+    """QT GUI Msg Push Button: a button that publishes (msgName . value) on its "pressed" port
+    when clicked; set_new_msg() changes the value (a Chooser variable behind it, say)."""
+
+    def __init__(self, lbl, msgName, msgValue, relBackColor="default", relFontColor="default"):
+        gr.basic_block.__init__(self, "MsgPushButton")
+        _msg_push_button_base().__init__(self, lbl)
+        self.lbl = lbl
+        self.msgName = msgName
+        self.msgValue = msgValue
+        self.message_port_register_out("pressed")
+        self.clicked.connect(self._clicked)
+
+    def _clicked(self, *args):
+        self._send(self.msgValue)
+
+    def _send(self, v):
+        import pmt
+
+        if isinstance(v, bool):
+            p = pmt.from_bool(v)
+        elif isinstance(v, int):
+            p = pmt.from_long(v)
+        elif isinstance(v, float):
+            p = pmt.from_double(v)
+        else:
+            p = pmt.intern(str(v))
+        self.message_port_pub("pressed", pmt.cons(pmt.intern(self.msgName), p))
+
+    def set_new_msg(self, msg):
+        self.msgValue = msg

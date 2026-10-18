@@ -256,6 +256,11 @@ class QLabel(_Control):
         self._text = str(text)
         if self._obj is not None:
             self._obj.set_text(self._text)
+        elif _gui._headless:
+            from gnuradio import _console
+
+            if _console.active():
+                _console.label(self, self._text)
 
     def text(self):
         return self._text
@@ -461,6 +466,7 @@ class QToolBar(_Control):
 
     def addWidget(self, widget, *args):
         self._widgets.append(widget)
+        widget._bar = self
 
     def _make(self, parent, x, y, w, h):
         x0 = x + 2

@@ -47,6 +47,13 @@ choice MICROPY_CONFIG_ROM_LEVEL
 
 endchoice
 
+config APP_EGGS
+	string "Bundled apps"
+	default ""
+	help
+	  The apps (folders of eggs/) the board's frozen manifest has, comma
+	  separated; empty: all of them. The launcher's index lists these.
+
 config APP_MP_STACK_SIZE
 	int "MicroPython thread stack, bytes"
 	default 16384

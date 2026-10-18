@@ -1,0 +1,7 @@
+{
+  "name": "Data link",
+  "description": "Text messages between two boards running this app (or a GNU Radio peer): GFSK at 25 kbaud, CRC-32, acknowledged and sent again until acknowledged; received text and link statistics on the display.",
+  "category": "transceive",
+  "author": "esp-sdr",
+  "revision": 4
+}

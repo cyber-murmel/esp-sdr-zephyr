@@ -328,3 +328,143 @@ class multiply_const_cc(gr.basic_block):
 
 def multiply_const_vcc(k):
     return multiply_const_cc(k[0] if isinstance(k, (list, tuple)) else k)
+
+
+# ---- packets (tagged streams in packet flowgraphs, gnuradio/_link.py) and messages ----
+
+
+def _items(v):
+    """A packet's items: gr.Bits unpacked, anything else as bytes."""
+    return v.items() if isinstance(v, gr.Bits) else bytes(v)
+
+
+class repack_bits_bb(gr.basic_block):
+    """k bits per input byte to l bits per output byte, a packet at a time; correlate_access_code
+    _bb_ts's bits to bytes (k 1, l 8) take no unpacking."""
+
+    _kind = "pkt"
+
+    def __init__(self, k, l, len_tag_key="", align_output=False, endianness=gr.GR_LSB_FIRST):
+        super().__init__("repack_bits_bb")
+        self.in_itemsize = self.out_itemsize = gr.sizeof_char
+        self.set_k_and_l(k, l)
+        self._msb = endianness == gr.GR_MSB_FIRST
+
+    def set_k_and_l(self, k, l):
+        if not (1 <= int(k) <= 8 and 1 <= int(l) <= 8):
+            raise ValueError("repack_bits_bb: 1 to 8 bits")
+        self._k = int(k)
+        self._l = int(l)
+
+    def _pkt(self, inputs):
+        v = inputs[0]
+        if isinstance(v, gr.Bits) and self._k == 1 and self._l == 8 and self._msb:
+            return bytes(v.data[:v.nbits // 8])
+        bits = []
+        for b in _items(v):
+            for j in range(self._k):
+                bits.append((b >> (self._k - 1 - j if self._msb else j)) & 1)
+        out = bytearray(len(bits) // self._l)
+        for i in range(len(out)):
+            x = 0
+            for j in range(self._l):
+                if bits[i * self._l + j]:
+                    x |= 1 << (self._l - 1 - j if self._msb else j)
+            out[i] = x
+        return bytes(out)
+
+
+class tagged_stream_mux(gr.basic_block):
+    """Its inputs' packets one after the other (a header before its payload)."""
+
+    _kind = "pkt"
+
+    def __init__(self, itemsize, lengthtagname, tag_preserve_head_pos=0):
+        super().__init__("tagged_stream_mux")
+        if itemsize != gr.sizeof_char:
+            raise ValueError("tagged_stream_mux on the board: byte items")
+        self.in_itemsize = self.out_itemsize = itemsize
+
+    def _pkt(self, inputs):
+        return b"".join(_items(v) for v in inputs)
+
+
+class message_strobe(gr.basic_block):
+    """Publishes its message every period ms while the flowgraph runs (from the Qt GUI loop)."""
+
+    def __init__(self, msg, period_ms):
+        super().__init__("message_strobe")
+        self.message_port_register_out("strobe")
+        self.message_port_register_in("set_msg")
+        self.set_msg_handler("set_msg", self.set_msg)
+        self._msg = msg
+        self._ms = max(1, int(period_ms))
+        self.timeout = self
+
+    def set_msg(self, msg):
+        self._msg = msg
+
+    def msg(self):
+        return self._msg
+
+    def set_period(self, period_ms):
+        self._ms = max(1, int(period_ms))
+
+    def period(self):
+        return self._ms
+
+    # The Qt GUI loop takes it for a QTimer (_ms, timeout.emit()).
+    def emit(self):
+        self.message_port_pub("strobe", self._msg)
+
+    def _start(self, tb):
+        from gnuradio import _gui
+
+        _gui.timer(self)
+
+    def _stop(self, tb):
+        from gnuradio import _gui
+
+        _gui.timer(self, False)
+
+
+class message_debug(gr.basic_block):
+    """Prints messages on the console (print, print_pdu) or keeps them (store)."""
+
+    def __init__(self, en_uvec=True, log_level=gr.log_levels.info):
+        super().__init__("message_debug")
+        self._store = []
+        for port, h in (("print", self._print), ("store", self._store.append),
+                        ("print_pdu", self._print)):
+            self.message_port_register_in(port)
+            self.set_msg_handler(port, h)
+
+    def _print(self, msg):
+        import pmt
+
+        print("message_debug:", pmt.to_python(msg))
+
+    def num_messages(self):
+        return len(self._store)
+
+    def get_message(self, i):
+        return self._store[i]
+
+
+class msg_pair_to_var(gr.basic_block):
+    """Sets a flowgraph variable (its setter, callback) to the value of each message pair."""
+
+    def __init__(self, callback):
+        super().__init__("msg_pair_to_var")
+        self._cb = callback
+        self.message_port_register_in("inpair")
+        self.set_msg_handler("inpair", self._pair)
+
+    def _pair(self, msg):
+        import pmt
+
+        if pmt.is_pair(msg):
+            self._cb(pmt.to_python(pmt.cdr(msg)))
+
+    def set_variable(self, callback):
+        self._cb = callback

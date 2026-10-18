@@ -30,8 +30,13 @@ if (CONFIG_MICROPY_FROZEN_MODULES)
     file(GLOB egg_metadata CONFIGURE_DEPENDS ${CMAKE_CURRENT_LIST_DIR}/eggs/*/metadata.json)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${egg_metadata}
                  ${CMAKE_CURRENT_LIST_DIR}/tools/eggs_index.py)
+    # CONFIG_APP_EGGS names the apps a board's manifest freezes when not all of them.
+    set(eggs_only)
+    if(CONFIG_APP_EGGS)
+        set(eggs_only --only ${CONFIG_APP_EGGS})
+    endif()
     execute_process(
-        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/tools/eggs_index.py
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/tools/eggs_index.py ${eggs_only}
                 ${CMAKE_CURRENT_LIST_DIR}/eggs ${MICROPY_MANIFEST_EGGS_INDEX_DIR}/eggs/__init__.py
         RESULT_VARIABLE eggs_index_result)
     if (eggs_index_result)
@@ -196,9 +201,13 @@ add_dependencies(BUILD_VERSION_HEADER zephyr_generated_headers)
 add_dependencies(${MICROPY_TARGET} zephyr_generated_headers)
 
 # The port's src/usbd.c and src/zephyr_start.c (main()) are left out: boot.c has the
-# mp_usbd_init() it calls and a main() that runs MicroPython in its own thread.
+# mp_usbd_init() it calls and a main() that runs MicroPython in its own thread. Without
+# boot.c (MICROPY_APP_START, the ESP32-C5) the port's main() runs it in the main thread.
 target_sources(app PRIVATE
     ${MICROPY_PORT_DIR}/src/zephyr_getchar.c
 )
+if(MICROPY_APP_START)
+    target_sources(app PRIVATE ${MICROPY_PORT_DIR}/src/zephyr_start.c)
+endif()
 
 target_link_libraries(app PRIVATE ${MICROPY_TARGET})

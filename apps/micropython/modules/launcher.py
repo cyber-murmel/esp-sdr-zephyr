@@ -9,7 +9,11 @@ Each app runs in a fresh interpreter, as badge.team's system.start() starts one 
 reset: start() leaves the app's folder in esdr.next_app() and soft-resets, main.py runs it,
 and when it ends a soft reset brings the menu back. Holding the knob ends an app and comes
 back here (esdr.home() tells that Ctrl-C from the console's, which ends it in the REPL, as
-without the launcher)."""
+without the launcher).
+
+Without a display (gnuradio._gui.headless()) the menu is a list on the console and the board
+stays in the REPL; run("datalink") starts an app by its folder or menu name, and its Qt GUI
+runs on the console (gnuradio/_console.py)."""
 
 import json
 import os
@@ -56,6 +60,21 @@ def start(path):
     _reset(path)
 
 
+def run(name):
+    """Start the app with this folder or menu name (any case)."""
+    for app in apps():
+        if name.lower() in (app["path"].rsplit("/", 1)[1].lower(), str(app["name"]).lower()):
+            start(app["path"])
+    raise ValueError("no app {!r}: {}".format(name, ", ".join(
+        a["path"].rsplit("/", 1)[1] for a in apps())))
+
+
+def _headless():
+    from gnuradio import _gui
+
+    return _gui.headless()
+
+
 def home(focus=""):
     """Back to the menu (a soft reset), the app in the folder focus selected."""
     _reset("?" + focus)
@@ -76,6 +95,9 @@ def main():
     try:
         if path and path[0] != "?":
             _run(path)
+        elif _headless():
+            _list()
+            return
         else:
             _menu(path[1:])
     except KeyboardInterrupt:
@@ -186,6 +208,17 @@ def _order(app):
 
 def _section(app):
     return app["category"].lower() if isinstance(app["category"], str) else ""
+
+
+def _list():
+    """The menu without a display: the apps on the console."""
+    found = apps()
+    print("Apps (launcher.run(NAME) starts one, Ctrl-C ends it):")
+    for app in found:
+        print("  {:12s} {} ({}, {})".format(app["path"].rsplit("/", 1)[1], app["name"],
+                                          app["category"] or "other", app["place"]))
+    if not found:
+        print("  none: copy app folders to apps/ on the FLASH drive")
 
 
 def _up():
@@ -326,6 +359,9 @@ def _running(lv, name):
 
 def _error(name, e):
     """Why the app stopped, until the knob is pressed."""
+    if _headless():
+        print("{} stopped: {}: {}".format(name, type(e).__name__, e))
+        return
     try:
         lv = _up()
         scr = lv.screen_active()

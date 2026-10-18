@@ -54,11 +54,17 @@ class source(gr.basic_block):
         self._n = 0
         self._live = False
         self._monitor = False
+        self._link = None
+        # A packet flowgraph's receive tuning correction (Hz, gnuradio/_link.py's AFC).
+        self._afc = 0.0
         esdr.init()
 
     def _changed(self):
-        # Only a display-only stream restarts at once; a capture keeps its settings.
-        if self._live:
+        # Only a display-only stream restarts at once; a capture keeps its settings; a packet
+        # receiver starts again with them.
+        if self._link is not None:
+            self._link.retune()
+        elif self._live:
             esdr.rx_stop()
             self._run(0)
 
@@ -72,6 +78,9 @@ class source(gr.basic_block):
 
     def set_frequency(self, channel, name_or_freq, freq=None):
         self._freq = float(name_or_freq if freq is None else freq)
+        self._afc = 0.0
+        if self._link is not None:
+            self._link.afc_want = None
         self._changed()
 
     def get_frequency(self, channel=0, name=None):
@@ -100,6 +109,12 @@ class source(gr.basic_block):
     def set_dc_offset_mode(self, channel, automatic):
         pass
 
+    def set_dc_offset(self, channel, offset):
+        pass
+
+    def set_iq_balance(self, channel, balance):
+        pass
+
     def set_frequency_correction(self, channel, ppm):
         if ppm:
             print("soapy: frequency correction not supported on the board")
@@ -114,6 +129,23 @@ class source(gr.basic_block):
         esdr.rx_gain(-1 if self._auto else self._gain)
         esdr.rx_bandwidth(self._bw)
         esdr.rx_start(self._rate, self._buf, count, monitor=self._monitor)
+
+    def _rx_ring(self, ring):
+        """A packet flowgraph's receiver (gnuradio/_link.py): into the ring, endlessly."""
+        esdr.channel_bw(2 if self._bw > 20e6 else 0)
+        self._centre = esdr.tune(self._freq + self._afc, offset=True)
+        esdr.rx_gain(-1 if self._auto else self._gain)
+        esdr.rx_bandwidth(self._bw)
+        esdr.rx_start(self._rate, ring, 0, wrap=True)
+
+    def _rx_fsk(self, state, slow=1):
+        """As _rx_ring(), with the radio engine running the FSK receiver state on the samples
+        (esdr.fsk_frames() collects its frames), at 1/slow of the rate."""
+        esdr.channel_bw(2 if self._bw > 20e6 else 0)
+        self._centre = esdr.tune(self._freq + self._afc, offset=True)
+        esdr.rx_gain(-1 if self._auto else self._gain)
+        esdr.rx_bandwidth(self._bw)
+        esdr.rx_start(self._rate, None, 0, fsk=state, slow=slow)
 
     def _start(self, tb):
         count = tb._items
@@ -225,6 +257,7 @@ class sink(gr.basic_block):
         self._tb = None
         self._loop = 0
         self._stream_rate = 250000
+        self._link = None
         self.centre = None
         self.mode = None
         esdr.init()
@@ -266,6 +299,9 @@ class sink(gr.basic_block):
         pass
 
     def set_dc_offset(self, channel, offset):
+        pass
+
+    def set_iq_balance(self, channel, balance):
         pass
 
     def set_frequency_correction(self, channel, ppm):
@@ -344,7 +380,21 @@ class sink(gr.basic_block):
             b._tb = tb
         self._run()
 
+    def _check_burst_rate(self):
+        if self._rate > _TX_RATE_MAX_OK:
+            raise ValueError("soapy: packet bursts stream at up to {} S/s".format(_TX_RATE_MAX_OK))
+
+    def _burst(self, buf):
+        """A packet flowgraph's burst (gnuradio/_link.py): buf played once, at the settings of
+        the moment."""
+        esdr.channel_bw(2 if self._bw > 20e6 else 0)
+        self.mode = "burst"
+        self.centre = esdr.tx_start(int(self._rate), self._freq, self._gain, buf=buf)
+
     def _restart(self):
+        # A packet flowgraph's next burst takes the new settings.
+        if self._link is not None:
+            return
         if self._tb is not None and self._tb._running and esdr.tx_busy():
             esdr.tx_stop()
             self._run()
