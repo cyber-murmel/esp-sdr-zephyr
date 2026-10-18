@@ -22,6 +22,13 @@ struct esdr_rx_stats {
 	/* The last ring error: enum esp_sdr_ring_status and its detail. */
 	int last_status;
 	uint32_t last_detail;
+	/*
+	 * The ring run's own counters while it runs (esp_sdr_ring_stats): units filtered, units
+	 * dropped part filtered and their pairs, the worst switch lateness (pairs), the slowest
+	 * filter slice (CPU cycles), parks for flash operations; once it has ended, the filter's
+	 * cycles per pair x 100.
+	 */
+	uint32_t units, abandoned, lost_pairs, late_max, slice_max, stalls, cycles_x100;
 };
 
 /* Brings the radio up and starts the engine's thread (once). */

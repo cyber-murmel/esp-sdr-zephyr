@@ -65,6 +65,8 @@ static uint32_t snap_fill, snap_want, snap_got, snap_want_max;
 static atomic_t busy;
 static atomic_t stop_req;
 static struct esdr_rx_stats stats;
+/* The running ring's own counters (the engine thread's), read live by the REPL's CPU. */
+static const struct esp_sdr_ring_stats *volatile ring_live;
 static K_SEM_DEFINE(start_sem, 0, 1);
 static K_SEM_DEFINE(done_sem, 0, 1);
 
@@ -181,12 +183,14 @@ static void burst_loop(void)
 
 static void rx_thread_fn(void *a, void *b, void *c)
 {
-	struct esp_sdr_ring_stats rst;
+	struct esp_sdr_ring_stats rst = {};
 
 	ARG_UNUSED(a);
 	ARG_UNUSED(b);
 	ARG_UNUSED(c);
 
+	/* For esdr_rx_get_stats(): this frame lives as long as the thread, forever. */
+	ring_live = &rst;
 	for (;;) {
 		(void)k_sem_take(&start_sem, K_FOREVER);
 		snk.stored = 0;
@@ -330,9 +334,21 @@ bool esdr_rx_wait(int32_t timeout_ms)
 
 void esdr_rx_get_stats(struct esdr_rx_stats *out)
 {
+	const struct esp_sdr_ring_stats *r = ring_live;
+
 	*out = stats;
 	if (atomic_get(&busy)) {
 		out->samples = snk.stored;
+	}
+	if (r != NULL && job.burst < 0) {
+		/* Single words, each consistent; the set is a snapshot only while idle. */
+		out->units = r->units;
+		out->abandoned = r->abandoned;
+		out->lost_pairs = r->lost_pairs;
+		out->late_max = r->late_max;
+		out->slice_max = r->slice_max;
+		out->stalls = r->stalls;
+		out->cycles_x100 = r->cycles_x100;
 	}
 }
 

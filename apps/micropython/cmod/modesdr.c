@@ -19,6 +19,9 @@
  *                              keeps the latest samples for rx_latest() (displays); wrap:
  *                              buf is a ring, sample k at k % its length, until rx_stop()
  *   rx_wait([timeout_ms]) -> done, rx_stop(), rx_busy(), rx_stats() -> dict
+ *                              samples, runs, errors, gaps, gap_samples, last_status,
+ *                              last_detail; the ring run's units, abandoned, lost_pairs,
+ *                              late_max, slice_max, stalls, cycles_x100 (esdr_rx.h)
  *   rx_count() -> int          samples the capture has stored so far
  *   fsk_rx_init(), fsk_rx(), fsk_rx_reset(), fsk_rx_state(), fsk_mod()
  *                              the packet modem (esdr_link.c)
@@ -415,7 +418,7 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_rx_wait_obj, 0, 1, esdr_rx_wait_
 static mp_obj_t esdr_rx_stats_fn(void)
 {
 	struct esdr_rx_stats s;
-	mp_obj_t d = mp_obj_new_dict(8);
+	mp_obj_t d = mp_obj_new_dict(14);
 
 	esdr_rx_get_stats(&s);
 #define PUT(name, val) mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_##name), (val))
@@ -426,6 +429,13 @@ static mp_obj_t esdr_rx_stats_fn(void)
 	PUT(gap_samples, mp_obj_new_int_from_ull(s.gap_samples));
 	PUT(last_status, mp_obj_new_int(s.last_status));
 	PUT(last_detail, mp_obj_new_int_from_uint(s.last_detail));
+	PUT(units, mp_obj_new_int_from_uint(s.units));
+	PUT(abandoned, mp_obj_new_int_from_uint(s.abandoned));
+	PUT(lost_pairs, mp_obj_new_int_from_uint(s.lost_pairs));
+	PUT(late_max, mp_obj_new_int_from_uint(s.late_max));
+	PUT(slice_max, mp_obj_new_int_from_uint(s.slice_max));
+	PUT(stalls, mp_obj_new_int_from_uint(s.stalls));
+	PUT(cycles_x100, mp_obj_new_int_from_uint(s.cycles_x100));
 #undef PUT
 	return d;
 }
