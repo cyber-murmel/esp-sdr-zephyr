@@ -22,10 +22,11 @@ manifest:
   projects:
     # Zephyr with ESP32-S3 SMP (zephyrproject-rtos/zephyr#120082, rebased), the
     # CDC-NCM NTB aggregation the USB stream relies on, and the llext and
-    # Xtensa changes apps/multiapp needs (doc/multiapp.md, "Zephyr changes").
+    # Xtensa changes apps/multiapp needs (doc/multiapp.md, "Zephyr changes"),
+    # and LVGL allocating from the MicroPython heap (apps/micropython).
     - name: zephyr
       remote: cyber-murmel
-      revision: ffb8a7cce5d31e098a09854d065e2e5ef7c493a4 # esp-sdr-multiapp branch
+      revision: b717e7df2a04cd4583131f8efd05c78897883ab1 # esp-sdr branch
       path: modules/zephyr
       import:
         name-allowlist:
@@ -76,7 +77,7 @@ manifest:
       path: modules/lib/gui/lvgl
     - name: lv_binding_micropython
       remote: cyber-murmel
-      revision: ded0cd857fc8b813753facfbae011ac5e74961f6 # mp-lvgl branch + two local commits, not pushed yet
+      revision: ded0cd857fc8b813753facfbae011ac5e74961f6 # zsdr branch (mp-lvgl + two commits)
       path: modules/lib/gui/lv_binding_micropython
     - name: pycparser
       remote: eliben
