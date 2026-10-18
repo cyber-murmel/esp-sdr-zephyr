@@ -92,6 +92,16 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 		    st.ring.status, st.ring.detail, st.ring.units, st.ring.abandoned,
 		    st.ring.lost_pairs, st.ring.late_max, st.ring.cycles_x100 / 100U,
 		    st.ring.cycles_x100 % 100U);
+	{
+		struct esp_sdr_stats rx;
+
+		esp_sdr_get_stats(&rx);
+		shell_print(sh, "ring detail: %llu pairs, %u irq windows (lines 0x%08x), %u stalls, "
+			    "slice max %u; gain re-forced %u in the ring, %u in all (last %u us)",
+			    (unsigned long long)st.ring.pairs, st.ring.irq_windows,
+			    st.ring.irq_lines, st.ring.stalls, st.ring.slice_max,
+			    st.ring.gain_refreshed, rx.gain_refreshed, rx.gain_apply_us);
+	}
 	shell_print(sh, "vrt: %u captures, %u data, %u context packets, %u blocks, %u kB, "
 		    "%u dropped, %u errors, %u blocks free",
 		    vs.captures, vs.packets, vs.context, vs.blocks, vs.bytes / 1024U, vs.dropped,

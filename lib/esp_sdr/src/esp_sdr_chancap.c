@@ -1474,6 +1474,8 @@ int esp_sdr_chancap_start(const struct esp_sdr_chancap_cfg *cfg)
 	}
 	memset(&rs, 0, sizeof(rs));
 	memset(&snk, 0, sizeof(snk));
+	/* Else the status shows the last run's ring counters until the new run starts. */
+	memset(&ring_st, 0, sizeof(ring_st));
 	rs.cfg = *cfg;
 	ret = plan(cfg);
 	if (ret != 0) {
@@ -1534,7 +1536,17 @@ void esp_sdr_chancap_stop(void)
 	if (atomic_get(&active) != 0) {
 		atomic_set(&stop_req, 1);
 		esp_sdr_ring_stop();
-		k_thread_join(&ring_thread, K_FOREVER);
+		/*
+		 * The ring thread polls the stop request; one that does not end in 2 s is wedged
+		 * on its CPU. Waiting forever would hold the lock and the caller's thread (the
+		 * shell): leave chancap active (start answers -EBUSY) and let a later stop retry.
+		 */
+		if (k_thread_join(&ring_thread, K_SECONDS(2)) != 0) {
+			LOG_ERR("chancap stop: the ring thread did not end (units %u, pairs %llu)",
+				ring_st.units, (unsigned long long)ring_st.pairs);
+			k_mutex_unlock(&lock);
+			return;
+		}
 		k_thread_join(&dsp_thread, K_FOREVER);
 		k_thread_join(&out_thread, K_FOREVER);
 		/* Captures still queued never reach the consumer. */
