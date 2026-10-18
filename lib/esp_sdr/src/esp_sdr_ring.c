@@ -476,7 +476,15 @@ static struct {
 	/* Finished units waiting for the filter, oldest first. */
 	struct unit q[RING_BANKS - 1U];
 	unsigned int q_len;
-	uint32_t slice_cost;
+	/*
+	 * The slowest recent filter slice (cycles): a slower one raises it at once, and it gives
+	 * up 1/16 every default unit length of input (768 us at 16 MS/s, decay_pairs counts), at
+	 * the same pace whatever the unit length. As the slowest of the whole run, one slice slowed
+	 * by the other CPU's PSRAM traffic at the start (the S3's display drawing) kept the filter
+	 * from slices it had time for, and with about 10 % to spare it then dropped part of every
+	 * unit for good.
+	 */
+	uint32_t slice_cost, decay_pairs;
 	uint64_t fir_cycles, fir_pairs;
 	/* The interrupt key of the run, for the windows in irq_window(). */
 	unsigned int irq_key;
@@ -1398,7 +1406,7 @@ HOT static void ring_loop(void)
 				prepared = true;
 				continue;
 			}
-			/* A slice only if the slowest one seen still fits. */
+			/* A slice only if the slowest recent one still fits. */
 			int32_t limit = prepared ? (int32_t)(g.thr + g.late / 2U)
 						 : (int32_t)g.thr - (int32_t)(prep_pairs + g.late);
 
@@ -1485,6 +1493,11 @@ HOT static void ring_loop(void)
 		}
 		unit_accept(b, first, count, index);
 		st->units++;
+		rs.decay_pairs += count;
+		if (rs.decay_pairs >= ESP_SDR_RING_UNIT_DEFAULT) {
+			rs.decay_pairs -= ESP_SDR_RING_UNIT_DEFAULT;
+			rs.slice_cost -= rs.slice_cost / 16U;
+		}
 		index += count;
 		expected = end;
 		b = next;

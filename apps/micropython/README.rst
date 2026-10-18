@@ -121,9 +121,7 @@ payload through ``protocol_formatter_bb`` and ``tagged_stream_mux``) -> ``gfsk_m
   start. Two boards' crystals differ by up to some 10 ppm (25 kHz between the bench's S3 and
   C5), which leaves one tone at the edge of the C5's receiver and costs it bits. The
   ``freq_offset`` a PDU carries is the peer's carrier against the frequency set.
-- On the S3, a receive run that started while the display drew can lose input for as long as
-  it lasts (the ring filter's writes to PSRAM wait behind the display's); one that keeps
-  losing samples starts again when idle.
+- A receive run that keeps losing samples starts again when idle (``rx_stats()``: ``gaps``).
 - Continuous receive rates only (250 kS/s down), the same rate both ways, up to 500 kS/s.
 - The receiver (``digital/_fsk.py``, in C in ``cmod/esdr_fsk.c``): a discriminator, its sum
   over a symbol, and per sampling phase a search for the access code's last 32 bits against

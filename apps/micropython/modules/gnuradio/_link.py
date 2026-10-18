@@ -53,10 +53,9 @@ TX_LATE_MS = 300
 AFC_MIN_HZ = 2000
 AFC_MAX_HZ = 60000
 AFC_ERRORS = 2
-# A ring receive run on the S3 that started while the display drew can lose input for as long
-# as it lasts (its ring filter writes PSRAM, which the display's traffic slows; a run started
-# later is fine): one that loses more than GAPS_MAX stretches of samples within GAPS_MS starts
-# again when idle.
+# A ring receive run that keeps losing input, more than GAPS_MAX stretches of samples within
+# GAPS_MS, starts again when idle. (A run on the S3 that started while the display drew did so
+# for as long as it lasted, until the ring's filter scheduling followed the recent slices.)
 GAPS_MS = 500
 GAPS_MAX = 10
 
