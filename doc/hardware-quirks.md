@@ -27,7 +27,10 @@ and comparing the AGC force register (`0x6001c02c`) does not detect it:
 last force is more than 20 ms old (`esp_sdr_rx_gain_refresh()` in
 `lib/esp_sdr/src/esp_sdr_rx.c`, `GAIN_REFRESH_MS`). Each re-force costs 14 to
 51 us. `esp_sdr_get_stats()` counts them, and `link status` prints them on
-its engine line. A turnaround back to receive also forces the gain.
+its engine line. A turnaround back to receive also forces the gain. A ring
+run re-forces between units: every 20 ms when it sends bursts, every second
+when it only receives, since a re-force is longer than the slack of short
+units (`apps/chancap`'s 128 us units dropped a few pairs at each one).
 
 When debugging this kind of fault: any `link set` in `apps/link` re-applies
 the whole radio configuration, which hides it.

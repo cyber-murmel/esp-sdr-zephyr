@@ -63,16 +63,23 @@ static void gain_apply(void)
  */
 #define GAIN_REFRESH_MS 20
 
-bool esp_sdr_rx_gain_refresh(void)
+bool esp_sdr_rx_gain_refresh_after(uint32_t ms)
 {
 #if defined(CONFIG_ESP_SDR_RFTEST)
-	if (gain_index >= 0 && k_uptime_get() - gain_applied_ms > GAIN_REFRESH_MS) {
+	if (gain_index >= 0 && k_uptime_get() - gain_applied_ms > (int64_t)ms) {
 		esp_sdr_counters.gain_refreshed++;
 		gain_apply();
 		return true;
 	}
+#else
+	ARG_UNUSED(ms);
 #endif
 	return false;
+}
+
+bool esp_sdr_rx_gain_refresh(void)
+{
+	return esp_sdr_rx_gain_refresh_after(GAIN_REFRESH_MS);
 }
 
 static void lpf_apply(void);

@@ -1529,8 +1529,14 @@ HOT static void ring_loop(void)
 		if (stop) {
 			break;
 		}
-		/* The forced gain gets lost now and then (see esp_sdr_rx_gain_refresh()). */
-		if (esp_sdr_rx_gain_refresh()) {
+		/*
+		 * The forced gain gets lost now and then, after transmissions (see
+		 * esp_sdr_rx_gain_refresh()). A re-force takes 14 to 51 us, too long for the
+		 * slack of short units (chancap's 128 us dropped a few pairs at every one, 50 a
+		 * second): every 20 ms with bursts, every second in a run that only receives.
+		 */
+		if (rs.burst_ok ? esp_sdr_rx_gain_refresh()
+				: esp_sdr_rx_gain_refresh_after(SDR_GAIN_REFRESH_RX_ONLY_MS)) {
 			st->gain_refreshed++;
 		}
 	}
