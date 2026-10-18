@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Coverage of the host tests (scripts/run-host-tests.sh): the Python tools that run in builds
+# and CI. Files no test imports count too, at 0 %. The bench tools under apps/*/tools talk to
+# boards and stay out.
+[run]
+branch = True
+source =
+    apps/multiapp
+    apps/micropython/tools
+    scripts
+    doc/registers
+omit =
+    apps/multiapp/pytest/*
+
+[report]
+skip_empty = True
+exclude_also =
+    if __name__ == .__main__.:
+sort = Cover
+
+[html]
+directory = host-coverage

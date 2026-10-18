@@ -2,8 +2,8 @@
 #
 # Local runs of the CI checks (.github/workflows), for pre-commit (in the nix shell).
 # `pre-commit install` once sets up both hook types. Each hook runs only when the
-# files it checks are staged. On commit: the register pages and SVDs, the SoapySDR
-# module. On push: the documentation and the unit tests. By hand only (they take
+# files it checks are staged. On commit: the register pages and SVDs, the host tests,
+# the SoapySDR module. On push: the documentation and the unit tests. By hand only (they take
 # long): the board builds, `pre-commit run --hook-stage manual build-boards -a`.
 # doc/testing.md has the table.
 # SKIP=<id>[,<id>] git commit skips a hook, e.g. offline (docs fetch Zephyr's
@@ -29,6 +29,15 @@ repos:
         entry: scripts/pre-commit/svdmerge.sh
         language: system
         files: ^doc/registers/
+        pass_filenames: false
+
+      # build.yml "Host tools": tests/host (pytest) under coverage, about a second
+      - id: host-tests
+        name: host tests of the Python tools (pytest)
+        entry: scripts/run-host-tests.sh
+        language: system
+        files: >-
+          ^(apps/multiapp/[^/]+\.py$|apps/micropython/(tools|eggs)/|scripts/|doc/registers/|tests/host/|apps/micropython/modules/gnuradio/eng_notation\.py$)
         pass_filenames: false
 
       # build.yml "SoapySDR module"

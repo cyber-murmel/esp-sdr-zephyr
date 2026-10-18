@@ -5,3 +5,6 @@ twister-out*/
 __pycache__/
 /doc/_build*/
 result*
+# scripts/run-host-tests.sh
+/.coverage
+/host-coverage/
