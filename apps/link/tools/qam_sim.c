@@ -53,14 +53,14 @@ static int rs_selftest(void)
 			cw[rand() % RS_N] ^= (uint8_t)(1 + rand() % 255);
 		}
 		ret = rs_decode(cw);
-		if (nerr <= 16 && (ret < 0 || memcmp(cw, ref, RS_N) != 0)) {
+		if (nerr <= RS_NROOTS / 2 && (ret < 0 || memcmp(cw, ref, RS_N) != 0)) {
 			bad++;
 		}
-		if (nerr > 16 && ret >= 0 && memcmp(cw, ref, RS_N) != 0) {
+		if (nerr > RS_NROOTS / 2 && ret >= 0 && memcmp(cw, ref, RS_N) != 0) {
 			/* miscorrection, possible but rare */
 		}
 	}
-	printf("rs: %d failures in 2000 (<= 16 errors must all correct)\n", bad);
+	printf("rs: %d failures in 2000 (<= %d errors must all correct)\n", bad, RS_NROOTS / 2);
 	return bad;
 }
 
