@@ -158,7 +158,7 @@ struct esp_sdr_chancap_plan {
 	unsigned int taps, delay_pairs;
 };
 
-/** @return The running or last run's plan. */
+/** Copy the running or last run's plan into @p plan. */
 void esp_sdr_chancap_get_plan(struct esp_sdr_chancap_plan *plan);
 
 /** Timing of the channelizer on synthetic data (esp_sdr_chancap_bench()). */
@@ -195,6 +195,12 @@ struct esp_sdr_chancap_bench_result {
  *
  * @param cfg The grid and rate to time; the gates are ignored.
  * @param pairs Input pairs to process (a multiple of 512).
+ * @param res The timings.
+ *
+ * @retval 0 on success.
+ * @retval -EBUSY while a run is active.
+ * @retval -EINVAL for a pair count that is not a multiple of 512, or a grid esp_sdr_chancap_start() refuses.
+ * @retval -ERANGE for an LO below the band.
  */
 int esp_sdr_chancap_bench(const struct esp_sdr_chancap_cfg *cfg, uint32_t pairs,
 			  struct esp_sdr_chancap_bench_result *res);
