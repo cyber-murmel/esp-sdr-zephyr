@@ -261,7 +261,7 @@ ZTEST(link_ofdm, test_frames)
 
 	for (size_t m = 0; m < ARRAY_SIZE(mods); m++) {
 		struct ofdm_fhdr h = {.type = 0, .mod = mods[m], .dst = 2, .src = 1, .seq = 77};
-		size_t user = ofdm_frame_user_bytes(&ctx, h.mod);
+		size_t user = ofdm_frame_user_bytes(&ctx, h.mod, h.fec);
 		struct ofdm_rx_info info;
 		struct ofdm_fhdr g;
 		int corr;
@@ -283,7 +283,7 @@ ZTEST(link_ofdm, test_frames)
 ZTEST(link_ofdm, test_frame_fec_in_parts)
 {
 	struct ofdm_fhdr h = {.mod = OFDM_16QAM, .dst = 5, .src = 6, .seq = 1};
-	size_t user = ofdm_frame_user_bytes(&ctx, h.mod);
+	size_t user = ofdm_frame_user_bytes(&ctx, h.mod, h.fec);
 	unsigned int units = ofdm_frame_units(&ctx, h.mod);
 	struct ofdm_rx_info info;
 	struct ofdm_fhdr g;
@@ -299,6 +299,46 @@ ZTEST(link_ofdm, test_frame_fec_in_parts)
 	zassert_equal(ofdm_frame_fec_units(&ctx, &g, &fwk, units / 2U, units, &corr), 0);
 	zassert_equal(ofdm_frame_check(&ctx, &g, &fwk, got), 0);
 	zassert_mem_equal(got, bits, user);
+}
+
+ZTEST(link_ofdm, test_fec_names)
+{
+	zassert_equal(ofdm_fec_parse(ofdm_fec_name(OFDM_FEC_RS)), (int)OFDM_FEC_RS);
+	zassert_equal(ofdm_fec_parse(ofdm_fec_name(OFDM_FEC_NONE)), (int)OFDM_FEC_NONE);
+	for (unsigned int f = 0; f < OFDM_FECS; f++) {
+		zassert_not_null(ofdm_fec_name(f));
+		zassert_equal(ofdm_fec_parse(ofdm_fec_name(f)), (int)f, "%s", ofdm_fec_name(f));
+	}
+	zassert_true(ofdm_fec_name(OFDM_FECS) == NULL);
+	zassert_equal(ofdm_fec_parse("rs255"), -1);
+}
+
+ZTEST(link_ofdm, test_frames_bch_and_none)
+{
+	/* A BCH code and the CRC alone: the CRC is checked first, BCH decodes only on a failure. */
+	static const char *const codes[] = {"bch2-128", "bch1-8"};
+
+	for (size_t i = 0; i <= ARRAY_SIZE(codes); i++) {
+		int fec = i < ARRAY_SIZE(codes) ? ofdm_fec_parse(codes[i]) : (int)OFDM_FEC_NONE;
+		struct ofdm_fhdr h = {.mod = OFDM_QPSK, .fec = (uint8_t)fec, .dst = 4, .src = 3,
+				      .seq = (uint16_t)(200 + i)};
+		size_t user;
+		struct ofdm_rx_info info;
+		struct ofdm_fhdr g;
+		int corr;
+
+		zassert_true(fec >= 0, "%s", i < ARRAY_SIZE(codes) ? codes[i] : "none");
+		user = ofdm_frame_user_bytes(&ctx, h.mod, h.fec);
+		zassert_true(user > 0U, "code %d", fec);
+		ofdm_test_bits(bits, user * 8U, 11U + (uint32_t)i);
+		zassert_equal(ofdm_frame_build(&ctx, &tb, &fwk, &h, bits, frame), ctx.len);
+		channel(&ctx, ctx.len, 24.0, 12e3, 0.6);
+		zassert_equal(ofdm_frame_begin(&ctx, win, WIN, &g, &info), 0, "code %d", fec);
+		zassert_equal(g.fec, h.fec);
+		zassert_equal(ofdm_frame_finish(&ctx, win, &g, &fwk, got, &corr, &info), 0,
+			      "code %d", fec);
+		zassert_mem_equal(got, bits, user);
+	}
 }
 
 ZTEST(link_ofdm, test_ack_frames)
@@ -338,7 +378,7 @@ ZTEST(link_ofdm, test_frame_too_noisy)
 	 * CRC and is never passed on as good.
 	 */
 	struct ofdm_fhdr h = {.mod = OFDM_64QAM, .dst = 2, .src = 1, .seq = 3};
-	size_t user = ofdm_frame_user_bytes(&ctx, h.mod);
+	size_t user = ofdm_frame_user_bytes(&ctx, h.mod, h.fec);
 	struct ofdm_rx_info info;
 	struct ofdm_fhdr g;
 	int corr;
