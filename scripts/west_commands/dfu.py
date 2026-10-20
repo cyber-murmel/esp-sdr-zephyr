@@ -161,7 +161,14 @@ class Dfu(WestCommand):
         mcuboot = b / "mcuboot" / "zephyr" / "zephyr.bin"
         if not mcuboot.exists():
             self.die(f"no {mcuboot}: --esptool needs a sysbuild with MCUboot")
-        parts = [("0x0", mcuboot), ("0x20000", self.find_image(args))]
+        image = self.find_image(args)
+        # The padded image with its confirmed trailer (CONFIG_MCUBOOT_GENERATE_CONFIRMED_IMAGE,
+        # apps/common/Kconfig): written plain, the slot keeps an earlier image's trailer, which
+        # MCUboot reads as bad magic, and the confirm below fails.
+        confirmed = image.with_name("zephyr.signed.confirmed.bin")
+        if not args.image and confirmed.exists():
+            image = confirmed
+        parts = [("0x0", mcuboot), ("0x20000", image)]
         if args.storage is not None:
             parts.append(("0x400000", self.find_storage(args)))
         # A stale update request in the update slot would make MCUboot swap the new image out.
