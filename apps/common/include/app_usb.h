@@ -42,6 +42,13 @@ bool app_usb_dfu_enter(void);
  */
 bool app_usb_dfu_was_slot(void);
 
+/*
+ * Take the application's USB device off the bus, and back: the port goes to another chip
+ * meanwhile (the WHY2025 badge's ESP32-C6 on USB-C J8). No-ops before USB is up.
+ */
+void app_usb_detach(void);
+void app_usb_attach(void);
+
 /* The USB thread's stack use in the last DFU download (it writes the flash), or false. */
 bool app_usb_dfu_stack(size_t *used, size_t *size);
 
