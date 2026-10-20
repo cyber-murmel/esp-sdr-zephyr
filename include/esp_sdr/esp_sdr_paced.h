@@ -27,6 +27,7 @@
 #define ESP_SDR_ESP_SDR_PACED_H_
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -66,6 +67,16 @@ int esp_sdr_rx_paced_start(uint32_t rate_hz);
  * @return true when a sample was produced.
  */
 bool esp_sdr_rx_paced_poll(int32_t *i, int32_t *q);
+
+/**
+ * @brief Produce the next @p n receive samples as they fall due, as 8-bit I, Q pairs.
+ * The tight form of esp_sdr_rx_paced_poll() for MS/s rates: blocks until the last one.
+ * @param out 2 * @p n bytes, 2-byte aligned.
+ * @param n Samples to produce.
+ * @param shift Right shift of each sum before it saturates to -127 to 127.
+ * @return Samples among them that came a whole period or more late.
+ */
+uint32_t esp_sdr_rx_paced_fill_iq8(int8_t *out, size_t n, unsigned int shift);
 
 /**
  * @brief CPU cycles until the next receive sample is due, 0 when it is.
