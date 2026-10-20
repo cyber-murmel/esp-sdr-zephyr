@@ -50,6 +50,7 @@ The API reference of the library is generated with Doxygen:
    ieee802154-ack
    testing
    multiapp
+   fpga-accelerator
    zigbit-reference
    ubertooth
    lte-calibration

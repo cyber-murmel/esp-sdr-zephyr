@@ -7,6 +7,8 @@ config ESDR_FPGA
 	select SPI
 	select GPIO
 	select MFD
+	# Frames of up to 64 KiB: wait for them, do not spin.
+	imply SPI_ESP32_INTERRUPT
 	help
 	  Loads the iCE40UP5K through the RP2040 (CRESET, CDONE) and SPI3, and talks to the
 	  gateware in gateware/ over the same SPI port.

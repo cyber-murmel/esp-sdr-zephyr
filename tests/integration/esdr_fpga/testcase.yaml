@@ -1,0 +1,12 @@
+common:
+  tags:
+    - fpga
+    - hardware
+  harness: ztest
+  platform_allow:
+    - mch2022/esp32/procpu
+
+tests:
+  # The gateware (ESDR_FPGA_IMAGE: a bitstream from gateware/, python -m esdr_fpga.build top)
+  # on the MCH2022 badge: loading, the SPI link, the panel behind it, the DSP chain.
+  integration.esdr_fpga: {}

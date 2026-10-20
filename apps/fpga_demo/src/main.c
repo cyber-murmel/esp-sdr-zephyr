@@ -16,6 +16,10 @@
 #include <esp_sdr/esdr_fpga.h>
 #include <esp_sdr/esdr_fpga_regs.h>
 #include <esp_sdr/esp_sdr_dsp.h>
+#ifdef CONFIG_ESP_SDR
+#include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_rx.h>
+#endif
 
 static const struct device *const fpga = DEVICE_DT_GET(DT_NODELABEL(fpga));
 
@@ -299,12 +303,188 @@ static int cmd_dsp(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+#ifdef CONFIG_ESP_SDR
+#define BURST 16380
+
+static bool radio_up;
+
+static int radio_init(const struct shell *sh, uint32_t mhz)
+{
+	int ret = 0;
+
+	if (!radio_up) {
+		ret = esp_sdr_init();
+		radio_up = ret == 0;
+	}
+	ret = ret ?: esp_sdr_set_freq(mhz);
+	if (ret) {
+		shell_error(sh, "radio: %d", ret);
+	}
+	return ret;
+}
+
+/* ESDR_FPGA_FMT_IQ8 in place: each word's int8 pair, I in the low byte. */
+static size_t pack_iq8(const uint32_t *words, size_t count, uint8_t *out)
+{
+	for (size_t j = 0; j < count; j++) {
+		uint32_t iq = esp_sdr_rx_iq8(words[j]);
+
+		out[2 * j] = (uint8_t)iq;
+		out[2 * j + 1] = (uint8_t)(iq >> 8);
+	}
+	return 2 * count;
+}
+
+/*
+ * ESDR_FPGA_FMT_IQ10P in place: the words' 20-bit I/Q fields little endian, two samples in
+ * five bytes (a pair is read before its bytes are written).
+ */
+static size_t pack_iq10(const uint32_t *words, size_t count, uint8_t *out)
+{
+	uint8_t *p = out;
+
+	for (size_t j = 0; j < count; j += 2, p += 5) {
+		uint32_t a = words[j] & GENMASK(19, 0);
+		uint32_t b = j + 1 < count ? words[j + 1] & GENMASK(19, 0) : 0U;
+
+		p[0] = (uint8_t)a;
+		p[1] = (uint8_t)(a >> 8);
+		p[2] = (uint8_t)((a >> 16) | (b << 4));
+		if (j + 1 < count) {
+			p[3] = (uint8_t)(b >> 4);
+			p[4] = (uint8_t)(b >> 12);
+		}
+	}
+	return (count * 20U + 7U) / 8U;
+}
+
+/*
+ * The badge's radio into the FPGA: fpga radio <MHz> [seconds] [rate: 0 80, 1 40, 6 16 MS/s]
+ * [format: 0 dump words, 1 packed 10 bit, 2 8 bit]. Each burst starts new frames.
+ */
+static int cmd_radio(const struct shell *sh, size_t argc, char **argv)
+{
+	const struct device *disp = DEVICE_DT_GET(DT_CHOSEN(zephyr_display));
+	uint32_t mhz = strtoul(argv[1], NULL, 0);
+	uint32_t secs = argc > 2 ? strtoul(argv[2], NULL, 0) : 10;
+	enum esp_sdr_rate rate = argc > 3 ? strtoul(argv[3], NULL, 0) : ESP_SDR_RATE_40MSPS;
+	uint8_t fmt = argc > 4 ? strtoul(argv[4], NULL, 0) : ESDR_FPGA_FMT_WORD32;
+	const struct esdr_fpga_trace trace = {.flags = ESDR_FPGA_SP_CENTER};
+	const struct esdr_fpga_dsp dsp = {
+		.log2n = 9, .window = ESP_SDR_WINDOW_BLACKMAN_HARRIS, .alpha = 0.25f,
+		.frames_per_line = 8, .cols = GFX_W,
+		.wf_min_db = -95.0f, .wf_max_db = -35.0f,
+		.tr_top_db = -10.0f, .tr_bottom_db = -110.0f, .tr_rows = SP_H,
+	};
+	struct esp_sdr_rx_burst b;
+	uint64_t t_cap = 0, t_pack = 0, t_send = 0;
+	uint16_t f0, f1, l0, l1;
+	uint32_t bursts = 0;
+	int64_t t0, end;
+	int ret;
+
+	ret = radio_init(sh, mhz);
+	if (ret) {
+		return ret;
+	}
+	display_blanking_off(disp);
+	palette(pal);
+	ret = esdr_fpga_palette(fpga, 0, pal, 256);
+	ret = ret ?: esdr_fpga_spectrum(fpga, 0, 0, GFX_W, SP_H, &trace);
+	ret = ret ?: esdr_fpga_waterfall(fpga, 0, SP_H, GFX_W, WF_H);
+	ret = ret ?: esdr_fpga_dsp_config(fpga, &dsp);
+	ret = ret ?: esdr_fpga_render(fpga, true, true, true);
+	ret = ret ?: esdr_fpga_dsp_run(fpga, true, &dsp);
+	if (ret) {
+		shell_error(sh, "setup: %d", ret);
+		return ret;
+	}
+	esdr_fpga_reg_read(fpga, ESDR_FPGA_REG_FRAMES, &f0, 1);
+	esdr_fpga_reg_read(fpga, ESDR_FPGA_REG_LINES, &l0, 1);
+	t0 = k_uptime_get();
+	end = t0 + secs * 1000;
+	while (k_uptime_get() < end) {
+		uint32_t c0 = k_cycle_get_32(), c1, c2;
+		size_t len;
+
+		ret = esp_sdr_rx_capture(rate, BURST, &b);
+		if (ret) {
+			shell_error(sh, "capture: %d", ret);
+			break;
+		}
+		c1 = k_cycle_get_32();
+		/* Packed in place: the bank is DMA-capable memory. */
+		if (fmt == ESDR_FPGA_FMT_IQ10P) {
+			len = pack_iq10(b.words, b.count, (uint8_t *)b.words);
+		} else if (fmt == ESDR_FPGA_FMT_IQ8) {
+			len = pack_iq8(b.words, b.count, (uint8_t *)b.words);
+		} else {
+			len = b.count * 4;
+		}
+		c2 = k_cycle_get_32();
+		ret = esdr_fpga_samples(fpga, fmt, true, b.words, len);
+		if (ret) {
+			shell_error(sh, "samples: %d", ret);
+			break;
+		}
+		t_cap += c1 - c0;
+		t_pack += c2 - c1;
+		t_send += k_cycle_get_32() - c2;
+		bursts++;
+	}
+	int64_t ms = k_uptime_get() - t0;
+
+	esdr_fpga_reg_read(fpga, ESDR_FPGA_REG_FRAMES, &f1, 1);
+	esdr_fpga_reg_read(fpga, ESDR_FPGA_REG_LINES, &l1, 1);
+	shell_print(sh, "radio: %u MHz, %u bursts of %u in %lld ms, %u frames, %u lines; per "
+		    "burst: capture %llu us, pack %llu us, send %llu us", mhz, bursts, BURST, ms,
+		    (uint16_t)(f1 - f0), (uint16_t)(l1 - l0),
+		    k_cyc_to_us_floor64(t_cap / MAX(bursts, 1)),
+		    k_cyc_to_us_floor64(t_pack / MAX(bursts, 1)),
+		    k_cyc_to_us_floor64(t_send / MAX(bursts, 1)));
+	return ret;
+}
+
+/* One burst as hex, 5 digits a sample (the dump word's 20 bits): fpga dump <MHz> [rate]. */
+static int cmd_dump(const struct shell *sh, size_t argc, char **argv)
+{
+	uint32_t mhz = strtoul(argv[1], NULL, 0);
+	enum esp_sdr_rate rate = argc > 2 ? strtoul(argv[2], NULL, 0) : ESP_SDR_RATE_40MSPS;
+	struct esp_sdr_rx_burst b;
+	char line[16 * 5 + 1];
+	int ret;
+
+	ret = radio_init(sh, mhz);
+	ret = ret ?: esp_sdr_rx_capture(rate, BURST, &b);
+	if (ret) {
+		shell_error(sh, "capture: %d", ret);
+		return ret;
+	}
+	shell_print(sh, "dump: %u MHz rate %d count %u", mhz, rate, (unsigned int)b.count);
+	for (size_t j = 0; j < b.count; j += 16) {
+		size_t n = MIN(16, b.count - j);
+
+		for (size_t k = 0; k < n; k++) {
+			snprintk(&line[5 * k], 6, "%05x", b.words[j + k] & 0xfffffU);
+		}
+		shell_print(sh, "%s", line);
+	}
+	shell_print(sh, "dump: end");
+	return 0;
+}
+#endif
+
 SHELL_STATIC_SUBCMD_SET_CREATE(fpga_cmds,
 	SHELL_CMD_ARG(reg, NULL, "reg <addr> [value]", cmd_reg, 2, 1),
 	SHELL_CMD_ARG(gfx, NULL, "gfx [seconds] [te 0/1]: spectrum and waterfall from software",
 		      cmd_gfx, 1, 2),
 	SHELL_CMD_ARG(dsp, NULL, "dsp [seconds] [log2n] [frames per line] [repeat]: the FPGA's "
 		      "FFT on samples made here", cmd_dsp, 1, 4),
+#ifdef CONFIG_ESP_SDR
+	SHELL_CMD_ARG(radio, NULL, "radio <MHz> [seconds] [rate] [format]: bursts into the FPGA",
+		      cmd_radio, 2, 3),
+	SHELL_CMD_ARG(dump, NULL, "dump <MHz> [rate]: one burst as hex", cmd_dump, 2, 1),
+#endif
 	SHELL_CMD_ARG(rate, NULL, "rate <addr> [ms]: how fast a counter register runs", cmd_rate,
 		      2, 1),
 	SHELL_CMD_ARG(test, NULL, "test [rounds] [read Hz]: scratch RAM round trips", cmd_test,
