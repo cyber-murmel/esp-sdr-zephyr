@@ -1,9 +1,12 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * The esdr module on the ESP32-P4 of the WHY2025 badge, as modesdr.c is on the S3. The P4 has
- * no radio of its own: the badge's ESP32-C6 is its radio, running apps/osmosdr_serial behind
- * a link (esdr_remote.c). CPU-paced on the C6: no offset tuning, no bursts, 8-bit samples.
+ * The esdr module, as modesdr.c is on the S3, for a radio behind esdr_remote.h: on the
+ * ESP32-P4 of the WHY2025 badge the badge's ESP32-C6, running apps/osmosdr_serial behind a link
+ * (esdr_remote.c), CPU-paced: no offset tuning, 8-bit samples; on the classic ESP32 of the
+ * MCH2022 badge the chip's own radio (esdr_local.c), which captures bursts only: its stream
+ * rates are decimated bursts with gaps between them, and it does not transmit (no tx_*, no
+ * trig_*: the launcher hides the apps that need them).
  *
  *   init()                     opens the link, reads the radio's description
  *   tune(hz, offset=True)      LO at hz (offset is ignored); returns the centre tuned
@@ -11,9 +14,10 @@
  *   radio_state() -> dict      the radio's settings as it reports them (mode, freq, centre,
  *                              rx_gain, tx_gain, rate, bits, bandwidth); after an app ends
  *                              they are the radio's start settings again
- *   RATES, BURST_RATES (80, 40 MS/s: bursts of up to 16380 samples at 80 MS/s, contiguous
- *                              within a burst only, full scale 16384 as on the S3),
- *                              FULL_SCALE (streams: 128), MON_SAMPLES, TX_PREBUF_S
+ *   RATES, BURST_RATES (P4: 80, 40 MS/s, bursts of up to 16380 samples at 80 MS/s; ESP32:
+ *                              80, 40, 16 MS/s; contiguous within a burst only, full scale
+ *                              16384 as on the S3), FULL_SCALE (P4 streams: 128, ESP32: 16384),
+ *                              MON_SAMPLES, TX_PREBUF_S
  *   rx_start(rate, buf=None, count=0, offset=True, monitor=False, wrap=False)
  *                              capture into buf (int16 I, Q; wrap: a ring), count samples
  *                              (0: endless); the monitor (rx_latest()) sees every sample
@@ -42,8 +46,8 @@
  *   shift()                    (esdr_board.c)
  *   claim(mnt), release(mnt)   no-ops: the volumes are not USB drives here
  *   shell(cmd) -> str          a Zephyr shell command (mcuboot confirm, ...)
- *   usb_to_c6(seconds=60)      USB-C port J8 to the ESP32-C6's USB-Serial-JTAG (esptool) for
- *                              that long, then back to this chip's REPL and DFU (esdr_usb.c)
+ *   usb_to_c6(seconds=60)      P4: USB-C port J8 to the ESP32-C6's USB-Serial-JTAG (esptool)
+ *                              for that long, then back to this chip's REPL and DFU (esdr_usb.c)
  *
  * Memory: the Python heap is CONFIG_APP_MP_PSRAM_HEAP_KB of PSRAM, added at every start; LVGL
  * allocates from it too (CONFIG_LV_Z_MEM_POOL_MICROPYTHON).
@@ -69,8 +73,18 @@
 
 #include "esdr_board.h"
 #include "esdr_remote.h"
-#include "esdr_usb.h"
 #include "esdr_rx.h"
+
+#if defined(CONFIG_ESP_SDR)
+/* The radio on the chip (esdr_local.c): bursts, and streams decimated from them. */
+#define RADIO_LINKED 0
+#define FULL_SCALE 16384
+#define RX_RATE_MAX_HZ 2000000
+#define RX_RATE_COUNT 5
+#else
+/* The radio behind a link: transmit and triggered snapshots too. */
+#define RADIO_LINKED 1
+#include "esdr_usb.h"
 
 /* 8-bit samples from the C6, carried as int16. */
 #define FULL_SCALE 128
@@ -88,12 +102,13 @@
 #define STREAM_MAX_HZ 125000
 /* The radio's native burst rate (ESDR_REQ_CAPTURE_BURST). */
 #define BURST_HZ 80000000
+#endif
 
 /* The buffers the link reads or writes, kept alive meanwhile. */
 MP_REGISTER_ROOT_POINTER(mp_obj_t esdr_rx_buf);
 MP_REGISTER_ROOT_POINTER(mp_obj_t esdr_tx_buf);
 
-/* PSRAM (the P4's linker script places .ext_ram.bss there; esp_attr.h's EXT_RAM_BSS_ATTR is
+/* PSRAM (the linker scripts place .ext_ram.bss there; esp_attr.h's EXT_RAM_BSS_ATTR is
  * empty on the P4). */
 static uint8_t psram_heap[CONFIG_APP_MP_PSRAM_HEAP_KB * 1024]
 	__attribute__((section(".ext_ram.bss"))) __aligned(16);
@@ -188,12 +203,14 @@ static mp_obj_t esdr_rx_gain_max(void)
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(esdr_rx_gain_max_obj, esdr_rx_gain_max);
 
+#if RADIO_LINKED
 static mp_obj_t esdr_tx_gain_max(void)
 {
 	need_radio();
 	return MP_OBJ_NEW_SMALL_INT(radio->tx_gain_max);
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(esdr_tx_gain_max_obj, esdr_tx_gain_max);
+#endif
 
 static mp_obj_t esdr_rx_bandwidth(mp_obj_t hz_in)
 {
@@ -206,7 +223,7 @@ static mp_obj_t esdr_rx_bandwidth(mp_obj_t hz_in)
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(esdr_rx_bandwidth_obj, esdr_rx_bandwidth);
 
-/* The C6's analog filters follow its own settings: nothing to switch. */
+/* The analog filters follow the radio's own settings: nothing to switch. */
 static mp_obj_t esdr_channel_bw(mp_obj_t mode_in)
 {
 	ARG_UNUSED(mode_in);
@@ -238,7 +255,11 @@ static mp_obj_t esdr_rx_start_fn(size_t n_args, const mp_obj_t *pos_args, mp_map
 		mp_raise_ValueError(MP_ERROR_TEXT("no FSK receiver in the radio"));
 	}
 	mp_int_t rate = args[ARG_rate].u_int;
+#if RADIO_LINKED
 	bool burst = rate == BURST_HZ || rate == BURST_HZ / 2;
+#else
+	bool burst = rate == 80000000 || rate == 40000000 || rate == 16000000;
+#endif
 
 	if (!burst && (rate <= 0 || rate > RX_RATE_MAX_HZ)) {
 		mp_raise_ValueError(MP_ERROR_TEXT("rate: one of RATES or BURST_RATES"));
@@ -257,8 +278,13 @@ static mp_obj_t esdr_rx_start_fn(size_t n_args, const mp_obj_t *pos_args, mp_map
 	}
 	MP_STATE_PORT(esdr_rx_buf) = args[ARG_buf].u_obj;
 	if (burst) {
+#if RADIO_LINKED
 		check(esdr_remote_rx_start_burst(BURST_HZ / 1000000, BURST_HZ / rate, buf, cap,
 						 (uint64_t)args[ARG_count].u_int));
+#else
+		check(esdr_remote_rx_start_burst(rate / 1000000, 1, buf, cap,
+						 (uint64_t)args[ARG_count].u_int));
+#endif
 		return mp_const_none;
 	}
 	check(esdr_remote_rx_start((uint32_t)rate, buf, cap, (uint64_t)args[ARG_count].u_int,
@@ -331,6 +357,7 @@ static mp_obj_t esdr_rx_stats_fn(void)
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(esdr_rx_stats_obj, esdr_rx_stats_fn);
 
+#if RADIO_LINKED
 /* ---- triggered snapshots ---- */
 
 static mp_obj_t esdr_trig_start_fn(size_t n_args, const mp_obj_t *pos, mp_map_t *kw)
@@ -531,6 +558,7 @@ static mp_obj_t esdr_tx_stats_fn(void)
 	return d;
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(esdr_tx_stats_obj, esdr_tx_stats_fn);
+#endif /* RADIO_LINKED */
 
 /* ---- board ---- */
 
@@ -607,6 +635,7 @@ static const mp_rom_obj_tuple_t esdr_rates_obj = {
 #endif
 	},
 };
+#if RADIO_LINKED
 /* The C6 captures bursts at 80 MS/s; 40 MS/s is them halved on the P4. */
 static const mp_rom_obj_tuple_t esdr_burst_rates_obj = {
 	{&mp_type_tuple},
@@ -616,7 +645,20 @@ static const mp_rom_obj_tuple_t esdr_burst_rates_obj = {
 		MP_ROM_INT(BURST_HZ / 2),
 	},
 };
+#else
+/* The chip's native rates. */
+static const mp_rom_obj_tuple_t esdr_burst_rates_obj = {
+	{&mp_type_tuple},
+	3,
+	{
+		MP_ROM_INT(80000000),
+		MP_ROM_INT(40000000),
+		MP_ROM_INT(16000000),
+	},
+};
+#endif
 
+#if RADIO_LINKED
 /* usb_to_c6(seconds=60): J8 to the C6 for a while (esdr_usb.c). */
 static mp_obj_t esdr_usb_to_c6_fn(size_t n_args, const mp_obj_t *args)
 {
@@ -633,6 +675,7 @@ static mp_obj_t esdr_usb_to_c6_fn(size_t n_args, const mp_obj_t *args)
 	return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_usb_to_c6_obj, 0, 1, esdr_usb_to_c6_fn);
+#endif
 
 static const mp_rom_map_elem_t esdr_globals_table[] = {
 	{MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_esdr)},
@@ -649,6 +692,7 @@ static const mp_rom_map_elem_t esdr_globals_table[] = {
 	{MP_ROM_QSTR(MP_QSTR_rx_count), MP_ROM_PTR(&esdr_rx_count_obj)},
 	{MP_ROM_QSTR(MP_QSTR_rx_stats), MP_ROM_PTR(&esdr_rx_stats_obj)},
 	{MP_ROM_QSTR(MP_QSTR_radio_state), MP_ROM_PTR(&esdr_radio_state_obj)},
+#if RADIO_LINKED
 	{MP_ROM_QSTR(MP_QSTR_tx_start), MP_ROM_PTR(&esdr_tx_start_obj)},
 	{MP_ROM_QSTR(MP_QSTR_tx_gen), MP_ROM_PTR(&esdr_tx_gen_obj)},
 	{MP_ROM_QSTR(MP_QSTR_tx_scale), MP_ROM_PTR(&esdr_tx_scale_obj)},
@@ -657,6 +701,7 @@ static const mp_rom_map_elem_t esdr_globals_table[] = {
 	{MP_ROM_QSTR(MP_QSTR_tx_wait), MP_ROM_PTR(&esdr_tx_wait_obj)},
 	{MP_ROM_QSTR(MP_QSTR_tx_stats), MP_ROM_PTR(&esdr_tx_stats_obj)},
 	{MP_ROM_QSTR(MP_QSTR_tx_gain_max), MP_ROM_PTR(&esdr_tx_gain_max_obj)},
+#endif
 	{MP_ROM_QSTR(MP_QSTR_fsk_rx_init), MP_ROM_PTR(&esdr_fsk_rx_init_obj)},
 	{MP_ROM_QSTR(MP_QSTR_fsk_rx), MP_ROM_PTR(&esdr_fsk_rx_obj)},
 	{MP_ROM_QSTR(MP_QSTR_fsk_rx_reset), MP_ROM_PTR(&esdr_fsk_rx_reset_obj)},
@@ -665,8 +710,12 @@ static const mp_rom_map_elem_t esdr_globals_table[] = {
 	{MP_ROM_QSTR(MP_QSTR_fc32_to_sc16), MP_ROM_PTR(&esdr_fc32_to_sc16_obj)},
 	{MP_ROM_QSTR(MP_QSTR_sc16_to_fc32), MP_ROM_PTR(&esdr_sc16_to_fc32_obj)},
 	{MP_ROM_QSTR(MP_QSTR_reset_reason), MP_ROM_PTR(&esdr_reset_reason_obj)},
+#if defined(CONFIG_SHELL_BACKEND_DUMMY)
 	{MP_ROM_QSTR(MP_QSTR_shell), MP_ROM_PTR(&esdr_shell_obj)},
+#endif
+#if RADIO_LINKED
 	{MP_ROM_QSTR(MP_QSTR_usb_to_c6), MP_ROM_PTR(&esdr_usb_to_c6_obj)},
+#endif
 	{MP_ROM_QSTR(MP_QSTR_next_app), MP_ROM_PTR(&esdr_next_app_obj)},
 	{MP_ROM_QSTR(MP_QSTR_home), MP_ROM_PTR(&esdr_home_obj)},
 	{MP_ROM_QSTR(MP_QSTR_shift), MP_ROM_PTR(&esdr_shift_obj)},
@@ -678,12 +727,14 @@ static const mp_rom_map_elem_t esdr_globals_table[] = {
 	{MP_ROM_QSTR(MP_QSTR_channelize), MP_ROM_PTR(&esdr_channelize_obj)},
 	{MP_ROM_QSTR(MP_QSTR_fb_image), MP_ROM_PTR(&esdr_fb_image_obj)},
 	{MP_ROM_QSTR(MP_QSTR_stretch), MP_ROM_PTR(&esdr_stretch_obj)},
+#if RADIO_LINKED
 	{MP_ROM_QSTR(MP_QSTR_trig_start), MP_ROM_PTR(&esdr_trig_start_obj)},
 	{MP_ROM_QSTR(MP_QSTR_trig_stop), MP_ROM_PTR(&esdr_trig_stop_obj)},
 	{MP_ROM_QSTR(MP_QSTR_trig_get), MP_ROM_PTR(&esdr_trig_get_obj)},
 	{MP_ROM_QSTR(MP_QSTR_trig_stats), MP_ROM_PTR(&esdr_trig_stats_obj)},
 	{MP_ROM_QSTR(MP_QSTR_TRIG_SAMPLES), MP_ROM_INT(ESDR_TRIG_SAMPLES)},
 	{MP_ROM_QSTR(MP_QSTR_TRIG_RATE), MP_ROM_INT(ESDR_TRIG_RATE_HZ)},
+#endif
 	{MP_ROM_QSTR(MP_QSTR_iq_cols), MP_ROM_PTR(&esdr_iq_cols_obj)},
 	{MP_ROM_QSTR(MP_QSTR_fb_trace), MP_ROM_PTR(&esdr_fb_trace_obj)},
 	{MP_ROM_QSTR(MP_QSTR_fb_wf_row), MP_ROM_PTR(&esdr_fb_wf_row_obj)},
@@ -693,9 +744,11 @@ static const mp_rom_map_elem_t esdr_globals_table[] = {
 	{MP_ROM_QSTR(MP_QSTR_BURST_RATES), MP_ROM_PTR(&esdr_burst_rates_obj)},
 	{MP_ROM_QSTR(MP_QSTR_FULL_SCALE), MP_ROM_INT(FULL_SCALE)},
 	{MP_ROM_QSTR(MP_QSTR_MON_SAMPLES), MP_ROM_INT(ESDR_MON_SAMPLES)},
+#if RADIO_LINKED
 	{MP_ROM_QSTR(MP_QSTR_TX_PREBUF_S), MP_ROM_INT(0)},
 	{MP_ROM_QSTR(MP_QSTR_TX_RATE_MAX), MP_ROM_INT(RATE_MAX_HZ)},
 	{MP_ROM_QSTR(MP_QSTR_TX_STREAM_MAX), MP_ROM_INT(STREAM_MAX_HZ)},
+#endif
 };
 static MP_DEFINE_CONST_DICT(esdr_globals, esdr_globals_table);
 

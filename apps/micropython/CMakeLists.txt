@@ -19,7 +19,7 @@ if(CONFIG_SOC_SERIES_ESP32C5)
   zephyr_linker_sources(RAM_SECTIONS SORT_KEY app src/c5_low.ld)
 elseif(CONFIG_SOC_SERIES_ESP32P4)
   # The ESP32-P4 (WHY2025 badge): MicroPython in the main thread (the port's own start), its
-  # heap in PSRAM (cmod/esdr_p4.c), the REPL on CDC-ACM and DFU through the shared USB device
+  # heap in PSRAM (cmod/esdr_radio.c), the REPL on CDC-ACM and DFU through the shared USB device
   # on USB-C J8, started by the port's mp_usbd_init() (cmod/esdr_usb.c).
   set(MICROPY_APP_START ON)
   include(${CMAKE_CURRENT_LIST_DIR}/../common/common.cmake)
@@ -29,6 +29,16 @@ elseif(CONFIG_SOC_SERIES_ESP32P4)
   target_include_directories(app PRIVATE cmod ../osmosdr/src)
   # Its SDIO side, shared with the bridge app.
   include(${CMAKE_CURRENT_LIST_DIR}/../common/esdr_sdio_host.cmake)
+elseif(CONFIG_SOC_SERIES_ESP32)
+  # The classic ESP32 (MCH2022 badge): the REPL on the console UART (the badge's RP2040 bridges
+  # it to USB), MicroPython in the main thread (the port's own start), its heap in PSRAM
+  # (cmod/esdr_radio.c), the radio on the chip behind the link's interface (cmod/esdr_local.c,
+  # plain Zephyr code as esdr_remote.c is on the P4).
+  set(MICROPY_APP_START ON)
+  target_sources(app PRIVATE cmod/esdr_local.c src/setjmp.S)
+  target_include_directories(app PRIVATE cmod ../osmosdr/src)
+  # The ROM's setjmp spills windows by SYSCALL, as on the S3 (setjmp.S).
+  zephyr_link_libraries("-Wl,--wrap=setjmp")
 else()
   include(${CMAKE_CURRENT_LIST_DIR}/../common/common.cmake)
 

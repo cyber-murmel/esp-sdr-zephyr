@@ -428,6 +428,29 @@ that restarted by itself. The P4 runs one CPU here: the USB threads are preempti
 MicroPython's (main, priority 10) and below the system work queue, which feeds the liveness
 watchdog; a cooperative USB thread held it off through a DFU download until the board reset.
 
+The MCH2022 badge
+*****************
+
+On the MCH2022 badge (``mch2022/esp32/procpu``) the app runs on its classic ESP32: the
+320x240 display, the buttons as an LVGL keypad (the joystick moves and changes, A and the
+joystick's press select, B goes back, HOME held 1.5 s goes to the launcher), the SD card at
+``/SD:``, a 3 MiB Python heap in PSRAM. The radio is the chip's own, which captures bursts only
+(``cmod/esdr_local.c`` behind the interface ``cmod/esdr_remote.c`` has on the P4): the burst
+rates come as captured, the stream rates (2 MS/s to 125 kS/s) are 16 MS/s bursts decimated by
+the library, about 1 ms each with gaps between them (``esdr.rx_stats()``), good for displays,
+not for demodulators. A display-only run captures a burst whenever the display has taken the
+last one. No transmit: the launcher hides the apps that need it. The REPL is on the console
+UART, which the badge's RP2040 bridges to its first USB serial port; flashing goes through it
+too (no MCUboot, no DFU).
+
+.. code-block:: console
+
+   west build -b mch2022/esp32/procpu esp-sdr-zephyr/apps/micropython
+   west flash --esp-device /dev/serial/by-id/usb-Badge.team_MCH2022_badge_*-if00
+
+The Wi-Fi driver takes its heap from PSRAM and runs with a few buffers: the DRAM the image
+leaves is the libc heap, and the radio only listens.
+
 How it is built
 ***************
 

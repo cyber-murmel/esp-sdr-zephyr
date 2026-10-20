@@ -2,9 +2,9 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * The esdr module's board functions, the same wherever the radio is: the launcher's next app
- * and home gesture (the knob, or Esc on a keyboard), the display's size, the reset reason, and
- * the sample format converters. modesdr.c (the S3) and esdr_p4.c (the P4) put them in their
- * module tables (esdr_board.h).
+ * and home gesture (the knob, or a key held), the display's size, the reset reason, and the
+ * sample format converters. modesdr.c (the S3) and esdr_radio.c (the P4, the ESP32) put them in
+ * their module tables (esdr_board.h).
  */
 
 #include <errno.h>
@@ -33,7 +33,7 @@
  * ---- the launcher (modules/launcher.py) ----
  *
  * The app to start survives the soft reset launcher.start() makes, outside the heap. Holding
- * the knob (the LVGL encoder's switch, or Esc on a keyboard that drives LVGL as a keypad) for
+ * the knob (the LVGL encoder's switch, or APP_HOME_CODE on keys that drive LVGL as a keypad) for
  * KNOB_HOME_MS ends what runs as Ctrl-C does, flagged so that the launcher shows its menu
  * rather than the REPL. When no Ctrl-C can help (the REPL waits for input, keyboard interrupts
  * are off, what runs ignored a hold KNOB_AGAIN_MS ago), holding the knob restarts the board.
@@ -50,7 +50,7 @@
 #if DT_NODE_EXISTS(KNOB_NODE)
 #define HOME_CODE DT_PROP(KNOB_NODE, button_input_code)
 #elif DT_NODE_EXISTS(KEYPAD_NODE)
-#define HOME_CODE INPUT_KEY_ESC
+#define HOME_CODE CONFIG_APP_HOME_CODE
 #endif
 
 static char next_app[128];

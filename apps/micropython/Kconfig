@@ -63,6 +63,14 @@ config APP_MP_STACK_SIZE
 	  Bounds the recursion depth, about 300 bytes per Python call. A
 	  GUI export with LVGL peaked at 11.9 KiB.
 
+config APP_HOME_CODE
+	int "Key that goes home when held"
+	default 1
+	help
+	  On boards whose keys drive LVGL as a keypad: the input code (Zephyr
+	  input-event-codes.h) that, held 1.5 s, ends the running app and
+	  shows the launcher. 1 is INPUT_KEY_ESC.
+
 config APP_MP_PSRAM_HEAP_KB
 	int "Python heap in PSRAM, KiB"
 	default 5120

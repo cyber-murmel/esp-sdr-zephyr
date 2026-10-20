@@ -4,7 +4,7 @@
  * setjmp() for MicroPython's exceptions and its garbage collector (linked in with
  * -Wl,--wrap=setjmp, see CMakeLists.txt).
  *
- * The S3's setjmp is the ROM's, which puts the live register windows on the stack with a
+ * The S3's and the ESP32's setjmp is the ROM's, which puts the live register windows on the stack with a
  * SYSCALL instruction. Without userspace Zephyr answers that with a register dump on the
  * console for every call, and MicroPython calls setjmp on every try and every garbage
  * collection. This is the same routine (newlib's Xtensa setjmp, Tensilica, MIT license;

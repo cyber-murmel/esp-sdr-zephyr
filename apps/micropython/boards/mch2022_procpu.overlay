@@ -1,0 +1,50 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * MCH2022 badge: the 320x240 display and the buttons; the REPL on the console UART, which the
+ * badge's RP2040 bridges to its first USB serial port; the radio on the chip.
+ */
+
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+#include <zephyr/dt-bindings/lvgl/lvgl.h>
+
+/ {
+	/* The FAT volume "FLASH", mounted at /FLASH:, and the SD card at /SD:. */
+	fat_disk: fat_disk {
+		compatible = "zephyr,flash-disk";
+		partition = <&fat_partition>;
+		disk-name = "FLASH";
+		cache-size = <4096>;
+	};
+
+	fstab {
+		compatible = "zephyr,fstab";
+
+		flash_fs: flash_fs {
+			compatible = "zephyr,fstab,fatfs";
+			mount-point = "/FLASH:";
+			disk-access;
+		};
+
+		/* The microSD card, if one mounts; never formatted (esdr_radio.c). */
+		sd_fs: sd_fs {
+			compatible = "zephyr,fstab,fatfs";
+			mount-point = "/SD:";
+			disk-access;
+		};
+	};
+};
+
+/*
+ * The buttons drive LVGL as a keypad: the joystick's up and down move the focus, left and right
+ * change the focused value, A and the joystick's press select, B goes back; HOME held 1.5 s goes
+ * to the launcher (CONFIG_APP_HOME_CODE).
+ */
+&lvgl_keypad {
+	input-codes = <INPUT_KEY_UP INPUT_KEY_DOWN INPUT_KEY_LEFT INPUT_KEY_RIGHT
+		       INPUT_KEY_ENTER INPUT_BTN_THUMBL INPUT_KEY_BACK INPUT_KEY_HOME>;
+	lvgl-codes = <LV_KEY_PREV LV_KEY_NEXT LV_KEY_LEFT LV_KEY_RIGHT
+		      LV_KEY_ENTER LV_KEY_ENTER LV_KEY_ESC LV_KEY_ESC>;
+};
+
+#include "partitions_mch2022.dtsi"
