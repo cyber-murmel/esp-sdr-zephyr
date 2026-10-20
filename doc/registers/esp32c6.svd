@@ -48,7 +48,7 @@
         1485-1507`): the 160 MHz CPU has 2 cycles per sample, too few to decimate the
         whole stream.
 
-        Leads for a continuous C6 receive below 80 MS/s, none tried:
+        Leads for a continuous C6 receive below 80 MS/s (the first one probed):
 
         - The modem diagnostic bus into PARL_IO. A third-party project, not re-checked
           here, reports for the ESP32-C5 that the dump's I/Q MSBs appear on MODEM_DIAG
@@ -62,6 +62,20 @@
           IO_MUX_MODEM_DIAG_EN_REG (0x600900bc); both below. Which selector
           value puts receive I/Q on the C6 bus is unknown. Sampling below 80 MHz
           decimates without filtering, so the analog low-pass has to be narrowed first.
+
+          Probed 2026-10-19 (`tmp/scratch/c6diag`, not in the tree: the dump engine
+          set up by a burst capture and left running circular, all lines enabled,
+          two lanes at a time looped back through GPIO5 and GPIO11 and read by the
+          CPU at some 20 MHz; GPIO5 is MTDI and needs its pad function set to GPIO
+          first). With a strong tone, selector values sel0 = 4n (sel1 = 0) drive lanes
+          16 to 22 and 26 to 29; their toggle rates fall from lane 16 (some 350 per
+          4096 reads) to lane 22 (some 30, the sign rate of the 100 kHz tone), like
+          the bits of a sampled value rather than copies of a sign (an earlier sweep
+          read them as sign-like). Odd values 3 + 4n drive lane 19 only. The bit
+          mapping is not resolved: two pads see only a pair at a time. A parallel
+          capture needs a free pad per lane, which the WHY2025 badge's C6 does not
+          have (its SDIO link takes GPIO18 to 23), and a XIAO ESP32C6 has the pads but
+          only USB-Serial-JTAG to send the samples on.
         - The 802.11p clock mode: `phy_11p_set(1, m)` writes MODEM_SYSCON_WIFI_BB_CFG_REG
           (0x600a981c) bits 4:2 = 4 for m = 0, else 5, presumably for 10 and 5 MHz
           channels, and clears AGC_R30_REG (0x600a7030) bit 5 (*decompile* C6 `libphy.a`
@@ -116,9 +130,15 @@
             <field>
               <name>CIRCULAR</name>
               <description>
-                Circular ring, in upstream's C6 ring code. Not used here.
-                Evidence: *upstream* `modules/lib/esp-sdr/main/common/ring_capture.c:104,
-                1499-1505`
+                Circular ring: set with DUMP_RUN and bit 14 (upstream's 0x24000), the engine
+                writes the owned block's first 16384 words over and over at 80 MS/s (205 us a
+                lap) until DUMP_RUN is cleared. The ring stays 16384 words whatever
+                DUMP_COUNT holds (16384, 32768 and 0 alike), so the block's upper 64 KiB is
+                never written; the CPUs cannot read the ring while it runs (see "SRAM bank
+                ownership"). The library's triggered snapshots use it.
+                Evidence: *measured* bench 2026-10-19 (sentinel fill, ring size and index);
+                *working* `lib/esp_sdr/src/esp_sdr_trig.c`; *upstream*
+                `modules/lib/esp-sdr/main/common/ring_capture.c:104, 1499-1505`
               </description>
               <bitRange>[17:17]</bitRange>
               <access>read-write</access>
@@ -137,10 +157,13 @@
           <name>MODE</name>
           <description>
             Dump source; the live write index in upstream's ring
-            Upstream's ring code reads the live write index from the low bits of this
-            register.
-            Evidence: *upstream* `modules/lib/esp-sdr/main/common/ring_capture.c:96, 1507`
-            (write index)
+            While DUMP_CIRCULAR runs, bits 14:0 are the write index: bits 13:0 the word the
+            engine writes next, one step per sample (80 MS/s), and bit 14 toggling every lap.
+            They read 0 once DUMP_RUN is cleared, so a stopped ring's position has to be read
+            just before the stop.
+            Evidence: *measured* bench 2026-10-19; *working* `lib/esp_sdr/src/esp_sdr_trig.c`;
+            *upstream* `modules/lib/esp-sdr/main/common/ring_capture.c:96, 1507` (write
+            index)
           </description>
           <addressOffset>0x8</addressOffset>
           <fields>
@@ -1127,6 +1150,141 @@
               <access>read-write</access>
             </field>
           </fields>
+        </register>
+        <register>
+          <name>IQE_CTRL0</name>
+          <description>
+            IQ estimator: mode
+            The estimator sums the 80 MHz receive input in hardware (ROM `rom_iq_est_enable`,
+            `dc_iq_est`); the library selects mode 1 for its paced receive and its trigger.
+            Modes 0 to 3 gave the same sums in FE_IQE_POW_REG and FE_IQE_POW_I_REG.
+            Evidence: *working* `lib/esp_sdr/src/esp_sdr_priv.h:118-120`,
+            `lib/esp_sdr/src/esp_sdr_paced.c`; *measured* bench 2026-10-19 (modes)
+          </description>
+          <addressOffset>0x470</addressOffset>
+          <fields>
+            <field>
+              <name>MODE</name>
+              <description>
+                Estimator mode; the library writes 1.
+              </description>
+              <bitRange>[27:26]</bitRange>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>IQE_CTRL1</name>
+          <description>
+            IQ estimator: source, input count, start and enable
+            A run sums IQE_COUNT + 1 inputs (at most 32768, 410 us), then stops; the sums
+            can be read while it counts. Restarting is enable, then enable with start.
+            Evidence: *working* `lib/esp_sdr/src/esp_sdr_priv.h:121-128`,
+            `lib/esp_sdr/src/esp_sdr_paced.c`
+          </description>
+          <addressOffset>0x474</addressOffset>
+          <fields>
+            <field>
+              <name>SRC</name>
+              <description>
+                Input select; the library writes 2 (the receive I/Q).
+              </description>
+              <bitRange>[20:19]</bitRange>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>COUNT</name>
+              <description>
+                Inputs to sum, minus one.
+              </description>
+              <bitRange>[16:2]</bitRange>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>START</name>
+              <description>
+                Set after IQE_EN to start a run.
+              </description>
+              <bitRange>[1:1]</bitRange>
+              <access>read-write</access>
+            </field>
+            <field>
+              <name>EN</name>
+              <description>
+                Enables the estimator.
+              </description>
+              <bitRange>[0:0]</bitRange>
+              <access>read-write</access>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>IQE_SUM_I</name>
+          <description>
+            IQ estimator: sum of I since the run started, times 64 (signed)
+            Differencing two readings gives the sum over the inputs between them: the paced
+            receive's boxcar decimator.
+            Evidence: *working* `lib/esp_sdr/src/esp_sdr_paced.c`
+          </description>
+          <addressOffset>0x488</addressOffset>
+          <access>read-only</access>
+        </register>
+        <register>
+          <name>IQE_SUM_Q</name>
+          <description>
+            IQ estimator: sum of Q since the run started, times 64 (signed)
+            Evidence: *working* `lib/esp_sdr/src/esp_sdr_paced.c`
+          </description>
+          <addressOffset>0x48c</addressOffset>
+          <access>read-only</access>
+        </register>
+        <register>
+          <name>IQE_POW</name>
+          <description>
+            IQ estimator: sum of I squared plus Q squared since the run started, over 8
+            Over the full 80 MHz input, the 10-bit values (the dump's bits 19:10 and 9:0)
+            squared: measured against the dump's own samples of the same inputs, 28 runs at
+            three frequencies and four gains, DC from 1 to 19 and noise to strong Wi-Fi, all
+            within 0.1 % once the count is matched by FE_IQE_SUM_I_REG. It keeps counting while
+            the dump engine runs, so it is a wideband power detector next to a capture: the
+            library's triggered snapshots difference it every 10 us and take the window's mean
+            out with FE_IQE_SUM_I_REG and FE_IQE_SUM_Q_REG. Whether it saturates or wraps past
+            2^32 is not known: the library restarts the run every 8000 inputs.
+            Evidence: *measured* bench 2026-10-20 (simultaneous dump and estimator);
+            *working* `lib/esp_sdr/src/esp_sdr_trig.c`
+          </description>
+          <addressOffset>0x490</addressOffset>
+          <access>read-only</access>
+        </register>
+        <register>
+          <name>IQE_POW_I</name>
+          <description>
+            IQ estimator: sum of I squared since the run started, over 4
+            Measured as FE_IQE_POW_REG.
+            Evidence: *measured* bench 2026-10-20
+          </description>
+          <addressOffset>0x494</addressOffset>
+          <access>read-only</access>
+        </register>
+        <register>
+          <name>IQE_POW_Q</name>
+          <description>
+            IQ estimator: sum of Q squared since the run started, over 4
+            Measured as FE_IQE_POW_REG.
+            Evidence: *measured* bench 2026-10-20
+          </description>
+          <addressOffset>0x498</addressOffset>
+          <access>read-only</access>
+        </register>
+        <register>
+          <name>IQE_CORR</name>
+          <description>
+            IQ estimator: sum of I times Q since the run started, over 4 (signed)
+            Measured as FE_IQE_POW_REG, with DCs and cross products of both signs.
+            Evidence: *measured* bench 2026-10-20
+          </description>
+          <addressOffset>0x49c</addressOffset>
+          <access>read-only</access>
         </register>
         <register>
           <name>FORCE</name>
