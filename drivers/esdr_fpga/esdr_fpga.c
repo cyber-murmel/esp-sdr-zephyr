@@ -1,0 +1,314 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * The esp-sdr gateware on the MCH2022 badge's iCE40UP5K: configuration through the RP2040
+ * (CRESET_B, CDONE) and the configuration SPI port, then command frames on the same port.
+ *
+ * Not lattice,ice40-fpga: that driver releases CRESET at init while SS is high, so the iCE40
+ * would boot as SPI master and drive SCK and SS against the ESP32; it also caps the clock at
+ * 25 MHz and loads from the system workqueue.
+ */
+
+#define DT_DRV_COMPAT esdr_mch2022_fpga
+
+#include <string.h>
+
+#include <zephyr/device.h>
+#include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/mfd/mch2022_rp2040.h>
+#include <zephyr/drivers/spi.h>
+#include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
+#include <zephyr/sys/util.h>
+
+#include <esp_sdr/esdr_fpga.h>
+
+LOG_MODULE_REGISTER(esdr_fpga, CONFIG_ESDR_FPGA_LOG_LEVEL);
+
+/* The ESP32 SPI DMA moves at most 4092 bytes per descriptor. */
+#define CHUNK 4092U
+
+/* Opcodes (gateware/esdr_fpga/proto.py). */
+#define OP_WRITE 0x01
+#define OP_READ  0x02
+
+/* RP2040 register 0x05: bit 0 releases CRESET_B, bit 1 loops the FPGA UART back. */
+#define FPGA_RUN BIT(0)
+
+struct esdr_fpga_config {
+	struct spi_dt_spec bus;
+	uint32_t read_frequency;
+	const struct device *mfd;
+	struct gpio_dt_spec irq;
+};
+
+struct esdr_fpga_data {
+	struct k_mutex lock;
+	/* The bus at the read clock (a second spi_config, same CS). */
+	struct spi_dt_spec bus_read;
+	bool loaded;
+	/* DMA-capable bounce buffer for images in flash or PSRAM. */
+	uint8_t bounce[CHUNK] __aligned(4);
+};
+
+static int creset(const struct device *dev, bool run)
+{
+	const struct esdr_fpga_config *cfg = dev->config;
+	uint8_t reg;
+	int ret;
+
+	ret = mfd_mch2022_rp2040_read(cfg->mfd, MCH2022_RP2040_FPGA, &reg, 1);
+	if (ret < 0) {
+		return ret;
+	}
+	reg = run ? (reg | FPGA_RUN) : (reg & ~FPGA_RUN);
+	return mfd_mch2022_rp2040_write(cfg->mfd, MCH2022_RP2040_FPGA, &reg, 1);
+}
+
+static int cdone(const struct device *dev)
+{
+	const struct esdr_fpga_config *cfg = dev->config;
+	uint8_t reg;
+	int ret;
+
+	ret = mfd_mch2022_rp2040_read(cfg->mfd, MCH2022_RP2040_INPUT1, &reg, 1);
+	if (ret < 0) {
+		return ret;
+	}
+	return !(reg & BIT(MCH2022_RP2040_FPGA_NOT_DONE));
+}
+
+/* SPI writes with the CS GPIO left alone: the configuration sequence drives it by hand. */
+static int raw_write(const struct spi_dt_spec *bus, const void *buf, size_t len)
+{
+	const struct spi_buf b = {.buf = (void *)buf, .len = len};
+	const struct spi_buf_set set = {.buffers = &b, .count = 1};
+
+	return spi_write_dt(bus, &set);
+}
+
+int esdr_fpga_load(const struct device *dev, const uint8_t *image, size_t size)
+{
+	const struct esdr_fpga_config *cfg = dev->config;
+	struct esdr_fpga_data *data = dev->data;
+	const struct gpio_dt_spec *cs = &cfg->bus.config.cs.gpio;
+	struct spi_dt_spec bus = cfg->bus;
+	int64_t start = k_uptime_get();
+	int ret;
+
+	bus.config.cs = (struct spi_cs_control){.cs_is_gpio = false};
+
+	k_mutex_lock(&data->lock, K_FOREVER);
+	data->loaded = false;
+
+	/* Reset with SS low: the iCE40 samples SS on release and becomes an SPI slave. */
+	ret = gpio_pin_configure_dt(cs, GPIO_OUTPUT_ACTIVE);
+	if (ret == 0) {
+		ret = creset(dev, false);
+	}
+	if (ret < 0) {
+		goto out;
+	}
+	ret = cdone(dev);
+	if (ret != 0) {
+		LOG_ERR("CDONE still high in reset (%d)", ret);
+		ret = ret < 0 ? ret : -EIO;
+		goto out;
+	}
+	ret = creset(dev, true);
+	if (ret < 0) {
+		goto out;
+	}
+	/* At least 1200 us for the iCE40 to clear its configuration memory. */
+	k_msleep(2);
+	gpio_pin_set_dt(cs, 0);
+
+	/* 8 clocks with SS high, then the image with SS low. */
+	memset(data->bounce, 0, 20);
+	ret = raw_write(&bus, data->bounce, 1);
+	if (ret < 0) {
+		goto out;
+	}
+	gpio_pin_set_dt(cs, 1);
+	for (size_t off = 0; off < size; off += CHUNK) {
+		size_t n = MIN(CHUNK, size - off);
+
+		memcpy(data->bounce, image + off, n);
+		ret = raw_write(&bus, data->bounce, n);
+		if (ret < 0) {
+			gpio_pin_set_dt(cs, 0);
+			goto out;
+		}
+	}
+	gpio_pin_set_dt(cs, 0);
+
+	/* At least 49 more clocks for the user I/Os to wake up; the stock firmware sends 160. */
+	memset(data->bounce, 0, 20);
+	ret = raw_write(&bus, data->bounce, 20);
+	if (ret < 0) {
+		goto out;
+	}
+
+	ret = cdone(dev);
+	if (ret != 1) {
+		LOG_ERR("CDONE low after %zu bytes (%d)", size, ret);
+		ret = ret < 0 ? ret : -EIO;
+		goto out;
+	}
+	data->loaded = true;
+	ret = 0;
+	LOG_INF("loaded %zu bytes in %lld ms", size, k_uptime_get() - start);
+out:
+	gpio_pin_configure_dt(cs, GPIO_OUTPUT_INACTIVE);
+	k_mutex_unlock(&data->lock);
+	return ret;
+}
+
+int esdr_fpga_off(const struct device *dev)
+{
+	struct esdr_fpga_data *data = dev->data;
+	int ret;
+
+	k_mutex_lock(&data->lock, K_FOREVER);
+	ret = creset(dev, false);
+	data->loaded = false;
+	k_mutex_unlock(&data->lock);
+	return ret;
+}
+
+bool esdr_fpga_loaded(const struct device *dev)
+{
+	struct esdr_fpga_data *data = dev->data;
+
+	return data->loaded;
+}
+
+int esdr_fpga_write(const struct device *dev, const void *head, size_t head_len,
+		    const void *payload, size_t len)
+{
+	const struct esdr_fpga_config *cfg = dev->config;
+	struct esdr_fpga_data *data = dev->data;
+	const struct spi_buf b[2] = {
+		{.buf = (void *)head, .len = head_len},
+		{.buf = (void *)payload, .len = len},
+	};
+	const struct spi_buf_set set = {.buffers = b, .count = 2};
+	int ret;
+
+	k_mutex_lock(&data->lock, K_FOREVER);
+	ret = spi_write_dt(&cfg->bus, &set);
+	k_mutex_unlock(&data->lock);
+	return ret;
+}
+
+static int read_frame(const struct device *dev, const void *head, size_t head_len, void *rx,
+		      size_t len)
+{
+	struct esdr_fpga_data *data = dev->data;
+	/*
+	 * Half duplex: the header goes out as a write-only chunk, then a read-only chunk clocks
+	 * len bytes in (no dummy bit below 26.7 MHz). Needs the SPI driver to leave the write
+	 * phase out of read-only chunks: the classic ESP32's DMA cannot do both in one.
+	 */
+	const struct spi_buf tx = {.buf = (void *)head, .len = head_len};
+	const struct spi_buf rxb[2] = {
+		{.buf = NULL, .len = head_len},
+		{.buf = rx, .len = len},
+	};
+	const struct spi_buf_set tx_set = {.buffers = &tx, .count = 1};
+	const struct spi_buf_set rx_set = {.buffers = rxb, .count = 2};
+	int ret;
+
+	if (len > CHUNK || len % 4 != 0 || (uintptr_t)rx % 4 != 0) {
+		return -EINVAL;
+	}
+	return spi_transceive_dt(&data->bus_read, &tx_set, &rx_set);
+}
+
+int esdr_fpga_read(const struct device *dev, const void *head, size_t head_len, void *rx,
+		   size_t len)
+{
+	struct esdr_fpga_data *data = dev->data;
+	int ret;
+
+	k_mutex_lock(&data->lock, K_FOREVER);
+	ret = read_frame(dev, head, head_len, rx, len);
+	k_mutex_unlock(&data->lock);
+	return ret;
+}
+
+int esdr_fpga_reg_write(const struct device *dev, uint16_t addr, const uint16_t *words,
+			size_t n)
+{
+	const uint8_t head[3] = {OP_WRITE, addr & 0xff, addr >> 8};
+
+	/* Words go out little-endian, as the ESP32 stores them. */
+	return esdr_fpga_write(dev, head, sizeof(head), words, n * 2);
+}
+
+int esdr_fpga_reg_read(const struct device *dev, uint16_t addr, uint16_t *words, size_t n)
+{
+	struct esdr_fpga_data *data = dev->data;
+	/* Whole 32-bit words for the DMA: read an even count into the bounce buffer. */
+	size_t even = ROUND_UP(n, 2);
+	size_t len = even * 2;
+	/* Two pad bytes give the gateware time to fetch the first word. */
+	const uint8_t head[7] = {OP_READ, addr & 0xff, addr >> 8, even & 0xff, even >> 8, 0, 0};
+	int ret;
+
+	if (len > CHUNK) {
+		return -EINVAL;
+	}
+	k_mutex_lock(&data->lock, K_FOREVER);
+	ret = read_frame(dev, head, sizeof(head), data->bounce, len);
+	if (ret == 0) {
+		memcpy(words, data->bounce, n * 2);
+	}
+	k_mutex_unlock(&data->lock);
+	return ret;
+}
+
+void esdr_fpga_set_read_frequency(const struct device *dev, uint32_t hz)
+{
+	struct esdr_fpga_data *data = dev->data;
+
+	k_mutex_lock(&data->lock, K_FOREVER);
+	data->bus_read.config.frequency = hz;
+	k_mutex_unlock(&data->lock);
+}
+
+static int esdr_fpga_init(const struct device *dev)
+{
+	const struct esdr_fpga_config *cfg = dev->config;
+	struct esdr_fpga_data *data = dev->data;
+
+	k_mutex_init(&data->lock);
+	data->bus_read = cfg->bus;
+	data->bus_read.config.frequency = cfg->read_frequency;
+	if (!spi_is_ready_dt(&cfg->bus) || !device_is_ready(cfg->mfd)) {
+		return -ENODEV;
+	}
+	if (cfg->irq.port != NULL) {
+		if (!gpio_is_ready_dt(&cfg->irq)) {
+			return -ENODEV;
+		}
+		gpio_pin_configure_dt(&cfg->irq, GPIO_INPUT);
+	}
+	return 0;
+}
+
+#define SPI_OP (SPI_OP_MODE_CONTROLLER | SPI_WORD_SET(8) | SPI_TRANSFER_MSB)
+
+#define ESDR_FPGA_DEFINE(inst)                                                                     \
+	static struct esdr_fpga_data esdr_fpga_data_##inst;                                        \
+	static const struct esdr_fpga_config esdr_fpga_config_##inst = {                           \
+		.bus = SPI_DT_SPEC_INST_GET(inst, SPI_OP),                                         \
+		.read_frequency = DT_INST_PROP(inst, read_frequency),                            \
+		.mfd = DEVICE_DT_GET(DT_INST_PHANDLE(inst, mfd)),                                  \
+		.irq = GPIO_DT_SPEC_INST_GET_OR(inst, irq_gpios, {0}),                             \
+	};                                                                                         \
+	DEVICE_DT_INST_DEFINE(inst, esdr_fpga_init, NULL, &esdr_fpga_data_##inst,                  \
+			      &esdr_fpga_config_##inst, POST_KERNEL,                               \
+			      CONFIG_ESDR_FPGA_INIT_PRIORITY, NULL);
+
+DT_INST_FOREACH_STATUS_OKAY(ESDR_FPGA_DEFINE)

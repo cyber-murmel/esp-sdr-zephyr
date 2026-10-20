@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+description: |
+  esp-sdr gateware (gateware/) on the MCH2022 badge's iCE40UP5K. The FPGA's configuration port
+  doubles as its SPI slave; the RP2040 holds CRESET_B and reports CDONE.
+
+compatible: "esdr,mch2022-fpga"
+
+include: spi-device.yaml
+
+properties:
+  mfd:
+    type: phandle
+    required: true
+    description: The badge's RP2040 (badgeteam,mch2022-rp2040).
+
+  irq-gpios:
+    type: phandle-array
+    description: FPGA interrupt, active low (ESP32 IO39).
+
+  read-frequency:
+    type: int
+    default: 20000000
+    description: |
+      SPI clock for reads. MISO comes through the GPIO matrix; at 40 MHz the HAL inserts a
+      timing dummy bit, below 26.7 MHz it does not.

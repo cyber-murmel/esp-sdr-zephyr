@@ -8,6 +8,8 @@ build:
   settings:
     # boards/waveshare/esp32c5_zero
     board_root: .
+    # dts/bindings: the esdr devices (drivers/)
+    dts_root: .
 samples:
   - apps
 blobs:
