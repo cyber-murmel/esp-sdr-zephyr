@@ -1,0 +1,19 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * MCH2022 badge: the protocol on UART0 at 2 Mbaud, which the RP2040 bridges to its first USB
+ * serial port; the host sets the same rate on the port (the SoapySDR module's baud=2000000).
+ * No console: the ROM's boot messages come at 115200 baud and the host skips them.
+ */
+
+/ {
+	chosen {
+		/delete-property/ zephyr,console;
+		/delete-property/ zephyr,shell-uart;
+		esdr,link-uart = &uart0;
+	};
+};
+
+&uart0 {
+	current-speed = <2000000>;
+};

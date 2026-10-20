@@ -47,6 +47,24 @@ Other links
   2 MS/s; the digital gain is a power of 2 there). 2.5 MS/s leaves 3 % of the samples late,
   3.2 MS/s does not fit. Transmit stays at 250 kS/s.
 
+The MCH2022 badge
+=================
+
+The badge's classic ESP32 (``mch2022/esp32/procpu``) has no paced receiver: it streams 16 MS/s
+bursts decimated by the library (``esp_sdr_rx_capture_decimated()``) at 2 MS/s to 125 kS/s,
+each about 1 ms contiguous; the gap to the next burst moves the block index and flags the block
+``ESDR_BLK_GAP``, as many bursts as the link carries (about 46 per second: 46 kS/s of samples
+on average at 2 MS/s). Bursts at the native rates (``ESDR_REQ_CAPTURE_BURST``) are as on the
+others; no transmit. The link is UART0 at 2 Mbaud, which the badge's RP2040 bridges to its first
+USB serial port without flow control (3 and 4 Mbaud did not answer); the host sets the line
+rate: ``baud=2000000`` in the SoapySDR device string, ``--baud 2000000`` for
+``tools/esdr_serial.py``. No console.
+
+The RP2040 resets the ESP32 into its download mode for esptool and keeps IO0 low until a reset
+into the application, which the RTS/DTR sequences do not always give; its WebUSB request 0x23
+does (``wValue`` 0: application), e.g. with pyusb
+``usb.core.find(idVendor=0x16D0, idProduct=0x0F9A).ctrl_transfer(0x21, 0x23, 0, 4, None)``.
+
 Triggered snapshots
 ===================
 
@@ -109,6 +127,9 @@ items.
 
    SoapySDRUtil --probe="driver=esdr,port=/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_<mac>-if00"
    gqrx        # device string: soapy=0,driver=esdr,port=/dev/serial/by-id/...
+
+Behind a USB bridge add the line rate, as for the MCH2022 badge:
+``driver=esdr,port=/dev/serial/by-id/usb-Badge.team_MCH2022_badge_<serial>-if00,baud=2000000``.
 
 Statistics
 **********

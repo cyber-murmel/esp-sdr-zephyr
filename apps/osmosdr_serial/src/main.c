@@ -3,10 +3,12 @@
  *
  * The osmosdr protocol over a serial link (esdr_proto.h, serial transport):
  * USB-Serial-JTAG (ESP32-C6, ESP32-C5) or a UART to another chip (the WHY2025
- * badge), driven through its FIFOs. One thread: idle, it answers request
- * frames; streaming, it runs the CPU-paced receiver or transmitter
- * (esp_sdr_paced.h) with interrupts locked and moves the bytes between
- * samples.
+ * badge) or to a USB bridge (the MCH2022 badge's RP2040), driven through its
+ * FIFOs. One thread: idle, it answers request frames; streaming, it runs the
+ * CPU-paced receiver or transmitter (esp_sdr_paced.h) with interrupts locked
+ * and moves the bytes between samples. A chip without the paced receiver (the
+ * classic ESP32) streams decimated bursts instead, with gaps, and does not
+ * transmit.
  */
 
 #include <errno.h>
@@ -20,10 +22,14 @@
 #include <zephyr/sys/util.h>
 
 #include <hal/uart_ll.h>
+#if !defined(CONFIG_APP_LINK_SDIO) && !DT_HAS_CHOSEN(esdr_link_uart)
 #include <soc/usb_serial_jtag_reg.h>
+#endif
 
 #include <esp_sdr/esp_sdr.h>
+#if defined(CONFIG_ESP_SDR_PACED)
 #include <esp_sdr/esp_sdr_paced.h>
+#endif
 #if defined(CONFIG_APP_RX_DIAG)
 #include <esp_sdr/esp_sdr_diag.h>
 #endif
@@ -49,6 +55,14 @@
 #define LINK_RATE_MAX_HZ 2000000U
 #define LINK_RATE_COUNT 8U
 #define OUT_BLOCKS 8U
+#elif !defined(CONFIG_ESP_SDR_PACED)
+/*
+ * Without the paced receiver: 16 MS/s bursts decimated by 8 to 128 (esp_sdr_rx.h), each about
+ * 1 ms contiguous, as many as the link carries; the gaps between them move the block index.
+ */
+#define BURST_IN_HZ 16000000U
+#define LINK_RATE_MAX_HZ 2000000U
+#define LINK_RATE_COUNT 5U
 #else
 #define LINK_RATE_MAX_HZ RATE_MAX_HZ
 #define LINK_RATE_COUNT RATE_COUNT
@@ -303,6 +317,7 @@ static void out_service(uint32_t max)
 	}
 }
 
+#if defined(CONFIG_ESP_SDR_PACED)
 /*
  * Write queued bytes until @p due is near. Each byte needs room first: a
  * write to a full FIFO stalls the CPU until the host takes a packet.
@@ -323,6 +338,7 @@ static void out_until(uint32_t due)
 		}
 	}
 }
+#endif
 
 /* Send a short buffer now (idle, or after a stream stopped), giving up after 100 ms. */
 static void write_now(const uint8_t *p, size_t n)
@@ -404,6 +420,7 @@ static void in_service(uint32_t max)
 	}
 }
 
+#if defined(CONFIG_ESP_SDR_PACED)
 /* Read from the host until @p due is near (or nothing waits, or the transmit ring is full). */
 static void in_until(uint32_t due)
 {
@@ -423,6 +440,17 @@ static void in_until(uint32_t due)
 		req_feed(link_getc());
 	}
 }
+#endif
+
+/* Transmit power steps; none without the paced transmitter. */
+static unsigned int tx_power_max(void)
+{
+#if defined(CONFIG_ESP_SDR_PACED)
+	return esp_sdr_tx_paced_power_max();
+#else
+	return 0U;
+#endif
+}
 
 static uint32_t rate_round(uint32_t hz)
 {
@@ -441,7 +469,8 @@ static unsigned int dgain_db(void)
 	if (want.dgain != ESDR_DGAIN_DEFAULT) {
 		return want.dgain;
 	}
-	return want.bits == 8U ? 24U : 0U;
+	/* The paced sums of a few inputs sit low in 8-bit items; the bursts' filter fills int16. */
+	return want.bits == 8U && IS_ENABLED(CONFIG_ESP_SDR_PACED) ? 24U : 0U;
 }
 
 /* Frequency, correction, gain and filter into the radio. */
@@ -659,7 +688,8 @@ static int handle_out(uint8_t r, uint16_t value, const uint8_t *data, size_t len
 		if (value == (ESDR_MODE_OFF | ESDR_MODE_F_DRAIN)) {
 			value = ESDR_MODE_OFF;
 		}
-		if (value != ESDR_MODE_OFF && value != ESDR_MODE_RX && value != ESDR_MODE_TX &&
+		if (value != ESDR_MODE_OFF && value != ESDR_MODE_RX &&
+		    !(IS_ENABLED(CONFIG_ESP_SDR_PACED) && value == ESDR_MODE_TX) &&
 		    !(IS_ENABLED(CONFIG_ESP_SDR_TRIG) && value == ESDR_MODE_TRIGGER)) {
 			return -ENOTSUP;
 		}
@@ -694,7 +724,7 @@ static int handle_out(uint8_t r, uint16_t value, const uint8_t *data, size_t len
 		radio_dirty = true;
 		return 0;
 	case ESDR_REQ_SET_TX_GAIN:
-		if (value > esp_sdr_tx_paced_power_max()) {
+		if (value > tx_power_max()) {
 			return -EINVAL;
 		}
 		want.tx_gain = value;
@@ -746,7 +776,7 @@ static int handle_in(uint8_t r, uint8_t *buf, size_t max)
 			.rx_rate_max_hz = LINK_RATE_MAX_HZ,
 			.rx_rate_count = LINK_RATE_COUNT,
 			.rx_gain_max = (uint16_t)esp_sdr_rx_gain_max(),
-			.tx_gain_max = (uint16_t)esp_sdr_tx_paced_power_max(),
+			.tx_gain_max = (uint16_t)tx_power_max(),
 			.block_bytes = ESDR_BLOCK_BYTES,
 			.full_scale16 = 32767,
 		};
@@ -807,6 +837,7 @@ static void req_answer(void)
 	req.got = 0;
 }
 
+#if defined(CONFIG_ESP_SDR_PACED)
 /* Scale factor from a sum of W inputs (each up to 512) to int16, with the digital gain, Q16. */
 static uint32_t rx_scale(void)
 {
@@ -829,6 +860,7 @@ static void pacing_stats(void)
 	stats.ring_errors += ps.late;
 	stats.ring_late_max = MAX(stats.ring_late_max, ps.late_max);
 }
+#endif
 
 static void out_commit(void)
 {
@@ -1019,6 +1051,53 @@ static void run_rx_fast(void)
 }
 #endif
 
+#if !defined(CONFIG_ESP_SDR_PACED)
+/*
+ * Decimated bursts: each one's samples into the blocks, then the link takes them; the next
+ * burst starts once the blocks are out, its gap since the last one moves the block index and
+ * flags the block. Their CIC's full scale is int16's; the digital gain shifts it up.
+ */
+static void run_rx(void)
+{
+	static struct esp_sdr_iq16 iq[ESP_SDR_SAMPLES_MAX / (BURST_IN_HZ / LINK_RATE_MAX_HZ)];
+	unsigned int m = BURST_IN_HZ / want.rate_hz;
+	int32_t g = 1 << (dgain_db() / 6U);
+	uint64_t next_ns = 0;
+	bool first = true;
+
+	rx_begin();
+	while (!req.ready) {
+		uint64_t first_ns;
+		size_t n;
+
+		if (esp_sdr_rx_capture_decimated(ESP_SDR_RATE_16MSPS, ESP_SDR_SAMPLES_MAX, m, iq,
+						 ARRAY_SIZE(iq), &n, &first_ns) != 0) {
+			want.mode = ESDR_MODE_OFF;
+			break;
+		}
+		if (!first && first_ns > next_ns) {
+			/* Close the block in progress, move on by the gap, flag it. */
+			if (out.fill_n != 0U) {
+				out_commit();
+			}
+			out.index += (first_ns - next_ns) * want.rate_hz / NSEC_PER_SEC;
+			out.next_flags |= ESDR_BLK_GAP;
+		}
+		first = false;
+		next_ns = first_ns + (uint64_t)n * NSEC_PER_SEC / want.rate_hz;
+		for (size_t j = 0; j < n; j++) {
+			rx_emit(CLAMP(iq[j].i * g, -32767, 32767), CLAMP(iq[j].q * g, -32767, 32767));
+		}
+		while (!req.ready && out.sent != out.committed) {
+			out_service(64);
+			in_service(16);
+		}
+		in_service(16);
+	}
+	stats.ring_runs++;
+	rx_end();
+}
+#else
 static void run_rx(void)
 {
 	uint32_t k = rx_scale();
@@ -1159,6 +1238,7 @@ static void run_tx(void)
 	stats.tx_samples += ps.samples - ps.events;
 	stats.tx_underruns += ps.events;
 }
+#endif /* CONFIG_ESP_SDR_PACED */
 
 int main(void)
 {
@@ -1178,8 +1258,10 @@ int main(void)
 		}
 		if (want.mode == ESDR_MODE_RX) {
 			run_rx();
+#if defined(CONFIG_ESP_SDR_PACED)
 		} else if (want.mode == ESDR_MODE_TX) {
 			run_tx();
+#endif
 #if defined(CONFIG_ESP_SDR_TRIG)
 		} else if (want.mode == ESDR_MODE_TRIGGER) {
 			run_trig();
@@ -1188,7 +1270,8 @@ int main(void)
 			uint32_t got = req.got + req.tx_left;
 
 			in_service(64);
-			if (!req.ready) {
+			/* Sleep only while nothing arrives: a link without flow control overruns. */
+			if (!req.ready && !link_readable()) {
 				k_msleep(1);
 				/* A frame the host abandoned halfway (it crashed): drop it after 200 ms. */
 				if (got != 0U && got == req.got + req.tx_left) {
