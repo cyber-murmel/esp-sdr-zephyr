@@ -30,7 +30,7 @@ manifest:
     # communicator-badge, why2025-badge).
     - name: zephyr
       remote: cyber-murmel
-      revision: 6d85083fdefcbd3a3021b676dc11a47dbb44367f # why2025-badge
+      revision: f520ac1e277450f32c7a20ea225b7aad1b4106c9 # why2025-badge
       path: modules/zephyr
       import:
         name-allowlist:
@@ -39,11 +39,12 @@ manifest:
           - mcuboot
           - mbedtls
           - tf-psa-crypto
-    # The HAL companion of the SMP port; listed here so it overrides the
-    # revision Zephyr's own manifest pins.
+    # The HAL companion of the SMP port, with the ESP32-P4 flash erase fix
+    # (the line levels kept when SPI1's control register is cleared); listed
+    # here so it overrides the revision Zephyr's own manifest pins.
     - name: hal_espressif
       remote: cyber-murmel
-      revision: 54d64a1289e8d0cddccef6359a385ffb4c68b213 # esp-sdr branch
+      revision: 35acb08e843f46d5fa9541f286aa56edb1b21eac # esp-sdr branch
       path: modules/hal/espressif
       groups:
         - hal
