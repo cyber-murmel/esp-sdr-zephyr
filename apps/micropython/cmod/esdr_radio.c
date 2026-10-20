@@ -5,8 +5,8 @@
  * ESP32-P4 of the WHY2025 badge the badge's ESP32-C6, running apps/osmosdr_serial behind a link
  * (esdr_remote.c), CPU-paced: no offset tuning, 8-bit samples; on the classic ESP32 of the
  * MCH2022 badge the chip's own radio (esdr_local.c), which captures bursts only: its stream
- * rates are decimated bursts with gaps between them, and it does not transmit (no tx_*, no
- * trig_*: the launcher hides the apps that need them).
+ * rates are decimated bursts with gaps between them, its snapshots come from bursts, and it
+ * does not transmit (no tx_*: the launcher hides the apps that need them).
  *
  *   init()                     opens the link, reads the radio's description
  *   tune(hz, offset=True)      LO at hz (offset is ignored); returns the centre tuned
@@ -357,7 +357,6 @@ static mp_obj_t esdr_rx_stats_fn(void)
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(esdr_rx_stats_obj, esdr_rx_stats_fn);
 
-#if RADIO_LINKED
 /* ---- triggered snapshots ---- */
 
 static mp_obj_t esdr_trig_start_fn(size_t n_args, const mp_obj_t *pos, mp_map_t *kw)
@@ -421,6 +420,8 @@ static mp_obj_t esdr_trig_stats_fn(void)
 	return d;
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(esdr_trig_stats_obj, esdr_trig_stats_fn);
+
+#if RADIO_LINKED
 
 /* ---- transmit ---- */
 
@@ -727,14 +728,12 @@ static const mp_rom_map_elem_t esdr_globals_table[] = {
 	{MP_ROM_QSTR(MP_QSTR_channelize), MP_ROM_PTR(&esdr_channelize_obj)},
 	{MP_ROM_QSTR(MP_QSTR_fb_image), MP_ROM_PTR(&esdr_fb_image_obj)},
 	{MP_ROM_QSTR(MP_QSTR_stretch), MP_ROM_PTR(&esdr_stretch_obj)},
-#if RADIO_LINKED
 	{MP_ROM_QSTR(MP_QSTR_trig_start), MP_ROM_PTR(&esdr_trig_start_obj)},
 	{MP_ROM_QSTR(MP_QSTR_trig_stop), MP_ROM_PTR(&esdr_trig_stop_obj)},
 	{MP_ROM_QSTR(MP_QSTR_trig_get), MP_ROM_PTR(&esdr_trig_get_obj)},
 	{MP_ROM_QSTR(MP_QSTR_trig_stats), MP_ROM_PTR(&esdr_trig_stats_obj)},
 	{MP_ROM_QSTR(MP_QSTR_TRIG_SAMPLES), MP_ROM_INT(ESDR_TRIG_SAMPLES)},
 	{MP_ROM_QSTR(MP_QSTR_TRIG_RATE), MP_ROM_INT(ESDR_TRIG_RATE_HZ)},
-#endif
 	{MP_ROM_QSTR(MP_QSTR_iq_cols), MP_ROM_PTR(&esdr_iq_cols_obj)},
 	{MP_ROM_QSTR(MP_QSTR_fb_trace), MP_ROM_PTR(&esdr_fb_trace_obj)},
 	{MP_ROM_QSTR(MP_QSTR_fb_wf_row), MP_ROM_PTR(&esdr_fb_wf_row_obj)},

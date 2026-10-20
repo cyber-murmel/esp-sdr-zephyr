@@ -6,12 +6,16 @@
  * 16 MS/s) come in bursts as captured; the stream rates (2 MS/s to 125 kS/s) are 16 MS/s bursts
  * through the library's CIC decimator, one after another, contiguous within a burst (about
  * 1 ms) with a gap between bursts that rx_stats counts: good for displays, not for
- * demodulators. Requests take the subset of the osmosdr protocol (esdr_proto.h) that
+ * demodulators. Triggered snapshots come from 80 MS/s bursts taken every few milliseconds: one
+ * whose power, in windows of 64 samples, rises past the threshold over the quiet power (the
+ * lower quartile of the windows, averaged) is a snapshot, the trigger at that window; there is
+ * nothing after a burst's end, so post is not honoured. Requests take the subset of the osmosdr protocol (esdr_proto.h) that
  * esdr_radio.c sends. Samples are int16 at full scale 16384, as the S3's ring gives them.
  * Plain Zephyr code, built as an app source.
  */
 
 #include <errno.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <zephyr/kernel.h>
@@ -77,6 +81,76 @@ static struct esp_sdr_iq16 burst[ESP_SDR_SAMPLES_MAX] __attribute__((section(".e
 
 static K_SEM_DEFINE(rx_go, 0, 1);
 static volatile bool worker_busy;
+
+/* ---- triggered snapshots ---- */
+
+#define TRIG_WIN       64U
+#define TRIG_WINS      (ESDR_TRIG_SAMPLES / TRIG_WIN)
+/* Between bursts: MicroPython's turn (a burst and its windows take about 1 ms). */
+#define TRIG_PERIOD_MS 5
+
+static struct {
+	volatile bool on;
+	uint32_t ratio_x16;
+	/* Quiet window power, 16 times its average (0: not learnt yet). */
+	uint32_t base16;
+	uint32_t seq, trig;
+	struct esdr_remote_trig_stats st;
+} trg;
+
+static int8_t trg_snap[2U * ESDR_TRIG_SAMPLES] __attribute__((section(".ext_ram.bss")));
+static K_MUTEX_DEFINE(trg_lock);
+
+static int cmp_u32(const void *a, const void *b)
+{
+	uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
+
+	return (x > y) - (x < y);
+}
+
+/* One 80 MS/s burst; a snapshot if a window passes the threshold. */
+static void trig_burst(void)
+{
+	static uint32_t pw[TRIG_WINS], sorted[TRIG_WINS];
+	struct esp_sdr_rx_burst b;
+	uint32_t base, w;
+
+	if (esp_sdr_rx_capture(ESP_SDR_RATE_80MSPS, ESDR_TRIG_SAMPLES, &b) != 0) {
+		trg.st.broken++;
+		return;
+	}
+	for (w = 0; w < TRIG_WINS; w++) {
+		uint32_t sum = 0;
+
+		for (uint32_t k = w * TRIG_WIN; k < (w + 1U) * TRIG_WIN; k++) {
+			int32_t i = esp_sdr_rx_i(b.words[k]), q = esp_sdr_rx_q(b.words[k]);
+
+			sum += (uint32_t)(i * i + q * q);
+		}
+		pw[w] = sum;
+	}
+	memcpy(sorted, pw, sizeof(pw));
+	qsort(sorted, TRIG_WINS, sizeof(sorted[0]), cmp_u32);
+	base = MAX(sorted[TRIG_WINS / 4U], 1U);
+	trg.base16 = trg.base16 == 0U ? 16U * base : trg.base16 - trg.base16 / 16U + base;
+	for (w = 0; w < TRIG_WINS; w++) {
+		if ((uint64_t)pw[w] * 256U > (uint64_t)trg.ratio_x16 * trg.base16) {
+			break;
+		}
+	}
+	if (w == TRIG_WINS) {
+		return;
+	}
+	k_mutex_lock(&trg_lock, K_FOREVER);
+	for (uint32_t k = 0; k < ESDR_TRIG_SAMPLES; k++) {
+		trg_snap[2U * k] = (int8_t)(esp_sdr_rx_i(b.words[k]) >> 2);
+		trg_snap[2U * k + 1U] = (int8_t)(esp_sdr_rx_q(b.words[k]) >> 2);
+	}
+	trg.trig = w * TRIG_WIN;
+	trg.seq++;
+	trg.st.snapshots++;
+	k_mutex_unlock(&trg_lock);
+}
 
 /* ---- requests ---- */
 
@@ -252,6 +326,10 @@ static void worker_fn(void *a, void *b, void *c)
 	ARG_UNUSED(c);
 	for (;;) {
 		(void)k_sem_take(&rx_go, K_FOREVER);
+		while (trg.on) {
+			trig_burst();
+			k_sleep(K_MSEC(TRIG_PERIOD_MS));
+		}
 		while (rx.active) {
 			/* A display-only run: a burst per monitor read, no more. */
 			if (rx.buf == NULL && rx.count == 0U && !mon_read) {
@@ -295,6 +373,7 @@ uint64_t esdr_rx_latest(int16_t *dst, size_t n)
 static int rx_start(int native, unsigned int decim, int16_t *buf, size_t cap, uint64_t count,
 		    bool wrap)
 {
+	esdr_remote_trig_stop();
 	esdr_remote_rx_stop();
 	k_mutex_lock(&rx_lock, K_FOREVER);
 	rx.buf = buf;
@@ -365,6 +444,49 @@ void esdr_remote_rx_stats(struct esdr_remote_rx_stats *st)
 	*st = rx.st;
 }
 
+int esdr_remote_trig_start(uint16_t ratio_x16, uint32_t post)
+{
+	ARG_UNUSED(post);
+	esdr_remote_rx_stop();
+	esdr_remote_trig_stop();
+	k_mutex_lock(&trg_lock, K_FOREVER);
+	trg.ratio_x16 = ratio_x16;
+	trg.base16 = 0;
+	k_mutex_unlock(&trg_lock);
+	worker_busy = true;
+	trg.on = true;
+	k_sem_give(&rx_go);
+	return 0;
+}
+
+void esdr_remote_trig_stop(void)
+{
+	trg.on = false;
+	while (worker_busy) {
+		k_msleep(1);
+	}
+}
+
+bool esdr_remote_trig_get(int8_t *dst, uint32_t after, uint32_t *seq, uint32_t *trig)
+{
+	bool fresh;
+
+	k_mutex_lock(&trg_lock, K_FOREVER);
+	fresh = trg.seq != 0U && trg.seq != after;
+	if (fresh) {
+		memcpy(dst, trg_snap, sizeof(trg_snap));
+		*seq = trg.seq;
+		*trig = trg.trig;
+	}
+	k_mutex_unlock(&trg_lock);
+	return fresh;
+}
+
+void esdr_remote_trig_stats(struct esdr_remote_trig_stats *st)
+{
+	*st = trg.st;
+}
+
 /* ---- setup ---- */
 
 int esdr_remote_init(const struct esdr_info **out)
@@ -404,6 +526,7 @@ int esdr_remote_init(const struct esdr_info **out)
 
 void esdr_remote_reset(void)
 {
+	esdr_remote_trig_stop();
 	esdr_remote_rx_stop();
 	(void)esp_sdr_reset_settings();
 	set.rx_gain = ESDR_GAIN_AUTO;

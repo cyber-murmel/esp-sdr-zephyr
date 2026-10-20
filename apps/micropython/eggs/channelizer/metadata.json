@@ -1,8 +1,11 @@
 {
   "name": "Channelizer",
-  "description": "80 MHz around the knob's frequency in 64 channels of 1.25 MHz, from 205 us snapshots the WHY2025 badge's radio takes when a burst rises past the threshold: channel power, occupancy over time, and the newest burst in time and frequency.",
+  "description": "80 MHz around the knob's frequency in 64 channels of 1.25 MHz, from 205 us snapshots the radio takes when a burst rises past the threshold (the WHY2025 badge's C6 watches continuously, the MCH2022 badge's ESP32 checks a burst every few milliseconds): channel power, occupancy over time, and the newest burst in time and frequency.",
   "category": "receive",
   "author": "esp-sdr",
   "revision": 1,
-  "needs": ["trig_start", "channelize"]
+  "needs": [
+    "trig_start",
+    "channelize"
+  ]
 }
