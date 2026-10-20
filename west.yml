@@ -25,12 +25,13 @@ manifest:
     # changes apps/multiapp needs (doc/multiapp.md, "Zephyr changes"), LVGL
     # allocating from the MicroPython heap (apps/micropython), the options
     # that make the USB stack and DWC2 threads preemptible (apps/chancap) and
-    # the Hackaday Communicator and WHY2025 badges with their NV3007, ST7703
-    # and TCA8418 drivers and an SX126x without BUSY and DIO1 lines (branches
-    # communicator-badge, why2025-badge).
+    # the Hackaday Communicator, WHY2025 and MCH2022 badges with their NV3007,
+    # ST7703, TCA8418 and RP2040 coprocessor drivers, an SX126x without BUSY
+    # and DIO1 lines and the ESP32 SPI timing fixes (branches
+    # communicator-badge, why2025-badge, mch2022-badge).
     - name: zephyr
       remote: cyber-murmel
-      revision: f520ac1e277450f32c7a20ea225b7aad1b4106c9 # why2025-badge
+      revision: 243ebb1f92f9e326fb42026772313fe0c09722f6 # mch2022-badge
       path: modules/zephyr
       import:
         name-allowlist:
