@@ -18,8 +18,7 @@ from amaranth.lib.wiring import In, Out
 
 from .dbi import MADCTL
 
-__all__ = ["Renderer", "PAL_BG", "PAL_TRACE", "PAL_FILL", "PAL_GRID", "PAL_CENTER",
-           "SP_ON", "SP_FILL", "SP_HGRID", "SP_VGRID", "SP_CENTER"]
+__all__ = ["Renderer", "PAL_BG", "PAL_TRACE", "PAL_CENTER", "SP_ON", "SP_CENTER"]
 
 CASET = 0x2A
 PASET = 0x2B
@@ -27,16 +26,11 @@ RAMWR = 0x2C
 
 PAL_BG = 248
 PAL_TRACE = 249
-PAL_FILL = 250
-PAL_GRID = 251
-PAL_CENTER = 252
+PAL_CENTER = 250
 
 # SP_FLAGS
 SP_ON = 1 << 0
-SP_FILL = 1 << 1
-SP_HGRID = 1 << 2
-SP_VGRID = 1 << 3
-SP_CENTER = 1 << 4
+SP_CENTER = 1 << 1
 
 
 class Renderer(wiring.Component):
@@ -63,10 +57,7 @@ class Renderer(wiring.Component):
     sp_col0: In(9)
     sp_w: In(9)
     sp_h: In(9)
-    sp_flags: In(8)
-    sp_grid_y0: In(9)
-    sp_grid_dy: In(9)
-    sp_grid_dx: In(9)
+    sp_flags: In(2)
 
     # Waterfall ring read port (Waterfall.r_*).
     wf_addr: Out(16)
@@ -158,8 +149,6 @@ class Renderer(wiring.Component):
         slot = Signal(16)
         v = Signal(8)
         vp = Signal(8)
-        gy = Signal(9)
-        gx = Signal(9)
         timer = Signal(24)
 
         page0 = Mux(region, self.sp_page0, self.wf_page0)
@@ -213,7 +202,7 @@ class Renderer(wiring.Component):
                     m.d.sync += [region.eq(0), todo[0].eq(0)]
                     m.next = "ROW"
                 with m.Elif(todo[1]):
-                    m.d.sync += [region.eq(1), todo[1].eq(0), gx.eq(0)]
+                    m.d.sync += [region.eq(1), todo[1].eq(0)]
                     m.next = "ROW"
                 with m.Else():
                     m.next = "RELEASE"
@@ -228,11 +217,7 @@ class Renderer(wiring.Component):
                         (0, PASET), (1, page[8:]), (1, page[:8]), (1, page[8:]), (1, page[:8]),
                         (0, RAMWR),
                     ])):
-                        m.d.sync += [
-                            y.eq(0),
-                            slot.eq(head),
-                            gy.eq(self.sp_grid_y0),
-                        ]
+                        m.d.sync += [y.eq(0), slot.eq(head)]
                         with m.If(region):
                             m.next = "SP_COL"
                         with m.Else():
@@ -264,29 +249,19 @@ class Renderer(wiring.Component):
             with m.State("SP_PIX"):
                 lo = Mux(vp < v, vp, v)
                 hi = Mux(vp < v, v, vp)
-                f = self.sp_flags
                 pix = Signal(8)
                 with m.If((y >= lo) & (y <= hi)):
                     m.d.comb += pix.eq(PAL_TRACE)
-                with m.Elif(f[1] & (y > v)):
-                    m.d.comb += pix.eq(PAL_FILL)
-                with m.Elif(f[4] & (x == (width >> 1))):
+                with m.Elif(self.sp_flags[1] & (x == (width >> 1))):
                     m.d.comb += pix.eq(PAL_CENTER)
-                with m.Elif((f[2] & (gy == 0)) | (f[3] & (gx == 0))):
-                    m.d.comb += pix.eq(PAL_GRID)
                 with m.Else():
                     m.d.comb += pix.eq(PAL_BG)
                 with m.If(emit(Cat(pix, Const(1, 1), Const(1, 1)))):
-                    m.d.sync += gy.eq(Mux(gy == 0, self.sp_grid_dy - 1, gy - 1))
                     m.next = "PIXEL_NEXT"
 
             with m.State("PIXEL_NEXT"):
                 with m.If(y + 1 == height):
-                    m.d.sync += [
-                        x.eq(x + 1),
-                        base.eq(base + self.wf_ring),
-                        gx.eq(Mux(gx == 0, self.sp_grid_dx - 1, gx - 1)),
-                    ]
+                    m.d.sync += [x.eq(x + 1), base.eq(base + self.wf_ring)]
                     with m.If(x + 1 == width):
                         m.next = "NEXT_REGION"
                     with m.Else():

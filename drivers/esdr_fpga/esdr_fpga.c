@@ -339,10 +339,7 @@ int esdr_fpga_wf_line(const struct device *dev, const uint8_t *idx, size_t n)
 int esdr_fpga_spectrum(const struct device *dev, uint16_t x, uint16_t y, uint16_t w,
 		       uint16_t h, const struct esdr_fpga_trace *t)
 {
-	const uint16_t regs[] = {
-		x, y, w, h, w && h ? t->flags | ESDR_FPGA_SP_ON : 0,
-		t->grid_y0, MAX(t->grid_dy, 1), MAX(t->grid_dx, 1),
-	};
+	const uint16_t regs[] = {x, y, w, h, w && h ? t->flags | ESDR_FPGA_SP_ON : 0};
 
 	if (w > 320) {
 		return -EINVAL;

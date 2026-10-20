@@ -15,6 +15,7 @@
 
 #include <esp_sdr/esdr_fpga.h>
 #include <esp_sdr/esdr_fpga_regs.h>
+#include <esp_sdr/esp_sdr_dsp.h>
 
 static const struct device *const fpga = DEVICE_DT_GET(DT_NODELABEL(fpga));
 
@@ -128,8 +129,6 @@ static void palette(uint16_t *pal)
 	}
 	pal[ESDR_FPGA_PAL_BG] = rgb565(0, 0, 0);
 	pal[ESDR_FPGA_PAL_TRACE] = rgb565(255, 255, 0);
-	pal[ESDR_FPGA_PAL_FILL] = rgb565(0, 40, 90);
-	pal[ESDR_FPGA_PAL_GRID] = rgb565(60, 60, 60);
 	pal[ESDR_FPGA_PAL_CENTER] = rgb565(200, 0, 0);
 	for (int i = ESDR_FPGA_PAL_CENTER + 1; i < 256; i++) {
 		pal[i] = rgb565(255, 0, 255);
@@ -148,11 +147,7 @@ static int cmd_gfx(const struct shell *sh, size_t argc, char **argv)
 	const struct device *disp = DEVICE_DT_GET(DT_CHOSEN(zephyr_display));
 	uint32_t secs = argc > 1 ? strtoul(argv[1], NULL, 0) : 10;
 	bool te = argc > 2 ? strtoul(argv[2], NULL, 0) : 1;
-	const struct esdr_fpga_trace trace = {
-		.flags = ESDR_FPGA_SP_FILL | ESDR_FPGA_SP_HGRID | ESDR_FPGA_SP_VGRID |
-			 ESDR_FPGA_SP_CENTER,
-		.grid_y0 = 0, .grid_dy = 20, .grid_dx = 40,
-	};
+	const struct esdr_fpga_trace trace = {.flags = ESDR_FPGA_SP_CENTER};
 	uint32_t seed = 1, n = 0;
 	uint64_t cpu = 0;
 	uint16_t r0, r1;
@@ -201,10 +196,115 @@ static int cmd_gfx(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+#define DSP_CHUNK 1024
+
+static int8_t iq[2 * DSP_CHUNK] __aligned(4);
+static int16_t levels[GFX_W];
+
+/*
+ * The DSP chain on samples made here: a full-scale tone sweeping in a sine, a fixed one 30 dB
+ * down at +fs/4, noise. fpga dsp [seconds] [log2n] [frames per line] [repeat]: each chunk goes
+ * out `repeat` times (to measure the gateware rather than the synthesis here).
+ */
+static int cmd_dsp(const struct shell *sh, size_t argc, char **argv)
+{
+	const struct device *disp = DEVICE_DT_GET(DT_CHOSEN(zephyr_display));
+	uint32_t secs = argc > 1 ? strtoul(argv[1], NULL, 0) : 10;
+	uint8_t log2n = argc > 2 ? strtoul(argv[2], NULL, 0) : 9;
+	uint8_t fpl = argc > 3 ? strtoul(argv[3], NULL, 0) : 4;
+	uint32_t repeat = argc > 4 ? MAX(strtoul(argv[4], NULL, 0), 1) : 1;
+	const struct esdr_fpga_trace trace = {.flags = ESDR_FPGA_SP_CENTER};
+	const struct esdr_fpga_dsp dsp = {
+		.log2n = log2n, .window = ESP_SDR_WINDOW_BLACKMAN_HARRIS, .alpha = 0.5f,
+		.frames_per_line = fpl, .cols = GFX_W,
+		.wf_min_db = -90.0f, .wf_max_db = -10.0f,
+		.tr_top_db = 0.0f, .tr_bottom_db = -100.0f, .tr_rows = SP_H,
+	};
+	uint16_t f0, f1, l0, l1, ovr;
+	uint32_t seed = 1, sent = 0;
+	float ph = 0.0f, ph2 = 0.0f, sweep = 0.0f;
+	uint64_t cpu = 0;
+	int64_t t0, end;
+	int ret;
+
+	display_blanking_off(disp);
+	palette(pal);
+	ret = esdr_fpga_palette(fpga, 0, pal, 256);
+	ret = ret ?: esdr_fpga_spectrum(fpga, 0, 0, GFX_W, SP_H, &trace);
+	ret = ret ?: esdr_fpga_waterfall(fpga, 0, SP_H, GFX_W, WF_H);
+	ret = ret ?: esdr_fpga_dsp_config(fpga, &dsp);
+	ret = ret ?: esdr_fpga_render(fpga, true, true, true);
+	ret = ret ?: esdr_fpga_dsp_run(fpga, true, &dsp);
+	if (ret) {
+		shell_error(sh, "setup: %d", ret);
+		return ret;
+	}
+	esdr_fpga_reg_read(fpga, ESDR_FPGA_REG_FRAMES, &f0, 1);
+	esdr_fpga_reg_read(fpga, ESDR_FPGA_REG_LINES, &l0, 1);
+	t0 = k_uptime_get();
+	end = t0 + secs * 1000;
+	while (k_uptime_get() < end) {
+		uint32_t c0 = k_cycle_get_32();
+		float step = ESP_SDR_TAU_F * 0.35f * sinf(sweep);
+
+		for (int k = 0; k < DSP_CHUNK; k++) {
+			float i = 120.0f * cosf(ph) + 3.8f * cosf(ph2);
+			float q = 120.0f * sinf(ph) + 3.8f * sinf(ph2);
+
+			seed = seed * 1664525U + 1013904223U;
+			i += (int8_t)(seed >> 24) / 64.0f;
+			q += (int8_t)(seed >> 16) / 64.0f;
+			iq[2 * k] = (int8_t)CLAMP(lroundf(i), -128, 127);
+			iq[2 * k + 1] = (int8_t)CLAMP(lroundf(q), -128, 127);
+			ph += step;
+			ph2 += ESP_SDR_TAU_F / 4.0f;
+		}
+		ph = fmodf(ph, ESP_SDR_TAU_F);
+		ph2 = fmodf(ph2, ESP_SDR_TAU_F);
+		sweep += 0.01f;
+		for (uint32_t r = 0; r < repeat; r++) {
+			esdr_fpga_samples(fpga, ESDR_FPGA_FMT_IQ8, false, iq, sizeof(iq));
+		}
+		cpu += k_cycle_get_32() - c0;
+		sent += DSP_CHUNK * repeat;
+	}
+	esdr_fpga_reg_read(fpga, ESDR_FPGA_REG_FRAMES, &f1, 1);
+	esdr_fpga_reg_read(fpga, ESDR_FPGA_REG_LINES, &l1, 1);
+	esdr_fpga_reg_read(fpga, ESDR_FPGA_REG_OVERRUNS, &ovr, 1);
+	shell_print(sh, "dsp: N %u, %u samples, %u frames, %u lines in %u s, %u overruns, "
+		    "%llu us CPU per %u samples", 1U << log2n, sent, (uint16_t)(f1 - f0),
+		    (uint16_t)(l1 - l0), secs, ovr, k_cyc_to_us_floor64(cpu * DSP_CHUNK / sent),
+		    DSP_CHUNK);
+
+	/* A fixed tone now: where is it, how strong? */
+	for (int k = 0; k < DSP_CHUNK; k++) {
+		iq[2 * k] = (int8_t)lroundf(127.0f * cosf(ESP_SDR_TAU_F * k / 8.0f));
+		iq[2 * k + 1] = (int8_t)lroundf(127.0f * sinf(ESP_SDR_TAU_F * k / 8.0f));
+	}
+	for (int r = 0; r < 4 * fpl; r++) {
+		esdr_fpga_samples(fpga, ESDR_FPGA_FMT_IQ8, r == 0, iq, sizeof(iq));
+	}
+	k_msleep(50);
+	esdr_fpga_dsp_columns(fpga, levels, GFX_W);
+	int peak = 0;
+
+	for (int c = 1; c < GFX_W; c++) {
+		if (levels[c] > levels[peak]) {
+			peak = c;
+		}
+	}
+	shell_print(sh, "dsp: tone at +fs/8: column %d of %d (want %d), %d.%01d dB", peak, GFX_W,
+		    GFX_W / 2 + GFX_W / 8, (int)esdr_fpga_l_to_db(levels[peak]),
+		    abs((int)(10.0f * esdr_fpga_l_to_db(levels[peak]))) % 10);
+	return 0;
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(fpga_cmds,
 	SHELL_CMD_ARG(reg, NULL, "reg <addr> [value]", cmd_reg, 2, 1),
 	SHELL_CMD_ARG(gfx, NULL, "gfx [seconds] [te 0/1]: spectrum and waterfall from software",
 		      cmd_gfx, 1, 2),
+	SHELL_CMD_ARG(dsp, NULL, "dsp [seconds] [log2n] [frames per line] [repeat]: the FPGA's "
+		      "FFT on samples made here", cmd_dsp, 1, 4),
 	SHELL_CMD_ARG(rate, NULL, "rate <addr> [ms]: how fast a counter register runs", cmd_rate,
 		      2, 1),
 	SHELL_CMD_ARG(test, NULL, "test [rounds] [read Hz]: scratch RAM round trips", cmd_test,

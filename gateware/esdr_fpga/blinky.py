@@ -96,6 +96,11 @@ class Blinky(Elaboratable):
             m.d.comb += uart_tx.o.eq(tx.tx)
 
     def breathe(self, m, rgb):
+        if not self.uart:
+            # A dim green blink, about 1 Hz (the breathing ramp costs more logic).
+            count = Signal(25)
+            m.d.sync += [count.eq(count + 1), rgb.g.eq(count[24] & (count[:3] == 0))]
+            return
         # Breathing green: 8-bit PWM against a triangle that ramps over about 2 s.
         pwm = Signal(8)
         level = Signal(9)

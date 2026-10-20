@@ -7,7 +7,7 @@ from esdr_fpga.core import COLUMNS, PALETTE, Core
 from esdr_fpga.dbi import F_HOLD, F_NOCMD, OP_DBI
 from esdr_fpga.model import Panel, spectrum_indices, waterfall_indices
 from esdr_fpga.regs import REGS
-from esdr_fpga.render import SP_CENTER, SP_FILL, SP_HGRID, SP_ON, SP_VGRID
+from esdr_fpga.render import SP_CENTER, SP_ON
 from esdr_fpga.waterfall import OP_WFLINE
 from spimaster import SPIMaster
 
@@ -103,10 +103,10 @@ def test_waterfall_wraps():
 def test_spectrum():
     w, h = 24, 20
     cols = [(x * 5) % h for x in range(w)]
-    flags = SP_ON | SP_FILL | SP_HGRID | SP_VGRID | SP_CENTER
+    flags = SP_ON | SP_CENTER
 
     async def bench(ctx, spi, panel):
-        await spi.write(ctx, reg("SP_PAGE0"), [3, 4, w, h, flags, 2, 5, 6])
+        await spi.write(ctx, reg("SP_PAGE0"), [3, 4, w, h, flags])
         await spi.write(ctx, reg("MADCTL_FPGA"), [0])
         await spi.write(ctx, COLUMNS, cols)
         await spi.write(ctx, reg("CTRL"), [1])
@@ -114,7 +114,7 @@ def test_spectrum():
         await wait_renders(ctx, spi, 1)
 
     panel = run(bench)
-    want = spectrum_indices(cols, w, h, flags, 2, 5, 6)
+    want = spectrum_indices(cols, w, h, flags)
     got = region(panel, 3, 4, w, h)
     assert got == [[PAL[i] for i in row] for row in want]
 

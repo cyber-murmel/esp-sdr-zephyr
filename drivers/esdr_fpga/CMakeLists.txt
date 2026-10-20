@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 zephyr_library()
-zephyr_library_sources(esdr_fpga.c)
+zephyr_library_sources(esdr_fpga.c esdr_fpga_dsp.c)
 
 if(CONFIG_ESDR_FPGA_IMAGE_EMBEDDED)
   set(gen_dir ${ZEPHYR_BINARY_DIR}/include/generated)

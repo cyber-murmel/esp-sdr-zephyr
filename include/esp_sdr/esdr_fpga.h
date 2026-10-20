@@ -78,10 +78,7 @@ int esdr_fpga_wf_line(const struct device *dev, const uint8_t *idx, size_t n);
 
 /** @brief The spectrum trace's look. */
 struct esdr_fpga_trace {
-	uint8_t flags;		/**< ESDR_FPGA_SP_FILL, _HGRID, _VGRID, _CENTER */
-	uint16_t grid_y0;	/**< rows above the first horizontal grid line */
-	uint16_t grid_dy;	/**< rows between horizontal grid lines */
-	uint16_t grid_dx;	/**< columns between vertical grid lines */
+	uint8_t flags;		/**< ESDR_FPGA_SP_CENTER */
 };
 
 /** @brief Place the spectrum trace; w = 0 turns it off. */
@@ -101,6 +98,48 @@ int esdr_fpga_render(const struct device *dev, bool on, bool te_sync, bool line_
 
 /** @brief Redraw regions now (or at the next TE). */
 int esdr_fpga_redraw(const struct device *dev, bool waterfall, bool spectrum);
+
+/*
+ * DSP: samples in (ESDR_FPGA_OP_SAMPLES), an FFT of 16..512 points, power in dB averaged per
+ * bin, and every frames_per_line frames a waterfall line and a new trace from the columns.
+ */
+
+/** @brief The DSP chain's settings. */
+struct esdr_fpga_dsp {
+	uint8_t log2n;		/**< FFT size, 4..9 */
+	uint8_t window;		/**< enum esp_sdr_window */
+	bool overlap;		/**< frames overlap by half */
+	float alpha;		/**< exponential average weight of a new frame, 1: none */
+	uint8_t frames_per_line; /**< 0: lines only on demand */
+	uint16_t cols;		/**< columns per line (the regions' width) */
+	uint16_t zoom_start;	/**< first bin (fftshifted) */
+	uint16_t zoom_step;	/**< bins per column, 8.8; 0: all bins over the columns */
+	float wf_min_db;	/**< waterfall colour 0 */
+	float wf_max_db;	/**< waterfall's top colour */
+	float tr_top_db;	/**< trace's top row */
+	float tr_bottom_db;	/**< trace's bottom row */
+	uint16_t tr_rows;	/**< the trace region's height */
+};
+
+/** @brief Load window, average table and scales (dB relative to a full-scale tone). */
+int esdr_fpga_dsp_config(const struct device *dev, const struct esdr_fpga_dsp *cfg);
+
+/** @brief Start or stop the DSP chain; starting restarts the average. */
+int esdr_fpga_dsp_run(const struct device *dev, bool on, const struct esdr_fpga_dsp *cfg);
+
+/**
+ * @brief Samples for the DSP: @p format one of ESDR_FPGA_FMT_*, @p resync starts a new frame
+ * at the first of them.
+ */
+int esdr_fpga_samples(const struct device *dev, uint8_t format, bool resync, const void *data,
+		      size_t len);
+
+/** @brief The last line's levels per column, in L units (esdr_fpga_l_to_db()). */
+int esdr_fpga_dsp_columns(const struct device *dev, int16_t *l, size_t n);
+
+/** @brief dB to the gateware's level units (256 log2 of power) and back. */
+int16_t esdr_fpga_db_to_l(float db);
+float esdr_fpga_l_to_db(int16_t l);
 
 #ifdef __cplusplus
 }

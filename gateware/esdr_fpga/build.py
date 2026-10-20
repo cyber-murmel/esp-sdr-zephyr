@@ -56,6 +56,7 @@ def main(argv=None):
     ap.add_argument("variant", choices=sorted(VARIANTS))
     ap.add_argument("--out", type=pathlib.Path,
                     default=pathlib.Path(os.environ.get("ESDR_FPGA_OUT", "build-gateware")))
+    # Seed 1 met timing with the most margin (32.4 MHz at 4927 cells).
     ap.add_argument("--seed", type=int, default=1)
     args = ap.parse_args(argv)
 

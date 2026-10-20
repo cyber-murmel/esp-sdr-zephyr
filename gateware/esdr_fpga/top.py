@@ -23,7 +23,7 @@ class Top(Elaboratable):
     def elaborate(self, platform):
         m = Module()
         m.submodules.crg = CRG(self.sys_clk_freq)
-        m.submodules.core = core = Core(build=self.build)
+        m.submodules.core = core = Core(build=self.build, debug=self.debug)
 
         # Heartbeat on the LED and the FPGA UART (no CRG of its own here).
         m.submodules.heartbeat = Blinky(self.sys_clk_freq, crg=False, uart=self.debug,

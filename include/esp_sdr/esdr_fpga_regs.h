@@ -8,29 +8,33 @@
 /* Opcodes: the first byte of an SPI frame. */
 #define ESDR_FPGA_OP_WRITE           0x0001U
 #define ESDR_FPGA_OP_READ            0x0002U
+#define ESDR_FPGA_OP_SAMPLES         0x0003U
 #define ESDR_FPGA_OP_DBI             0x0004U
 #define ESDR_FPGA_OP_WFLINE          0x0005U
 #define ESDR_FPGA_DBI_HOLD           0x0001U
 #define ESDR_FPGA_DBI_NOCMD          0x0002U
+#define ESDR_FPGA_FMT_WORD32         0x0000U
+#define ESDR_FPGA_FMT_IQ10P          0x0001U
+#define ESDR_FPGA_FMT_IQ8            0x0002U
+#define ESDR_FPGA_FMT_IQ16           0x0003U
+#define ESDR_FPGA_SAMPLES_RESYNC     0x0040U
 
 /* Memory windows (16-bit word addresses). */
 #define ESDR_FPGA_SCRATCH_RAM        0x0100U
 #define ESDR_FPGA_PALETTE            0x1000U
 #define ESDR_FPGA_COLUMNS            0x1800U
+#define ESDR_FPGA_WINDOW             0x1200U
+#define ESDR_FPGA_AVG_LUT            0x1400U
+#define ESDR_FPGA_COLV               0x1600U
 
 /* Palette entries of the renderer's chrome. */
 #define ESDR_FPGA_PAL_BG             0x00F8U
 #define ESDR_FPGA_PAL_TRACE          0x00F9U
-#define ESDR_FPGA_PAL_FILL           0x00FAU
-#define ESDR_FPGA_PAL_GRID           0x00FBU
-#define ESDR_FPGA_PAL_CENTER         0x00FCU
+#define ESDR_FPGA_PAL_CENTER         0x00FAU
 
 /* SP_FLAGS */
 #define ESDR_FPGA_SP_ON              0x0001U
-#define ESDR_FPGA_SP_FILL            0x0002U
-#define ESDR_FPGA_SP_HGRID           0x0004U
-#define ESDR_FPGA_SP_VGRID           0x0008U
-#define ESDR_FPGA_SP_CENTER          0x0010U
+#define ESDR_FPGA_SP_CENTER          0x0002U
 
 /* Registers. */
 #define ESDR_FPGA_ID                 0xE5DFU
@@ -47,12 +51,20 @@
 #define ESDR_FPGA_REG_STATUS         0x0004U
 /* rw, 16 bits: free for host tests */
 #define ESDR_FPGA_REG_SCRATCH        0x0007U
+/* r, 16 bits: DSP: free complex samples in the input ring */
+#define ESDR_FPGA_REG_IN_FREE        0x0008U
+/* r, 16 bits: DSP: FFT frames done */
+#define ESDR_FPGA_REG_FRAMES         0x000AU
 /* r, 16 bits: waterfall lines written */
 #define ESDR_FPGA_REG_LINES          0x000BU
 /* r, 16 bits: rising edges of the panel's FMARK (TE) */
 #define ESDR_FPGA_REG_TE_CNT         0x000CU
 /* r, 16 bits: bytes written to the panel bus, low 16 bits */
 #define ESDR_FPGA_REG_DBI_BYTES      0x000DU
+/* r, 16 bits: DSP: times the input ring was about to overflow (the frame skipped ahead) */
+#define ESDR_FPGA_REG_OVERRUNS       0x000EU
+/* r, 16 bits: DSP: samples dropped because the input ring was full */
+#define ESDR_FPGA_REG_DROPPED        0x000FU
 /* r, 16 bits: renders completed */
 #define ESDR_FPGA_REG_RENDERS        0x0010U
 /* r, 16 bits: last render's duration, 256-cycle units */
@@ -87,18 +99,39 @@
 #define ESDR_FPGA_REG_SP_W           0x0032U
 /* w, 9 bits: spectrum: rows */
 #define ESDR_FPGA_REG_SP_H           0x0033U
-/* w, 5 bits: spectrum: b0 on, b1 fill under the trace, b2 horizontal grid, b3 vertical grid,
- * b4 centre line */
+/* w, 2 bits: spectrum: b0 on, b1 centre line */
 #define ESDR_FPGA_REG_SP_FLAGS       0x0034U
-/* w, 9 bits: spectrum: rows before the first horizontal grid line */
-#define ESDR_FPGA_REG_SP_GRID_Y0     0x0035U
-/* w, 9 bits: spectrum: rows between horizontal grid lines */
-#define ESDR_FPGA_REG_SP_GRID_DY     0x0036U
-/* w, 9 bits: spectrum: columns between vertical grid lines */
-#define ESDR_FPGA_REG_SP_GRID_DX     0x0037U
 /* w, 8 bits: MADCTL the renderer writes with (MV clear) */
 #define ESDR_FPGA_REG_MADCTL_FPGA    0x0040U
 /* r, 8 bits: last MADCTL (0x36) the host passed through */
 #define ESDR_FPGA_REG_MADCTL_HOST    0x0041U
+/* w, 3 bits: DSP: b0 on, b1 average, b2 frames overlap by half */
+#define ESDR_FPGA_REG_DSP_CTRL       0x0050U
+/* w, 16 bits: DSP: bits 3:0 log2 N (4..9), bits 15:8 frames per line (0: lines only on EMIT) */
+#define ESDR_FPGA_REG_FFT_CFG        0x0051U
+/* w, 16 bits: DSP: added to 256 log2 |X|^2 (s16, L units) */
+#define ESDR_FPGA_REG_L_OFFSET       0x0052U
+/* w, 16 bits: DSP: average step for a jump of 8 log2 or more (256 log2 alpha) */
+#define ESDR_FPGA_REG_AVG_C_HI       0x0053U
+/* w, 16 bits: DSP: average step for a drop beyond 8 log2 (256 log2 (1 - alpha)) */
+#define ESDR_FPGA_REG_AVG_C_LO       0x0054U
+/* w, 9 bits: DSP: columns per line (the regions' width) */
+#define ESDR_FPGA_REG_COLS           0x0055U
+/* w, 10 bits: DSP: first bin (fftshifted) of column 0 */
+#define ESDR_FPGA_REG_ZOOM_START     0x0056U
+/* w, 16 bits: DSP: bins per column, 8.8 */
+#define ESDR_FPGA_REG_ZOOM_STEP      0x0057U
+/* w, 16 bits: DSP: L of waterfall index 0 (s16) */
+#define ESDR_FPGA_REG_WF_LO          0x0059U
+/* w, 16 bits: DSP: waterfall index per L, 8.8 (below 128) */
+#define ESDR_FPGA_REG_WF_GAIN        0x005AU
+/* w, 16 bits: DSP: L of the trace's top row (s16) */
+#define ESDR_FPGA_REG_TR_TOP         0x005BU
+/* w, 16 bits: DSP: trace rows per L, 8.8 (below 128) */
+#define ESDR_FPGA_REG_TR_GAIN        0x005CU
+/* s, 1 bits: DSP: the next frame restarts the average */
+#define ESDR_FPGA_REG_AVG_RESET      0x005DU
+/* s, 1 bits: DSP: a line after the next frame */
+#define ESDR_FPGA_REG_EMIT           0x005EU
 
 #endif /* ESDR_FPGA_REGS_H_ */
