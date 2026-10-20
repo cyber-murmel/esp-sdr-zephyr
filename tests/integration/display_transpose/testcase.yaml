@@ -1,0 +1,17 @@
+common:
+  tags:
+    - display
+    - hardware
+  harness: ztest
+
+tests:
+  # The WHY2025 badge's panel is mounted turned: every write is transposed into the
+  # framebuffer, by the PPA (CONFIG_DISPLAY_ESP32_DSI_PPA) or by the CPU.
+  integration.display.transpose:
+    platform_allow:
+      - why2025_badge/esp32p4/hpcore
+  integration.display.transpose.cpu:
+    platform_allow:
+      - why2025_badge/esp32p4/hpcore
+    extra_configs:
+      - CONFIG_DISPLAY_ESP32_DSI_PPA=n
