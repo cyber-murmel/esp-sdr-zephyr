@@ -28,7 +28,7 @@
 enum esdr_req {
 	/* IN: struct esdr_info. */
 	ESDR_REQ_GET_INFO = 0x01,
-	/* wValue: enum esdr_mode. */
+	/* wValue: enum esdr_mode, ESDR_MODE_OFF optionally with ESDR_MODE_F_DRAIN. */
 	ESDR_REQ_SET_MODE = 0x02,
 	/* OUT 8 bytes: centre frequency in Hz (uint64_t). */
 	ESDR_REQ_SET_FREQ = 0x03,
@@ -40,7 +40,11 @@ enum esdr_req {
 	ESDR_REQ_SET_TX_GAIN = 0x06,
 	/* OUT 4 bytes: analog low-pass bandwidth in Hz (uint32_t), 0 for automatic. */
 	ESDR_REQ_SET_BANDWIDTH = 0x07,
-	/* wValue: bits per I and Q item, 8 or 16. */
+	/*
+	 * wValue: bits per I and Q item, 8 or 16, or 4 where the device offers it
+	 * (the S3 osmosdr app: one byte per sample, I in bits 3:0 and Q in bits
+	 * 7:4, each signed, full scale 8; receive only, transmit items stay 8 bit).
+	 */
 	ESDR_REQ_SET_FORMAT = 0x08,
 	/* OUT 4 bytes: crystal correction in parts per billion (int32_t). */
 	ESDR_REQ_SET_FREQ_CORR = 0x09,
@@ -56,16 +60,54 @@ enum esdr_req {
 	 * 16). Decimation leaves a quiet band's noise far below an 8-bit item.
 	 */
 	ESDR_REQ_SET_DIGITAL_GAIN = 0x0d,
+	/*
+	 * Serial transport only. wValue: native rate in MHz (80 on the ESP32-C6);
+	 * OUT 4 bytes: complex samples (uint32_t, up to ESDR_BURST_MAX). One
+	 * burst at the centre frequency, contiguous, as int16 receive blocks
+	 * flagged ESDR_BLK_BURST before the reply (full scale 16384, the raw
+	 * 10-bit samples times 32). A running stream stops.
+	 */
+	ESDR_REQ_CAPTURE_BURST = 0x0e,
+	/*
+	 * Serial transport, ESP32-C6. wValue: trigger threshold over the quiet
+	 * baseline in sixteenths (0: 128, 9 dB); OUT 0 or 4 bytes: samples kept
+	 * after the trigger (uint32_t, below ESDR_TRIG_SAMPLES; default half).
+	 * Applies to ESDR_MODE_TRIGGER, now or next.
+	 */
+	ESDR_REQ_SET_TRIGGER = 0x0f,
+	/*
+	 * Back to the settings the device started with (mode off, frequency, gains,
+	 * format, rate, filter, options, trigger): what a host leaves behind for
+	 * the next one. A running stream stops.
+	 */
+	ESDR_REQ_RESET = 0x10,
 };
+
+#define ESDR_BURST_MAX 16380U
 
 enum esdr_mode {
 	ESDR_MODE_OFF = 0,
 	ESDR_MODE_RX = 1,
 	ESDR_MODE_TX = 2,
+	/*
+	 * Serial transport, ESP32-C6: triggered snapshots. The receiver watches
+	 * the power of the whole 80 MHz input; a burst past the threshold
+	 * (ESDR_REQ_SET_TRIGGER) sends ESDR_TRIG_SAMPLES samples at 80 MS/s from
+	 * before and after it as ESDR_TRIG_BLOCKS int8 blocks flagged
+	 * ESDR_BLK_TRIGGER (the first also ESDR_BLK_GAP), whatever the format.
+	 * Some 4 ms pass before the next can trigger.
+	 */
+	ESDR_MODE_TRIGGER = 3,
 	/* Throughput tests: IN sends counting blocks as fast as the bus takes them, OUT sinks. */
 	ESDR_MODE_TEST_IN = 0x10,
 	ESDR_MODE_TEST_OUT = 0x11,
 };
+
+/*
+ * Serial transport only: with ESDR_MODE_OFF, transmit mode ends once the samples queued for it
+ * have played, and the reply comes then (a burst is over when its request returns).
+ */
+#define ESDR_MODE_F_DRAIN 0x8000U
 
 #define ESDR_GAIN_AUTO 0xffffU
 #define ESDR_DGAIN_DEFAULT 0xffffU
@@ -147,6 +189,16 @@ struct esdr_stats {
 #define ESDR_BLK_16BIT    0x0004U
 /* Counting test pattern, not samples. */
 #define ESDR_BLK_TEST     0x0008U
+/* A burst's block (ESDR_REQ_CAPTURE_BURST): its index counts from the burst's first sample. */
+#define ESDR_BLK_BURST    0x0010U
+/* Items are 4 bit, one byte per sample (ESDR_REQ_SET_FORMAT 4). */
+#define ESDR_BLK_4BIT     0x0020U
+/*
+ * A triggered snapshot's block (ESDR_MODE_TRIGGER), 80 MS/s: its index is the
+ * first sample's position relative to the trigger, an int64_t (negative
+ * before it).
+ */
+#define ESDR_BLK_TRIGGER  0x0040U
 
 struct esdr_block_hdr {
 	uint32_t magic;
@@ -158,6 +210,11 @@ struct esdr_block_hdr {
 } __attribute__((packed));
 
 #define ESDR_BLOCK_PAYLOAD (ESDR_BLOCK_BYTES - sizeof(struct esdr_block_hdr))
+
+/* A triggered snapshot: whole int8 blocks. */
+#define ESDR_TRIG_BLOCKS  8U
+#define ESDR_TRIG_SAMPLES (ESDR_TRIG_BLOCKS * (ESDR_BLOCK_PAYLOAD / 2U))
+#define ESDR_TRIG_RATE_HZ 80000000U
 
 /*
  * Serial transport (apps/osmosdr_serial, ESP32-C6 over USB-Serial-JTAG: one

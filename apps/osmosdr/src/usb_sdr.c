@@ -31,12 +31,15 @@ static const struct usbd_cctx_vendor_req sdr_vregs = USBD_VENDOR_REQ(
 	ESDR_REQ_GET_INFO, ESDR_REQ_SET_MODE, ESDR_REQ_SET_FREQ, ESDR_REQ_SET_SAMPLE_RATE,
 	ESDR_REQ_SET_RX_GAIN, ESDR_REQ_SET_TX_GAIN, ESDR_REQ_SET_BANDWIDTH, ESDR_REQ_SET_FORMAT,
 	ESDR_REQ_SET_FREQ_CORR, ESDR_REQ_GET_STATE, ESDR_REQ_GET_STATS, ESDR_REQ_SET_OPTIONS,
-	ESDR_REQ_SET_DIGITAL_GAIN);
+	ESDR_REQ_SET_DIGITAL_GAIN, ESDR_REQ_SET_TRIGGER, ESDR_REQ_RESET);
 
 struct sdr_desc {
 	struct usb_if_descriptor if0;
 	struct usb_ep_descriptor in_ep;
 	struct usb_ep_descriptor out_ep;
+	/* High speed (the ESP32-P4's OTG HS port): 512-byte bulk packets. */
+	struct usb_ep_descriptor hs_in_ep;
+	struct usb_ep_descriptor hs_out_ep;
 	struct usb_desc_header nil_desc;
 };
 
@@ -68,6 +71,22 @@ static struct sdr_desc sdr_desc = {
 		.wMaxPacketSize = sys_cpu_to_le16(64U),
 		.bInterval = 0,
 	},
+	.hs_in_ep = {
+		.bLength = sizeof(struct usb_ep_descriptor),
+		.bDescriptorType = USB_DESC_ENDPOINT,
+		.bEndpointAddress = 0x81,
+		.bmAttributes = USB_EP_TYPE_BULK,
+		.wMaxPacketSize = sys_cpu_to_le16(512U),
+		.bInterval = 0,
+	},
+	.hs_out_ep = {
+		.bLength = sizeof(struct usb_ep_descriptor),
+		.bDescriptorType = USB_DESC_ENDPOINT,
+		.bEndpointAddress = 0x01,
+		.bmAttributes = USB_EP_TYPE_BULK,
+		.wMaxPacketSize = sys_cpu_to_le16(512U),
+		.bInterval = 0,
+	},
 	.nil_desc = {
 		.bLength = 0,
 		.bDescriptorType = 0,
@@ -78,6 +97,13 @@ static const struct usb_desc_header *const sdr_fs_desc[] = {
 	(struct usb_desc_header *)&sdr_desc.if0,
 	(struct usb_desc_header *)&sdr_desc.in_ep,
 	(struct usb_desc_header *)&sdr_desc.out_ep,
+	(struct usb_desc_header *)&sdr_desc.nil_desc,
+};
+
+static const struct usb_desc_header *const sdr_hs_desc[] = {
+	(struct usb_desc_header *)&sdr_desc.if0,
+	(struct usb_desc_header *)&sdr_desc.hs_in_ep,
+	(struct usb_desc_header *)&sdr_desc.hs_out_ep,
 	(struct usb_desc_header *)&sdr_desc.nil_desc,
 };
 
@@ -197,8 +223,7 @@ static int sdr_control_to_dev(struct usbd_class_data *c_data,
 static const void *sdr_get_desc(struct usbd_class_data *const c_data, const enum usbd_speed speed)
 {
 	ARG_UNUSED(c_data);
-	ARG_UNUSED(speed);
-	return sdr_fs_desc;
+	return speed == USBD_SPEED_HS ? sdr_hs_desc : sdr_fs_desc;
 }
 
 static void sdr_enable(struct usbd_class_data *const c_data)

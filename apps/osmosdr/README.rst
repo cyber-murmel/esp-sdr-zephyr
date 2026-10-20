@@ -11,8 +11,8 @@ control requests set the radio, bulk endpoints carry the samples, one
 direction at a time. The protocol is in ``src/esdr_proto.h``, shared with
 the host tool ``tools/esdr_usb.c``.
 
-- **Receive**: gapless I/Q at 250, 125, 62.5, 31.25 or 15.625 kS/s, 8 or 16
-  bit. The dump engine runs in circular mode through three SRAM banks at
+- **Receive**: gapless I/Q at 500, 250, 125, 62.5, 31.25 or 15.625 kS/s, 4, 8 or
+  16 bit (500 kS/s as 4 or 8-bit items: USB full speed carries some 1.16 MB/s). The dump engine runs in circular mode through three SRAM banks at
   16 MS/s; a two-stage decimating FIR on the vector unit filters every
   bank (``esp_sdr_ring_run()``, ported from upstream esp-sdr). It owns CPU 1
   with that CPU's interrupts masked; USB, Wi-Fi and the shell run on CPU 0.
@@ -85,7 +85,8 @@ little endian:
    * - ``SET_BANDWIDTH`` (0x07)
      - analog low-pass in Hz (13 to 69 MHz two-sided), 0 for the PHY's
    * - ``SET_FORMAT`` (0x08)
-     - 8 or 16 bits per I and Q item
+     - 4, 8 or 16 bits per I and Q item (4: one byte a sample, I in bits 3:0, Q in 7:4,
+       signed, receive only; Soapy stream argument ``bits=4``)
    * - ``SET_FREQ_CORR`` (0x09)
      - crystal correction in ppb, 4 bytes signed
    * - ``GET_STATE`` (0x0a, in) / ``GET_STATS`` (0x0b, in)
@@ -117,6 +118,8 @@ Host tool
    ./esdr_usb -s <serial> test-in        # USB throughput in; test-out for out
    ./esdr_usb -s <serial> rx -f 2450e6 -r 250e3 -g 32 -b 16 -t 10 -o rx.cs16
    ./esdr_usb -s <serial> tx -f 2450e6 -r 250e3 -G 4 -T 50e3 -a 0.3 -t 10
+   ./esdr_usb -s <serial> trig -f 2440e6 -g 30 -R 8 -t 10 -o snaps.cs8   # a radio with
+                                       # ESDR_MODE_TRIGGER: 80 MS/s around each burst
 
 SoapySDR, GNU Radio, gqrx
 *************************
@@ -139,9 +142,16 @@ step), frequency correction in ppm. gr-osmosdr reaches it through its
 
 In GNU Radio: ``osmosdr.source(args="numchan=1 soapy=0,driver=esdr")`` and
 ``osmosdr.sink(...)`` with the same string, at one of the receive rates
-(250 kS/s down to 15.625 kS/s; other requests get the nearest one, which
+(500 kS/s down to 15.625 kS/s; other requests get the nearest one, which
 ``getSampleRate()`` reports). Changing a setting while streaming restarts
 the device's stream: expect a few ms of zeros.
+
+Receive stream arguments (``getStreamArgsInfo()`` lists them, which gr-soapy checks):
+``bits=4`` for 4-bit items on the wire, and ``trigger=<ratio>`` (``post=<samples>``) for a
+radio with the trigger mode, the WHY2025 badge's C6 directly or through its bridge: the stream
+then carries 80 MS/s snapshots of 16320 samples around each burst, one after another, and the
+sample rate does not apply. With GNU Radio's ``soapy.source(..., "trigger=4", ...)`` and the
+Communicator sending bursts, 58 snapshots arrived in 8 s, none lost.
 
 Spectrum/waterfall viewer
 *************************
@@ -184,9 +194,9 @@ Two XIAO ESP32S3 boards cabled through a 30 dB attenuator.
 Limitations
 ***********
 
-- USB full speed caps receive at 250 kS/s (the filter allows no less than
-  64 times decimation); 500 kS/s at 8 bit would fit USB but needs a filter
-  stage with an odd window step.
+- USB full speed caps receive at 500 kS/s, 8-bit items (1.0 MB/s, gapless in
+  5 s runs) or 4-bit ones (0.5 MB/s, a tone 1 dB lower over the floor than at
+  8 bit); 32 times decimation leaves the filter 14.4 of its 15 cycles a pair.
 - Transmit interpolates linearly: images at multiples of the sample rate
   are only attenuated by the interpolator's sinc squared response.
 - Gains are uncalibrated PHY indices; the crystal error (several ppm) needs

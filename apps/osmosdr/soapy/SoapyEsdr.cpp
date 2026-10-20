@@ -8,6 +8,11 @@
  * with port=/dev/...: the same requests as frames on a byte stream). Half
  * duplex: activating one direction stops the other.
  *
+ * Stream argument trigger=<ratio> (a radio with ESDR_MODE_TRIGGER: the WHY2025 badge's C6):
+ * the receive stream carries triggered snapshots instead, each ESDR_TRIG_SAMPLES at 80 MS/s
+ * around a burst ratio times the quiet power, one after another (post=<samples> after the
+ * trigger, default half); the sample rate setting does not apply.
+ *
  * Build (CMakeLists.txt next to this file):
  *   cmake -B build && cmake --build build
  * then point SOAPY_SDR_PLUGIN_PATH at build/ (or install it into SoapySDR's
@@ -635,7 +640,7 @@ public:
 
 	SoapySDR::Stream *setupStream(const int direction, const std::string &format,
 				      const std::vector<size_t> &channels,
-				      const SoapySDR::Kwargs &) override
+				      const SoapySDR::Kwargs &args) override
 	{
 		if (!channels.empty() && (channels.size() != 1 || channels[0] != 0)) {
 			throw std::runtime_error("esdr: one channel only");
@@ -652,7 +657,14 @@ public:
 			return reinterpret_cast<SoapySDR::Stream *>(&txTag_);
 		}
 		float_ = format == SOAPY_SDR_CF32;
+		cs16_ = format == SOAPY_SDR_CS16;
 		bits_ = format == SOAPY_SDR_CS8 ? 8 : format == SOAPY_SDR_CS16 ? 16 : floatBits;
+		/* bits=4: 4-bit items on the wire where the device offers them (half the bytes of
+		 * 8-bit ones: twice the rate a USB full-speed link carries), unpacked to CS8. */
+		want4_ = args.count("bits") && args.at("bits") == "4";
+		trigRatio_ = args.count("trigger") ? std::stod(args.at("trigger")) : 0.0;
+		trigPost_ = args.count("post") ? (uint32_t)std::stoul(args.at("post"))
+					       : ESDR_TRIG_SAMPLES / 2U;
 		return reinterpret_cast<SoapySDR::Stream *>(&rxTag_);
 	}
 
@@ -662,6 +674,38 @@ public:
 	}
 
 	size_t getStreamMTU(SoapySDR::Stream *) const override { return 4096; }
+
+	/* The receive stream's arguments (gr-soapy refuses any not listed). */
+	SoapySDR::ArgInfoList getStreamArgsInfo(const int direction, const size_t) const override
+	{
+		SoapySDR::ArgInfoList list;
+
+		if (direction != SOAPY_SDR_RX) {
+			return list;
+		}
+
+		SoapySDR::ArgInfo bits, trigger, post;
+
+		bits.key = "bits";
+		bits.name = "Wire bits";
+		bits.description = "4: 4-bit items on the wire where the device offers them";
+		bits.type = SoapySDR::ArgInfo::STRING;
+		bits.value = "";
+		list.push_back(bits);
+		trigger.key = "trigger";
+		trigger.name = "Trigger ratio";
+		trigger.description = "Triggered 80 MS/s snapshots of bursts this many times the "
+				      "quiet power (a radio with the trigger mode); 0: a stream";
+		trigger.type = SoapySDR::ArgInfo::FLOAT;
+		trigger.value = "0";
+		list.push_back(trigger);
+		post.key = "post";
+		post.name = "Samples after the trigger";
+		post.type = SoapySDR::ArgInfo::INT;
+		post.value = std::to_string(ESDR_TRIG_SAMPLES / 2U);
+		list.push_back(post);
+		return list;
+	}
 
 	/* Half duplex: starting one direction stops the other. */
 	int activateStream(SoapySDR::Stream *stream, const int, const long long, const size_t) override
@@ -758,6 +802,18 @@ public:
 				for (size_t k = 0; k < 2 * n; k++) {
 					out[k] = (float)conv_[k] * (1.0f / 32768.0f);
 				}
+			}
+		} else if (cs16_ && bits_ == 8) {
+			size_t want = std::min(numElems, conv_.size() / 2);
+			int16_t *out = reinterpret_cast<int16_t *>(buffs[0]);
+
+			n = ring_.pop(reinterpret_cast<uint8_t *>(conv_.data()), want, (int)timeoutUs,
+				      overflow);
+
+			const int8_t *c = reinterpret_cast<const int8_t *>(conv_.data());
+
+			for (size_t k = 0; k < 2 * n; k++) {
+				out[k] = (int16_t)(c[k] * 256);
 			}
 		} else {
 			n = ring_.pop(reinterpret_cast<uint8_t *>(buffs[0]), numElems, (int)timeoutUs,
@@ -994,6 +1050,18 @@ private:
 
 	void startRx()
 	{
+		if (float_ || cs16_) {
+			/* CF32 and CS16 travel as 16-bit items up to 250 kS/s, else as 8-bit ones
+			 * widened here: the C6 offers 16 bit only up to there, and USB full speed
+			 * carries 500 kS/s of 8-bit items, not of 16-bit ones. */
+			bits_ = narrow_ || rateHz_ > 250000 ? 8 : 16;
+		}
+		if (trigRatio_ > 0) {
+			/* Snapshots are 8-bit items whatever the format. */
+			bits_ = 8;
+		}
+		wire4_ = want4_ && bits_ == 8 && trigRatio_ <= 0;
+
 		size_t itemBytes = bits_ == 16 ? 4 : 2;
 
 		ring_.reset(itemBytes);
@@ -1001,16 +1069,31 @@ private:
 		haveExpect_ = false;
 		synced_ = false;
 		carryLen_ = 0;
-		rxSamples_ = gaps_ = gapZeros_ = resyncs_ = 0;
+		rxSamples_ = gaps_ = gapZeros_ = resyncs_ = snaps_ = 0;
 		link_->ctrlOut(ESDR_REQ_SET_MODE, ESDR_MODE_OFF, nullptr, 0);
 		setFreq((uint64_t)freqHz_);
+		if (trigRatio_ > 0) {
+			uint8_t le[4] = {(uint8_t)trigPost_, (uint8_t)(trigPost_ >> 8),
+					 (uint8_t)(trigPost_ >> 16), (uint8_t)(trigPost_ >> 24)};
+
+			link_->ctrlOut(ESDR_REQ_SET_RX_GAIN,
+				       rxAuto_ ? ESDR_GAIN_AUTO : (uint16_t)rxGain_, nullptr, 0);
+			if (link_->ctrlOut(ESDR_REQ_SET_TRIGGER, (uint16_t)std::lrint(trigRatio_ * 16),
+					   le, 4) < 0 ||
+			    link_->ctrlOut(ESDR_REQ_SET_MODE, ESDR_MODE_TRIGGER, nullptr, 0) < 0) {
+				throw std::runtime_error("esdr: the radio has no trigger mode");
+			}
+			rxRunning_ = true;
+			link_->startRx([this](const uint8_t *p, size_t n) { onBytes(p, n); });
+			return;
+		}
 		setU32(ESDR_REQ_SET_SAMPLE_RATE, (uint32_t)rateHz_);
 		if (bwHz_ > 0) {
 			setU32(ESDR_REQ_SET_BANDWIDTH, (uint32_t)bwHz_);
 		}
 		link_->ctrlOut(ESDR_REQ_SET_RX_GAIN, rxAuto_ ? ESDR_GAIN_AUTO : (uint16_t)rxGain_,
 			nullptr, 0);
-		link_->ctrlOut(ESDR_REQ_SET_FORMAT, (uint16_t)bits_, nullptr, 0);
+		link_->ctrlOut(ESDR_REQ_SET_FORMAT, (uint16_t)(wire4_ ? 4 : bits_), nullptr, 0);
 		link_->ctrlOut(ESDR_REQ_SET_MODE, ESDR_MODE_RX, nullptr, 0);
 
 		rxRunning_ = true;
@@ -1024,9 +1107,10 @@ private:
 		link_->stopRx();
 		rxRunning_ = false;
 		SoapySDR_logf(SOAPY_SDR_INFO,
-			      "esdr: rx stopped: %llu samples, %llu gaps (%llu zero filled), "
-			      "%llu dropped by a slow reader, %llu resync steps",
-			      (unsigned long long)rxSamples_, (unsigned long long)gaps_,
+			      "esdr: rx stopped: %llu samples, %llu snapshots, %llu gaps (%llu zero "
+			      "filled), %llu dropped by a slow reader, %llu resync steps",
+			      (unsigned long long)rxSamples_, (unsigned long long)snaps_,
+			      (unsigned long long)gaps_,
 			      (unsigned long long)gapZeros_, (unsigned long long)ring_.dropped(),
 			      (unsigned long long)resyncs_);
 	}
@@ -1043,8 +1127,9 @@ private:
 		struct esdr_block_hdr h{};
 
 		std::memcpy(&h, p, sizeof(h));
-		return h.magic == ESDR_BLOCK_MAGIC && h.samples <= ESDR_BLOCK_PAYLOAD / 2U &&
-		       (h.flags & ~0x000fU) == 0U;
+		return h.magic == ESDR_BLOCK_MAGIC &&
+		       h.samples <= ESDR_BLOCK_PAYLOAD / ((h.flags & ESDR_BLK_4BIT) != 0U ? 1U : 2U) &&
+		       (h.flags & ~(0x000fU | ESDR_BLK_4BIT | ESDR_BLK_TRIGGER)) == 0U;
 	}
 
 	void onBlock(const uint8_t *p)
@@ -1052,6 +1137,13 @@ private:
 		struct esdr_block_hdr h{};
 
 		std::memcpy(&h, p, sizeof(h));
+		if ((h.flags & ESDR_BLK_TRIGGER) != 0U) {
+			/* Snapshots back to back: no zeros between them. */
+			snaps_ += (h.flags & ESDR_BLK_GAP) != 0U;
+			ring_.push(p + sizeof(h), h.samples);
+			rxSamples_ += h.samples;
+			return;
+		}
 		if (haveExpect_ && h.index > expect_ && h.index - expect_ < 1000000U) {
 			/* Missing samples become zeros: the time axis stays continuous. */
 			static const uint8_t zeros[4 * 1024] = {0};
@@ -1066,7 +1158,20 @@ private:
 			gaps_++;
 			gapZeros_ += h.index - expect_;
 		}
-		ring_.push(p + sizeof(h), h.samples);
+		if ((h.flags & ESDR_BLK_4BIT) != 0U) {
+			/* Each nibble sign extended, times 16: CS8 items. */
+			uint8_t wide[2 * ESDR_BLOCK_PAYLOAD];
+
+			for (unsigned int k = 0; k < h.samples; k++) {
+				uint8_t v = p[sizeof(h) + k];
+
+				wide[2 * k] = (uint8_t)(v << 4);
+				wide[2 * k + 1] = (uint8_t)(v & 0xf0);
+			}
+			ring_.push(wide, h.samples);
+		} else {
+			ring_.push(p + sizeof(h), h.samples);
+		}
 		rxSamples_ += h.samples;
 		expect_ = h.index + h.samples;
 		haveExpect_ = true;
@@ -1133,7 +1238,12 @@ private:
 	/* Serial link: CF32 and the native format travel as 8-bit items. */
 	bool narrow_ = false;
 	int bits_ = 16;
-	bool float_ = false;
+	bool want4_ = false, wire4_ = false;
+	/* trigger=<ratio>: triggered snapshots (0: a stream), post=<samples> after the trigger. */
+	double trigRatio_ = 0;
+	uint32_t trigPost_ = ESDR_TRIG_SAMPLES / 2U;
+	uint64_t snaps_ = 0;
+	bool float_ = false, cs16_ = false;
 	/* Stream handles: addresses of these tags. */
 	char rxTag_ = 0, txTag_ = 0;
 	/* Transmit: own frequency and rate (the device has one of each, set at activation). */

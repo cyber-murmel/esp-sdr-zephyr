@@ -244,10 +244,10 @@ HOT static uint32_t find_end(unsigned int b, unsigned int origin, unsigned int w
 /*
  * ---- two-stage decimating FIR (split I/Q arrays, vector unit) ----
  *
- * D = 8 x (D / 8), D >= 64: every window starts on a multiple of 8 samples,
+ * D = 8 x (D / 8), D >= 32: every window starts on a multiple of 8 samples,
  * 16-byte aligned. Stage 1: 32 taps, an 8-sample boxcar squared (double
  * zeros on every multiple of fs/8, the bands that alias onto 0 Hz) convolved
- * with an 18-tap Kaiser low pass. Stage 2: 18 D / 8 taps (at most 256),
+ * with an 18-tap Kaiser low pass. Stage 2: 18 D / 8 taps, rounded up to 16 (at most 256),
  * Kaiser beta 5.65 (~60 dB), pass band 0.4 and stop band 0.6 of the output
  * rate. Each stage keeps L samples of history, so the output is continuous
  * across slices and units. Scale: ring << 6, stage 1 x 16, stage 2 x 32.
@@ -970,7 +970,8 @@ static void fir_setup(unsigned int d)
 #endif
 #if defined(CONFIG_ESP_SDR_RING_FIR)
 	{
-		uint32_t d2 = d / 8U, l2 = MIN((18U * d2 + 7U) & ~7U, FS2_LMAX);
+		/* An even number of 8-tap groups: the fused kernel (esp_sdr_ring_dot()). */
+		uint32_t d2 = d / 8U, l2 = MIN((18U * d2 + 15U) & ~15U, FS2_LMAX);
 
 		fstage_init(&fs1, 8U, FS1_L, 17U);
 		fstage_init(&fs2, d2, l2, 14U);

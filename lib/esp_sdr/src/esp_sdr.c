@@ -15,6 +15,7 @@
 #include <zephyr/sys/util.h>
 
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_rx.h>
 
 #include <esp_wifi.h>
 
@@ -266,6 +267,30 @@ int esp_sdr_set_channel_bw(unsigned int cbw)
 	sdr_cbw = cbw;
 	ret = esp_sdr_retune();
 	k_mutex_unlock(&esp_sdr_lock);
+	return ret;
+}
+
+int esp_sdr_reset_settings(void)
+{
+	int ret;
+
+	if (!esp_sdr_ready) {
+		return -EAGAIN;
+	}
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+	esp_sdr_freq_mhz = CAL_CHANNEL_MHZ;
+	esp_sdr_fofs_khz = 0;
+	sdr_cbw = 0;
+	esp_sdr_turn_settle_us = SDR_RETUNE_SETTLE_US;
+	esp_sdr_turn_retune = true;
+	ret = esp_sdr_retune();
+	k_mutex_unlock(&esp_sdr_lock);
+	if (ret == 0) {
+		ret = esp_sdr_rx_set_gain(ESP_SDR_RX_GAIN_AUTO);
+	}
+	if (ret == 0) {
+		ret = esp_sdr_rx_set_lpf(ESP_SDR_RX_LPF_AUTO);
+	}
 	return ret;
 }
 
