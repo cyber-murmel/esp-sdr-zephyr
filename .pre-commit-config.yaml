@@ -71,7 +71,9 @@ repos:
         name: apps and tests build for the boards (twister --build-only)
         entry: >-
           scripts/pre-commit/twister.sh --build-only -T apps -T tests
-          -p xiao_esp32s3/esp32s3/procpu -p xiao_esp32c6/esp32c6/hpcore
+          -p xiao_esp32s3/esp32s3/procpu -p communicator_badge/esp32s3/procpu
+          -p xiao_esp32c6/esp32c6/hpcore -p why2025_badge/esp32c6/hpcore
+          -p why2025_badge/esp32p4/hpcore
           -p waveshare_esp32c5_zero/esp32c5/hpcore
         language: system
         pass_filenames: false

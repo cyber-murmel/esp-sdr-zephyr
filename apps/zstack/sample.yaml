@@ -9,6 +9,7 @@ common:
     - zigbee
   platform_allow:
     - xiao_esp32c6/esp32c6/hpcore
+    - why2025_badge/esp32c6/hpcore
   integration_platforms:
     - xiao_esp32c6/esp32c6/hpcore
 tests:

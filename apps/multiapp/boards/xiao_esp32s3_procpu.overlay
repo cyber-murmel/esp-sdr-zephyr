@@ -33,13 +33,4 @@ zephyr_udc0: &usb_otg {
 	};
 };
 
-/* The upper half of the 8 MB flash, which the board's 4 MB partition table leaves out. */
-&flash0 {
-	partitions {
-		fat_partition: partition@400000 {
-			compatible = "zephyr,mapped-partition";
-			label = "fat";
-			reg = <0x400000 DT_SIZE_M(4)>;
-		};
-	};
-};
+#include "partitions.dtsi"

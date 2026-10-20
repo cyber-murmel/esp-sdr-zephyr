@@ -75,7 +75,9 @@ Contents
    * - ``scripts/``
      - ``west dfu`` (``west_commands/``), test runners
    * - ``boards/``
-     - ``waveshare/esp32c5_zero``: Waveshare ESP32-C5-Zero
+     - ``waveshare/esp32c5_zero``: Waveshare ESP32-C5-Zero. The badges are Zephyr boards
+       (``modules/zephyr``): ``hackaday/communicator_badge`` (Hackaday Communicator, ESP32-S3)
+       and ``why2025/why2025_badge`` (WHY2025, ESP32-P4 with an ESP32-C6)
    * - ``zephyr/``
      - ``module.yml`` and the ``librftest.a`` blobs
    * - ``west.yml``
@@ -104,8 +106,9 @@ the SoapySDR module for gqrx and GNU Radio.
 The library
 -----------
 
-- **Chips:** ESP32-S3 (XIAO ESP32S3), SMP or single core. ESP32-C6
-  (XIAO ESP32C6) and ESP32-C5 (C5-Zero): burst captures, and continuous
+- **Chips:** ESP32-S3 (XIAO ESP32S3, Hackaday Communicator badge), SMP or
+  single core. ESP32-C6 (XIAO ESP32C6, the WHY2025 badge's radio
+  co-processor) and ESP32-C5 (C5-Zero): burst captures, and continuous
   CPU-paced receive and transmit up to 250 kS/s (``esp_sdr_paced.h``);
   the C5 also has a gapless 40 MS/s ring through the modem diagnostic
   bus (``esp_sdr_diag.h``, ``CONFIG_ESP_SDR_DIAG``) and loops waveforms

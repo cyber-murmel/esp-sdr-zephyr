@@ -417,6 +417,26 @@ XIAO ESP32-C6 on the other end of a 30 dB coax attenuator.
   one's reset leaves the second without a port.
 - Gate an update on the build's exit status (a pipe into `grep` hides it),
   else `west dfu` flashes the previous image.
+- The Hackaday Communicator badge has a reset button but no boot button. When
+  no app answers `usj` any more, ROM download mode needs test pad TP1 (IO0)
+  shorted to ground while pressing reset. A sysbuild `west flash` over its
+  USB-Serial-JTAG does work for the first install, before an app owns OTG.
+- On the WHY2025 badge the ESP32-C6 (`why2025_badge/esp32c6/hpcore`) reaches
+  USB-C port J8 only while the ESP32-P4 drives its GPIO2 high: run a P4 image
+  built with `CONFIG_WHY2025_BADGE_USB_TO_C6=y` and without esp-hosted (which
+  resets the C6), then flash the C6 over J8 with `west flash`. The C6 also
+  drives both backlights: its images hold them on, the P4 cannot.
+- The WHY2025 badge's LoRa module is an Ai-Thinker Ra-01SH (SX1262), not the
+  Ra-01H (SX1276) its schematic names: an SX1276 driver reads a constant 0xA2
+  (the SX126x status byte) and hangs in its image calibration loop. On the
+  Ra-01H footprint the Ra-01SH's BUSY, DIO1 and RXEN pads are unconnected and
+  pad 5 (C6 GPIO3, the Ra-01H's DIO0) is TXEN. The board's `semtech,sx1262`
+  node has neither `busy-gpios` nor `dio1-gpios`: the Zephyr driver waits out
+  each command's busy time and polls the IRQ status. Zephyr's `lora/send` and
+  `lora/receive` samples run between it and the Communicator in both
+  directions (-78 and -87 dBm at a metre, 8 dB SNR).
+- MicroPython on an S3 hands the port to the USB-Serial-JTAG with
+  `esdr.shell("usj")`, as the shell apps' `usj` does.
 
 ## Debugging
 

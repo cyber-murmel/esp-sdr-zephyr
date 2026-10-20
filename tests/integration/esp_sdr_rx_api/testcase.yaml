@@ -9,6 +9,7 @@ tests:
   integration.esp_sdr.rx_api.c6:
     platform_allow:
       - xiao_esp32c6/esp32c6/hpcore
+      - why2025_badge/esp32c6/hpcore
 
   # The C5 as well: USB-Serial-JTAG console, flashed directly.
   integration.esp_sdr.rx_api.c5:
@@ -20,4 +21,5 @@ tests:
   integration.esp_sdr.rx_api.s3:
     platform_allow:
       - xiao_esp32s3/esp32s3/procpu
+      - communicator_badge/esp32s3/procpu
     sysbuild: true
