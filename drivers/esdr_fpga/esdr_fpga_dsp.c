@@ -76,11 +76,12 @@ int esdr_fpga_dsp_config(const struct device *dev, const struct esdr_fpga_dsp *c
 	}
 
 	/*
-	 * |X|^2 of a full-scale tone (amplitude 32768) is (32768 sum w)^2: that is 0 dB. The
+	 * |X|^2 of a full-scale tone (amplitude fs) is (fs sum w)^2: that is 0 dB. The
 	 * waterfall maps wf_min_db..wf_max_db onto its indices, the trace tr_top_db..tr_bottom_db
 	 * onto its rows; the gains are 8.8 and below 128.
 	 */
-	float l_offset = -512.0f * log2f(32768.0f * sum);
+	float fs = cfg->full_scale > 0.0f ? cfg->full_scale : 32768.0f;
+	float l_offset = -512.0f * log2f(fs * sum);
 	float wf_span = esdr_fpga_db_to_l(cfg->wf_max_db) - esdr_fpga_db_to_l(cfg->wf_min_db);
 	float tr_span = esdr_fpga_db_to_l(cfg->tr_top_db) - esdr_fpga_db_to_l(cfg->tr_bottom_db);
 	uint16_t avg = cfg->alpha < 1.0f;

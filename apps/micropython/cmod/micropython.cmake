@@ -34,6 +34,10 @@ else()
     ${CMAKE_CURRENT_LIST_DIR}/esdr_fsk.c
     ${CMAKE_CURRENT_LIST_DIR}/esdr_link.c)
 endif()
+# The MCH2022 badge's FPGA (drivers/esdr_fpga): the fpga module.
+if(CONFIG_ESDR_FPGA)
+  target_sources(usermod_esdr INTERFACE ${CMAKE_CURRENT_LIST_DIR}/esdr_fpga.c)
+endif()
 # app_crash.h of apps/common.
 target_include_directories(usermod_esdr INTERFACE ${CMAKE_CURRENT_LIST_DIR}
   ${CMAKE_CURRENT_LIST_DIR}/../../common/include)

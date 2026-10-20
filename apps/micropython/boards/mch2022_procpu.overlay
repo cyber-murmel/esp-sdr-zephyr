@@ -48,3 +48,10 @@
 };
 
 #include "partitions_mch2022.dtsi"
+
+/*
+ * The FPGA as display controller and spectrum engine (the fpga module, qtgui's waterfall and
+ * frequency sinks); the bitstream comes with -DCONFIG_ESDR_FPGA_IMAGE=<gateware build>/top.bin.
+ * Without one the panel stays on SPI and the sinks draw in software.
+ */
+#include "../../../dts/esdr/mch2022_fpga.dtsi"

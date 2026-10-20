@@ -241,6 +241,10 @@ def relayout():
 def _layout():
     global _head, _active
     _clear()
+    # The FPGA's regions belong to the sinks placed below (_fpga.py).
+    from gnuradio import _fpga
+
+    _fpga.release()
     _head = lv.label(_scr)
     _head.set_pos(2, 1)
     out = []
@@ -302,7 +306,9 @@ def run():
             for k, s in enumerate(_active):
                 if time.ticks_diff(now, due[k]) >= 0:
                     s._draw()
-                    s._canvas.invalidate()
+                    # A sink the FPGA draws has only its label on the canvas.
+                    if not s._fpga:
+                        s._canvas.invalidate()
                     _frames[s._title] = _frames.get(s._title, 0) + 1
                     due[k] = time.ticks_add(now, int(s._update * 1000))
             for t in _timers:
@@ -336,6 +342,10 @@ def run():
             raise
         h(signal.SIGINT, None)
     finally:
+        # The FPGA stops drawing: the next screen is LVGL's.
+        from gnuradio import _fpga
+
+        _fpga.release()
         # The window closes with the loop, as when a desktop export exits: the export's
         # closeEvent() stops the flowgraph (a no-op after its SIGINT handler did).
         _close_window()

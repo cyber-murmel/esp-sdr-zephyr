@@ -482,6 +482,20 @@ too (no MCUboot, no DFU).
 The Wi-Fi driver takes its heap from PSRAM and runs with a few buffers: the DRAM the image
 leaves is the libc heap, and the radio only listens.
 
+With a bitstream of the badge's FPGA (``gateware/``, see ``doc/fpga-accelerator.md``) built in,
+the FPGA owns the display, LVGL's drawing passes through it, and the first waterfall and
+frequency sinks of an app hand their plot areas to it (``modules/gnuradio/_fpga.py``, the
+``fpga`` module of ``cmod/esdr_fpga.c``): it computes the spectrum of every monitored sample and
+draws a line per redraw; the sinks keep only their label rows. Other sinks, and a firmware
+without a bitstream, draw in software.
+
+.. code-block:: console
+
+   west build -b mch2022/esp32/procpu esp-sdr-zephyr/apps/micropython -- \
+     -DCONFIG_ESDR_FPGA_IMAGE=\"<gateware build>/top/top.bin\"
+
+``tools/bench/egg_fpga.py`` runs an app with the gateware's counters.
+
 How it is built
 ***************
 

@@ -12,7 +12,7 @@ import time
 
 import dusk
 import esdr
-from gnuradio import _gui, gr
+from gnuradio import _fpga, _gui, gr
 from PyQt5._nothing import Nothing
 
 TRIG_MODE_FREE = 0
@@ -48,6 +48,10 @@ class _sink(gr.basic_block):
     _wants_monitor = True
     _draws = False
     _flex = True
+    # The MCH2022 badge's FPGA can draw this sink's plot area as a "waterfall" or a "trace"
+    # (_fpga.py).
+    _accel = None
+    _fpga = False
 
     def __init__(self, name, kind, title):
         super().__init__(name)
@@ -88,13 +92,22 @@ class _sink(gr.basic_block):
 
         self._w = w
         self._h = h
-        self._buf = bytearray(w * h * 2)
-        self._fbo = framebuf.FrameBuffer(self._buf, w, h, framebuf.RGB565)
+        self._fpga = self._accel is not None and _fpga.claim(self)
+        # With the FPGA the canvas is only the label row; the FPGA draws the plot area.
+        rows = LABEL if self._fpga else h
+        self._buf = bytearray(w * rows * 2)
+        self._fbo = framebuf.FrameBuffer(self._buf, w, rows, framebuf.RGB565)
         self._canvas = lv.canvas(parent)
-        self._canvas.set_buffer(self._buf, w, h, lv.COLOR_FORMAT.RGB565)
+        self._canvas.set_buffer(self._buf, w, rows, lv.COLOR_FORMAT.RGB565)
         self._canvas.set_pos(x, y)
         self._columns(w)
-        self._setup()
+        if self._fpga:
+            px, py, pw, ph = self._plot()
+            self._fpga_area = (x + px, y + py, pw, ph)
+            self._head()
+            _fpga.configure()
+        else:
+            self._setup()
 
     def _columns(self, w):
         pass
@@ -165,7 +178,11 @@ class _spectrum(_sink):
     def set_frequency_range(self, fc, bw):
         self._fc = float(fc)
         self._bw = float(bw)
-        if self._h:
+        if self._fpga:
+            self._head()
+            self._canvas.invalidate()
+            _fpga.configure()
+        elif self._h:
             self._setup()
             self._canvas.invalidate()
 
@@ -174,6 +191,8 @@ class _spectrum(_sink):
 
     def set_fft_average(self, a):
         self._avg = float(a)
+        if self._fpga:
+            _fpga.configure()
 
     def _label(self):
         return "{} {}".format(self._title, _gui.eng(self._fc, "Hz"))
@@ -187,6 +206,7 @@ class _spectrum(_sink):
 
 class freq_sink_c(_spectrum):
     _draws = True
+    _accel = "trace"
 
     def __init__(self, size, wintype, fc, bw, name, nconnections=1, parent=None):
         super().__init__("freq_sink_c", "c", size, wintype, fc, bw, name)
@@ -196,8 +216,13 @@ class freq_sink_c(_spectrum):
     def set_y_axis(self, ymin, ymax):
         self._ymin = float(ymin)
         self._ymax = float(ymax)
+        if self._fpga:
+            _fpga.configure()
 
     def _draw(self):
+        if self._fpga:
+            _fpga.feed()
+            return
         self._spectrum()
         fb, buf = self._fbo, self._buf
         x, y, w, h = self._plot()
@@ -215,6 +240,7 @@ class freq_sink_c(_spectrum):
 
 class waterfall_sink_c(_spectrum):
     _draws = True
+    _accel = "waterfall"
 
     def __init__(self, size, wintype, fc, bw, name, nconnections=1, parent=None):
         super().__init__("waterfall_sink_c", "c", size, wintype, fc, bw, name)
@@ -226,10 +252,14 @@ class waterfall_sink_c(_spectrum):
         # An upper level at or below the lower one (two sliders crossed) leaves 1 dB.
         self._imin = float(imin)
         self._imax = max(float(imax), self._imin + 1.0)
+        if self._fpga:
+            _fpga.configure()
 
     def set_gamma(self, gamma):
         """Not in GNU Radio: the heat scale's gamma for this sink (_gui.GAMMA by default)."""
         self._palette = dusk.heat(gamma=float(gamma))
+        if self._fpga:
+            _fpga.configure()
 
     def set_frequency_range(self, fc, bw):
         # A retune keeps the history: only the label changes.
@@ -238,6 +268,8 @@ class waterfall_sink_c(_spectrum):
         if self._h:
             self._head()
             self._canvas.invalidate()
+        if self._fpga:
+            _fpga.configure()
 
     def _setup(self):
         super()._setup()
@@ -247,6 +279,9 @@ class waterfall_sink_c(_spectrum):
         fb.fill_rect(x, y, w, h, self._palette[0])
 
     def _draw(self):
+        if self._fpga:
+            _fpga.feed()
+            return
         self._spectrum()
         buf = self._buf
         x, y, w, h = self._plot()

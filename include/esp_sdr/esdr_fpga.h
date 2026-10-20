@@ -119,6 +119,7 @@ struct esdr_fpga_dsp {
 	float tr_top_db;	/**< trace's top row */
 	float tr_bottom_db;	/**< trace's bottom row */
 	uint16_t tr_rows;	/**< the trace region's height */
+	float full_scale;	/**< the input's amplitude of 0 dB; 0: 32768 (all formats' top) */
 };
 
 /** @brief Load window, average table and scales (dB relative to a full-scale tone). */
