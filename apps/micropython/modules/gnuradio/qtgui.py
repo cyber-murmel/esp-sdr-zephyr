@@ -328,6 +328,7 @@ class RangeWidget:
     radio cannot tune) is not taken: the slider stops at the last value towards it that works."""
 
     ACCEL = 100
+    SHIFT = 10
 
     _flex = False
     _h = _gui.ROW
@@ -370,10 +371,14 @@ class RangeWidget:
             self._slider.set_value(self.index, False)
 
     def _turned(self, i):
-        # The knob moved the slider to step i since the last pass of the display loop.
+        # The knob (or the arrow keys) moved the slider to step i since the last pass of the
+        # display loop. With a keyboard's Shift held each step counts SHIFT times (10 MHz on a
+        # frequency in 1 MHz steps); boards without a keyboard never report Shift.
         n = int(i) - self.index
         if self.steps > self.ACCEL and abs(n) > 1:
             n *= abs(n)
+        if _gui.shift():
+            n *= self.SHIFT
         self.set_index(self.index + n)
 
     def _at(self, i):

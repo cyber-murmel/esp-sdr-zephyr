@@ -744,6 +744,8 @@ void esdr_port_deinit(void)
 	rx_stop();
 	MP_STATE_PORT(esdr_rx_buf) = MP_OBJ_NULL;
 	MP_STATE_PORT(esdr_rx_fsk) = MP_OBJ_NULL;
+	/* An app that ends leaves the radio as esdr.init() found it: the next starts afresh. */
+	(void)esp_sdr_reset_settings();
 }
 
 /* esdr_link.c */

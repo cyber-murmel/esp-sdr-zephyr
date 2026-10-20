@@ -2,7 +2,8 @@
 """The launcher: a menu of the apps on the board, packaged as in the badge.team hatchery. An
 app is a folder whose __init__.py runs it when imported (tools/mkegg.py writes one that runs
 the GRC export next to it) and whose metadata.json says what it is: name, description,
-category (the menu's section), author, revision; "hidden": true keeps it out of the menu. The
+category (the menu's section), author, revision; "hidden": true keeps it out of the menu, and
+so does "needs" (esdr functions) naming one the board's esdr module lacks. The
 apps come with the firmware (eggs/, frozen) or are folders in apps/ on /FLASH: or /SD:.
 
 Each app runs in a fresh interpreter, as badge.team's system.start() starts one after a
@@ -27,8 +28,10 @@ PLACES = ((".frozen/eggs", "bundled"), ("/FLASH:/apps", "FLASH"), ("/SD:/apps", 
 # These sections come first; the others follow in alphabetical order, apps without one last.
 FIRST = ("receive", "transmit")
 
-W = 320
-H = 240
+# The display LVGL draws on (esdr.display_size(), absent on the C5); 320x240 without one.
+W, H = getattr(esdr, "display_size", lambda: (0, 0))()
+if not W:
+    W, H = 320, 240
 HEADER = 20
 FOOTER = 54
 FG = 0xDCDCDC
@@ -45,6 +48,8 @@ def apps():
     for where, place in PLACES:
         for app, meta in _scan(where):
             if meta.get("hidden") is True:
+                continue
+            if not all(hasattr(esdr, f) for f in meta.get("needs", ())):
                 continue
             entry = {"name": app, "description": "", "category": "", "author": "", "revision": 0}
             entry.update(meta)
@@ -241,12 +246,13 @@ def _up():
         _group = lv.group_create()
     _group.remove_all_objs()
     _group.set_default()
-    # The Zephyr encoder is the only input device; a throw-away one finds it in the list.
+    # Zephyr's encoder (a knob) or keypad (a keyboard) is the input; a throw-away device finds
+    # it in the list.
     tmp = lv.indev_create()
     dev = tmp.get_next()
     tmp.delete()
     while dev:
-        if dev.get_type() == lv.INDEV_TYPE.ENCODER:
+        if dev.get_type() in (lv.INDEV_TYPE.ENCODER, lv.INDEV_TYPE.KEYPAD):
             # Zephyr queues the knob's events across soft resets, also while an app without a
             # GUI ran: read them into the empty group, where they do nothing, and ignore a
             # press that lasts into the menu.

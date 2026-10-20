@@ -18,8 +18,10 @@ import time
 import esdr
 from gnuradio import _layout as _layout_mod
 
-W = 320
-H = 240
+# The display LVGL draws on (esdr.display_size(), absent on the C5); 320x240 without one.
+W, H = getattr(esdr, "display_size", lambda: (0, 0))()
+if not W:
+    W, H = 320, 240
 HEADER = 18
 ROW = 26
 LABEL = 9
@@ -71,6 +73,9 @@ _relayout = False
 _frames = {}
 _busy = [0, 0]
 _headless = None
+
+# A keyboard's Shift key held (esdr.shift(); boards without a keyboard, and the C5, never).
+shift = getattr(esdr, "shift", lambda: False)
 
 
 def headless():
@@ -134,6 +139,7 @@ def _clear():
     if _scr is not None:
         _group.remove_all_objs()
         _scr.clean()
+        _scr.scroll_to_y(0, False)
 
 
 def register(sink):
@@ -190,18 +196,23 @@ def _up():
         ZDD.init()
     lv = lvgl
     _scr = lv.screen_active()
-    _scr.remove_flag(lv.obj.FLAG.SCROLLABLE)
+    # What does not fit below the header (a short display) scrolls into view when the knob or
+    # keyboard focuses it.
+    _scr.add_flag(lv.obj.FLAG.SCROLLABLE)
+    _scr.set_scroll_dir(lv.DIR.VER)
+    _scr.set_scrollbar_mode(lv.SCROLLBAR_MODE.OFF)
     _scr.set_style_bg_color(lv.color_hex(0), 0)
     _scr.set_style_text_color(lv.color_hex(0xDCDCDC), 0)
     _scr.set_style_pad_all(0, 0)
     _group = lv.group_create()
     _group.set_default()
-    # The Zephyr encoder is the only input device; a throw-away one finds it in the list.
+    # Zephyr's encoder (a knob) or keypad (a keyboard) is the input; a throw-away device finds
+    # it in the list.
     tmp = lv.indev_create()
     dev = tmp.get_next()
     tmp.delete()
     while dev:
-        if dev.get_type() == lv.INDEV_TYPE.ENCODER:
+        if dev.get_type() in (lv.INDEV_TYPE.ENCODER, lv.INDEV_TYPE.KEYPAD):
             dev.set_group(_group)
         dev = dev.get_next()
 
@@ -225,6 +236,8 @@ def on(obj, event, handler, getter=None, latest=False):
 
 
 def add_to_group(obj):
+    # LVGL scrolls only its own focusable widgets into view on focus; ours too.
+    obj.add_flag(lv.obj.FLAG.SCROLL_ON_FOCUS)
     _group.add_obj(obj)
 
 

@@ -199,7 +199,11 @@ def _alloc(count):
 _DAC_HZ = 40000000
 # Streaming is gapless (esdr.tx_stats() restarts 0) up to this input rate: above it the DAC
 # backend's block fill takes longer than a block plays. Periodic signals loop at the DAC rate.
-_TX_RATE_MAX_OK = 500000
+# A radio behind a link (the WHY2025 badge's ESP32-C6) plays bursts at up to esdr.TX_RATE_MAX,
+# streams gaplessly up to esdr.TX_STREAM_MAX and has no DAC loops (no esdr.tx_loop).
+_TX_RATE_MAX_OK = getattr(esdr, "TX_RATE_MAX", 500000)
+_TX_STREAM_OK = getattr(esdr, "TX_STREAM_MAX", _TX_RATE_MAX_OK)
+_LOOPS = hasattr(esdr, "tx_loop")
 # A loop is at most this many DAC samples (one bank).
 _LOOP_MAX = 16380
 _LOOP_MIN = 256
@@ -313,7 +317,10 @@ class sink(gr.basic_block):
         return 80000000 if self._rate == 80000000 else _DAC_HZ
 
     def _loop_gen(self, gen, fs):
-        """gen with its cycles per DAC sample, or None when no loop holds it within 1 Hz."""
+        """gen with its cycles per DAC sample, or None when no loop holds it within 1 Hz (or the
+        radio has no loops)."""
+        if not _LOOPS:
+            return None
         wave, cycles, amp, dci, dcq = gen
         c = cycles * self._rate / fs
         if abs(c) >= 0.5:
@@ -332,7 +339,7 @@ class sink(gr.basic_block):
                 g = self._loop_gen(args["gen"](scale), fs)
                 if g is not None:
                     return "loop", {"gen": g}
-            elif args["repeat"] and fs % self._rate == 0:
+            elif _LOOPS and args["repeat"] and fs % self._rate == 0:
                 n = len(args["buf"]) // 4
                 interp = fs // self._rate
                 if _LOOP_MIN <= n * interp <= _LOOP_MAX:
@@ -341,7 +348,7 @@ class sink(gr.basic_block):
             # A generated signal is the same at any rate that holds it: stream it at the
             # fastest gapless rate, or the flowgraph's if that is lower.
             wave, cycles, amp, dci, dcq = args["gen"](scale)
-            rate = min(self._rate, _TX_RATE_MAX_OK)
+            rate = min(self._rate, _TX_STREAM_OK)
             c = cycles * self._rate / rate
             if abs(c) < 0.45 or wave == 0:
                 self._stream_rate = rate
@@ -349,8 +356,8 @@ class sink(gr.basic_block):
         if self._rate * 2 > _DAC_HZ:
             raise ValueError("soapy: {} S/s only for a periodic signal (a loop at the DAC rate)"
                              .format(self._rate))
-        if self._rate > _TX_RATE_MAX_OK:
-            print("soapy: streaming above {} S/s is not gapless on the board".format(_TX_RATE_MAX_OK))
+        if self._rate > _TX_STREAM_OK:
+            print("soapy: streaming above {} S/s is not gapless on the board".format(_TX_STREAM_OK))
         self._stream_rate = self._rate
         if "gen" in args:
             return "stream", {"gen": args["gen"](scale)}

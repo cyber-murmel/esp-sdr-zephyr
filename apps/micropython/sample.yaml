@@ -12,6 +12,7 @@ tests:
     sysbuild: true
     platform_allow:
       - xiao_esp32s3/esp32s3/procpu
+      - communicator_badge/esp32s3/procpu
     integration_platforms:
       - xiao_esp32s3/esp32s3/procpu
   sample.esp_sdr.micropython.c5:
@@ -19,3 +20,8 @@ tests:
       - waveshare_esp32c5_zero/esp32c5/hpcore
     integration_platforms:
       - waveshare_esp32c5_zero/esp32c5/hpcore
+  sample.esp_sdr.micropython.p4:
+    platform_allow:
+      - why2025_badge/esp32p4/hpcore
+    integration_platforms:
+      - why2025_badge/esp32p4/hpcore

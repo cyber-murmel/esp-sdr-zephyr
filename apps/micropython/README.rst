@@ -140,12 +140,24 @@ payload through ``protocol_formatter_bb`` and ``tagged_stream_mux``) -> ``gfsk_m
 Hardware
 ********
 
-As in `mp-lvgl-example <https://github.com/cyber-murmel/mp-lvgl-example>`__:
+On the XIAO ESP32S3, as in `mp-lvgl-example <https://github.com/cyber-murmel/mp-lvgl-example>`__:
 
 - ST7789V 320x240 display and SD card on SPI2 (SCK D8, MISO D9, MOSI D10); display CS D2,
   D/C D1, reset D0; SD card CS D7. The SD card runs at 12 MHz: the pins reach SPI2 through
   the GPIO matrix.
 - Rotary encoder on D3/D4, its switch on D5.
+
+On the Hackaday Communicator badge (``communicator_badge/esp32s3/procpu``), the board's own
+hardware (Zephyr's board documentation):
+
+- The 428x142 NV3007 display; the launcher and the GUI lay out for its size
+  (``esdr.display_size()``). What does not fit below the header scrolls into view when it takes
+  the focus.
+- The keyboard in place of the knob: up and down move the focus, left and right change values,
+  Enter selects, Esc goes back, Esc held 1.5 s returns to the launcher.
+- No SD card: only ``/FLASH:`` (``esdr.sd_info()`` raises ENODEV). The display SPI runs without
+  GDMA, and UART0, the SAO bus and the LoRa module are off, for the image to end below the ring
+  banks.
 
 Storage and USB
 ***************
@@ -186,7 +198,8 @@ as in the `badge.team hatchery <https://badge.team/docs/hatchery/>`__: a folder 
    }
 
 ``category`` is the menu's section (``receive`` and ``transmit`` come first), ``"hidden": true``
-keeps an app out of the menu. ``tools/mkegg.py flowgraph.grc --category receive`` makes the
+keeps an app out of the menu, and so does ``"needs"`` naming an ``esdr`` function the board's
+module lacks (Channelizer needs ``trig_start``). ``tools/mkegg.py flowgraph.grc --category receive`` makes the
 folder of a GRC flowgraph: the flowgraph, its export (``grcc``, unmodified), an ``__init__.py``
 that runs the export's ``main()``, and the metadata from the flowgraph's options (title,
 description, author). Run it again after changing the flowgraph; the revision goes up when the
@@ -196,13 +209,18 @@ The menu lists:
 
 - the apps bundled with the firmware, ``eggs/``: Spectrum, Waterfall (250 kS/s, gapless),
   Wideband (40 MS/s bursts), Constellation, Receiver (tabs, radio buttons, a check box), Tone
-  (transmits) and Data link (two-way messages, `Data link`_). They are frozen;
+  (transmits), Data link (two-way messages, `Data link`_) and, on the WHY2025 badge,
+  Channelizer (80 MHz in 64 channels from triggered snapshots, ``esdr.trig_get()`` and
+  ``esdr.channelize()``; not a GRC export: the snapshots are no stream). They are frozen;
   ``tools/eggs_index.py`` turns their ``metadata.json`` files into the index the menu reads;
 - the folders in ``apps/`` on the FLASH and SD drives: copy an app's folder there over USB.
 
 Each app runs in a fresh interpreter: the launcher keeps the choice across a soft reset
 (``esdr.next_app()``), ``main.py`` runs the app, and when the app ends another soft reset
-brings the menu back with the app selected. An app that fails shows its error until the knob
+brings the menu back with the app selected. That soft reset also resets the radio: every stream stops
+and its settings (frequency, gain, filter, channel bandwidth) go back to those ``esdr.init()``
+found, so no app inherits another's (``esp_sdr_reset_settings()``; on the WHY2025 badge the
+C6 gets ``ESDR_REQ_RESET``, and ``esdr.radio_state()`` shows what it holds). An app that fails shows its error until the knob
 is pressed; the traceback is on the console.
 
 Holding the knob for 1.5 s ends an app and returns to the menu, as Ctrl-C does (a GRC export's
@@ -293,10 +311,40 @@ is already confirmed)::
    >>> import esdr; esdr.shell("mcuboot confirm")
 
 Without DFU access, hand the USB port to the USB-Serial-JTAG from the REPL
-(``esdr.shell("usj")``) and write MCUboot at 0x0 and ``zephyr.signed.bin`` at 0x20000 with
-``esptool``.
+(``esdr.shell("usj")``) and write MCUboot at 0x0 and ``zephyr.signed.confirmed.bin`` at 0x20000
+with ``esptool`` (``west dfu --esptool`` does all of it). That image is padded to its slot and
+ends in a confirmed trailer; ``zephyr.signed.bin`` written plain leaves an earlier image's
+trailer at the slot's end, which MCUboot reads as bad magic, and ``mcuboot confirm`` then fails
+with -5. ``mcuboot`` reports -5 for the secondary slot's header too while that slot holds no
+image, which is harmless.
 
 ``tools/check_capture.py`` checks a recording on the host (length, level, DC, strongest line).
+
+Bench scripts
+=============
+
+``tools/bench/`` holds scripts for boards on the desk, run by ``tools/bench/bench.py PORT
+SCRIPT [NAME=VALUE ...]`` (the settings go in front of the script; each run starts with a soft
+reset):
+
+- ``egg_smoke.py``: a bundled app (``EGG='"spectrum"'``) for a few seconds, imported as the
+  launcher does, and the frames its bands drew;
+- ``egg_sliders.py``: the same with every slider moved part way through its range (floats, as
+  the knob gives them);
+- ``datalink_auto.py``: the Data link egg in auto mode on two boards at once (start both),
+  then the node's counters: ``acked`` against ``msgs``;
+- ``trig_snapshots.py``: the WHY2025 badge's triggered snapshots, channelized: how many came,
+  how many broke, what ``channelize()`` costs;
+- ``burst_capture.py`` on one board while another sends bursts, then
+  ``burst_analyse.py`` on its output on the host: the envelope, where the burst lies, its
+  frequency and what the Data link's GFSK receiver decodes (it found truncated bursts and a DC
+  tracker that followed the signal).
+
+.. code-block:: console
+
+   tools/bench/bench.py /dev/ttyUSB0 egg_smoke.py EGG='"channelizer"' SECS=10
+   tools/bench/bench.py /dev/ttyACM0 burst_capture.py > burst.txt
+   tools/bench/burst_analyse.py burst.txt
 
 The ESP32-C5 image
 ******************

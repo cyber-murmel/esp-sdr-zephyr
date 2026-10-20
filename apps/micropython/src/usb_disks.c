@@ -27,8 +27,13 @@
 /* Long enough for the host's media poll (udisks: every 2 s) to see the medium gone. */
 #define HIDE_MIN_MS 3000
 
+/* Boards without a card slot have no "/SD:" volume (sd_fs). */
+#define HAS_SD DT_NODE_EXISTS(DT_NODELABEL(sd_fs))
+
 FS_FSTAB_DECLARE_ENTRY(DT_NODELABEL(flash_fs));
+#if HAS_SD
 FS_FSTAB_DECLARE_ENTRY(DT_NODELABEL(sd_fs));
+#endif
 
 struct usb_disk {
 	struct disk_info info;
@@ -120,17 +125,21 @@ static struct usb_disk disks[] = {
 		.mount = &FS_FSTAB_ENTRY(DT_NODELABEL(flash_fs)),
 		.shared = true,
 	},
+#if HAS_SD
 	{
 		.info = {.name = "USD", .ops = &proxy_ops},
 		.target = "SD",
 		.mount = &FS_FSTAB_ENTRY(DT_NODELABEL(sd_fs)),
 		.shared = true,
 	},
+#endif
 };
 
 /* Sorted by id: LUN 0 FLASH, LUN 1 SD. */
 USBD_DEFINE_MSC_LUN(a_flash, "UFLASH", "ESP-SDR", "FLASH", "1.0");
+#if HAS_SD
 USBD_DEFINE_MSC_LUN(b_sd, "USD", "ESP-SDR", "SD card", "1.0");
+#endif
 
 static struct usb_disk *find(const char *mnt)
 {
@@ -191,8 +200,10 @@ bool usb_disk_shared(const char *mnt)
 
 static int usb_disks_init(void)
 {
+#if HAS_SD
 	/* A card that does not mount is left alone, never formatted. */
 	FS_FSTAB_ENTRY(DT_NODELABEL(sd_fs)).flags |= FS_MOUNT_FLAG_NO_FORMAT;
+#endif
 	ARRAY_FOR_EACH_PTR(disks, u) {
 		k_mutex_init(&u->lock);
 		(void)disk_access_register(&u->info);

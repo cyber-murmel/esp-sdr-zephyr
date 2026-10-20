@@ -10,7 +10,7 @@
  *   rx_gain([index])           set (-1: automatic) or read the receive gain index
  *   rx_gain_max()
  *   rx_bandwidth(hz)           receive filter, 0: the PHY's own setting
- *   RATES                      the continuous rates, 16 MS/s / 64 .. 1024
+ *   RATES                      the continuous rates, 16 MS/s / 32 .. 1024
  *   BURST_RATES                80, 40, 16 MS/s: rx_start() takes single-bank bursts at
  *                              these, contiguous within a burst only (16380 samples)
  *   rx_start(rate, buf=None, count=0, offset=True, monitor=False, wrap=False)
@@ -40,13 +40,15 @@
  *   shell(cmd) -> str          a Zephyr shell command (usj, mcuboot confirm, ...)
  *   claim(mnt), release(mnt)   take a volume ("/FLASH:", "/SD:") from the USB host for
  *                              writing, give it back (src/usb_disks.h)
- *   sd_info() -> dict           what the SD stack negotiated with the card
+ *   sd_info() -> dict           what the SD stack negotiated with the card (ENODEV: no slot)
+ *   display_size() -> (w, h)    the display LVGL draws on, (0, 0) without one
  *   reset_reason() -> str      why the chip last started (power-on, brownout, watchdogs)
  *   crash() -> dict or None    what ended the previous boot (fatal error, watchdog, double
  *                              exception)
  *   next_app([path]) -> str    the app main.py starts after the next soft reset (launcher.py);
  *                              without an argument returns it and forgets it
  *   home() -> bool             whether the knob was held for the launcher since the last call
+ *   shift() -> bool            whether a keyboard's Shift key is held (no keyboard: never)
  */
 
 #include <errno.h>
@@ -56,7 +58,6 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/input/input.h>
 #include <zephyr/kernel.h>
-#include <zephyr/sd/sd.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/shell/shell_dummy.h>
 #include <zephyr/sys/atomic.h>
@@ -81,6 +82,7 @@
 #include "shared/runtime/interrupt_char.h"
 
 #include "app_crash.h"
+#include "esdr_board.h"
 #include "usb_disks.h"
 #include "esdr_rx.h"
 #include "esdr_tx.h"
@@ -91,59 +93,6 @@
 MP_REGISTER_ROOT_POINTER(mp_obj_t esdr_rx_buf);
 /* The transmit buffer, read by the feeder thread while it plays. */
 MP_REGISTER_ROOT_POINTER(mp_obj_t esdr_tx_buf);
-
-/*
- * ---- the launcher (modules/launcher.py) ----
- *
- * The app to start survives the soft reset launcher.start() makes, outside the heap. Holding
- * the knob (the LVGL encoder's switch) for KNOB_HOME_MS ends what runs as Ctrl-C does, flagged
- * so that the launcher shows its menu rather than the REPL. When no Ctrl-C can help (the REPL
- * waits for input, keyboard interrupts are off, what runs ignored a hold KNOB_AGAIN_MS ago),
- * holding the knob restarts the board. A hold counts for the launcher for KNOB_FRESH_MS: a
- * hold whose Ctrl-C an app swallowed does not turn a later Ctrl-C from the console into one.
- */
-
-#define KNOB_HOME_MS  1500
-#define KNOB_AGAIN_MS 5000
-#define KNOB_FRESH_MS 15000
-#define KNOB_NODE     DT_COMPAT_GET_ANY_STATUS_OKAY(zephyr_lvgl_encoder_input)
-
-static char next_app[128];
-static atomic_t knob_home;
-static int64_t knob_time;
-
-#if DT_NODE_EXISTS(KNOB_NODE)
-static void knob_held(struct k_work *work)
-{
-	int64_t now = k_uptime_get();
-
-	ARG_UNUSED(work);
-	if (mp_interrupt_char < 0 ||
-	    (atomic_get(&knob_home) != 0 && now - knob_time < KNOB_AGAIN_MS)) {
-		sys_reboot(SYS_REBOOT_COLD);
-	}
-	knob_time = now;
-	(void)atomic_set(&knob_home, 1);
-	mp_hal_signal_event();
-	mp_sched_keyboard_interrupt();
-}
-
-static K_WORK_DELAYABLE_DEFINE(knob_work, knob_held);
-
-static void knob_input(struct input_event *evt, void *user_data)
-{
-	ARG_UNUSED(user_data);
-	if (evt->type != INPUT_EV_KEY || evt->code != DT_PROP(KNOB_NODE, button_input_code)) {
-		return;
-	}
-	if (evt->value != 0) {
-		(void)k_work_reschedule(&knob_work, K_MSEC(KNOB_HOME_MS));
-	} else {
-		(void)k_work_cancel_delayable(&knob_work);
-	}
-}
-INPUT_CALLBACK_DEFINE(NULL, knob_input, NULL);
-#endif
 
 /*
  * ---- heap, added at every (soft) start ----
@@ -169,7 +118,7 @@ void esdr_port_init(void)
 	gc_add(psram_heap, psram_heap + sizeof(psram_heap));
 	MP_STATE_PORT(esdr_rx_buf) = MP_OBJ_NULL;
 	MP_STATE_PORT(esdr_tx_buf) = MP_OBJ_NULL;
-	(void)atomic_clear(&knob_home);
+	esdr_board_init();
 }
 
 void esdr_port_deinit(void)
@@ -182,6 +131,8 @@ void esdr_port_deinit(void)
 	esdr_tx_stop();
 	(void)esdr_tx_wait(3000);
 	MP_STATE_PORT(esdr_tx_buf) = MP_OBJ_NULL;
+	/* An app that ends leaves the radio as esdr.init() found it: the next starts afresh. */
+	(void)esp_sdr_reset_settings();
 #ifdef CONFIG_LVGL
 	/*
 	 * LVGL's state, displays and draw buffers included, was in the heap, which the port has
@@ -719,53 +670,6 @@ static mp_obj_t esdr_tx_gain_max_fn(void)
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(esdr_tx_gain_max_obj, esdr_tx_gain_max_fn);
 
-/* fc32_to_sc16(src, dst, scale): float32 pairs times scale to clipped int16 pairs, as many as
- * both hold; returns that count of samples. */
-static mp_obj_t esdr_fc32_to_sc16(mp_obj_t src_in, mp_obj_t dst_in, mp_obj_t scale_in)
-{
-	mp_buffer_info_t src, dst;
-	float scale = (float)mp_obj_get_float(scale_in);
-
-	mp_get_buffer_raise(src_in, &src, MP_BUFFER_READ);
-	mp_get_buffer_raise(dst_in, &dst, MP_BUFFER_WRITE);
-	size_t n = MIN(src.len / 4U, dst.len / 2U) & ~1U;
-	const float *s = src.buf;
-	int16_t *o = dst.buf;
-
-	if ((((uintptr_t)s) & 3U) != 0U || (((uintptr_t)o) & 1U) != 0U) {
-		mp_raise_ValueError(MP_ERROR_TEXT("unaligned buffer"));
-	}
-	for (size_t k = 0; k < n; k++) {
-		float v = s[k] * scale;
-
-		o[k] = (int16_t)(v > 32767.0f ? 32767 : (v < -32767.0f ? -32767 : (int)v));
-	}
-	return mp_obj_new_int_from_uint(n / 2U);
-}
-static MP_DEFINE_CONST_FUN_OBJ_3(esdr_fc32_to_sc16_obj, esdr_fc32_to_sc16);
-
-/* sc16_to_fc32(src, dst, scale): as many pairs as both hold; returns that count. */
-static mp_obj_t esdr_sc16_to_fc32(mp_obj_t src_in, mp_obj_t dst_in, mp_obj_t scale_in)
-{
-	mp_buffer_info_t src, dst;
-	float scale = (float)mp_obj_get_float(scale_in);
-
-	mp_get_buffer_raise(src_in, &src, MP_BUFFER_READ);
-	mp_get_buffer_raise(dst_in, &dst, MP_BUFFER_WRITE);
-	size_t n = MIN(src.len / 2U, dst.len / 4U);
-	const int16_t *s = src.buf;
-	float *o = dst.buf;
-
-	if ((((uintptr_t)s) & 1U) != 0U || (((uintptr_t)o) & 3U) != 0U) {
-		mp_raise_ValueError(MP_ERROR_TEXT("unaligned buffer"));
-	}
-	for (size_t k = 0; k < n; k++) {
-		o[k] = (float)s[k] * scale;
-	}
-	return mp_obj_new_int_from_uint(n / 2U);
-}
-static MP_DEFINE_CONST_FUN_OBJ_3(esdr_sc16_to_fc32_obj, esdr_sc16_to_fc32);
-
 /* ---- board ---- */
 
 /* claim(mnt), release(mnt): take a volume ("/FLASH:", "/SD:") from the USB host before
@@ -785,7 +689,11 @@ static mp_obj_t esdr_release(mp_obj_t mnt_in)
 static MP_DEFINE_CONST_FUN_OBJ_1(esdr_release_obj, esdr_release);
 
 /* sd_info() -> dict: what the SD stack negotiated with the card (diagnostics). The sdmmc disk
- * driver's data starts with its struct sd_card (drivers/disk/sdmmc_subsys.c). */
+ * driver's data starts with its struct sd_card (drivers/disk/sdmmc_subsys.c). Boards without
+ * a card slot raise ENODEV. */
+#if DT_NODE_EXISTS(DT_NODELABEL(sd_spi))
+#include <zephyr/sd/sd.h>
+
 #define SD_DISK_NODE DT_CHILD(DT_NODELABEL(sd_spi), mmc)
 
 static mp_obj_t esdr_sd_info(void)
@@ -808,22 +716,13 @@ static mp_obj_t esdr_sd_info(void)
 #undef PUT
 	return d;
 }
-static MP_DEFINE_CONST_FUN_OBJ_0(esdr_sd_info_obj, esdr_sd_info);
-
-/* reset_reason() -> str: why the chip last started (esp_reset_reason()). Catches what crash()
- * cannot: power-on, brownout, the hardware watchdogs, a USB or JTAG reset. */
-static mp_obj_t esdr_reset_reason(void)
+#else
+static mp_obj_t esdr_sd_info(void)
 {
-	static const char *const names[] = {
-		"unknown", "power-on", "external pin", "software", "panic", "interrupt watchdog",
-		"task watchdog", "other watchdog", "deep sleep", "brownout", "sdio", "usb", "jtag",
-		"efuse", "power glitch", "cpu lockup",
-	};
-	unsigned int r = (unsigned int)esp_reset_reason();
-
-	return mp_obj_new_str_from_cstr(r < ARRAY_SIZE(names) ? names[r] : "?");
+	mp_raise_OSError(ENODEV);
 }
-static MP_DEFINE_CONST_FUN_OBJ_0(esdr_reset_reason_obj, esdr_reset_reason);
+#endif
+static MP_DEFINE_CONST_FUN_OBJ_0(esdr_sd_info_obj, esdr_sd_info);
 
 /* crash() -> dict or None: the fatal error, watchdog reset or double exception that ended
  * the previous boot (apps/common app_crash.h; the console on USB loses the dump itself). */
@@ -890,43 +789,6 @@ static mp_obj_t esdr_shell(mp_obj_t cmd_in)
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(esdr_shell_obj, esdr_shell);
 
-/* next_app([path]) -> str: with a path, the app main.py starts after the next soft reset;
- * without, that app ("" for none), forgotten. */
-static mp_obj_t esdr_next_app(size_t n_args, const mp_obj_t *args)
-{
-	char out[sizeof(next_app)];
-	const char *path;
-	size_t len;
-
-	if (n_args == 0) {
-		/* Forgotten first: whatever the string does, the next soft reset starts the menu. */
-		strcpy(out, next_app);
-		next_app[0] = '\0';
-		return mp_obj_new_str_from_cstr(out);
-	}
-	if (!mp_obj_is_str(args[0])) {
-		mp_raise_TypeError(MP_ERROR_TEXT("path must be a str"));
-	}
-	path = mp_obj_str_get_data(args[0], &len);
-	if (len >= sizeof(next_app) || memchr(path, '\0', len) != NULL) {
-		mp_raise_ValueError(MP_ERROR_TEXT("path too long or with a NUL"));
-	}
-	memcpy(next_app, path, len);
-	next_app[len] = '\0';
-	return mp_const_none;
-}
-static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_next_app_obj, 0, 1, esdr_next_app);
-
-/* home() -> bool: the knob was held since the last call, recently enough that the Ctrl-C
- * which ended the app was the knob's: "back to the launcher". */
-static mp_obj_t esdr_home(void)
-{
-	bool held = atomic_clear(&knob_home) != 0;
-
-	return mp_obj_new_bool(held && k_uptime_get() - knob_time < KNOB_FRESH_MS);
-}
-static MP_DEFINE_CONST_FUN_OBJ_0(esdr_home_obj, esdr_home);
-
 /* esdr_link.c */
 extern const mp_obj_fun_builtin_fixed_t esdr_fsk_rx_reset_obj, esdr_fsk_rx_state_obj;
 extern const mp_obj_fun_builtin_var_t esdr_fsk_rx_init_obj, esdr_fsk_rx_obj, esdr_fsk_mod_obj;
@@ -948,8 +810,9 @@ static const mp_rom_obj_tuple_t esdr_burst_rates_obj = {
 
 static const mp_rom_obj_tuple_t esdr_rates_obj = {
 	{&mp_type_tuple},
-	5,
+	6,
 	{
+		MP_ROM_INT(ESP_SDR_RING_RATE_HZ / 32U),
 		MP_ROM_INT(ESP_SDR_RING_RATE_HZ / 64U),
 		MP_ROM_INT(ESP_SDR_RING_RATE_HZ / 128U),
 		MP_ROM_INT(ESP_SDR_RING_RATE_HZ / 256U),
@@ -995,7 +858,9 @@ static const mp_rom_map_elem_t esdr_globals_table[] = {
 	{MP_ROM_QSTR(MP_QSTR_reset_reason), MP_ROM_PTR(&esdr_reset_reason_obj)},
 	{MP_ROM_QSTR(MP_QSTR_next_app), MP_ROM_PTR(&esdr_next_app_obj)},
 	{MP_ROM_QSTR(MP_QSTR_home), MP_ROM_PTR(&esdr_home_obj)},
+	{MP_ROM_QSTR(MP_QSTR_shift), MP_ROM_PTR(&esdr_shift_obj)},
 	{MP_ROM_QSTR(MP_QSTR_sd_info), MP_ROM_PTR(&esdr_sd_info_obj)},
+	{MP_ROM_QSTR(MP_QSTR_display_size), MP_ROM_PTR(&esdr_display_size_obj)},
 	{MP_ROM_QSTR(MP_QSTR_claim), MP_ROM_PTR(&esdr_claim_obj)},
 	{MP_ROM_QSTR(MP_QSTR_release), MP_ROM_PTR(&esdr_release_obj)},
 	{MP_ROM_QSTR(MP_QSTR_rx_latest), MP_ROM_PTR(&esdr_rx_latest_obj)},

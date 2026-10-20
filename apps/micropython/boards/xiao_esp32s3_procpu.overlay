@@ -120,7 +120,7 @@ zephyr_udc0: &usb_otg {
 };
 
 /* 1792 KiB slots and the FAT volume in the upper 4 MB. */
-#include "xiao_esp32s3_partitions.dtsi"
+#include "partitions.dtsi"
 
 /*
  * SPI2 (SCK D8, MISO D9, MOSI D10), shared by the display (CS 0) and the SD card (CS 1). No

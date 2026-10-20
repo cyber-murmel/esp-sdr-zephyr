@@ -4,9 +4,10 @@
  * Flash layout of this application, for the application and its MCUboot
  * (sysbuild/mcuboot.overlay), which must agree on it: Espressif's 4 MB default
  * table (two 1792 KiB slots, MicroPython with LVGL needs more than the
- * board's 1344 KiB) instead of the board's AMP table, whose APP CPU slots go
- * unused (the S3 runs SMP), and the upper half of the 8 MB flash as the FAT
- * volume "FLASH". The volume stays where apps/multiapp keeps it.
+ * 1344 KiB of the XIAO ESP32S3's AMP table) instead of the board's table,
+ * whose APP CPU slots go unused (the S3 runs SMP), and the 4 MB above it as the
+ * FAT volume "FLASH", on any S3 board with at least 8 MB of flash. The volume
+ * stays where apps/multiapp keeps it.
  */
 
 &flash0 {

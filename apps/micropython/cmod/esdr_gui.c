@@ -26,11 +26,22 @@
 #define FFT_MAX 4096U
 #define FULL_SCALE 16384.0f
 
-static EXT_RAM_BSS_ATTR float fft_re[FFT_MAX];
-static EXT_RAM_BSS_ATTR float fft_im[FFT_MAX];
-static EXT_RAM_BSS_ATTR float tw_cos[FFT_MAX / 2];
-static EXT_RAM_BSS_ATTR float tw_sin[FFT_MAX / 2];
-static EXT_RAM_BSS_ATTR float win[FFT_MAX];
+/*
+ * EXT_RAM_BSS_ATTR is empty on the ESP32-P4 (the HAL enables SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY
+ * for the ESP32, S2 and S3 only), whose linker script puts .ext_ram.bss in PSRAM all the same:
+ * named directly there, so that the SRAM stays free for LVGL's draw buffers.
+ */
+#if defined(CONFIG_SOC_SERIES_ESP32P4)
+#define GUI_PSRAM __attribute__((section(".ext_ram.bss")))
+#else
+#define GUI_PSRAM EXT_RAM_BSS_ATTR
+#endif
+
+static GUI_PSRAM float fft_re[FFT_MAX];
+static GUI_PSRAM float fft_im[FFT_MAX];
+static GUI_PSRAM float tw_cos[FFT_MAX / 2];
+static GUI_PSRAM float tw_sin[FFT_MAX / 2];
+static GUI_PSRAM float win[FFT_MAX];
 static uint32_t tw_n, win_n;
 static int win_kind = -1;
 static float win_sum;

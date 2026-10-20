@@ -1,0 +1,79 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * Hackaday Communicator badge: the board's 428x142 display and keyboard, no SD card.
+ */
+
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+#include <zephyr/dt-bindings/lvgl/lvgl.h>
+
+/ {
+	chosen {
+		zephyr,console = &cdc_acm_uart0;
+		zephyr,shell-uart = &cdc_acm_uart0;
+	};
+
+	/* The FAT volume "FLASH", mounted at /FLASH:, shared with the USB host. */
+	fat_disk: fat_disk {
+		compatible = "zephyr,flash-disk";
+		partition = <&fat_partition>;
+		disk-name = "FLASH";
+		cache-size = <4096>;
+	};
+
+	fstab {
+		compatible = "zephyr,fstab";
+
+		flash_fs: flash_fs {
+			compatible = "zephyr,fstab,fatfs";
+			mount-point = "/FLASH:";
+			disk-access;
+		};
+	};
+};
+
+/*
+ * The keyboard drives LVGL as the knob does: up and down move the focus, left and right
+ * change the focused value, Enter selects, Esc goes back (held 1.5 s: the launcher).
+ */
+&lvgl_keypad {
+	input-codes = <INPUT_KEY_UP INPUT_KEY_DOWN INPUT_KEY_LEFT INPUT_KEY_RIGHT
+		       INPUT_KEY_ENTER INPUT_KEY_ESC INPUT_KEY_BACKSPACE INPUT_KEY_TAB>;
+	lvgl-codes = <LV_KEY_PREV LV_KEY_NEXT LV_KEY_LEFT LV_KEY_RIGHT
+		      LV_KEY_ENTER LV_KEY_ESC LV_KEY_BACKSPACE LV_KEY_NEXT>;
+};
+
+zephyr_udc0: &usb_otg {
+	status = "okay";
+
+	/* The REPL's console while OTG owns the USB port. */
+	cdc_acm_uart0: cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+		label = "ESP-SDR MicroPython REPL";
+	};
+};
+
+#include "partitions.dtsi"
+
+/*
+ * The display without GDMA: its driver and DMA paths do not fit in the DRAM below the
+ * receiver's ring banks.
+ */
+&spi2 {
+	/delete-property/ dma-enabled;
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+};
+
+/* Unused here, and their drivers' RAM does not fit: UART0 (J7), the SAO bus, the LoRa module. */
+&uart0 {
+	status = "disabled";
+};
+
+&i2c0 {
+	status = "disabled";
+};
+
+&spi3 {
+	status = "disabled";
+};
