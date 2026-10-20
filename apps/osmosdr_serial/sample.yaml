@@ -7,6 +7,7 @@ common:
   tags: esp-sdr
   platform_allow:
     - xiao_esp32c6/esp32c6/hpcore
+    - why2025_badge/esp32c6/hpcore
     - waveshare_esp32c5_zero/esp32c5/hpcore
   integration_platforms:
     - xiao_esp32c6/esp32c6/hpcore

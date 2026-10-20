@@ -8,3 +8,4 @@ project(esp_sdr_osmosdr_serial)
 # The protocol header is the osmosdr app's.
 target_include_directories(app PRIVATE ../osmosdr/src)
 target_sources(app PRIVATE src/main.c)
+target_sources_ifdef(CONFIG_APP_LINK_SDIO app PRIVATE src/link_sdio.c)

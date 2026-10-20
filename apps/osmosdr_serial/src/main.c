@@ -2,21 +2,24 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * The osmosdr protocol over a serial link (esdr_proto.h, serial transport):
- * the ESP32-C6's USB-Serial-JTAG, driven through its FIFOs. One thread: idle,
- * it answers request frames; streaming, it runs the CPU-paced receiver or
- * transmitter (esp_sdr_paced.h) with interrupts locked and moves the bytes
- * between samples.
+ * USB-Serial-JTAG (ESP32-C6, ESP32-C5) or a UART to another chip (the WHY2025
+ * badge), driven through its FIFOs. One thread: idle, it answers request
+ * frames; streaming, it runs the CPU-paced receiver or transmitter
+ * (esp_sdr_paced.h) with interrupts locked and moves the bytes between
+ * samples.
  */
 
 #include <errno.h>
 #include <string.h>
 
 #include <zephyr/app_version.h>
+#include <zephyr/devicetree.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/sys_io.h>
 #include <zephyr/sys/util.h>
 
+#include <hal/uart_ll.h>
 #include <soc/usb_serial_jtag_reg.h>
 
 #include <esp_sdr/esp_sdr.h>
@@ -25,11 +28,31 @@
 #include <esp_sdr/esp_sdr_diag.h>
 #endif
 #include <esp_sdr/esp_sdr_rx.h>
+#if defined(CONFIG_ESP_SDR_TRIG)
+#include <esp_sdr/esp_sdr_trig.h>
+#endif
 
 #include "esdr_proto.h"
+#if defined(CONFIG_APP_LINK_SDIO)
+#include "link_sdio.h"
+#endif
 
+/* The paced receiver one sample at a time, either item width: what a UART or USB-Serial-JTAG
+ * carries. */
 #define RATE_MAX_HZ 250000U
 #define RATE_COUNT 5U
+/*
+ * Receive rates offered: over SDIO up to 2 MS/s, 8-bit items above RATE_MAX_HZ (the tight
+ * loop, esp_sdr_rx_paced_fill_iq8(); 2.5 MS/s leaves 3 % of the samples late).
+ */
+#if defined(CONFIG_APP_LINK_SDIO)
+#define LINK_RATE_MAX_HZ 2000000U
+#define LINK_RATE_COUNT 8U
+#define OUT_BLOCKS 8U
+#else
+#define LINK_RATE_MAX_HZ RATE_MAX_HZ
+#define LINK_RATE_COUNT RATE_COUNT
+#endif
 /*
  * Transmit DAC rate limit: the interpolating poll plus reading the samples
  * from USB keep up with 250 kS/s at the DAC on the C6 (125 kS/s x 2), 500
@@ -42,31 +65,44 @@
 #endif
 /* The diagnostic-bus ring delivers 2.5 MS/s divided by the decimation. */
 #define DIAG_IQ_HZ 2500000U
+#ifndef OUT_BLOCKS
 #define OUT_BLOCKS 3U
+#endif
 /* The diagnostic-bus build has no RAM for more. */
 #if defined(CONFIG_APP_RX_DIAG)
 #define TX_RING_BYTES 8192U
 #else
 #define TX_RING_BYTES 16384U
 #endif
+/* Transmit prebuffer (tx_prebuffer()): its length, how long the first byte may take, and the
+ * pause that ends a burst shorter than it. */
+#define TX_PREBUF_MS 20U
+#define TX_FIRST_MS  50
+#define TX_QUIET_MS  3
 /* Cycles one FIFO byte access takes, and the margin left before a sample is due. */
 #define IO_SLACK_CYCLES 40
 
 /* Settings as requested by the host. */
-static struct {
+struct settings {
 	uint16_t mode, bits, rx_gain, tx_gain, dgain;
 	uint64_t freq_hz;
 	uint32_t rate_hz, bandwidth_hz;
 	int32_t corr_ppb;
-} want = {
-	.mode = ESDR_MODE_OFF,
-	.bits = 8,
-	.rx_gain = ESDR_GAIN_AUTO,
-	.tx_gain = 8,
-	.dgain = ESDR_DGAIN_DEFAULT,
-	.freq_hz = (uint64_t)CONFIG_APP_FREQ_MHZ * 1000000U,
-	.rate_hz = RATE_MAX_HZ,
+	/* ESDR_REQ_SET_TRIGGER: threshold over the baseline in sixteenths, samples after. */
+	uint16_t trig_ratio;
+	uint32_t trig_post;
 };
+
+/* As the device starts, and again after ESDR_REQ_RESET. */
+#define SETTINGS_START                                                                             \
+	{                                                                                          \
+		.mode = ESDR_MODE_OFF, .bits = 8, .rx_gain = ESDR_GAIN_AUTO, .tx_gain = 8,         \
+		.dgain = ESDR_DGAIN_DEFAULT, .freq_hz = (uint64_t)CONFIG_APP_FREQ_MHZ * 1000000U,  \
+		.rate_hz = RATE_MAX_HZ, .trig_ratio = 128, .trig_post = ESDR_TRIG_SAMPLES / 2U,     \
+	}
+
+static const struct settings want_start = SETTINGS_START;
+static struct settings want = SETTINGS_START;
 
 static uint64_t center_hz;
 static uint32_t lo_mhz;
@@ -74,42 +110,190 @@ static int32_t lo_khz;
 static bool radio_dirty = true;
 static struct esdr_stats stats;
 
-/* USB-Serial-JTAG endpoint 1 (Zephyr's driver is disabled in the board overlay). */
-static inline bool usj_readable(void)
+/*
+ * The link to the host, driven through its FIFOs: the SDIO slave (CONFIG_APP_LINK_SDIO: the
+ * WHY2025 badge's ESP32-C6 to its ESP32-P4, link_sdio.c), a UART where the board names one
+ * (chosen esdr,link-uart), else USB-Serial-JTAG's endpoint 1 (Zephyr's driver is disabled in
+ * the board overlay).
+ */
+#define LINK_UART DT_CHOSEN(esdr_link_uart)
+
+#if defined(CONFIG_APP_LINK_SDIO)
+static void link_init(void)
+{
+	sdio_link_init();
+}
+
+static inline bool link_readable(void)
+{
+	return sdio_link_readable();
+}
+
+static inline uint8_t link_getc(void)
+{
+	return sdio_link_getc();
+}
+
+static inline void link_flush(void)
+{
+}
+#elif DT_NODE_EXISTS(LINK_UART)
+static uart_dev_t *const link_hw = (uart_dev_t *)DT_REG_ADDR(LINK_UART);
+
+/*
+ * Zephyr's driver sets the UART up (current-speed); the app only polls its FIFOs. RTS drops
+ * once the receive FIFO holds LINK_RTS_THRESHOLD bytes, so the host pauses while the transmit
+ * ring is full, as USB does; there is no line the other way.
+ */
+#define LINK_RTS_THRESHOLD 96U
+
+static void link_init(void)
+{
+	uart_ll_set_hw_flow_ctrl(link_hw, UART_HW_FLOWCTRL_RTS, LINK_RTS_THRESHOLD);
+}
+
+static inline bool link_readable(void)
+{
+	return uart_ll_get_rxfifo_len(link_hw) > 0U;
+}
+
+static inline bool link_writable(void)
+{
+	return uart_ll_get_txfifo_len(link_hw) > 0U;
+}
+
+static inline uint8_t link_getc(void)
+{
+	uint8_t b;
+
+	uart_ll_read_rxfifo(link_hw, &b, 1);
+	return b;
+}
+
+static inline void link_putc(uint8_t b)
+{
+	uart_ll_write_txfifo(link_hw, &b, 1);
+}
+
+static inline void link_flush(void)
+{
+}
+#else
+static uint32_t usj_pkt;
+
+static void link_init(void)
+{
+}
+
+static inline bool link_readable(void)
 {
 	return (sys_read32(USB_SERIAL_JTAG_EP1_CONF_REG) & USB_SERIAL_JTAG_SERIAL_OUT_EP_DATA_AVAIL) != 0U;
 }
 
-static inline bool usj_writable(void)
+static inline bool link_writable(void)
 {
 	return (sys_read32(USB_SERIAL_JTAG_EP1_CONF_REG) & USB_SERIAL_JTAG_SERIAL_IN_EP_DATA_FREE) != 0U;
 }
 
-static inline void usj_flush(void)
+static inline uint8_t link_getc(void)
+{
+	return (uint8_t)sys_read32(USB_SERIAL_JTAG_EP1_REG);
+}
+
+/* A full 64-byte packet goes to the host at once. */
+static inline void link_flush(void)
 {
 	sys_write32(USB_SERIAL_JTAG_WR_DONE, USB_SERIAL_JTAG_EP1_CONF_REG);
+	usj_pkt = 0;
 }
+
+static inline void link_putc(uint8_t b)
+{
+	sys_write32(b, USB_SERIAL_JTAG_EP1_REG);
+	if (++usj_pkt == 64U) {
+		link_flush();
+	}
+}
+#endif
 
 /* Bytes to the host: whole receive blocks, then at most one reply frame. */
 static struct {
-	uint8_t blk[OUT_BLOCKS][ESDR_BLOCK_BYTES];
+	uint8_t blk[OUT_BLOCKS][ESDR_BLOCK_BYTES] __aligned(4);
 	/* Blocks committed and sent (counters); offset into the block being sent. */
-	uint32_t committed, sent, off, pkt;
+	uint32_t committed, sent, off;
 	/* The block being filled, and its sample count. */
 	uint32_t fill_n;
 	uint16_t next_flags;
 	uint64_t index;
 } out;
 
+#if defined(CONFIG_APP_LINK_SDIO)
+/*
+ * SDIO: committed blocks go to the DMA as they are (out.queued counts them); a block is sent
+ * once the host has read its chain. Replies are copied into a bounce buffer behind them.
+ */
+static uint32_t out_queued;
+static uint8_t bounce[2][ESDR_BLOCK_BYTES] __aligned(4);
+static uint32_t bounce_next;
+
+static void sdio_out(void)
+{
+	while (out_queued != out.committed &&
+	       sdio_link_queue(out.blk[out_queued % OUT_BLOCKS], ESDR_BLOCK_BYTES, true)) {
+		out_queued++;
+	}
+	sdio_link_pump();
+	while (out.sent != sdio_link_blocks_done()) {
+		out.sent++;
+		stats.rx_blocks++;
+		stats.usb_in_bytes += ESDR_BLOCK_BYTES;
+	}
+}
+
+static void out_service(uint32_t max)
+{
+	ARG_UNUSED(max);
+	sdio_out();
+}
+
+static void out_until(uint32_t due)
+{
+	ARG_UNUSED(due);
+	sdio_out();
+}
+
+/*
+ * Send a buffer now (idle, or after a stream stopped), zero padded to whole words (the host
+ * reads words; the parser skips zeros between frames), giving up after 100 ms. Waits until
+ * the host has read it: the bounce buffer is used again.
+ */
+static void write_now(const uint8_t *p, size_t n)
+{
+	int64_t end = k_uptime_get() + 100;
+	uint8_t *b = bounce[bounce_next++ % ARRAY_SIZE(bounce)];
+	size_t padded = (n + 3U) & ~3U;
+
+	if (padded > sizeof(bounce[0])) {
+		return;
+	}
+	memcpy(b, p, n);
+	memset(b + n, 0, padded - n);
+	while (!sdio_link_queue(b, padded, false)) {
+		sdio_out();
+		if (k_uptime_get() > end) {
+			return;
+		}
+	}
+	do {
+		sdio_out();
+	} while (sdio_link_pending() > 0U && k_uptime_get() <= end);
+}
+#else
 /* Write what is queued while the FIFO takes it; at most @p max bytes. */
 static void out_service(uint32_t max)
 {
-	while (max-- > 0U && out.sent != out.committed && usj_writable()) {
-		sys_write32(out.blk[out.sent % OUT_BLOCKS][out.off++], USB_SERIAL_JTAG_EP1_REG);
-		if (++out.pkt == 64U) {
-			usj_flush();
-			out.pkt = 0;
-		}
+	while (max-- > 0U && out.sent != out.committed && link_writable()) {
+		link_putc(out.blk[out.sent % OUT_BLOCKS][out.off++]);
 		if (out.off == ESDR_BLOCK_BYTES) {
 			out.off = 0;
 			out.sent++;
@@ -127,14 +311,10 @@ static void out_until(uint32_t due)
 {
 	while (out.sent != out.committed &&
 	       (int32_t)(due - esp_sdr_paced_cycles()) > IO_SLACK_CYCLES) {
-		if (!usj_writable()) {
+		if (!link_writable()) {
 			return;
 		}
-		sys_write32(out.blk[out.sent % OUT_BLOCKS][out.off++], USB_SERIAL_JTAG_EP1_REG);
-		if (++out.pkt == 64U) {
-			usj_flush();
-			out.pkt = 0;
-		}
+		link_putc(out.blk[out.sent % OUT_BLOCKS][out.off++]);
 		if (out.off == ESDR_BLOCK_BYTES) {
 			out.off = 0;
 			out.sent++;
@@ -150,20 +330,16 @@ static void write_now(const uint8_t *p, size_t n)
 	int64_t end = k_uptime_get() + 100;
 
 	for (size_t k = 0; k < n; k++) {
-		while (!usj_writable()) {
+		while (!link_writable()) {
 			if (k_uptime_get() > end) {
 				return;
 			}
 		}
-		sys_write32(p[k], USB_SERIAL_JTAG_EP1_REG);
-		if (++out.pkt == 64U) {
-			usj_flush();
-			out.pkt = 0;
-		}
+		link_putc(p[k]);
 	}
-	usj_flush();
-	out.pkt = 0;
+	link_flush();
 }
+#endif
 
 /* Transmit samples from the host, as received (int8 or int16 little endian pairs). */
 static struct {
@@ -220,11 +396,11 @@ static void req_feed(uint8_t b)
 /* Read from the host while there is room for transmit data; at most @p max bytes. */
 static void in_service(uint32_t max)
 {
-	while (max-- > 0U && !req.ready && usj_readable()) {
+	while (max-- > 0U && !req.ready && link_readable()) {
 		if (req.tx_left > 0U && txr.head - txr.tail >= TX_RING_BYTES) {
 			return;
 		}
-		req_feed((uint8_t)sys_read32(USB_SERIAL_JTAG_EP1_REG));
+		req_feed(link_getc());
 	}
 }
 
@@ -232,31 +408,32 @@ static void in_service(uint32_t max)
 static void in_until(uint32_t due)
 {
 	while (!req.ready && (int32_t)(due - esp_sdr_paced_cycles()) > IO_SLACK_CYCLES &&
-	       usj_readable()) {
+	       link_readable()) {
 		if (req.tx_left > 0U) {
 			/* Transmit payload straight into the ring. */
 			if (txr.head - txr.tail >= TX_RING_BYTES) {
 				return;
 			}
 			txr.buf[txr.head++ % TX_RING_BYTES] =
-				(uint8_t)sys_read32(USB_SERIAL_JTAG_EP1_REG);
+				link_getc();
 			req.tx_left--;
 			stats.usb_out_bytes++;
 			continue;
 		}
-		req_feed((uint8_t)sys_read32(USB_SERIAL_JTAG_EP1_REG));
+		req_feed(link_getc());
 	}
 }
 
 static uint32_t rate_round(uint32_t hz)
 {
-	for (uint32_t r = RATE_MAX_HZ; r > (RATE_MAX_HZ >> (RATE_COUNT - 1U)); r /= 2U) {
+	for (uint32_t r = LINK_RATE_MAX_HZ; r > (LINK_RATE_MAX_HZ >> (LINK_RATE_COUNT - 1U));
+	     r /= 2U) {
 		/* Above the geometric mean of r and r / 2. */
 		if (2U * (uint64_t)hz * hz >= (uint64_t)r * r) {
 			return r;
 		}
 	}
-	return RATE_MAX_HZ >> (RATE_COUNT - 1U);
+	return LINK_RATE_MAX_HZ >> (LINK_RATE_COUNT - 1U);
 }
 
 static unsigned int dgain_db(void)
@@ -293,14 +470,197 @@ static int radio_apply(void)
 		    (int64_t)want.freq_hz * want.corr_ppb / 1000000000LL;
 	/* Applied once: a setting the radio refuses keeps its previous value. */
 	radio_dirty = false;
+#if defined(CONFIG_ESP_SDR_TRIG)
+	/* The trigger's quiet baseline moves with the frequency and the gain. */
+	esp_sdr_trig_reset();
+#endif
 	return ret;
 }
+
+/*
+ * ESDR_REQ_CAPTURE_BURST: one burst at a native rate (@p mhz), sent as int16 blocks (the raw
+ * 10 bits times 32, as the S3's bursts) flagged ESDR_BLK_BURST before the reply. The radio is
+ * idle meanwhile (main() runs requests only between streams).
+ */
+static int capture_burst(uint16_t mhz, const uint8_t *data, size_t len)
+{
+	static uint8_t blk[ESDR_BLOCK_BYTES];
+	const size_t per = ESDR_BLOCK_PAYLOAD / 4U;
+	struct esp_sdr_rx_burst b;
+	enum esp_sdr_rate rate;
+	uint32_t n;
+	int ret;
+
+	if (len != 4U) {
+		return -EINVAL;
+	}
+	n = sys_get_le32(data);
+	for (rate = ESP_SDR_RATE_80MSPS; rate <= ESP_SDR_RATE_16MSPS; rate++) {
+		if (esp_sdr_rx_rate_hz(rate) == (uint32_t)mhz * 1000000U) {
+			break;
+		}
+	}
+	if (rate > ESP_SDR_RATE_16MSPS || n < ESP_SDR_SAMPLES_MIN || n > ESP_SDR_SAMPLES_MAX) {
+		return -EINVAL;
+	}
+	if (radio_dirty) {
+		ret = radio_apply();
+		if (ret != 0) {
+			return ret;
+		}
+	}
+	ret = esp_sdr_rx_capture(rate, n, &b);
+	if (ret != 0) {
+		return ret;
+	}
+	for (size_t k = 0; k < b.count; k += per) {
+		size_t m = MIN(per, b.count - k);
+		struct esdr_block_hdr h = {
+			.magic = sys_cpu_to_le32(ESDR_BLOCK_MAGIC),
+			.flags = sys_cpu_to_le16(ESDR_BLK_BURST | ESDR_BLK_16BIT),
+			.samples = sys_cpu_to_le16((uint16_t)m),
+			.index = sys_cpu_to_le64(k),
+		};
+		uint8_t *p = blk + sizeof(h);
+
+		memcpy(blk, &h, sizeof(h));
+		memset(p + 4U * m, 0, ESDR_BLOCK_PAYLOAD - 4U * m);
+		for (size_t j = 0; j < m; j++) {
+			sys_put_le16((uint16_t)(esp_sdr_rx_i(b.words[k + j]) * 32), p + 4U * j);
+			sys_put_le16((uint16_t)(esp_sdr_rx_q(b.words[k + j]) * 32), p + 4U * j + 2U);
+		}
+		write_now(blk, sizeof(blk));
+		stats.rx_blocks++;
+		stats.usb_in_bytes += sizeof(blk);
+	}
+	return 0;
+}
+
+#if defined(CONFIG_ESP_SDR_TRIG)
+static bool trig_stop(void *user)
+{
+	ARG_UNUSED(user);
+	in_service(64);
+	return req.ready;
+}
+
+/*
+ * One snapshot to the host: ESDR_TRIG_BLOCKS int8 blocks built in the snapshot's scratch (the
+ * free half of the capture bank), the newest ESDR_TRIG_SAMPLES of the ring, sent from there
+ * before the ring may run again.
+ */
+static void trig_send(const struct esp_sdr_trig_snap *snap)
+{
+	const uint32_t per = ESDR_BLOCK_PAYLOAD / 2U;
+	const uint32_t skip = ESP_SDR_TRIG_RING - ESDR_TRIG_SAMPLES;
+
+	for (uint32_t k = 0; k < ESDR_TRIG_BLOCKS; k++) {
+		uint8_t *blk = snap->scratch + k * ESDR_BLOCK_BYTES;
+		uint32_t from = skip + k * per;
+		struct esdr_block_hdr h = {
+			.magic = sys_cpu_to_le32(ESDR_BLOCK_MAGIC),
+			.flags = sys_cpu_to_le16(ESDR_BLK_TRIGGER | (k == 0U ? ESDR_BLK_GAP : 0U)),
+			.samples = sys_cpu_to_le16((uint16_t)per),
+			.index = sys_cpu_to_le64((uint64_t)((int64_t)from - (int64_t)snap->trig)),
+		};
+
+		memcpy(blk, &h, sizeof(h));
+		esp_sdr_trig_pack_iq8(snap, from, per, (int8_t *)(blk + sizeof(h)));
+	}
+#if defined(CONFIG_APP_LINK_SDIO)
+	int64_t end = k_uptime_get() + 200;
+
+	for (uint32_t k = 0; k < ESDR_TRIG_BLOCKS; k++) {
+		while (!sdio_link_queue(snap->scratch + k * ESDR_BLOCK_BYTES, ESDR_BLOCK_BYTES,
+					false)) {
+			sdio_link_pump();
+			if (k_uptime_get() > end) {
+				return;
+			}
+		}
+	}
+	do {
+		sdio_link_pump();
+	} while (sdio_link_pending() > 0U && k_uptime_get() <= end);
+#else
+	for (uint32_t k = 0; k < ESDR_TRIG_BLOCKS; k++) {
+		write_now(snap->scratch + k * ESDR_BLOCK_BYTES, ESDR_BLOCK_BYTES);
+	}
+#endif
+	stats.rx_blocks += ESDR_TRIG_BLOCKS;
+	stats.usb_in_bytes += ESDR_TRIG_BLOCKS * ESDR_BLOCK_BYTES;
+	stats.rx_samples += ESDR_TRIG_SAMPLES;
+}
+
+/* ESDR_MODE_TRIGGER: snapshots until a request comes. */
+static void run_trig(void)
+{
+	struct esp_sdr_trig_cfg cfg = {
+		.ratio_x16 = want.trig_ratio,
+		.post = want.trig_post,
+		.stop = trig_stop,
+	};
+	struct esp_sdr_trig_snap snap;
+
+	while (!req.ready) {
+		int ret = esp_sdr_trig_wait(&cfg, &snap);
+
+		if (ret == -EINTR) {
+			break;
+		}
+		if (ret != 0) {
+			want.mode = ESDR_MODE_OFF;
+			break;
+		}
+		stats.ring_runs++;
+		trig_send(&snap);
+	}
+}
+
+static int set_trigger(uint16_t value, const uint8_t *data, size_t len)
+{
+	uint32_t post = ESDR_TRIG_SAMPLES / 2U;
+
+	if (len == 4U) {
+		post = sys_get_le32(data);
+	} else if (len != 0U) {
+		return -EINVAL;
+	}
+	if (value == 0U) {
+		value = 128U;
+	}
+	if (value <= 16U || post == 0U || post >= ESDR_TRIG_SAMPLES) {
+		return -EINVAL;
+	}
+	want.trig_ratio = value;
+	want.trig_post = post;
+	return 0;
+}
+#endif
 
 static int handle_out(uint8_t r, uint16_t value, const uint8_t *data, size_t len)
 {
 	switch (r) {
+#if defined(CONFIG_ESP_SDR_TRIG)
+	case ESDR_REQ_SET_TRIGGER:
+		return set_trigger(value, data, len);
+#endif
+	case ESDR_REQ_CAPTURE_BURST:
+		return capture_burst(value, data, len);
+	case ESDR_REQ_RESET:
+		/* radio_apply() then tunes and sets the gain and filter (and resets the trigger's
+		 * baseline) before the next stream.
+		 */
+		want = want_start;
+		radio_dirty = true;
+		return 0;
 	case ESDR_REQ_SET_MODE:
-		if (value != ESDR_MODE_OFF && value != ESDR_MODE_RX && value != ESDR_MODE_TX) {
+		/* run_tx() played what was queued before taking an ESDR_MODE_F_DRAIN request. */
+		if (value == (ESDR_MODE_OFF | ESDR_MODE_F_DRAIN)) {
+			value = ESDR_MODE_OFF;
+		}
+		if (value != ESDR_MODE_OFF && value != ESDR_MODE_RX && value != ESDR_MODE_TX &&
+		    !(IS_ENABLED(CONFIG_ESP_SDR_TRIG) && value == ESDR_MODE_TRIGGER)) {
 			return -ENOTSUP;
 		}
 		want.mode = value;
@@ -383,8 +743,8 @@ static int handle_in(uint8_t r, uint8_t *buf, size_t max)
 			.info_size = sizeof(info),
 			.freq_min_hz = (uint64_t)ESP_SDR_FREQ_MIN_MHZ * 1000000U,
 			.freq_max_hz = (uint64_t)ESP_SDR_FREQ_MAX_MHZ * 1000000U,
-			.rx_rate_max_hz = RATE_MAX_HZ,
-			.rx_rate_count = RATE_COUNT,
+			.rx_rate_max_hz = LINK_RATE_MAX_HZ,
+			.rx_rate_count = LINK_RATE_COUNT,
 			.rx_gain_max = (uint16_t)esp_sdr_rx_gain_max(),
 			.tx_gain_max = (uint16_t)esp_sdr_tx_paced_power_max(),
 			.block_bytes = ESDR_BLOCK_BYTES,
@@ -528,11 +888,13 @@ static void rx_emit(int32_t vi, int32_t vq)
 /* After a stream: whole blocks only, the partial one is dropped and the restart marked. */
 static void rx_end(void)
 {
-	while (out.sent != out.committed) {
+	int64_t end = k_uptime_get() + 200;
+
+	/* A host that stopped reading leaves them after 200 ms. */
+	while (out.sent != out.committed && k_uptime_get() <= end) {
 		out_service(64);
 	}
-	usj_flush();
-	out.pkt = 0;
+	link_flush();
 	out.fill_n = 0;
 	out.next_flags = ESDR_BLK_GAP;
 }
@@ -595,6 +957,68 @@ static void run_rx_diag(void)
 }
 #endif
 
+#if defined(CONFIG_APP_LINK_SDIO)
+/* Samples per esp_sdr_rx_paced_fill_iq8() call: a quarter block, then the link's turn. */
+#define FAST_CHUNK (ESDR_BLOCK_PAYLOAD / 2U / 4U)
+
+/*
+ * Above RATE_MAX_HZ, 8-bit items: the tight loop fills the blocks in place, a quarter block
+ * at a time, and the DMA takes them as they are. The gain is a shift: sums of 80 MHz / rate
+ * inputs, times 2^(gain / 6) / 4 per input, to the nearest power of 2 (within 3 dB of the
+ * one-sample path's scale).
+ */
+static void run_rx_fast(void)
+{
+	static int8_t drop[2U * FAST_CHUNK] __aligned(4);
+	uint32_t v = 4U * (ESP_SDR_PACED_INPUT_HZ / want.rate_hz);
+	/* log2(v) to the nearest integer, less the digital gain. */
+	int shift = 31 - __builtin_clz(v);
+	unsigned int key;
+
+	if (v - (1U << shift) > (1U << shift) / 2U) {
+		shift++;
+	}
+	shift = MAX(0, shift - (int)(dgain_db() / 6U));
+	if (esp_sdr_rx_paced_start(want.rate_hz) != 0) {
+		want.mode = ESDR_MODE_OFF;
+		return;
+	}
+	rx_begin();
+	key = irq_lock();
+	esp_sdr_paced_sync();
+	while (!req.ready) {
+		if (out.committed - out.sent >= OUT_BLOCKS) {
+			/* No free block: the samples go, the next block marks the gap. */
+			esp_sdr_rx_paced_fill_iq8(drop, FAST_CHUNK, (unsigned int)shift);
+			out.index += FAST_CHUNK;
+			stats.rx_overflow_samples += FAST_CHUNK;
+			if (out.next_flags == 0U) {
+				out.next_flags = ESDR_BLK_OVERFLOW | ESDR_BLK_GAP;
+				stats.rx_overflows++;
+			}
+		} else {
+			uint8_t *blk = out.blk[out.committed % OUT_BLOCKS] +
+				       sizeof(struct esdr_block_hdr);
+
+			esp_sdr_rx_paced_fill_iq8((int8_t *)blk + 2U * out.fill_n, FAST_CHUNK,
+						  (unsigned int)shift);
+			out.fill_n += FAST_CHUNK;
+			if (out.fill_n == rx_per_block) {
+				out_commit();
+			}
+		}
+		sdio_out();
+		while (!req.ready && link_readable()) {
+			req_feed(link_getc());
+		}
+	}
+	irq_unlock(key);
+	esp_sdr_rx_paced_stop();
+	pacing_stats();
+	rx_end();
+}
+#endif
+
 static void run_rx(void)
 {
 	uint32_t k = rx_scale();
@@ -605,6 +1029,17 @@ static void run_rx(void)
 	run_rx_diag();
 	return;
 #endif
+	if (want.rate_hz > RATE_MAX_HZ) {
+#if defined(CONFIG_APP_LINK_SDIO)
+		if (want.bits == 8U) {
+			run_rx_fast();
+			return;
+		}
+#endif
+		/* 16-bit items only up to RATE_MAX_HZ. */
+		want.mode = ESDR_MODE_OFF;
+		return;
+	}
 	ret = esp_sdr_rx_paced_start(want.rate_hz);
 	if (ret != 0) {
 		want.mode = ESDR_MODE_OFF;
@@ -650,11 +1085,54 @@ static bool tx_input(void *user, int16_t *i, int16_t *q)
 	return true;
 }
 
+/*
+ * Fill the ring before the stream starts, as the S3's DAC prebuffer: TX_PREBUF_MS of samples
+ * (at most three quarters of the ring), or what the host sent before it paused (a burst
+ * shorter than that), or nothing if it sends nothing for TX_FIRST_MS. Without it a link as
+ * fast as the stream (a UART at 5 Mbaud carries 250 kS/s of 8-bit pairs, just) leaves the
+ * transmitter short from its first sample and a burst plays as noise.
+ */
+static void tx_prebuffer(void)
+{
+	uint32_t item = want.bits == 16U ? 4U : 2U;
+	uint32_t fill = (uint32_t)MIN((uint64_t)want.rate_hz * item * TX_PREBUF_MS / 1000U,
+				      TX_RING_BYTES / 4U * 3U);
+	uint32_t quiet = TX_FIRST_MS;
+	int64_t last = k_uptime_get();
+
+	while (!req.ready && txr.head - txr.tail < fill) {
+		if (link_readable()) {
+			in_service(256);
+			last = k_uptime_get();
+			quiet = TX_QUIET_MS;
+		} else if (k_uptime_get() - last >= quiet) {
+			break;
+		}
+	}
+}
+
+/* The request waiting is ESDR_MODE_OFF with ESDR_MODE_F_DRAIN and samples are still queued. */
+static bool tx_draining(void)
+{
+	uint32_t item = want.bits == 16U ? 4U : 2U;
+
+	return req.h.req == ESDR_REQ_SET_MODE && (req.h.flags & ESDR_SER_IN) == 0U &&
+	       sys_le16_to_cpu(req.h.value) == (ESDR_MODE_OFF | ESDR_MODE_F_DRAIN) &&
+	       txr.head - txr.tail >= item;
+}
+
 static void run_tx(void)
 {
 	unsigned int l = 8;
 	struct esp_sdr_paced_stats ps;
 	unsigned int key;
+
+	if (want.rate_hz > RATE_MAX_HZ) {
+		/* Transmit stays at the one-sample rates. */
+		want.mode = ESDR_MODE_OFF;
+		return;
+	}
+	tx_prebuffer();
 
 	/* The top rate leaves no time to interpolate: it goes to the DAC as it is. */
 	uint32_t dac_max = want.rate_hz >= RATE_MAX_HZ ? RATE_MAX_HZ : TX_DAC_MAX_HZ;
@@ -670,7 +1148,7 @@ static void run_tx(void)
 	stats.tx_sessions++;
 	key = irq_lock();
 	esp_sdr_paced_sync();
-	while (!req.ready) {
+	while (!req.ready || tx_draining()) {
 		(void)esp_sdr_tx_paced_poll();
 		in_until(esp_sdr_paced_deadline());
 	}
@@ -688,6 +1166,7 @@ int main(void)
 	int ret;
 
 	printk("osmosdr_serial %s\n", APP_VERSION_STRING);
+	link_init();
 	ret = esp_sdr_init();
 	if (ret != 0) {
 		printk("esp_sdr_init: %d\n", ret);
@@ -701,6 +1180,10 @@ int main(void)
 			run_rx();
 		} else if (want.mode == ESDR_MODE_TX) {
 			run_tx();
+#if defined(CONFIG_ESP_SDR_TRIG)
+		} else if (want.mode == ESDR_MODE_TRIGGER) {
+			run_trig();
+#endif
 		} else {
 			uint32_t got = req.got + req.tx_left;
 
