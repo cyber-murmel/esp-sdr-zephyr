@@ -83,6 +83,8 @@ let
 
   python = zephyr-nix.pythonEnv.override {
     extraPackages = ps: with ps; [
+      # The MCH2022 badge's FPGA gateware (gateware/).
+      amaranth
       jsonschema
       # Markdown pages in the Sphinx docs (doc/).
       myst-parser
@@ -167,10 +169,13 @@ let
     (esp-idf-xtensa.tools.openocd-esp32)
     gnuradio
     gqrx
+    # Synthesis, place and route for the MCH2022 badge's iCE40 (gateware/).
+    icestorm
     inspectrum
     librsvg
     libusb1
     mermaid-filter
+    nextpnr
     pandoc
     # The CI checks as git hooks (.pre-commit-config.yaml).
     pre-commit
@@ -183,6 +188,7 @@ let
     west2nix-update
     # tshark: the host tests read the pcap app's stream with it.
     wireshark-cli
+    yosys
   ]);
 
   env = {
