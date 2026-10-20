@@ -16,6 +16,7 @@ zephyr_library_sources(
 )
 zephyr_library_sources_ifdef(CONFIG_SOC_SERIES_ESP32S3 src/esp_sdr_tx.c)
 zephyr_library_sources_ifdef(CONFIG_ESP_SDR_PACED src/esp_sdr_paced.c)
+zephyr_library_sources_ifdef(CONFIG_ESP_SDR_TRIG src/esp_sdr_trig.c)
 zephyr_library_sources_ifdef(CONFIG_ESP_SDR_DIAG src/esp_sdr_diag.c)
 zephyr_library_sources_ifdef(CONFIG_ESP_SDR_REPLAY src/esp_sdr_replay.c)
 zephyr_library_sources_ifdef(CONFIG_ESP_SDR_TX src/esp_sdr_tx_stream.c)
@@ -25,6 +26,10 @@ zephyr_library_sources_ifdef(CONFIG_ESP_SDR_RING src/esp_sdr_ring.c src/esp_sdr_
 zephyr_library_sources_ifdef(CONFIG_ESP_SDR_RING_FIR src/esp_sdr_ring_dot.S)
 zephyr_library_sources_ifdef(CONFIG_ESP_SDR_CHANCAP src/esp_sdr_chancap.c)
 zephyr_library_sources_ifdef(CONFIG_ESP_SDR_CHANCAP_SIMD src/esp_sdr_chancap_pie.S)
+if(CONFIG_ESP_SDR_TRIG)
+  # The snapshot packing loop.
+  set_source_files_properties(src/esp_sdr_trig.c PROPERTIES COMPILE_OPTIONS "-O3")
+endif()
 if(CONFIG_ESP_SDR_CHANCAP)
   # Per-sample loops of the channelizer and the sink.
   set_source_files_properties(src/esp_sdr_chancap.c PROPERTIES COMPILE_OPTIONS "-O3;-ffp-contract=fast")
