@@ -1,7 +1,7 @@
 {
   "name": "Waterfall",
-  "description": "A gapless waterfall of 250 kHz; the knob tunes from 1.8 to 2.8 GHz and sets the level (the top of the colour scale).",
+  "description": "A gapless waterfall of 250 kHz to 2 MHz (a chooser, up to the board's top rate: 2 MS/s on the WHY2025 badge, 500 kS/s on the S3); the knob tunes from 1.8 to 2.8 GHz and sets the level (the top of the colour scale).",
   "category": "receive",
   "author": "esp-sdr",
-  "revision": 2
+  "revision": 4
 }

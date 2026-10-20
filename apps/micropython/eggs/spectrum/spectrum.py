@@ -7,12 +7,13 @@
 # GNU Radio Python Flow Graph
 # Title: Spectrum
 # Author: esp-sdr
-# Description: Spectrum, waterfall and samples of 250 kHz; the knob tunes from 1.8 to 2.8 GHz.
+# Description: Spectrum, waterfall and samples of 250 kHz to 2 MHz (a chooser, up to the board's top rate: 2 MS/s on the WHY2025 badge, 500 kS/s on the S3); the knob tunes from 1.8 to 2.8 GHz.
 # GNU Radio version: 3.10.12.0
 
 from PyQt5 import Qt
 from gnuradio import qtgui
 from PyQt5 import QtCore
+from PyQt5.QtCore import QObject, pyqtSlot
 from gnuradio import gr
 from gnuradio.filter import firdes
 from gnuradio.fft import window
@@ -71,6 +72,22 @@ class spectrum(gr.top_block, Qt.QWidget):
         # Blocks
         ##################################################
 
+        # Create the options list
+        self._samp_rate_options = [2000000.0, 1000000.0, 500000.0, 250000.0]
+        # Create the labels list
+        self._samp_rate_labels = ['2 MS/s', '1 MS/s', '500 kS/s', '250 kS/s']
+        # Create the combo box
+        self._samp_rate_tool_bar = Qt.QToolBar(self)
+        self._samp_rate_tool_bar.addWidget(Qt.QLabel("Sample rate" + ": "))
+        self._samp_rate_combo_box = Qt.QComboBox()
+        self._samp_rate_tool_bar.addWidget(self._samp_rate_combo_box)
+        for _label in self._samp_rate_labels: self._samp_rate_combo_box.addItem(_label)
+        self._samp_rate_callback = lambda i: Qt.QMetaObject.invokeMethod(self._samp_rate_combo_box, "setCurrentIndex", Qt.Q_ARG("int", self._samp_rate_options.index(i)))
+        self._samp_rate_callback(self.samp_rate)
+        self._samp_rate_combo_box.currentIndexChanged.connect(
+            lambda i: self.set_samp_rate(self._samp_rate_options[i]))
+        # Create the radio buttons
+        self.top_layout.addWidget(self._samp_rate_tool_bar)
         self._freq_range = qtgui.Range(1.8e9, 2.8e9, 1e6, 2.44e9, 200)
         self._freq_win = qtgui.RangeWidget(self._freq_range, self.set_freq, "Frequency", "counter_slider", float, QtCore.Qt.Horizontal)
         self.top_layout.addWidget(self._freq_win)
@@ -239,19 +256,20 @@ class spectrum(gr.top_block, Qt.QWidget):
 
     def set_samp_rate(self, samp_rate):
         self.samp_rate = samp_rate
-        self.soapy_hackrf_source_0.set_sample_rate(0, self.samp_rate)
+        self._samp_rate_callback(self.samp_rate)
         self.qtgui_freq_sink_x_0.set_frequency_range(self.freq, self.samp_rate)
-        self.qtgui_waterfall_sink_x_0.set_frequency_range(self.freq, self.samp_rate)
         self.qtgui_time_sink_x_0.set_samp_rate(self.samp_rate)
+        self.qtgui_waterfall_sink_x_0.set_frequency_range(self.freq, self.samp_rate)
+        self.soapy_hackrf_source_0.set_sample_rate(0, self.samp_rate)
 
     def get_freq(self):
         return self.freq
 
     def set_freq(self, freq):
         self.freq = freq
-        self.soapy_hackrf_source_0.set_frequency(0, self.freq)
         self.qtgui_freq_sink_x_0.set_frequency_range(self.freq, self.samp_rate)
         self.qtgui_waterfall_sink_x_0.set_frequency_range(self.freq, self.samp_rate)
+        self.soapy_hackrf_source_0.set_frequency(0, self.freq)
 
 
 

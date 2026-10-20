@@ -205,16 +205,16 @@ class constellation(gr.top_block, Qt.QWidget):
 
     def set_samp_rate(self, samp_rate):
         self.samp_rate = samp_rate
-        self.soapy_hackrf_source_0.set_sample_rate(0, self.samp_rate)
         self.qtgui_freq_sink_x_0.set_frequency_range(self.freq, self.samp_rate)
+        self.soapy_hackrf_source_0.set_sample_rate(0, self.samp_rate)
 
     def get_freq(self):
         return self.freq
 
     def set_freq(self, freq):
         self.freq = freq
-        self.soapy_hackrf_source_0.set_frequency(0, self.freq)
         self.qtgui_freq_sink_x_0.set_frequency_range(self.freq, self.samp_rate)
+        self.soapy_hackrf_source_0.set_frequency(0, self.freq)
 
 
 

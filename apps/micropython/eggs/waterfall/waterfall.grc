@@ -1,36 +1,198 @@
 options:
   parameters:
     author: esp-sdr
-    description: A gapless waterfall of 250 kHz; the knob tunes from 1.8 to 2.8 GHz and sets the level (the top of the colour scale).
+    catch_exceptions: 'True'
+    category: '[GRC Hier Blocks]'
+    cmake_opt: ''
+    comment: ''
+    copyright: ''
+    description: 'A gapless waterfall of 250 kHz to 2 MHz (a chooser, up to the board''s top rate: 2 MS/s on the WHY2025 badge, 500 kS/s on the S3); the knob tunes from 1.8 to 2.8 GHz and sets the level (the top of the colour scale).'
+    gen_cmake: 'On'
+    gen_linking: dynamic
     generate_options: qt_gui
+    hier_block_src_path: '.:'
     id: waterfall
-    title: Waterfall
+    max_nouts: '0'
+    output_language: python
+    placement: (0,0)
+    qt_qss_theme: ''
+    realtime_scheduling: ''
     run: 'True'
+    run_command: '{python} -u {filename}'
     run_options: prompt
-  states: {coordinate: [8, 8], rotation: 0, state: enabled}
+    sizing_mode: fixed
+    thread_safe_setters: ''
+    title: Waterfall
+    window_size: (1000,1000)
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [8, 4.0]
+    rotation: 0
+    state: enabled
+
 blocks:
-- name: samp_rate
-  id: variable
-  parameters: {value: '250e3'}
-  states: {coordinate: [184, 12], rotation: 0, state: enabled}
 - name: freq
   id: variable_qtgui_range
-  parameters: {label: Frequency, start: 1.8e9, stop: 2.8e9, step: 1e6, value: 2.44e9, widget: counter_slider}
-  states: {coordinate: [300, 12], rotation: 0, state: enabled}
+  parameters:
+    comment: ''
+    gui_hint: ''
+    label: Frequency
+    min_len: '200'
+    orient: QtCore.Qt.Horizontal
+    rangeType: float
+    start: 1.8e9
+    step: 1e6
+    stop: 2.8e9
+    value: 2.44e9
+    widget: counter_slider
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [312, 4.0]
+    rotation: 0
+    state: enabled
 - name: level
   id: variable_qtgui_range
-  parameters: {label: Level dB, start: '-100', stop: '-20', step: '1', value: '-57', widget: counter_slider}
-  states: {coordinate: [420, 12], rotation: 0, state: enabled}
-- name: soapy_hackrf_source_0
-  id: soapy_hackrf_source
-  parameters: {dev_args: '', samp_rate: samp_rate, center_freq: freq, gain: '16', vga: '16', amp: 'False', bandwidth: '0', type: fc32}
-  states: {coordinate: [16, 160], rotation: 0, state: enabled}
+  parameters:
+    comment: ''
+    gui_hint: ''
+    label: Level dB
+    min_len: '200'
+    orient: QtCore.Qt.Horizontal
+    rangeType: float
+    start: '-100'
+    step: '1'
+    stop: '-20'
+    value: '-57'
+    widget: counter_slider
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [448, 4.0]
+    rotation: 0
+    state: enabled
+- name: samp_rate
+  id: variable_qtgui_chooser
+  parameters:
+    comment: ''
+    gui_hint: ''
+    label: Sample rate
+    label0: 2 MS/s
+    label1: 1 MS/s
+    label2: 500 kS/s
+    label3: 250 kS/s
+    label4: ''
+    labels: '[]'
+    num_opts: '4'
+    option0: 2e6
+    option1: 1e6
+    option2: 500e3
+    option3: 250e3
+    option4: '4'
+    options: '[0, 1, 2]'
+    orient: Qt.QVBoxLayout
+    type: real
+    value: 250e3
+    widget: combo_box
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [176, 4.0]
+    rotation: 0
+    state: enabled
 - name: qtgui_waterfall_sink_x_0
   id: qtgui_waterfall_sink_x
-  parameters: {type: complex, fftsize: '256', fc: freq, bw: samp_rate, name: '"250 kS/s"', update_time: '0.02', int_min: level - 20, int_max: level}
-  states: {coordinate: [400, 240], rotation: 0, state: enabled}
+  parameters:
+    affinity: ''
+    alias: ''
+    alpha1: '1.0'
+    alpha10: '1.0'
+    alpha2: '1.0'
+    alpha3: '1.0'
+    alpha4: '1.0'
+    alpha5: '1.0'
+    alpha6: '1.0'
+    alpha7: '1.0'
+    alpha8: '1.0'
+    alpha9: '1.0'
+    axislabels: 'True'
+    bw: samp_rate
+    color1: '0'
+    color10: '0'
+    color2: '0'
+    color3: '0'
+    color4: '0'
+    color5: '0'
+    color6: '0'
+    color7: '0'
+    color8: '0'
+    color9: '0'
+    comment: ''
+    fc: freq
+    fftsize: '256'
+    freqhalf: 'True'
+    grid: 'False'
+    gui_hint: ''
+    int_max: level
+    int_min: level - 20
+    label1: ''
+    label10: ''
+    label2: ''
+    label3: ''
+    label4: ''
+    label5: ''
+    label6: ''
+    label7: ''
+    label8: ''
+    label9: ''
+    legend: 'True'
+    maxoutbuf: '0'
+    minoutbuf: '0'
+    name: '"250 kS/s"'
+    nconnections: '1'
+    showports: 'False'
+    type: complex
+    update_time: '0.02'
+    wintype: window.WIN_BLACKMAN_hARRIS
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [384, 228.0]
+    rotation: 0
+    state: enabled
+- name: soapy_hackrf_source_0
+  id: soapy_hackrf_source
+  parameters:
+    affinity: ''
+    alias: ''
+    amp: 'False'
+    bandwidth: '0'
+    center_freq: freq
+    comment: ''
+    dev_args: ''
+    gain: '16'
+    maxoutbuf: '0'
+    minoutbuf: '0'
+    samp_rate: samp_rate
+    type: fc32
+    vga: '16'
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [176, 244.0]
+    rotation: 0
+    state: enabled
+
 connections:
 - [soapy_hackrf_source_0, '0', qtgui_waterfall_sink_x_0, '0']
+
 metadata:
   file_format: 1
   grc_version: 3.10.12.0

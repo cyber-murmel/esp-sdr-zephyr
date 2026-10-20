@@ -1,36 +1,140 @@
 options:
   parameters:
     author: esp-sdr
-    description: Transmits a tone at the weakest gain step; the knob sets its offset (+-100 kHz) and the frequency (2.401 to 2.482 GHz, the 2.4 GHz ISM band).
+    catch_exceptions: 'True'
+    category: '[GRC Hier Blocks]'
+    cmake_opt: ''
+    comment: ''
+    copyright: ''
+    description: Transmits a tone at the weakest gain step; the knob sets its offset
+      (+-100 kHz) and the frequency (2.401 to 2.482 GHz, the 2.4 GHz ISM band).
+    gen_cmake: 'On'
+    gen_linking: dynamic
     generate_options: qt_gui
+    hier_block_src_path: '.:'
     id: tone
-    title: Tone
+    max_nouts: '0'
+    output_language: python
+    placement: (0,0)
+    qt_qss_theme: ''
+    realtime_scheduling: ''
     run: 'True'
+    run_command: '{python} -u {filename}'
     run_options: prompt
-  states: {coordinate: [8, 8], rotation: 0, state: enabled}
+    sizing_mode: fixed
+    thread_safe_setters: ''
+    title: Tone
+    window_size: (1000,1000)
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [8, 4.0]
+    rotation: 0
+    state: enabled
+
 blocks:
-- name: samp_rate
-  id: variable
-  parameters: {value: '250000'}
-  states: {coordinate: [184, 12], rotation: 0, state: enabled}
-- name: offset
-  id: variable_qtgui_range
-  parameters: {label: Offset, start: '-100e3', stop: '100e3', step: '1e3', value: '50e3', widget: counter_slider}
-  states: {coordinate: [300, 12], rotation: 0, state: enabled}
 - name: freq
   id: variable_qtgui_range
-  parameters: {label: Frequency, start: 2.401e9, stop: 2.482e9, step: 1e6, value: 2.44e9, widget: counter_slider}
-  states: {coordinate: [420, 12], rotation: 0, state: enabled}
+  parameters:
+    comment: ''
+    gui_hint: ''
+    label: Frequency
+    min_len: '200'
+    orient: QtCore.Qt.Horizontal
+    rangeType: float
+    start: 2.401e9
+    step: 1e6
+    stop: 2.482e9
+    value: 2.44e9
+    widget: counter_slider
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [392, 4.0]
+    rotation: 0
+    state: enabled
+- name: offset
+  id: variable_qtgui_range
+  parameters:
+    comment: ''
+    gui_hint: ''
+    label: Offset
+    min_len: '200'
+    orient: QtCore.Qt.Horizontal
+    rangeType: float
+    start: -100e3
+    step: 1e3
+    stop: 100e3
+    value: 50e3
+    widget: counter_slider
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [272, 4.0]
+    rotation: 0
+    state: enabled
+- name: samp_rate
+  id: variable
+  parameters:
+    comment: ''
+    value: '250000'
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [176, 4.0]
+    rotation: 0
+    state: enabled
 - name: analog_sig_source_x_0
   id: analog_sig_source_x
-  parameters: {type: complex, samp_rate: samp_rate, waveform: analog.GR_COS_WAVE, freq: offset, amp: '0.5', offset: '0', phase: '0'}
-  states: {coordinate: [16, 160], rotation: 0, state: enabled}
+  parameters:
+    affinity: ''
+    alias: ''
+    amp: '0.5'
+    comment: ''
+    freq: offset
+    maxoutbuf: '0'
+    minoutbuf: '0'
+    offset: '0'
+    phase: '0'
+    samp_rate: samp_rate
+    showports: 'False'
+    type: complex
+    waveform: analog.GR_COS_WAVE
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [8, 116.0]
+    rotation: 0
+    state: enabled
 - name: soapy_hackrf_sink_0
   id: soapy_hackrf_sink
-  parameters: {dev_args: '', samp_rate: samp_rate, center_freq: freq, amp: 'False', vga: '0', bandwidth: '0', type: fc32}
-  states: {coordinate: [300, 160], rotation: 0, state: enabled}
+  parameters:
+    affinity: ''
+    alias: ''
+    amp: 'False'
+    bandwidth: '0'
+    center_freq: freq
+    comment: ''
+    dev_args: ''
+    samp_rate: samp_rate
+    type: fc32
+    vga: '0'
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [232, 160.0]
+    rotation: 0
+    state: enabled
+
 connections:
 - [analog_sig_source_x_0, '0', soapy_hackrf_sink_0, '0']
+
 metadata:
   file_format: 1
   grc_version: 3.10.12.0

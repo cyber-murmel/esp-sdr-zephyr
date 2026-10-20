@@ -16,9 +16,10 @@ import os
 import re
 import sys
 
-# metadata.json: the hatchery's fields, all optional; "hidden" keeps an app out of the menu.
+# metadata.json: the hatchery's fields, all optional; "hidden" keeps an app out of the menu, as
+# does "needs" (esdr functions) naming one the board lacks.
 TYPES = {"name": str, "description": str, "category": str, "author": str, "revision": int,
-         "hidden": bool}
+         "hidden": bool, "needs": list}
 
 
 def index(eggs, only=None):

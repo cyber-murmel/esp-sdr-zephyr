@@ -1,49 +1,323 @@
 options:
   parameters:
     author: esp-sdr
-    description: Waterfall and spectrum on one tab, LNA gain and RF amp on the other, at 125 kS/s; the knob tunes from 1.8 to 2.8 GHz.
+    catch_exceptions: 'True'
+    category: '[GRC Hier Blocks]'
+    cmake_opt: ''
+    comment: ''
+    copyright: ''
+    description: Waterfall and spectrum on one tab, LNA gain and RF amp on the other,
+      at 125 kS/s; the knob tunes from 1.8 to 2.8 GHz.
+    gen_cmake: 'On'
+    gen_linking: dynamic
     generate_options: qt_gui
+    hier_block_src_path: '.:'
     id: receiver
-    title: Receiver
+    max_nouts: '0'
+    output_language: python
+    placement: (0,0)
+    qt_qss_theme: ''
+    realtime_scheduling: ''
     run: 'True'
+    run_command: '{python} -u {filename}'
     run_options: prompt
-  states: {coordinate: [8, 8], rotation: 0, state: enabled}
+    sizing_mode: fixed
+    thread_safe_setters: ''
+    title: Receiver
+    window_size: (1000,1000)
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [8, 4.0]
+    rotation: 0
+    state: enabled
+
 blocks:
-- name: samp_rate
-  id: variable
-  parameters: {value: '125000'}
-  states: {coordinate: [184, 12], rotation: 0, state: enabled}
-- name: tabs
-  id: qtgui_tab_widget
-  parameters: {num_tabs: '2', label0: '"RX"', label1: '"Settings"', gui_hint: '1,0,1,2'}
-  states: {coordinate: [300, 12], rotation: 0, state: enabled}
-- name: freq
-  id: variable_qtgui_range
-  parameters: {label: Frequency, start: 1.8e9, stop: 2.8e9, step: 1e6, value: 2.44e9, widget: counter_slider, gui_hint: '0,0,1,2'}
-  states: {coordinate: [420, 12], rotation: 0, state: enabled}
-- name: lna
-  id: variable_qtgui_chooser
-  parameters: {label: LNA gain, type: int, value: '16', num_opts: '3', option0: '0', option1: '16', option2: '32', label0: '0 dB', label1: '16 dB', label2: '32 dB', widget: radio_buttons, orient: Qt.QVBoxLayout, gui_hint: 'tabs@1: 0,0,1,1'}
-  states: {coordinate: [540, 12], rotation: 0, state: enabled}
 - name: amp_en
   id: variable_qtgui_check_box
-  parameters: {label: RF amp, type: bool, value: 'False', true: 'True', false: 'False', gui_hint: 'tabs@1: 0,1,1,1'}
-  states: {coordinate: [660, 12], rotation: 0, state: enabled}
-- name: soapy_hackrf_source_0
-  id: soapy_hackrf_source
-  parameters: {dev_args: '', samp_rate: samp_rate, center_freq: freq, gain: lna, vga: '16', amp: amp_en, bandwidth: '0', type: fc32}
-  states: {coordinate: [16, 160], rotation: 0, state: enabled}
-- name: qtgui_waterfall_sink_x_0
-  id: qtgui_waterfall_sink_x
-  parameters: {type: complex, fftsize: '1024', fc: freq, bw: samp_rate, name: '"Waterfall"', int_min: '-90', int_max: '-40', gui_hint: 'tabs@0: 0,0,1,1'}
-  states: {coordinate: [400, 240], rotation: 0, state: enabled}
+  parameters:
+    comment: ''
+    'false': 'False'
+    gui_hint: 'tabs@1: 0,1,1,1'
+    label: RF amp
+    'true': 'True'
+    type: bool
+    value: 'False'
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [664, 4.0]
+    rotation: 0
+    state: enabled
+- name: freq
+  id: variable_qtgui_range
+  parameters:
+    comment: ''
+    gui_hint: 0,0,1,2
+    label: Frequency
+    min_len: '200'
+    orient: QtCore.Qt.Horizontal
+    rangeType: float
+    start: 1.8e9
+    step: 1e6
+    stop: 2.8e9
+    value: 2.44e9
+    widget: counter_slider
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [408, 4.0]
+    rotation: 0
+    state: enabled
+- name: lna
+  id: variable_qtgui_chooser
+  parameters:
+    comment: ''
+    gui_hint: 'tabs@1: 0,0,1,1'
+    label: LNA gain
+    label0: 0 dB
+    label1: 16 dB
+    label2: 32 dB
+    label3: ''
+    label4: ''
+    labels: '[]'
+    num_opts: '3'
+    option0: '0'
+    option1: '16'
+    option2: '32'
+    option3: '3'
+    option4: '4'
+    options: '[0, 1, 2]'
+    orient: Qt.QVBoxLayout
+    type: int
+    value: '16'
+    widget: radio_buttons
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [544, 4.0]
+    rotation: 0
+    state: enabled
+- name: samp_rate
+  id: variable
+  parameters:
+    comment: ''
+    value: '125000'
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [176, 4.0]
+    rotation: 0
+    state: enabled
 - name: qtgui_freq_sink_x_0
   id: qtgui_freq_sink_x
-  parameters: {type: complex, fftsize: '1024', fc: freq, bw: samp_rate, name: '"Spectrum"', ymin: '-120', ymax: '0', gui_hint: 'tabs@0: 0,1,1,1'}
-  states: {coordinate: [400, 120], rotation: 0, state: enabled}
+  parameters:
+    affinity: ''
+    alias: ''
+    alpha1: '1.0'
+    alpha10: '1.0'
+    alpha2: '1.0'
+    alpha3: '1.0'
+    alpha4: '1.0'
+    alpha5: '1.0'
+    alpha6: '1.0'
+    alpha7: '1.0'
+    alpha8: '1.0'
+    alpha9: '1.0'
+    autoscale: 'False'
+    average: '1.0'
+    axislabels: 'True'
+    bw: samp_rate
+    color1: '"blue"'
+    color10: '"dark blue"'
+    color2: '"red"'
+    color3: '"green"'
+    color4: '"black"'
+    color5: '"cyan"'
+    color6: '"magenta"'
+    color7: '"yellow"'
+    color8: '"dark red"'
+    color9: '"dark green"'
+    comment: ''
+    ctrlpanel: 'False'
+    fc: freq
+    fftsize: '1024'
+    freqhalf: 'True'
+    grid: 'False'
+    gui_hint: 'tabs@0: 0,1,1,1'
+    label: Relative Gain
+    label1: ''
+    label10: ''''''
+    label2: ''''''
+    label3: ''''''
+    label4: ''''''
+    label5: ''''''
+    label6: ''''''
+    label7: ''''''
+    label8: ''''''
+    label9: ''''''
+    legend: 'True'
+    maxoutbuf: '0'
+    minoutbuf: '0'
+    name: '"Spectrum"'
+    nconnections: '1'
+    norm_window: 'False'
+    showports: 'False'
+    tr_chan: '0'
+    tr_level: '0.0'
+    tr_mode: qtgui.TRIG_MODE_FREE
+    tr_tag: '""'
+    type: complex
+    units: dB
+    update_time: '0.10'
+    width1: '1'
+    width10: '1'
+    width2: '1'
+    width3: '1'
+    width4: '1'
+    width5: '1'
+    width6: '1'
+    width7: '1'
+    width8: '1'
+    width9: '1'
+    wintype: window.WIN_BLACKMAN_hARRIS
+    ymax: '0'
+    ymin: '-120'
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [344, 212.0]
+    rotation: 0
+    state: enabled
+- name: qtgui_waterfall_sink_x_0
+  id: qtgui_waterfall_sink_x
+  parameters:
+    affinity: ''
+    alias: ''
+    alpha1: '1.0'
+    alpha10: '1.0'
+    alpha2: '1.0'
+    alpha3: '1.0'
+    alpha4: '1.0'
+    alpha5: '1.0'
+    alpha6: '1.0'
+    alpha7: '1.0'
+    alpha8: '1.0'
+    alpha9: '1.0'
+    axislabels: 'True'
+    bw: samp_rate
+    color1: '0'
+    color10: '0'
+    color2: '0'
+    color3: '0'
+    color4: '0'
+    color5: '0'
+    color6: '0'
+    color7: '0'
+    color8: '0'
+    color9: '0'
+    comment: ''
+    fc: freq
+    fftsize: '1024'
+    freqhalf: 'True'
+    grid: 'False'
+    gui_hint: 'tabs@0: 0,0,1,1'
+    int_max: '-40'
+    int_min: '-90'
+    label1: ''
+    label10: ''
+    label2: ''
+    label3: ''
+    label4: ''
+    label5: ''
+    label6: ''
+    label7: ''
+    label8: ''
+    label9: ''
+    legend: 'True'
+    maxoutbuf: '0'
+    minoutbuf: '0'
+    name: '"Waterfall"'
+    nconnections: '1'
+    showports: 'False'
+    type: complex
+    update_time: '0.10'
+    wintype: window.WIN_BLACKMAN_hARRIS
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [344, 308.0]
+    rotation: 0
+    state: enabled
+- name: soapy_hackrf_source_0
+  id: soapy_hackrf_source
+  parameters:
+    affinity: ''
+    alias: ''
+    amp: amp_en
+    bandwidth: '0'
+    center_freq: freq
+    comment: ''
+    dev_args: ''
+    gain: lna
+    maxoutbuf: '0'
+    minoutbuf: '0'
+    samp_rate: samp_rate
+    type: fc32
+    vga: '16'
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [96, 228.0]
+    rotation: 0
+    state: enabled
+- name: tabs
+  id: qtgui_tab_widget
+  parameters:
+    alias: ''
+    comment: ''
+    gui_hint: 1,0,1,2
+    label0: '"RX"'
+    label1: '"Settings"'
+    label10: Tab 10
+    label11: Tab 11
+    label12: Tab 12
+    label13: Tab 13
+    label14: Tab 14
+    label15: Tab 15
+    label16: Tab 16
+    label17: Tab 17
+    label18: Tab 18
+    label19: Tab 19
+    label2: Tab 2
+    label3: Tab 3
+    label4: Tab 4
+    label5: Tab 5
+    label6: Tab 6
+    label7: Tab 7
+    label8: Tab 8
+    label9: Tab 9
+    num_tabs: '2'
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [272, 4.0]
+    rotation: 0
+    state: enabled
+
 connections:
 - [soapy_hackrf_source_0, '0', qtgui_freq_sink_x_0, '0']
 - [soapy_hackrf_source_0, '0', qtgui_waterfall_sink_x_0, '0']
+
 metadata:
   file_format: 1
   grc_version: 3.10.12.0
