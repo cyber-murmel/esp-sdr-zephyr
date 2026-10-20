@@ -83,7 +83,7 @@ extern "C" {
 
 /**
  * Native dump engine rates; values are the upstream protocol rate indices.
- * The S3 receives at 80, 40 and 16 MS/s (esp_sdr_rx_rate_hz()), the C5 at 80,
+ * The S3 and the ESP32 receive at 80, 40 and 16 MS/s (esp_sdr_rx_rate_hz()), the C5 at 80,
  * 40, 20, 10, 8 and 4 MS/s, the C6 at 80 MS/s only (the others return 0); the
  * DAC runs at 80 and 40 MS/s (esp_sdr_tx_rate_hz(), S3 only).
  */

@@ -2,7 +2,8 @@
 
 config ESP_SDR
 	bool "ESP-SDR raw I/Q receiver"
-	depends on SOC_SERIES_ESP32S3 || SOC_SERIES_ESP32C6 || SOC_SERIES_ESP32C5
+	depends on SOC_SERIES_ESP32S3 || SOC_SERIES_ESP32C6 || SOC_SERIES_ESP32C5 || \
+		   SOC_SERIES_ESP32
 	depends on WIFI_ESP32
 	# The bank and heap limits assume no APPCPU image in SRAM.
 	depends on !SOC_ENABLE_APPCPU
@@ -14,13 +15,17 @@ config ESP_SDR
 	  CPU-paced (ESP_SDR_PACED). The ESP32-C5 receives at 80 to 4 MS/s
 	  into its 128 KiB block 1, which splits the image around it, streams
 	  like the C6 or gapless through the diagnostic bus (ESP_SDR_DIAG),
-	  and loops waveforms through its DAC engine (ESP_SDR_REPLAY).
+	  and loops waveforms through its DAC engine (ESP_SDR_REPLAY). The
+	  ESP32 receives bursts at 80, 40 and 16 MS/s into 64 KiB of SRAM1,
+	  which needs ESP32_REGION_1_NOINIT off.
 
 if ESP_SDR
 
 config ESP_SDR_RFTEST
 	bool "Espressif RF test library (fixed RX gain, TX power steps)"
 	default y
+	# No blob for the ESP32, which forces its gain without it.
+	depends on !SOC_SERIES_ESP32
 	help
 	  Links force_rx_gain(), force_tx_gain() and force_txon_mode() from
 	  Espressif's librftest.a, fetched with "west blobs fetch
