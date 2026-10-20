@@ -2,7 +2,8 @@
 """west dfu: update a running esp-sdr board over USB DFU and confirm the image.
 
 The apps in this repository expose DFU (runtime 2fe3:0005, or 1d50:6002 for
-the Ubertooth app, DFU mode 2fe3:ffff) and an MCUboot shell on their CDC-ACM port. This command detaches
+the Ubertooth app, DFU mode 2fe3:ffff) and an MCUboot shell on their CDC-ACM port (MicroPython
+its REPL, which reaches the shell through esdr.shell()). This command detaches
 the board into DFU mode, downloads the signed image into the secondary slot,
 waits until the board has left USB and come back running the new image (on
 trial), checks that its shell still answers after a settle time, and only
@@ -60,21 +61,43 @@ def shell_tty(serial):
 
 
 class Shell:
+    """The board's Zephyr shell on its CDC-ACM port, or MicroPython's REPL there (apps/micropython),
+    whose esdr.shell() runs the same commands: the running Python app is interrupted, and the
+    launcher starts again (a soft reset) when the shell is closed."""
+
     def __init__(self, path):
         import serial
 
-        self.s = serial.Serial(path, 115200, timeout=0.2)
-        time.sleep(0.3)
-        self.s.read(65536)
+        # A port that just enumerated can be busy for a few seconds (a modem probe on the host).
+        for attempt in range(5):
+            try:
+                self.s = serial.Serial(path, 115200, timeout=0.2)
+                time.sleep(0.3)
+                self.s.read(65536)
+                break
+            except serial.SerialException:
+                if attempt == 4:
+                    raise
+                time.sleep(2)
+        self.s.write(b"\x03\r\n")
+        self.repl = ">>>" in self.read(0.5)
 
-    def cmd(self, line, wait=1.0):
-        self.s.write((line + "\r\n").encode())
+    def read(self, wait):
         end, out = time.time() + wait, b""
         while time.time() < end:
             out += self.s.read(4096)
         return ANSI.sub("", out.decode(errors="replace"))
 
+    def cmd(self, line, wait=1.0):
+        if self.repl:
+            line = f"import esdr; print(esdr.shell({line!r}))"
+        self.s.write((line + "\r\n").encode())
+        return self.read(wait)
+
     def close(self):
+        if self.repl:
+            self.s.write(b"\x04")
+            time.sleep(0.2)
         self.s.close()
 
     def app_list(self):
@@ -108,6 +131,12 @@ class Dfu(WestCommand):
                        help="write MCUboot and the image (and with --storage the FAT "
                             "volume) with esptool over the USB-Serial-JTAG, which the "
                             "running app hands over (its usj command): no button, no DFU")
+        p.add_argument("--c6", action="store_true",
+                       help="update the WHY2025 badge's ESP32-C6 with the build directory's "
+                            "image: the P4 (apps/micropython) hands USB-C J8 to the C6's "
+                            "USB-Serial-JTAG for --c6-time seconds, west flash writes it")
+        p.add_argument("--c6-time", type=int, default=30,
+                       help="seconds the P4 leaves J8 to the C6 (default 30)")
         p.add_argument("--dfu-board", action="store_true",
                        help="if --serial is not on USB, update the one board found in DFU "
                             "mode (one an earlier try left there; it has no serial to check)")
@@ -212,6 +241,38 @@ class Dfu(WestCommand):
         self.inf(f"{sn}: written with esptool{'' if args.no_confirm else ' and confirmed'}\n"
                  f"{out.strip()}")
 
+    def c6_flash(self, args):
+        """The WHY2025 badge's C6 through the P4: J8 to the C6, west flash, J8 back."""
+        sn, _ = self.find_board(args)
+        before = set(glob.glob("/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*"))
+        sh = Shell(shell_tty(sn))
+        if not sh.repl:
+            sh.close()
+            self.die(f"{sn}: no MicroPython REPL (--c6 needs apps/micropython on the P4)")
+        # The P4 leaves USB as it hands J8 over: no answer to wait for.
+        sh.s.write(f"import esdr; esdr.usb_to_c6({args.c6_time})\r\n".encode())
+        time.sleep(0.5)
+        try:
+            sh.s.close()
+        except Exception:  # serial.SerialException: the port is gone already
+            pass
+        usj = []
+        if not self.wait_for(lambda: usj.extend(set(glob.glob(
+                "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*")) - before)
+                or usj, 15):
+            self.die(f"{sn}: the C6's USB-Serial-JTAG did not appear on J8")
+        self.inf(f"{sn}: J8 to the C6 ({usj[0]}), {args.c6_time} s")
+        start = time.time()
+        r = subprocess.run(["west", "flash", "-d", args.build_dir, "--esp-device", usj[0]],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            self.die(f"{sn}: west flash failed:\n{(r.stdout + r.stderr).strip()[-600:]}")
+        self.inf(f"{sn}: C6 written in {time.time() - start:.0f} s, waiting for the P4")
+        if not self.wait_for(lambda: shell_tty(sn) is not None,
+                             args.c6_time - (time.time() - start) + 30):
+            self.die(f"{sn}: the P4 did not take J8 back")
+        self.inf(f"{sn}: J8 back to the P4")
+
     def find_board(self, args):
         boards = usb_boards()
         in_dfu = [k for k in boards if k.startswith("dfu@")]
@@ -267,6 +328,9 @@ class Dfu(WestCommand):
         return True
 
     def do_run(self, args, unknown):
+        if args.c6:
+            self.c6_flash(args)
+            return
         if args.esptool:
             sn, _ = self.find_board(args)
             self.esptool_flash(args, sn)
