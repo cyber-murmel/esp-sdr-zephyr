@@ -208,8 +208,9 @@ class Renderer(wiring.Component):
                     m.next = "RELEASE"
 
             with m.State("ROW"):
-                # Yield between rows when the host wants the bus.
-                with m.If(self.host_busy):
+                # Yield between rows when the host wants the bus: before a row's commands,
+                # never inside them (k counts their bytes).
+                with m.If(self.host_busy & (k == 0)):
                     m.next = "YIELD"
                 with m.Else():
                     with m.If(command_bytes([
@@ -260,9 +261,10 @@ class Renderer(wiring.Component):
                     m.next = "PIXEL_NEXT"
 
             with m.State("PIXEL_NEXT"):
-                with m.If(y + 1 == height):
+                # >=: the host may shrink a region while it is drawn (stop() zeroes it).
+                with m.If(y + 1 >= height):
                     m.d.sync += [x.eq(x + 1), base.eq(base + self.wf_ring)]
-                    with m.If(x + 1 == width):
+                    with m.If(x + 1 >= width):
                         m.next = "NEXT_REGION"
                     with m.Else():
                         m.next = "ROW"

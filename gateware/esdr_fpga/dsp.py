@@ -202,6 +202,9 @@ class DSP(wiring.Component):
 
         # Main sequence --------------------------------------------------------------------
         k = Signal(11)
+        widx = Signal(9)
+        wdown = Signal()
+        whalf = Signal(9)
         fresh = Signal()
         x_i = Signal(signed(16))
         x_q = Signal(signed(16))
@@ -263,13 +266,13 @@ class DSP(wiring.Component):
                     m.d.sync += [fp.eq(wp - n), self.overruns.eq(self.overruns + 1),
                                  settle.eq(1)]
                 with m.Elif(self.on & frame_ready & (resync == 0) & ~settle):
-                    m.d.sync += k.eq(0)
+                    m.d.sync += [k.eq(0), widx.eq(0), wdown.eq(0), whalf.eq((n >> 1) - 1)]
                     m.next = "LOAD_I"
 
             # Load: I, Q, window, two products, into the FFT bit-reversed.
             with m.State("LOAD_I"):
-                m.d.comb += [rd_addr.eq(Cat(0, fp + k)), rd_req.eq(1),
-                             win_r.addr.eq(Mux(k < (n >> 1), k, n - 1 - k)), self.busy.eq(1)]
+                m.d.comb += [rd_addr.eq(Cat(0, fp + k)), rd_req.eq(1), win_r.addr.eq(widx),
+                             self.busy.eq(1)]
                 with m.If(rd_ack):
                     m.d.sync += fresh.eq(1)
                     m.next = "LOAD_Q"
@@ -295,6 +298,13 @@ class DSP(wiring.Component):
                 m.d.comb += self.busy.eq(1)
                 m.d.sync += [fft.ld_im.eq((mul_p + (1 << 15)) >> 16), fft.ld_addr.eq(k),
                              fft.ld_we.eq(1), k.eq(k + 1)]
+                # The window's index: up to N/2 - 1, held once, then down (it is symmetric).
+                with m.If(wdown):
+                    m.d.sync += widx.eq(widx - 1)
+                with m.Elif(widx == whalf):
+                    m.d.sync += wdown.eq(1)
+                with m.Else():
+                    m.d.sync += widx.eq(widx + 1)
                 with m.If(k + 1 == n):
                     m.d.sync += [fp.eq(fp + Mux(self.overlap, n >> 1, n)), fft.start.eq(1),
                                  settle.eq(1)]
