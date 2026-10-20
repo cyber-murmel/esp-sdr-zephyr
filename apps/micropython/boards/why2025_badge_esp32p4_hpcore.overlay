@@ -1,8 +1,9 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * WHY2025 badge, ESP32-P4: the board's 720x720 display and keyboard; the REPL on the CH340
- * (UART0, the board's console); the radio is the badge's ESP32-C6.
+ * WHY2025 badge, ESP32-P4: the board's 720x720 display and keyboard; the REPL on CDC-ACM and DFU
+ * on USB-C port J8 (OTG HS), which cmod/esdr_usb.c can hand to the ESP32-C6 for a while; boot
+ * messages on the CH340 (UART0); the radio is the badge's ESP32-C6.
  */
 
 #include <zephyr/dt-bindings/input/input-event-codes.h>
@@ -11,6 +12,8 @@
 
 / {
 	chosen {
+		zephyr,console = &cdc_acm_uart0;
+		zephyr,shell-uart = &cdc_acm_uart0;
 		/*
 		 * The radio: the C6's osmosdr_serial (cmod/esdr_remote.c) over SDIO (its default on
 		 * this board). For the UART link instead (a C6 image built with
@@ -63,25 +66,23 @@
 	status = "disabled";
 };
 
-/*
- * The application in the lower 8 MB (Espressif's 8 MB table: two 3840 KiB slots), the upper
- * 8 MB as the FAT volume.
- */
-&flash0 {
-	/delete-node/ partitions;
-};
+zephyr_udc0: &usb_otg {
+	status = "okay";
+	/*
+	 * An IN endpoint is bulk capable only with a FIFO of a whole high-speed packet (512 bytes,
+	 * 128 words). The SoC gives that to one, which CDC-ACM's notification endpoint takes
+	 * first: its bulk IN endpoint needs a second.
+	 */
+	g-tx-fifo-size = <128 128 64 64 64 64 64>;
 
-#include <espressif/partitions_0x2000_default_8M.dtsi>
-
-&flash0 {
-	partitions {
-		fat_partition: partition@800000 {
-			compatible = "zephyr,mapped-partition";
-			label = "fat";
-			reg = <0x800000 DT_SIZE_M(8)>;
-		};
+	/* The REPL's console. */
+	cdc_acm_uart0: cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+		label = "ESP-SDR MicroPython REPL";
 	};
 };
+
+#include "partitions_why2025_p4.dtsi"
 
 /*
  * The link to the C6 (its UART0) at 5 Mbaud, 40 MHz / 8 on both chips. CTS on GPIO14, the C6's

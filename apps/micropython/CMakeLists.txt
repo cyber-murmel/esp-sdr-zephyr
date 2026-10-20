@@ -3,8 +3,9 @@
 cmake_minimum_required(VERSION 3.20.0)
 
 # The radio is on the chip (radio.conf) except on the WHY2025 badge's ESP32-P4, whose radio is
-# the badge's ESP32-C6 behind a link.
-if(NOT BOARD MATCHES "^why2025_badge/esp32p4")
+# the badge's ESP32-C6 behind a link. Under sysbuild the board is not known here yet:
+# sysbuild.cmake adds radio.conf there.
+if(BOARD AND NOT BOARD MATCHES "^why2025_badge/+esp32p4")
   list(APPEND EXTRA_CONF_FILE ${CMAKE_CURRENT_LIST_DIR}/radio.conf)
 endif()
 
@@ -17,12 +18,14 @@ if(CONFIG_SOC_SERIES_ESP32C5)
   set(MICROPY_APP_START ON)
   zephyr_linker_sources(RAM_SECTIONS SORT_KEY app src/c5_low.ld)
 elseif(CONFIG_SOC_SERIES_ESP32P4)
-  # The ESP32-P4 (WHY2025 badge): the REPL on the UART console, MicroPython in the main thread
-  # (the port's own start), its heap in PSRAM (cmod/esdr_p4.c).
+  # The ESP32-P4 (WHY2025 badge): MicroPython in the main thread (the port's own start), its
+  # heap in PSRAM (cmod/esdr_p4.c), the REPL on CDC-ACM and DFU through the shared USB device
+  # on USB-C J8, started by the port's mp_usbd_init() (cmod/esdr_usb.c).
   set(MICROPY_APP_START ON)
-  # The link to the radio, plain Zephyr code (outside MicroPython's include path, whose
-  # assert.h hides the HAL's static_assert).
-  target_sources(app PRIVATE cmod/esdr_remote.c)
+  include(${CMAKE_CURRENT_LIST_DIR}/../common/common.cmake)
+  # The link to the radio and the USB glue, plain Zephyr code (outside MicroPython's include
+  # path, whose assert.h hides the HAL's static_assert).
+  target_sources(app PRIVATE cmod/esdr_remote.c cmod/esdr_usb.c)
   target_include_directories(app PRIVATE cmod ../osmosdr/src)
   # Its SDIO side, shared with the bridge app.
   include(${CMAKE_CURRENT_LIST_DIR}/../common/esdr_sdio_host.cmake)

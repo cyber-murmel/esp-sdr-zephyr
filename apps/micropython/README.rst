@@ -302,11 +302,11 @@ Building and flashing
 .. code-block:: console
 
    west build --sysbuild -b xiao_esp32s3/esp32s3/procpu esp-sdr-zephyr/apps/micropython
-   west dfu --no-confirm
+   west dfu
 
-``west dfu`` confirms a new image through the MCUboot shell on the CDC-ACM port, which the REPL
-has taken, hence ``--no-confirm``; confirm from the REPL instead (an image written with esptool
-is already confirmed)::
+``west dfu`` finds the REPL on the CDC-ACM port and runs the MCUboot shell's commands through
+``esdr.shell()``: it interrupts the running app (Ctrl-C), checks the new image and confirms it,
+then restarts the launcher (Ctrl-D). By hand, or after ``west dfu --no-confirm``::
 
    >>> import esdr; esdr.shell("mcuboot confirm")
 
@@ -400,6 +400,33 @@ side A on GPIO 0, 1, 2 and side B on GPIO 8, 9, 10, bits A, B, C of the port num
 
 At the board's first start ``_boot.py`` selects A4-B1, or the path a file ``/FLASH:/rfswitch``
 holds ("4 1"); soft resets keep the pins as they are.
+
+The WHY2025 badge
+*****************
+
+On the WHY2025 badge the app runs on its ESP32-P4 (``why2025_badge/esp32p4/hpcore``): the
+720x720 display, the keyboard as on the Communicator, the SD card at ``/SD:``, a 16 MiB Python
+heap in PSRAM. Its radio is the badge's ESP32-C6 running ``apps/osmosdr_serial`` over SDIO
+(``cmod/esdr_remote.c``). The REPL and DFU are on USB-C port J8 (CDC-ACM, OTG high speed);
+the CH340 shows the boot messages only.
+
+.. code-block:: console
+
+   west build --sysbuild -b why2025_badge/esp32p4/hpcore esp-sdr-zephyr/apps/micropython
+   west flash --esp-device /dev/ttyUSB0      # once, through the CH340: MCUboot and the app
+   west dfu                                  # from then on, over J8
+
+J8 reaches either the P4's USB or the C6's USB-Serial-JTAG (P4 GPIO2). ``esdr.usb_to_c6(s)``
+hands it to the C6 for ``s`` seconds and then takes it back, which is how the C6 is updated
+without the CH340 (a ``build`` directory of ``apps/osmosdr_serial`` for
+``why2025_badge/esp32c6/hpcore``)::
+
+   west dfu --c6 -d build-c6
+
+``--c6-time`` sets how long the C6 keeps the port (30 s). The P4 reopens its SDIO link to a C6
+that restarted by itself. The P4 runs one CPU here: the USB threads are preemptible, above
+MicroPython's (main, priority 10) and below the system work queue, which feeds the liveness
+watchdog; a cooperative USB thread held it off through a DFU download until the board reset.
 
 How it is built
 ***************

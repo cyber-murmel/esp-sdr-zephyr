@@ -1,0 +1,23 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * The WHY2025 badge's ESP32-P4 flash: MCUboot at 0x2000 and the application in the lower 8 MB
+ * (Espressif's 8 MB table: two 3840 KiB slots), the upper 8 MB the FAT volume. The application
+ * and MCUboot (sysbuild/mcuboot_why2025_p4.overlay) share it.
+ */
+
+&flash0 {
+	/delete-node/ partitions;
+};
+
+#include <espressif/partitions_0x2000_default_8M.dtsi>
+
+&flash0 {
+	partitions {
+		fat_partition: partition@800000 {
+			compatible = "zephyr,mapped-partition";
+			label = "fat";
+			reg = <0x800000 DT_SIZE_M(8)>;
+		};
+	};
+};

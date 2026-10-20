@@ -58,8 +58,6 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/input/input.h>
 #include <zephyr/kernel.h>
-#include <zephyr/shell/shell.h>
-#include <zephyr/shell/shell_dummy.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/reboot.h>
 
@@ -766,28 +764,6 @@ static mp_obj_t esdr_crash(void)
 static MP_DEFINE_CONST_FUN_OBJ_0(esdr_crash_obj, esdr_crash);
 
 
-/* shell(cmd) -> str: run a shell command on the dummy backend, return what it printed. The
- * port's zephyr.shell_exec() needs the serial backend, which the REPL's console cannot share. */
-static mp_obj_t esdr_shell(mp_obj_t cmd_in)
-{
-	const char *cmd = mp_obj_str_get_str(cmd_in);
-	const struct shell *sh = shell_backend_dummy_get_ptr();
-	size_t len = 0;
-	const char *out;
-	int ret;
-
-	if (sh == NULL) {
-		mp_raise_OSError(ENODEV);
-	}
-	shell_backend_dummy_clear_output(sh);
-	ret = shell_execute_cmd(sh, cmd);
-	out = shell_backend_dummy_get_output(sh, &len);
-	if (ret < 0 && len == 0) {
-		mp_raise_OSError(-ret);
-	}
-	return mp_obj_new_str(out, len);
-}
-static MP_DEFINE_CONST_FUN_OBJ_1(esdr_shell_obj, esdr_shell);
 
 /* esdr_link.c */
 extern const mp_obj_fun_builtin_fixed_t esdr_fsk_rx_reset_obj, esdr_fsk_rx_state_obj;

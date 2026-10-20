@@ -422,9 +422,18 @@ XIAO ESP32-C6 on the other end of a 30 dB coax attenuator.
   shorted to ground while pressing reset. A sysbuild `west flash` over its
   USB-Serial-JTAG does work for the first install, before an app owns OTG.
 - On the WHY2025 badge the ESP32-C6 (`why2025_badge/esp32c6/hpcore`) reaches
-  USB-C port J8 only while the ESP32-P4 drives its GPIO2 high: run a P4 image
-  built with `CONFIG_WHY2025_BADGE_USB_TO_C6=y` and without esp-hosted (which
-  resets the C6), then flash the C6 over J8 with `west flash`. The C6 also
+  USB-C port J8 only while the ESP32-P4 drives its GPIO2 high. With
+  `apps/micropython` on the P4, `west dfu --c6` hands the port over for a
+  while (`esdr.usb_to_c6()`) and flashes the C6; otherwise run a P4 image built
+  with `CONFIG_WHY2025_BADGE_USB_TO_C6=y` and without esp-hosted (which resets
+  the C6), then flash the C6 over J8 with `west flash`.
+- The WHY2025 badge's ESP32-P4 (v1.0) runs its XTX XT25F128 flash in DIO mode,
+  where IO2 and IO3 are WP# and HOLD#. The Espressif HAL cleared the SPI1
+  control register before erases and status reads, which drove both low: the
+  flash ignored the erase and reported idle, so erases "succeeded" in under a
+  millisecond and changed nothing, while page programs worked. Fixed in the
+  HAL (esp_hal_mspi: esp32p4: keep the flash line levels when clearing ctrl);
+  without it no DFU image ever reaches the update slot intact. The C6 also
   drives both backlights: its images hold them on, the P4 cannot.
 - The WHY2025 badge's LoRa module is an Ai-Thinker Ra-01SH (SX1262), not the
   Ra-01H (SX1276) its schematic names: an SX1276 driver reads a constant 0xA2

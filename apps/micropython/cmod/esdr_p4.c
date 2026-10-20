@@ -41,6 +41,9 @@
  *   fc32_to_sc16(), sc16_to_fc32(), display_size(), reset_reason(), next_app([path]), home(),
  *   shift()                    (esdr_board.c)
  *   claim(mnt), release(mnt)   no-ops: the volumes are not USB drives here
+ *   shell(cmd) -> str          a Zephyr shell command (mcuboot confirm, ...)
+ *   usb_to_c6(seconds=60)      USB-C port J8 to the ESP32-C6's USB-Serial-JTAG (esptool) for
+ *                              that long, then back to this chip's REPL and DFU (esdr_usb.c)
  *
  * Memory: the Python heap is CONFIG_APP_MP_PSRAM_HEAP_KB of PSRAM, added at every start; LVGL
  * allocates from it too (CONFIG_LV_Z_MEM_POOL_MICROPYTHON).
@@ -66,6 +69,7 @@
 
 #include "esdr_board.h"
 #include "esdr_remote.h"
+#include "esdr_usb.h"
 #include "esdr_rx.h"
 
 /* 8-bit samples from the C6, carried as int16. */
@@ -613,6 +617,23 @@ static const mp_rom_obj_tuple_t esdr_burst_rates_obj = {
 	},
 };
 
+/* usb_to_c6(seconds=60): J8 to the C6 for a while (esdr_usb.c). */
+static mp_obj_t esdr_usb_to_c6_fn(size_t n_args, const mp_obj_t *args)
+{
+	mp_int_t s = n_args > 0 ? mp_obj_get_int(args[0]) : 60;
+	int ret;
+
+	if (s < 1 || s > 3600) {
+		mp_raise_ValueError(MP_ERROR_TEXT("seconds: 1 to 3600"));
+	}
+	ret = esdr_usb_to_c6((uint32_t)s);
+	if (ret != 0) {
+		mp_raise_OSError(-ret);
+	}
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_usb_to_c6_obj, 0, 1, esdr_usb_to_c6_fn);
+
 static const mp_rom_map_elem_t esdr_globals_table[] = {
 	{MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_esdr)},
 	{MP_ROM_QSTR(MP_QSTR_init), MP_ROM_PTR(&esdr_init_obj)},
@@ -644,6 +665,8 @@ static const mp_rom_map_elem_t esdr_globals_table[] = {
 	{MP_ROM_QSTR(MP_QSTR_fc32_to_sc16), MP_ROM_PTR(&esdr_fc32_to_sc16_obj)},
 	{MP_ROM_QSTR(MP_QSTR_sc16_to_fc32), MP_ROM_PTR(&esdr_sc16_to_fc32_obj)},
 	{MP_ROM_QSTR(MP_QSTR_reset_reason), MP_ROM_PTR(&esdr_reset_reason_obj)},
+	{MP_ROM_QSTR(MP_QSTR_shell), MP_ROM_PTR(&esdr_shell_obj)},
+	{MP_ROM_QSTR(MP_QSTR_usb_to_c6), MP_ROM_PTR(&esdr_usb_to_c6_obj)},
 	{MP_ROM_QSTR(MP_QSTR_next_app), MP_ROM_PTR(&esdr_next_app_obj)},
 	{MP_ROM_QSTR(MP_QSTR_home), MP_ROM_PTR(&esdr_home_obj)},
 	{MP_ROM_QSTR(MP_QSTR_shift), MP_ROM_PTR(&esdr_shift_obj)},
