@@ -23,15 +23,19 @@ manifest:
     # Zephyr with ESP32-S3 SMP (zephyrproject-rtos/zephyr#120082, rebased), the
     # CDC-NCM NTB aggregation the USB stream relies on, the llext and Xtensa
     # changes apps/multiapp needs (doc/multiapp.md, "Zephyr changes"), LVGL
-    # allocating from the MicroPython heap (apps/micropython) and the options
-    # that make the USB stack and DWC2 threads preemptible (apps/chancap).
+    # allocating from the MicroPython heap (apps/micropython), the options
+    # that make the USB stack and DWC2 threads preemptible (apps/chancap) and
+    # the Hackaday Communicator and WHY2025 badges with their NV3007, ST7703
+    # and TCA8418 drivers and an SX126x without BUSY and DIO1 lines (branches
+    # communicator-badge, why2025-badge).
     - name: zephyr
       remote: cyber-murmel
-      revision: 03b033e2609da2cf66937c6500d0a0cc22781c4f # esp-sdr + preemptible USB
+      revision: 6d85083fdefcbd3a3021b676dc11a47dbb44367f # why2025-badge
       path: modules/zephyr
       import:
         name-allowlist:
           - fatfs
+          - loramac-node
           - mcuboot
           - mbedtls
           - tf-psa-crypto
