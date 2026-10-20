@@ -200,10 +200,14 @@ static mp_obj_t esdr_sc16_to_fc32(mp_obj_t src_in, mp_obj_t dst_in, mp_obj_t sca
 MP_DEFINE_CONST_FUN_OBJ_3(esdr_sc16_to_fc32_obj, esdr_sc16_to_fc32);
 
 /* display_size() -> (width, height): the panel LVGL draws on (chosen zephyr,display), (0, 0)
- * without one. Known before LVGL starts, for the layouts. */
+ * without one. Known before LVGL starts, for the layouts; a panel turned by 90 or 270 degrees
+ * (the MCH2022 badge's ILI9341: 240x320 at rotation 90) is as wide as its height. */
 #if DT_HAS_CHOSEN(zephyr_display)
-#define DISPLAY_W DT_PROP(DT_CHOSEN(zephyr_display), width)
-#define DISPLAY_H DT_PROP(DT_CHOSEN(zephyr_display), height)
+#define DISPLAY_TURNED (DT_PROP_OR(DT_CHOSEN(zephyr_display), rotation, 0) % 180 == 90)
+#define DISPLAY_W (DISPLAY_TURNED ? DT_PROP(DT_CHOSEN(zephyr_display), height)                     \
+				  : DT_PROP(DT_CHOSEN(zephyr_display), width))
+#define DISPLAY_H (DISPLAY_TURNED ? DT_PROP(DT_CHOSEN(zephyr_display), width)                      \
+				  : DT_PROP(DT_CHOSEN(zephyr_display), height))
 #else
 #define DISPLAY_W 0
 #define DISPLAY_H 0
