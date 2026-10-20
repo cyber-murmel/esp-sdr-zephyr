@@ -12,9 +12,11 @@ __all__ = ["Top"]
 
 
 class Top(Elaboratable):
-    def __init__(self, sys_clk_freq=30e6, build=0, miso_test=False):
+    def __init__(self, sys_clk_freq=30e6, build=0, miso_test=False, debug=False):
         self.sys_clk_freq = sys_clk_freq
         self.build = build
+        # A line of probes per second on the UART to the RP2040 (USB interface 2).
+        self.debug = debug
         # Bring-up: MISO held high while selected.
         self.miso_test = miso_test
 
@@ -24,7 +26,7 @@ class Top(Elaboratable):
         m.submodules.core = core = Core(build=self.build)
 
         # Heartbeat on the LED and the FPGA UART (no CRG of its own here).
-        m.submodules.heartbeat = Blinky(self.sys_clk_freq, crg=False,
+        m.submodules.heartbeat = Blinky(self.sys_clk_freq, crg=False, uart=self.debug,
                                         probes=[core.dbg_frames, core.dbg_last, core.dbg_len])
 
         spi = platform.request("spi", 0, dir={"clk": "-", "copi": "-", "cipo": "-", "cs": "-"})

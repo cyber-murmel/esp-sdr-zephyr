@@ -12,10 +12,12 @@ __all__ = ["Blinky"]
 
 
 class Blinky(Elaboratable):
-    def __init__(self, sys_clk_freq=30e6, baud=115200, crg=True, probes=()):
+    def __init__(self, sys_clk_freq=30e6, baud=115200, crg=True, probes=(), uart=True):
         self.sys_clk_freq = sys_clk_freq
         self.baud = baud
         self.crg = crg
+        # Without the UART report only the LED breathes.
+        self.uart = uart
         # 16-bit signals printed in hex after the seconds.
         self.probes = list(probes)
 
@@ -24,6 +26,12 @@ class Blinky(Elaboratable):
         if self.crg:
             m.submodules.crg = CRG(self.sys_clk_freq)
         m.submodules.rgb = rgb = RgbDriver()
+        if self.uart:
+            self.report(m, platform)
+        self.breathe(m, rgb)
+        return m
+
+    def report(self, m, platform):
         m.submodules.tx = tx = UARTTx(round(self.sys_clk_freq / self.baud))
 
         # Seconds counter and a 5-digit decimal count of them.
@@ -87,6 +95,7 @@ class Blinky(Elaboratable):
             m.submodules.uart_tx = uart_tx = io.Buffer("o", uart.tx)
             m.d.comb += uart_tx.o.eq(tx.tx)
 
+    def breathe(self, m, rgb):
         # Breathing green: 8-bit PWM against a triangle that ramps over about 2 s.
         pwm = Signal(8)
         level = Signal(9)
@@ -101,4 +110,3 @@ class Blinky(Elaboratable):
         m.d.comb += bright.eq(level[:8] ^ level[8].replicate(8))
         # Registered: the RGB driver sits in a far corner.
         m.d.sync += rgb.g.eq(pwm < bright)
-        return m

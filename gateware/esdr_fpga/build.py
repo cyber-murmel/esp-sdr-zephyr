@@ -31,6 +31,12 @@ def top():
 
 
 @variant
+def debug():
+    from .top import Top
+    return Top(debug=True)
+
+
+@variant
 def misotest():
     from .top import Top
     return Top(miso_test=True)

@@ -5,16 +5,44 @@ from amaranth.hdl import Module, Signal
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 
+from . import bus
 from .bus import Decoder
 from .dbi import DBIPassthrough
 from .lcd import LCDPhy
 from .mem import BusRAM
 from .proto import Protocol
 from .regs import Registers
+from .render import Renderer
+from .waterfall import Waterfall
 
-__all__ = ["Core", "SCRATCH_RAM"]
+__all__ = ["Core", "SCRATCH_RAM", "PALETTE", "COLUMNS"]
 
-SCRATCH_RAM = 0x1000
+SCRATCH_RAM = 0x0100
+PALETTE = 0x1000        # 256 RGB565 entries, write-only
+COLUMNS = 0x1800        # spectrum trace row per column (back bank), write-only
+
+
+class _WritePort(wiring.Component):
+    """A write-only bus window: address, data and a strobe."""
+
+    def __init__(self, depth):
+        self.depth = depth
+        super().__init__({
+            "bus": In(bus.Signature((depth - 1).bit_length())),
+            "addr": Out((depth - 1).bit_length()),
+            "data": Out(16),
+            "we": Out(1),
+        })
+
+    def elaborate(self, platform):
+        m = Module()
+        m.d.comb += [
+            self.addr.eq(self.bus.addr),
+            self.data.eq(self.bus.w_data),
+            self.we.eq(self.bus.w_stb),
+            self.bus.r_data.eq(0),
+        ]
+        return m
 
 
 class Core(wiring.Component):
@@ -36,8 +64,9 @@ class Core(wiring.Component):
     dbg_last: Out(16)
     dbg_len: Out(16)
 
-    def __init__(self, build=0):
+    def __init__(self, build=0, hold_timeout=1 << 20):
         self.build = build
+        self.hold_timeout = hold_timeout
         super().__init__()
 
     def elaborate(self, platform):
@@ -45,25 +74,32 @@ class Core(wiring.Component):
         m.submodules.proto = proto = Protocol()
         m.submodules.regs = regs = Registers({"BUILD": self.build})
         m.submodules.ram = ram = BusRAM(256)
-        m.submodules.dec = dec = Decoder([(0x0000, 256), (SCRATCH_RAM, 256)])
+        m.submodules.pal_port = pal_port = _WritePort(256)
+        m.submodules.col_port = col_port = _WritePort(512)
+        m.submodules.dec = dec = Decoder([(0x0000, 256), (SCRATCH_RAM, 256), (PALETTE, 256),
+                                          (COLUMNS, 512)])
         wiring.connect(m, proto.bus, dec.bus)
         wiring.connect(m, dec.w0, regs.bus)
         wiring.connect(m, dec.w1, ram.bus)
+        wiring.connect(m, dec.w2, pal_port.bus)
+        wiring.connect(m, dec.w3, col_port.bus)
         m.d.comb += [
             proto.spi.sck.eq(self.sck),
             proto.spi.copi.eq(self.copi),
             proto.spi.cs.eq(self.cs),
             self.cipo.eq(proto.spi.cipo),
         ]
+        stream = (proto.s_data, proto.s_first, proto.s_stb, proto.s_end)
 
         # Panel.
-        m.submodules.dbi = dbi = DBIPassthrough()
+        m.submodules.dbi = dbi = DBIPassthrough(hold_timeout=self.hold_timeout)
         m.submodules.phy = phy = LCDPhy()
+        m.submodules.wf = wf = Waterfall()
+        m.submodules.render = rd = Renderer()
+        for blk in (dbi, wf):
+            m.d.comb += [blk.s_data.eq(stream[0]), blk.s_first.eq(stream[1]),
+                         blk.s_stb.eq(stream[2]), blk.s_end.eq(stream[3])]
         m.d.comb += [
-            dbi.s_data.eq(proto.s_data),
-            dbi.s_first.eq(proto.s_first),
-            dbi.s_stb.eq(proto.s_stb),
-            dbi.s_end.eq(proto.s_end),
             phy.mode_in.eq(self.lcd_mode),
             phy.fmark_in.eq(self.lcd_fmark),
             self.lcd_d.eq(phy.d),
@@ -71,16 +107,68 @@ class Core(wiring.Component):
             self.lcd_wr.eq(phy.wr),
             self.lcd_oe.eq(phy.oe),
         ]
-        wiring.connect(m, dbi.out, phy.data)
+
+        # The panel bus: the renderer's while it owns it, the host's otherwise.
+        with m.If(rd.own):
+            m.d.comb += [phy.data.payload.eq(rd.out.payload), phy.data.valid.eq(rd.out.valid),
+                         rd.out.ready.eq(phy.data.ready)]
+        with m.Else():
+            m.d.comb += [phy.data.payload.eq(dbi.out.payload),
+                         phy.data.valid.eq(dbi.out.valid), dbi.out.ready.eq(phy.data.ready)]
+
+        c = regs.control
+        sp_flags = c["SP_FLAGS"]
+        m.d.comb += [
+            rd.host_busy.eq(dbi.pending | dbi.hold),
+            rd.te.eq(phy.te),
+            rd.enable.eq(c["CTRL"][0] & phy.mode),
+            rd.te_sync.eq(c["CTRL"][1]),
+            rd.madctl_fpga.eq(c["MADCTL_FPGA"]),
+            rd.madctl_host.eq(dbi.madctl),
+            rd.dirty_set.eq((regs.strobe["DIRTY"][0][:2] & regs.strobe["DIRTY"][1].replicate(2))
+                            | (wf.line_stb & c["CTRL"][2])),
+            rd.wf_on.eq(c["WF_FLAGS"][0]),
+            rd.wf_page0.eq(c["WF_PAGE0"]),
+            rd.wf_col0.eq(c["WF_COL0"]),
+            rd.wf_w.eq(c["WF_W"]),
+            rd.wf_h.eq(c["WF_H"]),
+            rd.wf_ring.eq(c["WF_RING"]),
+            rd.wf_head.eq(wf.head),
+            rd.sp_page0.eq(c["SP_PAGE0"]),
+            rd.sp_col0.eq(c["SP_COL0"]),
+            rd.sp_w.eq(c["SP_W"]),
+            rd.sp_h.eq(c["SP_H"]),
+            rd.sp_flags.eq(sp_flags),
+            rd.sp_grid_y0.eq(c["SP_GRID_Y0"]),
+            rd.sp_grid_dy.eq(c["SP_GRID_DY"]),
+            rd.sp_grid_dx.eq(c["SP_GRID_DX"]),
+            wf.ring.eq(c["WF_RING"]),
+            wf.r_addr.eq(rd.wf_addr),
+            wf.r_req.eq(rd.wf_req),
+            rd.wf_ack.eq(wf.r_ack),
+            rd.wf_data.eq(wf.r_data),
+            rd.pal_addr.eq(pal_port.addr),
+            rd.pal_data.eq(pal_port.data),
+            rd.pal_we.eq(pal_port.we),
+            rd.col_addr.eq(col_port.addr),
+            rd.col_data.eq(col_port.data),
+            rd.col_we.eq(col_port.we),
+            rd.col_commit.eq(regs.strobe["COL_COMMIT"][1]),
+        ]
 
         te_cnt = Signal(16)
         with m.If(phy.te):
             m.d.sync += te_cnt.eq(te_cnt + 1)
         m.d.comb += [
-            regs.status["STATUS"].eq(phy.mode | (dbi.pending << 1)),
+            regs.status["STATUS"].eq(phy.mode | (dbi.pending << 1) | (dbi.hold << 2)
+                                     | (rd.own << 3) | (dbi.overflow << 7)),
             regs.status["TE_CNT"].eq(te_cnt),
             regs.status["DBI_BYTES"].eq(phy.count),
             regs.status["MADCTL_HOST"].eq(dbi.madctl),
+            regs.status["LINES"].eq(wf.lines),
+            regs.status["WF_HEAD"].eq(wf.head),
+            regs.status["RENDERS"].eq(rd.renders),
+            regs.status["R_TIME"].eq(rd.busy_cycles[8:]),
         ]
 
         nbytes = Signal(16)

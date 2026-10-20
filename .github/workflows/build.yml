@@ -148,6 +148,10 @@ jobs:
       - name: Tests
         run: scripts/run-host-tests.sh
 
+      # The MCH2022 FPGA's gateware in simulation (Amaranth, no synthesis tools).
+      - name: Gateware simulations
+        run: python3 -m pytest -q gateware/tests
+
       - name: Coverage summary
         if: always()
         run: |

@@ -14,18 +14,16 @@
 #include <zephyr/drivers/spi.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/byteorder.h>
 
 #include <esp_sdr/esdr_fpga.h>
+#include <esp_sdr/esdr_fpga_regs.h>
 
 LOG_MODULE_REGISTER(mipi_dbi_esdr_fpga, CONFIG_ESDR_FPGA_LOG_LEVEL);
 
-/* gateware/esdr_fpga/dbi.py */
-#define OP_DBI  0x04
-#define F_NOCMD BIT(1)
-
-/* gateware/esdr_fpga/regs.py */
-#define REG_ID  0x00
-#define FPGA_ID 0xE5DF
+#define CASET 0x2A
+#define PASET 0x2B
+#define RAMWR 0x2C
 
 struct dbi_fpga_config {
 	const struct device *fpga;
@@ -40,6 +38,12 @@ struct dbi_fpga_config {
 struct dbi_fpga_data {
 	struct k_mutex lock;
 	bool fpga;
+	/*
+	 * The open memory write: the gateware's renderer must not take the bus between the
+	 * window, RAMWR and the pixels that fill it, which come in separate frames.
+	 */
+	uint16_t window[4];		/* CASET start, end; PASET start, end */
+	uint32_t remaining;		/* bytes until the window is full */
 };
 
 /* SPI fallback, as zephyr,mipi-dbi-spi drives a 4-wire panel. */
@@ -63,8 +67,21 @@ static int dbi_fpga_command_write(const struct device *dev, const struct mipi_db
 
 	k_mutex_lock(&data->lock, K_FOREVER);
 	if (data->fpga) {
-		const uint8_t head[3] = {OP_DBI, 0, cmd};
+		uint8_t head[3] = {ESDR_FPGA_OP_DBI, 0, cmd};
 
+		data->remaining = 0;
+		if ((cmd == CASET || cmd == PASET) && len >= 4) {
+			uint16_t *w = &data->window[cmd == CASET ? 0 : 2];
+
+			w[0] = sys_get_be16(&data_buf[0]);
+			w[1] = sys_get_be16(&data_buf[2]);
+			head[1] = ESDR_FPGA_DBI_HOLD;
+		} else if (cmd == RAMWR) {
+			data->remaining = 2U * (data->window[1] - data->window[0] + 1U) *
+					  (data->window[3] - data->window[2] + 1U);
+			data->remaining -= MIN(data->remaining, len);
+			head[1] = data->remaining ? ESDR_FPGA_DBI_HOLD : 0;
+		}
 		ret = esdr_fpga_write(cfg->fpga, head, sizeof(head), data_buf, len);
 	} else {
 		ret = spi_write_dc(dev, dbi, false, &cmd, 1);
@@ -87,8 +104,12 @@ static int dbi_fpga_write_display(const struct device *dev, const struct mipi_db
 
 	k_mutex_lock(&data->lock, K_FOREVER);
 	if (data->fpga) {
-		const uint8_t head[2] = {OP_DBI, F_NOCMD};
+		uint8_t head[2] = {ESDR_FPGA_OP_DBI, ESDR_FPGA_DBI_NOCMD};
 
+		data->remaining -= MIN(data->remaining, desc->buf_size);
+		if (data->remaining) {
+			head[1] |= ESDR_FPGA_DBI_HOLD;
+		}
 		ret = esdr_fpga_write(cfg->fpga, head, sizeof(head), framebuf, desc->buf_size);
 	} else {
 		ret = spi_write_dc(dev, dbi, true, framebuf, desc->buf_size);
@@ -142,7 +163,7 @@ static int dbi_fpga_init(const struct device *dev)
 	}
 
 	if (device_is_ready(cfg->fpga) && esdr_fpga_loaded(cfg->fpga) &&
-	    esdr_fpga_reg_read(cfg->fpga, REG_ID, &id, 1) == 0 && id == FPGA_ID) {
+	    esdr_fpga_reg_read(cfg->fpga, ESDR_FPGA_REG_ID, &id, 1) == 0 && id == ESDR_FPGA_ID) {
 		/* The FPGA's WR and CS meet D/C and CS through 47 ohm: float ours first. */
 		gpio_pin_configure_dt(&cfg->dc, GPIO_INPUT);
 		gpio_pin_configure_dt(&cfg->cs, GPIO_INPUT);

@@ -48,10 +48,20 @@ repos:
             apps/osmosdr/src/esdr_proto\.h$|
             apps/ubertooth/tools/le_ref\.py$|
             tests/unit/ubertooth_le/src/le_vectors\.h$|
+            gateware/esdr_fpga/|
+            include/esp_sdr/esdr_fpga_regs\.h$|
             scripts/|
             doc/registers/|
             tests/host/
           )
+        pass_filenames: false
+
+      # build.yml "Gateware": the MCH2022 FPGA's simulations
+      - id: gateware-sim
+        name: gateware simulations (pytest, Amaranth)
+        entry: python3 -m pytest -q gateware/tests
+        language: system
+        files: ^gateware/
         pass_filenames: false
 
       # build.yml "SoapySDR module"

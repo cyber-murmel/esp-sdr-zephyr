@@ -24,15 +24,12 @@
 #include <esp_memory_utils.h>
 
 #include <esp_sdr/esdr_fpga.h>
+#include <esp_sdr/esdr_fpga_regs.h>
 
 LOG_MODULE_REGISTER(esdr_fpga, CONFIG_ESDR_FPGA_LOG_LEVEL);
 
 /* The ESP32 SPI DMA moves at most 4092 bytes per descriptor. */
 #define CHUNK 4092U
-
-/* Opcodes (gateware/esdr_fpga/proto.py). */
-#define OP_WRITE 0x01
-#define OP_READ  0x02
 
 /* RP2040 register 0x05: bit 0 releases CRESET_B, bit 1 loops the FPGA UART back. */
 #define FPGA_RUN BIT(0)
@@ -53,6 +50,8 @@ struct esdr_fpga_data {
 	bool loaded;
 	/* DMA-capable bounce buffer for images in flash or PSRAM. */
 	uint8_t bounce[CHUNK] __aligned(4);
+	/* Spectrum columns as bus words. */
+	uint16_t cols[512];
 };
 
 static int creset(const struct device *dev, bool run)
@@ -263,7 +262,7 @@ int esdr_fpga_read(const struct device *dev, const void *head, size_t head_len, 
 int esdr_fpga_reg_write(const struct device *dev, uint16_t addr, const uint16_t *words,
 			size_t n)
 {
-	const uint8_t head[3] = {OP_WRITE, addr & 0xff, addr >> 8};
+	const uint8_t head[3] = {ESDR_FPGA_OP_WRITE, addr & 0xff, addr >> 8};
 
 	/* Words go out little-endian, as the ESP32 stores them. */
 	return esdr_fpga_write(dev, head, sizeof(head), words, n * 2);
@@ -276,7 +275,9 @@ int esdr_fpga_reg_read(const struct device *dev, uint16_t addr, uint16_t *words,
 	size_t even = ROUND_UP(n, 2);
 	size_t len = even * 2;
 	/* Two pad bytes give the gateware time to fetch the first word. */
-	const uint8_t head[7] = {OP_READ, addr & 0xff, addr >> 8, even & 0xff, even >> 8, 0, 0};
+	const uint8_t head[7] = {
+		ESDR_FPGA_OP_READ, addr & 0xff, addr >> 8, even & 0xff, even >> 8, 0, 0,
+	};
 	int ret;
 
 	if (len > CHUNK) {
@@ -305,6 +306,96 @@ static const uint8_t image[] = {
 #include "esdr_fpga_image.inc"
 };
 #endif
+
+int esdr_fpga_palette(const struct device *dev, uint8_t first, const uint16_t *rgb565, size_t n)
+{
+	if (first + n > 256) {
+		return -EINVAL;
+	}
+	return esdr_fpga_reg_write(dev, ESDR_FPGA_PALETTE + first, rgb565, n);
+}
+
+int esdr_fpga_waterfall(const struct device *dev, uint16_t x, uint16_t y, uint16_t w,
+			uint16_t h)
+{
+	/* The ring takes as many lines as fit in the 64 KiB. */
+	uint32_t ring = w ? MIN(65536U / w, 0xffffU) : 1U;
+	const uint16_t regs[] = {x, y, w, h, ring, w && h ? 1 : 0};
+
+	if (w > 320 || (w && ring <= h)) {
+		return -EINVAL;
+	}
+	/* WF_PAGE0 .. WF_FLAGS: native row x carries column x, native column y row y. */
+	return esdr_fpga_reg_write(dev, ESDR_FPGA_REG_WF_PAGE0, regs, ARRAY_SIZE(regs));
+}
+
+int esdr_fpga_wf_line(const struct device *dev, const uint8_t *idx, size_t n)
+{
+	const uint8_t op = ESDR_FPGA_OP_WFLINE;
+
+	return esdr_fpga_write(dev, &op, 1, idx, n);
+}
+
+int esdr_fpga_spectrum(const struct device *dev, uint16_t x, uint16_t y, uint16_t w,
+		       uint16_t h, const struct esdr_fpga_trace *t)
+{
+	const uint16_t regs[] = {
+		x, y, w, h, w && h ? t->flags | ESDR_FPGA_SP_ON : 0,
+		t->grid_y0, MAX(t->grid_dy, 1), MAX(t->grid_dx, 1),
+	};
+
+	if (w > 320) {
+		return -EINVAL;
+	}
+	return esdr_fpga_reg_write(dev, ESDR_FPGA_REG_SP_PAGE0, regs, ARRAY_SIZE(regs));
+}
+
+int esdr_fpga_columns(const struct device *dev, const uint8_t *rows, size_t n)
+{
+	struct esdr_fpga_data *data = dev->data;
+	const uint16_t commit = 1;
+	int ret;
+
+	if (n > ARRAY_SIZE(data->cols)) {
+		return -EINVAL;
+	}
+	/* The mutex nests: esdr_fpga_write() takes it again. */
+	k_mutex_lock(&data->lock, K_FOREVER);
+	for (size_t i = 0; i < n; i++) {
+		data->cols[i] = rows[i];
+	}
+	ret = esdr_fpga_reg_write(dev, ESDR_FPGA_COLUMNS, data->cols, n);
+	if (ret == 0) {
+		ret = esdr_fpga_reg_write(dev, ESDR_FPGA_REG_COL_COMMIT, &commit, 1);
+	}
+	k_mutex_unlock(&data->lock);
+	return ret;
+}
+
+int esdr_fpga_render(const struct device *dev, bool on, bool te_sync, bool line_dirty)
+{
+	uint16_t madctl;
+	uint16_t ctrl = (on ? BIT(0) : 0) | (te_sync ? BIT(1) : 0) | (line_dirty ? BIT(2) : 0);
+	int ret;
+
+	/* The host's MADCTL without MV: native rows run along the screen's columns. */
+	ret = esdr_fpga_reg_read(dev, ESDR_FPGA_REG_MADCTL_HOST, &madctl, 1);
+	if (ret == 0) {
+		madctl &= ~BIT(5);
+		ret = esdr_fpga_reg_write(dev, ESDR_FPGA_REG_MADCTL_FPGA, &madctl, 1);
+	}
+	if (ret == 0) {
+		ret = esdr_fpga_reg_write(dev, ESDR_FPGA_REG_CTRL, &ctrl, 1);
+	}
+	return ret;
+}
+
+int esdr_fpga_redraw(const struct device *dev, bool waterfall, bool spectrum)
+{
+	const uint16_t dirty = (waterfall ? BIT(0) : 0) | (spectrum ? BIT(1) : 0);
+
+	return esdr_fpga_reg_write(dev, ESDR_FPGA_REG_DIRTY, &dirty, 1);
+}
 
 static int esdr_fpga_init(const struct device *dev)
 {
