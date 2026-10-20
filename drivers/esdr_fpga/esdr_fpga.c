@@ -21,6 +21,8 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/util.h>
 
+#include <esp_memory_utils.h>
+
 #include <esp_sdr/esdr_fpga.h>
 
 LOG_MODULE_REGISTER(esdr_fpga, CONFIG_ESDR_FPGA_LOG_LEVEL);
@@ -44,6 +46,8 @@ struct esdr_fpga_config {
 
 struct esdr_fpga_data {
 	struct k_mutex lock;
+	/* The bus with the chip select left to us: frames span several SPI writes. */
+	struct spi_dt_spec bus_nocs;
 	/* The bus at the read clock (a second spi_config, same CS). */
 	struct spi_dt_spec bus_read;
 	bool loaded;
@@ -92,11 +96,9 @@ int esdr_fpga_load(const struct device *dev, const uint8_t *image, size_t size)
 	const struct esdr_fpga_config *cfg = dev->config;
 	struct esdr_fpga_data *data = dev->data;
 	const struct gpio_dt_spec *cs = &cfg->bus.config.cs.gpio;
-	struct spi_dt_spec bus = cfg->bus;
+	const struct spi_dt_spec *bus = &data->bus_nocs;
 	int64_t start = k_uptime_get();
 	int ret;
-
-	bus.config.cs = (struct spi_cs_control){.cs_is_gpio = false};
 
 	k_mutex_lock(&data->lock, K_FOREVER);
 	data->loaded = false;
@@ -125,7 +127,7 @@ int esdr_fpga_load(const struct device *dev, const uint8_t *image, size_t size)
 
 	/* 8 clocks with SS high, then the image with SS low. */
 	memset(data->bounce, 0, 20);
-	ret = raw_write(&bus, data->bounce, 1);
+	ret = raw_write(bus, data->bounce, 1);
 	if (ret < 0) {
 		goto out;
 	}
@@ -134,7 +136,7 @@ int esdr_fpga_load(const struct device *dev, const uint8_t *image, size_t size)
 		size_t n = MIN(CHUNK, size - off);
 
 		memcpy(data->bounce, image + off, n);
-		ret = raw_write(&bus, data->bounce, n);
+		ret = raw_write(bus, data->bounce, n);
 		if (ret < 0) {
 			gpio_pin_set_dt(cs, 0);
 			goto out;
@@ -144,7 +146,7 @@ int esdr_fpga_load(const struct device *dev, const uint8_t *image, size_t size)
 
 	/* At least 49 more clocks for the user I/Os to wake up; the stock firmware sends 160. */
 	memset(data->bounce, 0, 20);
-	ret = raw_write(&bus, data->bounce, 20);
+	ret = raw_write(bus, data->bounce, 20);
 	if (ret < 0) {
 		goto out;
 	}
@@ -183,20 +185,42 @@ bool esdr_fpga_loaded(const struct device *dev)
 	return data->loaded;
 }
 
+/* Payload in DMA-sized pieces; buffers the DMA cannot read (flash, PSRAM) via the bounce. */
+static int write_payload(const struct device *dev, const uint8_t *buf, size_t len)
+{
+	struct esdr_fpga_data *data = dev->data;
+	int ret = 0;
+
+	if (len == 0) {
+		return 0;
+	}
+	if (esp_ptr_dma_capable(buf)) {
+		return raw_write(&data->bus_nocs, buf, len);
+	}
+	for (size_t off = 0; off < len && ret == 0; off += CHUNK) {
+		size_t n = MIN(CHUNK, len - off);
+
+		memcpy(data->bounce, buf + off, n);
+		ret = raw_write(&data->bus_nocs, data->bounce, n);
+	}
+	return ret;
+}
+
 int esdr_fpga_write(const struct device *dev, const void *head, size_t head_len,
 		    const void *payload, size_t len)
 {
 	const struct esdr_fpga_config *cfg = dev->config;
 	struct esdr_fpga_data *data = dev->data;
-	const struct spi_buf b[2] = {
-		{.buf = (void *)head, .len = head_len},
-		{.buf = (void *)payload, .len = len},
-	};
-	const struct spi_buf_set set = {.buffers = b, .count = 2};
+	const struct gpio_dt_spec *cs = &cfg->bus.config.cs.gpio;
 	int ret;
 
 	k_mutex_lock(&data->lock, K_FOREVER);
-	ret = spi_write_dt(&cfg->bus, &set);
+	gpio_pin_set_dt(cs, 1);
+	ret = write_payload(dev, head, head_len);
+	if (ret == 0) {
+		ret = write_payload(dev, payload, len);
+	}
+	gpio_pin_set_dt(cs, 0);
 	k_mutex_unlock(&data->lock);
 	return ret;
 }
@@ -217,7 +241,6 @@ static int read_frame(const struct device *dev, const void *head, size_t head_le
 	};
 	const struct spi_buf_set tx_set = {.buffers = &tx, .count = 1};
 	const struct spi_buf_set rx_set = {.buffers = rxb, .count = 2};
-	int ret;
 
 	if (len > CHUNK || len % 4 != 0 || (uintptr_t)rx % 4 != 0) {
 		return -EINVAL;
@@ -277,12 +300,20 @@ void esdr_fpga_set_read_frequency(const struct device *dev, uint32_t hz)
 	k_mutex_unlock(&data->lock);
 }
 
+#ifdef CONFIG_ESDR_FPGA_IMAGE_EMBEDDED
+static const uint8_t image[] = {
+#include "esdr_fpga_image.inc"
+};
+#endif
+
 static int esdr_fpga_init(const struct device *dev)
 {
 	const struct esdr_fpga_config *cfg = dev->config;
 	struct esdr_fpga_data *data = dev->data;
 
 	k_mutex_init(&data->lock);
+	data->bus_nocs = cfg->bus;
+	data->bus_nocs.config.cs = (struct spi_cs_control){.cs_is_gpio = false};
 	data->bus_read = cfg->bus;
 	data->bus_read.config.frequency = cfg->read_frequency;
 	if (!spi_is_ready_dt(&cfg->bus) || !device_is_ready(cfg->mfd)) {
@@ -294,6 +325,10 @@ static int esdr_fpga_init(const struct device *dev)
 		}
 		gpio_pin_configure_dt(&cfg->irq, GPIO_INPUT);
 	}
+#ifdef CONFIG_ESDR_FPGA_IMAGE_EMBEDDED
+	/* A failed load leaves the FPGA in reset; the display falls back to the ESP32's SPI. */
+	(void)esdr_fpga_load(dev, image, sizeof(image));
+#endif
 	return 0;
 }
 

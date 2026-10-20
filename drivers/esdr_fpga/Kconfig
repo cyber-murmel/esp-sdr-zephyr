@@ -19,8 +19,35 @@ config ESDR_FPGA_INIT_PRIORITY
 	help
 	  After the RP2040 MFD (80), before the display (85).
 
+config ESDR_FPGA_IMAGE
+	string "Bitstream to embed and load at boot"
+	help
+	  Path of a bitstream built from gateware/ (python -m esdr_fpga.build). Empty: nothing is
+	  loaded at boot; esdr_fpga_load() can still configure the FPGA later.
+
+config ESDR_FPGA_IMAGE_EMBEDDED
+	bool
+	default y if ESDR_FPGA_IMAGE != ""
+
 module = ESDR_FPGA
 module-str = esdr_fpga
 source "subsys/logging/Kconfig.template.log_config"
 
 endif
+
+config MIPI_DBI_ESDR_FPGA
+	bool "Panel behind the MCH2022 badge's FPGA"
+	default y
+	depends on DT_HAS_ESDR_MCH2022_FPGA_DBI_ENABLED
+	depends on ESDR_FPGA
+	select MIPI_DBI
+	help
+	  A MIPI-DBI controller that sends the display driver's commands and pixels through the
+	  gateware to the ILI9341's 8080 bus, or straight over SPI when no gateware is loaded.
+
+config MIPI_DBI_ESDR_FPGA_INIT_PRIORITY
+	int "Init priority of the panel controller"
+	default 82
+	depends on MIPI_DBI_ESDR_FPGA
+	help
+	  After the FPGA (81), before the display (85).

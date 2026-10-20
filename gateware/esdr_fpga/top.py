@@ -25,7 +25,7 @@ class Top(Elaboratable):
 
         # Heartbeat on the LED and the FPGA UART (no CRG of its own here).
         m.submodules.heartbeat = Blinky(self.sys_clk_freq, crg=False,
-                                        probes=[core.dbg_frames, core.dbg_last])
+                                        probes=[core.dbg_frames, core.dbg_last, core.dbg_len])
 
         spi = platform.request("spi", 0, dir={"clk": "-", "copi": "-", "cipo": "-", "cs": "-"})
         m.submodules.sck_buf = sck_buf = io.Buffer("i", spi.clk)
@@ -51,4 +51,25 @@ class Top(Elaboratable):
             cipo_buf.o.eq(1 if self.miso_test else core.cipo),
             cipo_buf.oe.eq(cs_buf.i),
         ]
+
+        # Panel: registered outputs, enabled while the ESP32 has handed the bus over; CS low
+        # whenever enabled.
+        lcd = platform.request("lcd", 0, dir={"d": "-", "rs": "-", "wr": "-", "cs": "-",
+                                              "mode": "-", "rst": "-", "fmark": "-"})
+        m.submodules.lcd_d = lcd_d = io.FFBuffer("o", lcd.d)
+        m.submodules.lcd_rs = lcd_rs = io.FFBuffer("o", lcd.rs)
+        m.submodules.lcd_wr = lcd_wr = io.FFBuffer("o", lcd.wr)
+        m.submodules.lcd_cs = lcd_cs = io.FFBuffer("o", lcd.cs)
+        m.submodules.lcd_mode = lcd_mode = io.Buffer("i", lcd.mode)
+        m.submodules.lcd_fmark = lcd_fmark = io.Buffer("i", lcd.fmark)
+        m.d.comb += [
+            core.lcd_mode.eq(lcd_mode.i),
+            core.lcd_fmark.eq(lcd_fmark.i),
+            lcd_d.o.eq(core.lcd_d),
+            lcd_rs.o.eq(core.lcd_rs),
+            lcd_wr.o.eq(core.lcd_wr),
+            lcd_cs.o.eq(1),
+        ]
+        for buf in (lcd_d, lcd_rs, lcd_wr, lcd_cs):
+            m.d.comb += buf.oe.eq(core.lcd_oe)
         return m

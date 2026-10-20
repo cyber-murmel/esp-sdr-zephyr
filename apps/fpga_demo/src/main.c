@@ -1,7 +1,8 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * Shell for the MCH2022 badge's FPGA: load the embedded bitstream, reset, poke frames.
+ * Shell for the MCH2022 badge's FPGA (bitstream from CONFIG_ESDR_FPGA_IMAGE): reset, registers,
+ * an SPI round-trip test.
  */
 
 #include <stdlib.h>
@@ -13,27 +14,6 @@
 #include <esp_sdr/esdr_fpga.h>
 
 static const struct device *const fpga = DEVICE_DT_GET(DT_NODELABEL(fpga));
-
-#ifdef ESDR_FPGA_IMAGE_EMBEDDED
-static const uint8_t image[] = {
-#include "fpga_image.inc"
-};
-#else
-static const uint8_t image[1];
-#endif
-
-static int cmd_load(const struct shell *sh, size_t argc, char **argv)
-{
-	int ret;
-
-	if (!IS_ENABLED(ESDR_FPGA_IMAGE_EMBEDDED) && sizeof(image) < 2) {
-		shell_error(sh, "no embedded bitstream (build with -DESDR_FPGA_IMAGE=...)");
-		return -ENOENT;
-	}
-	ret = esdr_fpga_load(fpga, image, sizeof(image));
-	shell_print(sh, "load: %d", ret);
-	return ret;
-}
 
 static int cmd_off(const struct shell *sh, size_t argc, char **argv)
 {
@@ -57,6 +37,23 @@ static int cmd_reg(const struct shell *sh, size_t argc, char **argv)
 		shell_print(sh, "0x%04x: 0x%04x", addr, w);
 	}
 	return ret;
+}
+
+static int cmd_rate(const struct shell *sh, size_t argc, char **argv)
+{
+	uint16_t addr = strtoul(argv[1], NULL, 0);
+	uint32_t ms = argc > 2 ? strtoul(argv[2], NULL, 0) : 1000;
+	uint16_t a, b;
+	int64_t t0, t1;
+
+	t0 = k_uptime_get();
+	esdr_fpga_reg_read(fpga, addr, &a, 1);
+	k_msleep(ms);
+	t1 = k_uptime_get();
+	esdr_fpga_reg_read(fpga, addr, &b, 1);
+	shell_print(sh, "0x%04x: %u in %lld ms, %u/s", addr, (uint16_t)(b - a), t1 - t0,
+		    (uint32_t)((uint16_t)(b - a) * 1000LL / (t1 - t0)));
+	return 0;
 }
 
 /* The gateware's scratch RAM (gateware/esdr_fpga/core.py) and SCRATCH register. */
@@ -103,21 +100,17 @@ static int cmd_test(const struct shell *sh, size_t argc, char **argv)
 
 SHELL_STATIC_SUBCMD_SET_CREATE(fpga_cmds,
 	SHELL_CMD_ARG(reg, NULL, "reg <addr> [value]", cmd_reg, 2, 1),
+	SHELL_CMD_ARG(rate, NULL, "rate <addr> [ms]: how fast a counter register runs", cmd_rate,
+		      2, 1),
 	SHELL_CMD_ARG(test, NULL, "test [rounds] [read Hz]: scratch RAM round trips", cmd_test,
 		      1, 2),
-	SHELL_CMD(load, NULL, "Load the embedded bitstream", cmd_load),
 	SHELL_CMD(off, NULL, "Hold the FPGA in reset", cmd_off),
 	SHELL_SUBCMD_SET_END);
 SHELL_CMD_REGISTER(fpga, &fpga_cmds, "MCH2022 FPGA", NULL);
 
 int main(void)
 {
-	if (!device_is_ready(fpga)) {
-		printk("fpga: not ready\n");
-		return 0;
-	}
-#ifdef ESDR_FPGA_IMAGE_EMBEDDED
-	printk("fpga: load %d\n", esdr_fpga_load(fpga, image, sizeof(image)));
-#endif
+	printk("fpga: %s\n", !device_is_ready(fpga) ? "not ready"
+			      : esdr_fpga_loaded(fpga) ? "loaded" : "not loaded");
 	return 0;
 }
