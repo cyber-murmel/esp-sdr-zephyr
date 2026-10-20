@@ -802,6 +802,8 @@ static const mp_rom_map_elem_t esdr_globals_table[] = {
 	{MP_ROM_QSTR(MP_QSTR_init), MP_ROM_PTR(&esdr_init_obj)},
 	{MP_ROM_QSTR(MP_QSTR_tune), MP_ROM_PTR(&esdr_tune_obj)},
 	{MP_ROM_QSTR(MP_QSTR_tx_start), MP_ROM_PTR(&esdr_tx_start_obj)},
+	/* Plays sample buffers (an app's "needs"). */
+	{MP_ROM_QSTR(MP_QSTR_TX_BUFFERS), MP_ROM_INT(1)},
 	{MP_ROM_QSTR(MP_QSTR_tx_gen), MP_ROM_PTR(&esdr_tx_gen_obj)},
 	{MP_ROM_QSTR(MP_QSTR_tx_loop), MP_ROM_PTR(&esdr_tx_loop_obj)},
 	{MP_ROM_QSTR(MP_QSTR_channel_bw), MP_ROM_PTR(&esdr_channel_bw_obj)},

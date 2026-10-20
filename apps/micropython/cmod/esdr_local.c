@@ -9,7 +9,9 @@
  * demodulators. Triggered snapshots come from 80 MS/s bursts taken every few milliseconds: one
  * whose power, in windows of 64 samples, rises past the threshold over the quiet power (the
  * lower quartile of the windows, averaged) is a snapshot, the trigger at that window; there is
- * nothing after a burst's end, so post is not honoured. Requests take the subset of the osmosdr protocol (esdr_proto.h) that
+ * nothing after a burst's end, so post is not honoured. Transmit is a carrier from the PHY's
+ * tone generator (as the vendor's CW test, wifiscwout): a generated tone or constant at the LO,
+ * the tone's offset added to the LO; no sample buffers. Requests take the subset of the osmosdr protocol (esdr_proto.h) that
  * esdr_radio.c sends. Samples are int16 at full scale 16384, as the S3's ring gives them.
  * Plain Zephyr code, built as an app source.
  */
@@ -52,6 +54,21 @@ static struct {
 	int32_t lo_khz;
 	uint16_t rx_gain;
 } set = {.rx_gain = ESDR_GAIN_AUTO};
+
+/* Transmit, a carrier (below): power steps 0 (weakest) to TX_POWER_MAX; the attenuation per
+ * step and at the top are not measured. */
+#define TX_POWER_MAX 15U
+#define TX_ATT_STEP  8
+#define TX_ATT_TOP   0
+
+static struct {
+	volatile bool on;
+	uint32_t rate;
+	int64_t offset_hz;
+	uint64_t count;
+	int64_t t0_ms;
+	uint16_t power;
+} tx;
 
 /* The receive run; the worker fills buffers under rx_lock, start and stop change them under it. */
 static K_MUTEX_DEFINE(rx_lock);
@@ -212,6 +229,12 @@ int esdr_remote_request(uint8_t req, uint16_t value, const void *data, uint16_t 
 		}
 		set.rx_gain = value;
 		return 0;
+	case ESDR_REQ_SET_TX_GAIN:
+		if (value > TX_POWER_MAX) {
+			return -EINVAL;
+		}
+		tx.power = value;
+		return 0;
 	case ESDR_REQ_SET_BANDWIDTH:
 		if (len != 4U) {
 			return -EINVAL;
@@ -222,6 +245,7 @@ int esdr_remote_request(uint8_t req, uint16_t value, const void *data, uint16_t 
 			.mode = rx.active ? ESDR_MODE_RX : ESDR_MODE_OFF,
 			.bits = 16,
 			.rx_gain = set.rx_gain,
+			.tx_gain = tx.power,
 			.freq_hz = set.freq_hz,
 			.center_hz = set.center_hz,
 			.sample_rate_hz = rx.active ? stream_rate() : 0U,
@@ -373,6 +397,7 @@ uint64_t esdr_rx_latest(int16_t *dst, size_t n)
 static int rx_start(int native, unsigned int decim, int16_t *buf, size_t cap, uint64_t count,
 		    bool wrap)
 {
+	esdr_remote_tx_stop();
 	esdr_remote_trig_stop();
 	esdr_remote_rx_stop();
 	k_mutex_lock(&rx_lock, K_FOREVER);
@@ -487,6 +512,120 @@ void esdr_remote_trig_stats(struct esdr_remote_trig_stats *st)
 	*st = trg.st;
 }
 
+/* ---- transmit: a carrier ---- */
+
+/*
+ * libphy: tone 1 on/off, its offset (kHz, from the LO) and attenuation, the same for tone 2
+ * (the PHY table's rom_start_tx_tone_step). wifiscwout() leaves the TX calibration's debug mode
+ * before and puts its work mode back after: without the latter the carrier stays on.
+ */
+extern void ram_start_tx_tone(int en1, int khz1, int att1, int en2, int khz2, int att2);
+extern void txcal_debuge_mode(int en);
+extern void ram_txcal_work_mode(void);
+/* ROM: clears the enable bit of tone 1, 2 or 3 (0x600060b8, bc, c4); other values all three. */
+extern void rom_stop_tx_tone(int which);
+
+static void tx_off(void)
+{
+	ram_start_tx_tone(0, 0, 0, 0, 0, 0);
+	rom_stop_tx_tone(0);
+	ram_txcal_work_mode();
+}
+
+/* The LO at the requested frequency plus the tone's offset; the settings' frequency stays. */
+static int tx_tune(void)
+{
+	uint64_t hz = set.freq_hz + tx.offset_hz;
+	uint32_t mhz = (uint32_t)((hz + 500000U) / 1000000U);
+	int64_t rest = (int64_t)hz - (int64_t)mhz * 1000000;
+	int ret = esp_sdr_set_freq(mhz);
+
+	if (ret == 0) {
+		ret = esp_sdr_set_freq_offset((int32_t)((rest + (rest >= 0 ? 500 : -500)) / 1000));
+	}
+	return ret;
+}
+
+static int tx_on(void)
+{
+	int ret = tx_tune();
+
+	if (ret != 0) {
+		return ret;
+	}
+	txcal_debuge_mode(0);
+	ram_start_tx_tone(1, 0, TX_ATT_TOP + (int)(TX_POWER_MAX - tx.power) * TX_ATT_STEP, 0, 0, 0);
+	return 0;
+}
+
+static void gen_offset(const struct esdr_remote_gen *gen)
+{
+	/* A constant is the carrier itself; a tone sits cycles x rate from it. */
+	tx.offset_hz = gen->wave == ESDR_REMOTE_WAVE_CONST ? 0 :
+		       (int64_t)(gen->cycles * (float)tx.rate);
+}
+
+int esdr_remote_tx_start(uint32_t rate, const int16_t *buf, size_t n, bool repeat,
+			 const struct esdr_remote_gen *gen, uint64_t count, float scale)
+{
+	ARG_UNUSED(n);
+	ARG_UNUSED(repeat);
+	ARG_UNUSED(scale);
+	if (buf != NULL || gen == NULL ||
+	    (gen->wave != ESDR_REMOTE_WAVE_CONST && gen->wave != ESDR_REMOTE_WAVE_COS &&
+	     gen->wave != ESDR_REMOTE_WAVE_SIN)) {
+		return -ENOTSUP;
+	}
+	esdr_remote_tx_stop();
+	esdr_remote_trig_stop();
+	esdr_remote_rx_stop();
+	tx.rate = rate;
+	tx.count = count;
+	gen_offset(gen);
+	tx.t0_ms = k_uptime_get();
+	tx.on = true;
+	return tx_on();
+}
+
+void esdr_remote_tx_set_gen(const struct esdr_remote_gen *gen)
+{
+	if (!tx.on) {
+		return;
+	}
+	gen_offset(gen);
+	tx_off();
+	(void)tx_on();
+}
+
+void esdr_remote_tx_set_scale(float scale)
+{
+	ARG_UNUSED(scale);
+}
+
+void esdr_remote_tx_stop(void)
+{
+	if (!tx.on) {
+		return;
+	}
+	tx.on = false;
+	tx_off();
+	/* Back to receive at the settings' frequency. */
+	(void)tune(set.freq_hz);
+}
+
+uint64_t esdr_remote_tx_played(void)
+{
+	return tx.on ? (uint64_t)(k_uptime_get() - tx.t0_ms) * tx.rate / 1000U : 0U;
+}
+
+bool esdr_remote_tx_busy(void)
+{
+	if (tx.on && tx.count != 0U && esdr_remote_tx_played() >= tx.count) {
+		esdr_remote_tx_stop();
+	}
+	return tx.on;
+}
+
 /* ---- setup ---- */
 
 int esdr_remote_init(const struct esdr_info **out)
@@ -507,6 +646,7 @@ int esdr_remote_init(const struct esdr_info **out)
 			.rx_rate_max_hz = STREAM_MAX_HZ,
 			.rx_rate_count = STREAM_RATES,
 			.rx_gain_max = (uint16_t)esp_sdr_rx_gain_max(),
+			.tx_gain_max = TX_POWER_MAX,
 			.full_scale16 = 16384,
 		};
 		strncpy(info.firmware, "esp-sdr esp32 on chip", sizeof(info.firmware) - 1);
@@ -526,6 +666,7 @@ int esdr_remote_init(const struct esdr_info **out)
 
 void esdr_remote_reset(void)
 {
+	esdr_remote_tx_stop();
 	esdr_remote_trig_stop();
 	esdr_remote_rx_stop();
 	(void)esp_sdr_reset_settings();

@@ -6,7 +6,8 @@
  * (esdr_remote.c), CPU-paced: no offset tuning, 8-bit samples; on the classic ESP32 of the
  * MCH2022 badge the chip's own radio (esdr_local.c), which captures bursts only: its stream
  * rates are decimated bursts with gaps between them, its snapshots come from bursts, and it
- * does not transmit (no tx_*: the launcher hides the apps that need them).
+ * transmits a carrier only (a generated tone or constant; no TX_STREAM_MAX: the launcher hides
+ * the apps that send samples).
  *
  *   init()                     opens the link, reads the radio's description
  *   tune(hz, offset=True)      LO at hz (offset is ignored); returns the centre tuned
@@ -79,6 +80,8 @@
 /* The radio on the chip (esdr_local.c): bursts, and streams decimated from them. */
 #define RADIO_LINKED 0
 #define FULL_SCALE 16384
+/* Transmit is a carrier: any rate holds a generated tone. */
+#define RATE_MAX_HZ 250000
 #define RX_RATE_MAX_HZ 2000000
 #define RX_RATE_COUNT 5
 #else
@@ -203,14 +206,12 @@ static mp_obj_t esdr_rx_gain_max(void)
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(esdr_rx_gain_max_obj, esdr_rx_gain_max);
 
-#if RADIO_LINKED
 static mp_obj_t esdr_tx_gain_max(void)
 {
 	need_radio();
 	return MP_OBJ_NEW_SMALL_INT(radio->tx_gain_max);
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(esdr_tx_gain_max_obj, esdr_tx_gain_max);
-#endif
 
 static mp_obj_t esdr_rx_bandwidth(mp_obj_t hz_in)
 {
@@ -421,8 +422,6 @@ static mp_obj_t esdr_trig_stats_fn(void)
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(esdr_trig_stats_obj, esdr_trig_stats_fn);
 
-#if RADIO_LINKED
-
 /* ---- transmit ---- */
 
 static void tx_gen_from(struct esdr_remote_gen *g, mp_obj_t t)
@@ -559,7 +558,6 @@ static mp_obj_t esdr_tx_stats_fn(void)
 	return d;
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(esdr_tx_stats_obj, esdr_tx_stats_fn);
-#endif /* RADIO_LINKED */
 
 /* ---- board ---- */
 
@@ -693,7 +691,6 @@ static const mp_rom_map_elem_t esdr_globals_table[] = {
 	{MP_ROM_QSTR(MP_QSTR_rx_count), MP_ROM_PTR(&esdr_rx_count_obj)},
 	{MP_ROM_QSTR(MP_QSTR_rx_stats), MP_ROM_PTR(&esdr_rx_stats_obj)},
 	{MP_ROM_QSTR(MP_QSTR_radio_state), MP_ROM_PTR(&esdr_radio_state_obj)},
-#if RADIO_LINKED
 	{MP_ROM_QSTR(MP_QSTR_tx_start), MP_ROM_PTR(&esdr_tx_start_obj)},
 	{MP_ROM_QSTR(MP_QSTR_tx_gen), MP_ROM_PTR(&esdr_tx_gen_obj)},
 	{MP_ROM_QSTR(MP_QSTR_tx_scale), MP_ROM_PTR(&esdr_tx_scale_obj)},
@@ -702,7 +699,6 @@ static const mp_rom_map_elem_t esdr_globals_table[] = {
 	{MP_ROM_QSTR(MP_QSTR_tx_wait), MP_ROM_PTR(&esdr_tx_wait_obj)},
 	{MP_ROM_QSTR(MP_QSTR_tx_stats), MP_ROM_PTR(&esdr_tx_stats_obj)},
 	{MP_ROM_QSTR(MP_QSTR_tx_gain_max), MP_ROM_PTR(&esdr_tx_gain_max_obj)},
-#endif
 	{MP_ROM_QSTR(MP_QSTR_fsk_rx_init), MP_ROM_PTR(&esdr_fsk_rx_init_obj)},
 	{MP_ROM_QSTR(MP_QSTR_fsk_rx), MP_ROM_PTR(&esdr_fsk_rx_obj)},
 	{MP_ROM_QSTR(MP_QSTR_fsk_rx_reset), MP_ROM_PTR(&esdr_fsk_rx_reset_obj)},
@@ -743,9 +739,11 @@ static const mp_rom_map_elem_t esdr_globals_table[] = {
 	{MP_ROM_QSTR(MP_QSTR_BURST_RATES), MP_ROM_PTR(&esdr_burst_rates_obj)},
 	{MP_ROM_QSTR(MP_QSTR_FULL_SCALE), MP_ROM_INT(FULL_SCALE)},
 	{MP_ROM_QSTR(MP_QSTR_MON_SAMPLES), MP_ROM_INT(ESDR_MON_SAMPLES)},
-#if RADIO_LINKED
-	{MP_ROM_QSTR(MP_QSTR_TX_PREBUF_S), MP_ROM_INT(0)},
 	{MP_ROM_QSTR(MP_QSTR_TX_RATE_MAX), MP_ROM_INT(RATE_MAX_HZ)},
+#if RADIO_LINKED
+	/* Samples from buffers (the ESP32 transmits carriers only; an app's "needs"). */
+	{MP_ROM_QSTR(MP_QSTR_TX_BUFFERS), MP_ROM_INT(1)},
+	{MP_ROM_QSTR(MP_QSTR_TX_PREBUF_S), MP_ROM_INT(0)},
 	{MP_ROM_QSTR(MP_QSTR_TX_STREAM_MAX), MP_ROM_INT(STREAM_MAX_HZ)},
 #endif
 };

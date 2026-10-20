@@ -5,6 +5,7 @@
   "author": "esp-sdr",
   "revision": 5,
   "needs": [
-    "tx_start"
+    "tx_start",
+    "TX_BUFFERS"
   ]
 }
