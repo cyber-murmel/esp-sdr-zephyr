@@ -25,6 +25,27 @@ The C6's triggered snapshots (``ESDR_MODE_TRIGGER``, ``../osmosdr_serial/README.
 through as they are: ``esdr_usb trig`` writes 80 MS/s snapshots around each burst. With the
 Communicator sending 5.69 bursts a second it took 5.6 a second, none broken.
 
+Channelizer
+***********
+
+With the C6 in gapless mode (``../osmosdr_serial/README.rst``) and a channelizer set
+(``ESDR_REQ_SET_CHANNELIZER``: 16, 32, 40, 64 or 80 channels over the 80 MHz, an opening level,
+a channel mask), the segment blocks go through a polyphase filterbank, 2x oversampled, and a
+burst detector per channel (``../common/include/esdr_pfbq.h``); the open channels' samples go out
+as ``ESDR_BLK_CHAN`` blocks, int16 at 32 times the raw units, each run with its index on the
+channel's absolute grid. ``esdr_usb chan -C 40 -O 6`` records them and counts bursts per channel.
+
+The filterbank runs in fixed point four frames at a time on the P4's PIE SIMD
+(``../common/src/esdr_pfbq_pie.S``), assembled by Espressif's assembler: the dev shell of
+``default.nix`` has it (``riscv32-esp-elf-as``). A build without it (CMake warns) runs the same
+arithmetic in the C reference kernels, some 40 times slower on the P4 and far too slow for the
+stream. Against the float bank (``esdr_pfb.h``) the error stays within
+0.4 sqrt(M) output units rms (``tests/unit/esdr_pfbq``, which also checks PIE against C bit for
+bit on the badge). At 360 MHz the bridge takes 77 to 83 cycles a pair with 40 channels on busy
+2.4 GHz air (filterbank 39, detector 15, channel blocks 10 to 15): the C6's whole link, 3.9 M
+pairs/s kept at a fixed low threshold, went through with 12 to 27 % of the CPU to spare and
+nothing dropped. The float bank had managed some 1 M pairs/s.
+
 Building and flashing
 *********************
 
