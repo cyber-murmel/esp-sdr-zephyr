@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The WHY2025 badge's triggered snapshots per half second for SECS seconds at F1, then again
-# after retuning to F2 (as the channelizer egg retunes: trigger mode stopped and started
+# after retuning to F2 (as the Bursts egg's snapshots retune: trigger mode stopped and started
 # again). A trigger that settles slowly after a retune shows as a burst of snapshots at first.
 import time
 

@@ -84,7 +84,7 @@ def test_bundled_apps_are_valid():
     for app, meta in idx.items():
         assert meta.get("name") and meta.get("description"), app
         # A flowgraph GNU Radio Companion exported comes with its .grc; a hand-written app
-        # (the channelizer) has none.
+        # (Bursts) has none.
         py = REPO / "apps/micropython/eggs" / app / f"{app}.py"
         if "# GNU Radio Python Flow Graph" in py.read_text():
             assert py.with_suffix(".grc").is_file(), app

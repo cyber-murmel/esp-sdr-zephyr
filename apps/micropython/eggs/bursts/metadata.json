@@ -1,11 +1,10 @@
 {
   "name": "Bursts",
-  "description": "80 MHz around the knob's frequency without a gap (the WHY2025 badge's C6 keeps the 10 us windows that stand out), channelized on the P4 into 40 channels of 2 MHz with a burst detector per channel: each channel's power over its floor, occupancy over time, and the bursts that ended with their frequency, length and level.",
+  "description": "80 MHz around the knob's frequency in channels, with a chooser where both sources work. Gapless (the WHY2025 badge's C6 keeps the 10 us windows that stand out): channelized on the P4 into 40 channels of 2 MHz with a burst detector per channel, each channel's power over its floor, occupancy over time, and the bursts that ended with their frequency, length and level. Snapshots (205 us whenever a burst rises past the threshold; the MCH2022 badge's ESP32 checks a burst every few milliseconds): 64 channels of 1.25 MHz, channel power, occupancy over time, and the newest burst in time and frequency.",
   "category": "receive",
   "author": "esp-sdr",
-  "revision": 1,
+  "revision": 2,
   "needs": [
-    "gapless_start",
-    "chan_power"
+    "trig_start"
   ]
 }

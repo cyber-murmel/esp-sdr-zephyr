@@ -199,10 +199,10 @@ as in the `badge.team hatchery <https://badge.team/docs/hatchery/>`__: a folder 
 
 ``category`` is the menu's section (``receive`` and ``transmit`` come first), ``"hidden": true``
 keeps an app out of the menu, and so does ``"needs"`` naming an ``esdr`` function the board's
-module lacks (Channelizer needs ``trig_start``). ``tools/mkegg.py flowgraph.grc --category receive`` makes the
-folder of a GRC flowgraph: the flowgraph, its export (``grcc``, unmodified), an ``__init__.py``
-that runs the export's ``main()``, and the metadata from the flowgraph's options (title,
-description, author). Run it again after changing the flowgraph; the revision goes up when the
+module lacks (Bursts needs ``trig_start``). ``tools/mkegg.py flowgraph.grc --category receive``
+makes the folder of a GRC flowgraph: the flowgraph, its export (``grcc``, unmodified), an
+``__init__.py`` that runs the export's ``main()``, and the metadata from the flowgraph's options
+(title, description, author). Run it again after changing the flowgraph; the revision goes up when the
 export changes.
 
 The menu lists:
@@ -211,10 +211,10 @@ The menu lists:
   Wideband (80 MS/s: the bursts in the gapless stream where the radio has it, else bursts),
   Constellation,
   Receiver (tabs, radio buttons, a check box), Tone (transmits), Data link (two-way messages,
-  `Data link`_) and, on the WHY2025 badge, Channelizer (80 MHz in 64 channels from triggered
-  snapshots, ``esdr.trig_get()`` and ``esdr.channelize()``; not a GRC export: the snapshots are
-  no stream) and Bursts (the gapless stream in 40 channels with a burst detector each,
-  ``esdr.chan_power()`` and ``esdr.chan_bursts()``). They are frozen;
+  `Data link`_) and, on the WHY2025 and MCH2022 badges, Bursts (80 MHz in channels, not a GRC
+  export: the gapless stream in 40 channels with a burst detector each, ``esdr.chan_power()``
+  and ``esdr.chan_bursts()``, where the radio streams it, else, or by its chooser, 64 channels
+  of triggered snapshots, ``esdr.trig_get()`` and ``esdr.channelize()``). They are frozen;
   ``tools/eggs_index.py`` turns their ``metadata.json`` files into the index the menu reads;
 - the folders in ``apps/`` on the FLASH and SD drives: copy an app's folder there over USB.
 
@@ -345,7 +345,7 @@ reset):
 
 .. code-block:: console
 
-   tools/bench/bench.py /dev/ttyUSB0 egg_smoke.py EGG='"channelizer"' SECS=10
+   tools/bench/bench.py /dev/ttyUSB0 egg_smoke.py EGG='"bursts"' SECS=10
    tools/bench/bench.py /dev/ttyACM0 burst_capture.py > burst.txt
    tools/bench/burst_analyse.py burst.txt
 

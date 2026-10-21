@@ -5,11 +5,11 @@
 import sys
 import time
 
-EGG = globals().get("EGG", "channelizer")
+EGG = globals().get("EGG", "bursts")
 SECS = globals().get("SECS", 6)
 
 sys.path[:0] = [".frozen", ".frozen/eggs/" + EGG]
-from gnuradio import _gui
+from gnuradio import _gui, qtgui
 
 t0 = time.ticks_ms()
 moved = []
@@ -17,7 +17,7 @@ moved = []
 
 def poll():
     t = time.ticks_diff(time.ticks_ms(), t0)
-    for k, w in enumerate(v for v in _gui._vars if hasattr(v, "slot")):
+    for k, w in enumerate(v for v in _gui._vars if isinstance(v, qtgui.RangeWidget)):
         # Each slider in turn to a quarter, then three quarters of its range.
         for step, frac in ((1, 0.25), (2, 0.75)):
             if t > 1000 * step + 300 * k and (k, step) not in moved:
