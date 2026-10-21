@@ -3,11 +3,12 @@
 # The esdr module: the radio and the board, for the gnuradio shim. The ESP32-C5's (no display,
 # no PSRAM) is esdr_c5.c; the ESP32-P4's (its radio is the WHY2025 badge's ESP32-C6, over a
 # link) and the classic ESP32's (bursts from the radio on the chip) are esdr_radio.c; all have
-# the packet modem (esdr_fsk.c, esdr_link.c).
+# the board functions (esdr_board.c) and the packet modem (esdr_fsk.c, esdr_link.c).
 add_library(usermod_esdr INTERFACE)
 if(CONFIG_SOC_SERIES_ESP32C5)
   target_sources(usermod_esdr INTERFACE
     ${CMAKE_CURRENT_LIST_DIR}/esdr_c5.c
+    ${CMAKE_CURRENT_LIST_DIR}/esdr_board.c
     ${CMAKE_CURRENT_LIST_DIR}/esdr_fsk.c
     ${CMAKE_CURRENT_LIST_DIR}/esdr_link.c)
 elseif(CONFIG_SOC_SERIES_ESP32P4 OR CONFIG_SOC_SERIES_ESP32)

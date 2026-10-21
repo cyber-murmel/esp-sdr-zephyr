@@ -32,7 +32,7 @@
  *   fsk_rx_init(), fsk_rx(), fsk_rx_reset(), fsk_rx_state(), fsk_mod()   (esdr_link.c)
  *   first_start()              true once per hardware start (soft resets keep it false)
  *   next_app([path]), home()   the launcher (modules/launcher.py); no knob, home() is false
- *   reset_reason()
+ *   reset_reason()             (esdr_board.c, as on the other chips)
  *
  * Memory: the Python heap gets the upper half of SRAM block 1, which the dump engine owns only
  * while it captures (this module never does) and which the diagnostic ring's lower half leaves
@@ -51,7 +51,6 @@
 #include <zephyr/sys/barrier.h>
 
 #include <esp_rom_sys.h>
-#include <esp_system.h>
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_diag.h>
 #include <esp_sdr/esp_sdr_paced.h>
@@ -62,6 +61,7 @@
 #include "py/obj.h"
 #include "py/runtime.h"
 
+#include "esdr_board.h"
 #include "esdr_fsk.h"
 
 #define BYTE_RATE    40000000U
@@ -265,13 +265,6 @@ static bool tx_input(void *user, int16_t *i, int16_t *q)
 
 /* ---- helpers ---- */
 
-static void check(int ret)
-{
-	if (ret < 0) {
-		mp_raise_OSError(-ret);
-	}
-}
-
 static void check_idle(void)
 {
 	if (atomic_get(&rx_busy_flag)) {
@@ -286,15 +279,15 @@ static void tune_to(double hz, uint32_t *mhz, int32_t *khz)
 	}
 	*mhz = (uint32_t)llround(hz / 1e6);
 	*khz = (int32_t)llround((hz - (double)*mhz * 1e6) / 1e3);
-	check(esp_sdr_set_freq(*mhz));
-	check(esp_sdr_set_freq_offset(*khz));
+	esdr_check(esp_sdr_set_freq(*mhz));
+	esdr_check(esp_sdr_set_freq_offset(*khz));
 }
 
 /* ---- the module ---- */
 
 static mp_obj_t esdr_init(void)
 {
-	check(rx_init());
+	esdr_check(rx_init());
 	return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(esdr_init_obj, esdr_init);
@@ -324,7 +317,7 @@ static mp_obj_t esdr_rx_gain(size_t n_args, const mp_obj_t *args)
 	check_idle();
 	mp_int_t index = mp_obj_get_int(args[0]);
 
-	check(esp_sdr_rx_set_gain(index < 0 ? ESP_SDR_RX_GAIN_AUTO : (int)index));
+	esdr_check(esp_sdr_rx_set_gain(index < 0 ? ESP_SDR_RX_GAIN_AUTO : (int)index));
 	return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_rx_gain_obj, 0, 1, esdr_rx_gain);
@@ -341,12 +334,12 @@ static mp_obj_t esdr_rx_bandwidth(mp_obj_t hz_in)
 
 	check_idle();
 	if (hz <= 0) {
-		check(esp_sdr_rx_set_lpf(ESP_SDR_RX_LPF_AUTO));
+		esdr_check(esp_sdr_rx_set_lpf(ESP_SDR_RX_LPF_AUTO));
 	} else {
 		uint32_t lo, hi, mhz = (uint32_t)ceilf((float)hz / 1e6f);
 
 		esp_sdr_rx_bandwidth_range(&lo, &hi);
-		check(esp_sdr_rx_set_bandwidth(CLAMP(mhz, lo, hi)));
+		esdr_check(esp_sdr_rx_set_bandwidth(CLAMP(mhz, lo, hi)));
 	}
 	return mp_const_none;
 }
@@ -355,7 +348,7 @@ static MP_DEFINE_CONST_FUN_OBJ_1(esdr_rx_bandwidth_obj, esdr_rx_bandwidth);
 static mp_obj_t esdr_channel_bw(mp_obj_t mode_in)
 {
 	check_idle();
-	check(esp_sdr_set_channel_bw((unsigned int)mp_obj_get_int(mode_in)));
+	esdr_check(esp_sdr_set_channel_bw((unsigned int)mp_obj_get_int(mode_in)));
 	return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(esdr_channel_bw_obj, esdr_channel_bw);
@@ -400,7 +393,7 @@ static mp_obj_t esdr_rx_start_fn(size_t n_args, const mp_obj_t *pos_args, mp_map
 	if (args[ARG_count].u_int < 0) {
 		mp_raise_ValueError(MP_ERROR_TEXT("count < 0"));
 	}
-	check(rx_init());
+	esdr_check(rx_init());
 	if (atomic_get(&rx_busy_flag) || tx.buf != NULL) {
 		mp_raise_OSError(EBUSY);
 	}
@@ -577,7 +570,7 @@ static mp_obj_t esdr_tx_start_fn(size_t n_args, const mp_obj_t *pos_args, mp_map
 	if (((uintptr_t)bi.buf & 1U) != 0U || bi.len < 4) {
 		mp_raise_ValueError(MP_ERROR_TEXT("buf: 16-bit aligned, one sample at least"));
 	}
-	check(rx_init());
+	esdr_check(rx_init());
 	check_idle();
 
 	size_t n = bi.len / 4U;
@@ -607,7 +600,7 @@ static mp_obj_t esdr_tx_start_fn(size_t n_args, const mp_obj_t *pos_args, mp_map
 		esp_sdr_tx_paced_stop();
 	}
 	tx.buf = NULL;
-	check(tx.ret);
+	esdr_check(tx.ret);
 	return mp_obj_new_float((mp_float_t)((double)mhz * 1e6 + (double)khz * 1e3));
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(esdr_tx_start_obj, 3, esdr_tx_start_fn);
@@ -666,51 +659,6 @@ static mp_obj_t esdr_first_start(void)
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(esdr_first_start_obj, esdr_first_start);
 
-static char next_app[128];
-
-static mp_obj_t esdr_next_app(size_t n_args, const mp_obj_t *args)
-{
-	char out[sizeof(next_app)];
-	const char *path;
-	size_t len;
-
-	if (n_args == 0) {
-		strcpy(out, next_app);
-		next_app[0] = '\0';
-		return mp_obj_new_str_from_cstr(out);
-	}
-	if (!mp_obj_is_str(args[0])) {
-		mp_raise_TypeError(MP_ERROR_TEXT("path must be a str"));
-	}
-	path = mp_obj_str_get_data(args[0], &len);
-	if (len >= sizeof(next_app) || memchr(path, '\0', len) != NULL) {
-		mp_raise_ValueError(MP_ERROR_TEXT("path too long or with a NUL"));
-	}
-	memcpy(next_app, path, len);
-	next_app[len] = '\0';
-	return mp_const_none;
-}
-static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_next_app_obj, 0, 1, esdr_next_app);
-
-static mp_obj_t esdr_home(void)
-{
-	return mp_const_false;
-}
-static MP_DEFINE_CONST_FUN_OBJ_0(esdr_home_obj, esdr_home);
-
-static mp_obj_t esdr_reset_reason(void)
-{
-	static const char *const names[] = {
-		"unknown", "power-on", "external pin", "software", "panic", "interrupt watchdog",
-		"task watchdog", "other watchdog", "deep sleep", "brownout", "sdio", "usb", "jtag",
-		"efuse", "power glitch", "cpu lockup",
-	};
-	unsigned int r = (unsigned int)esp_reset_reason();
-
-	return mp_obj_new_str_from_cstr(r < ARRAY_SIZE(names) ? names[r] : "?");
-}
-static MP_DEFINE_CONST_FUN_OBJ_0(esdr_reset_reason_obj, esdr_reset_reason);
-
 /* ---- heap, added at every (soft) start; the radio stops before a soft reset ---- */
 
 void esdr_port_init(void)
@@ -737,6 +685,7 @@ void esdr_port_init(void)
 	}
 	MP_STATE_PORT(esdr_rx_buf) = MP_OBJ_NULL;
 	MP_STATE_PORT(esdr_rx_fsk) = MP_OBJ_NULL;
+	esdr_board_init();
 }
 
 void esdr_port_deinit(void)

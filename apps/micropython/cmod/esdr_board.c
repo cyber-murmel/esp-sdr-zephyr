@@ -3,8 +3,9 @@
  *
  * The esdr module's board functions, the same wherever the radio is: the launcher's next app
  * and home gesture (the knob, or a key held), the display's size, the reset reason, and the
- * sample format converters. modesdr.c (the S3) and esdr_radio.c (the P4, the ESP32) put them in
- * their module tables (esdr_board.h), and share the helpers of their radio bindings.
+ * sample format converters. modesdr.c (the S3), esdr_radio.c (the P4, the ESP32) and esdr_c5.c
+ * (the C5: no knob, no display) put them in their module tables (esdr_board.h), and share the
+ * helpers of their radio bindings.
  */
 
 #include <errno.h>
