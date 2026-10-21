@@ -230,19 +230,6 @@ int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cfg,
 void esp_sdr_gapless_reset(void);
 
 /**
- * @brief Pack raw ring words to int8 I/Q: I and Q shifted right by @p shift, saturated. I is
- * bits 19:10 of a word, Q bits 9:0 (10-bit, signed).
- *
- * @param words The ring block.
- * @param at First ring index (wraps at ESP_SDR_GAPLESS_RING).
- * @param n Samples.
- * @param out 2 * @p n bytes, 2-byte aligned.
- * @param shift 0 to 2.
- */
-void esp_sdr_gapless_pack(const uint32_t *words, uint32_t at, uint32_t n, int8_t *out,
-			  unsigned int shift);
-
-/**
  * @brief The int8 shift for a window of power @p power per sample about its mean (raw units
  * squared) and DC @p dc_i, @p dc_q: the smallest that keeps the DC plus 4 times the rms per
  * component below full scale.

@@ -456,22 +456,8 @@ void esp_sdr_tx_front_end(void);
 /* Take the receiver lock and switch the front end to TX at the current step. */
 int esp_sdr_dac_begin(enum esp_sdr_rate rate);
 
-/*
- * Two DAC banks: 0 is the capture bank (SRAM bank 2), 1 the transmit bank
- * (SRAM bank 1, reserved by esp_sdr_bank_tx.ld). The engine owns the bank it
- * plays, the CPUs the other one: fill that one with plain stores, then
- * esp_sdr_dac_start() it once the previous burst is done.
- */
-#define ESP_SDR_DAC_BANKS 2
-
 /* Bank idx and its size in words. */
 uint32_t *esp_sdr_dac_buf(int idx, size_t *words);
-
-/* Hand bank idx to the engine and play its first count words; returns at once. */
-void esp_sdr_dac_start(int idx, size_t count);
-
-/* Wait for the burst started last; false on timeout. */
-bool esp_sdr_dac_wait(void);
 
 /*
  * Loop mode: with the trigger bit held the engine replays the first count

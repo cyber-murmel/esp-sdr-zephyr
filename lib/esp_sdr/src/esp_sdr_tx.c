@@ -272,21 +272,6 @@ uint32_t *esp_sdr_dac_buf(int idx, size_t *words)
 	return (uint32_t *)__esp_sdr_bank_start;
 }
 
-void esp_sdr_dac_start(int idx, size_t count)
-{
-	/* One-hot: the engine gets this bank, the CPUs keep every other one. */
-	uint32_t usage = idx == 0 ? dac_usage : BIT(1) << SENSITIVE_INTERNAL_SRAM_MAC_DUMP_USAGE_S;
-
-	REG_WRITE(SENSITIVE_INTERNAL_SRAM_USAGE_3_REG,
-		  (dac_saved & ~SENSITIVE_INTERNAL_SRAM_MAC_DUMP_USAGE_M) | usage);
-	dac_trigger(dac_rate, count);
-}
-
-bool esp_sdr_dac_wait(void)
-{
-	return dac_wait_done();
-}
-
 IRAM_ATTR void esp_sdr_dac_select(int idx)
 {
 	uint32_t usage = idx == 0 ? dac_usage : BIT(1) << SENSITIVE_INTERNAL_SRAM_MAC_DUMP_USAGE_S;

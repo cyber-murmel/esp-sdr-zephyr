@@ -616,36 +616,6 @@ int esp_sdr_rx_capture_folded(enum esp_sdr_rate rate, size_t count, unsigned int
 }
 #endif /* CONFIG_ESP_SDR_RX_DECIM */
 
-size_t esp_sdr_rx_pack_iq8(const uint32_t *words, size_t count, uint8_t *out)
-{
-	for (size_t j = 0; j < count; j++) {
-		uint32_t w = words[j];
-
-		out[2 * j] = (uint8_t)(w >> 12);
-		out[2 * j + 1] = (uint8_t)(w >> 2);
-	}
-	return 2 * count;
-}
-
-size_t esp_sdr_rx_pack_iq10(const uint32_t *words, size_t count, uint8_t *out)
-{
-	uint8_t *p = out;
-
-	for (size_t j = 0; j < count; j += 2, p += 5) {
-		uint32_t a = words[j] & GENMASK(19, 0);
-		uint32_t b = j + 1 < count ? words[j + 1] & GENMASK(19, 0) : 0U;
-
-		p[0] = (uint8_t)a;
-		p[1] = (uint8_t)(a >> 8);
-		p[2] = (uint8_t)((a >> 16) | (b << 4));
-		if (j + 1 < count) {
-			p[3] = (uint8_t)(b >> 4);
-			p[4] = (uint8_t)(b >> 12);
-		}
-	}
-	return (count * 20U + 7U) / 8U;
-}
-
 #if defined(CONFIG_SOC_SERIES_ESP32S3)
 /* TX baseband low-pass codes, inferred from the vendor PHY: 0x67 regs 0x0c/0x0d and 0x0e/0x0f. */
 #define BBTOP_TX_LPF_A 0x0cU

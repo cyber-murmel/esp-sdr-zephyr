@@ -540,22 +540,6 @@ pack_run(const uint32_t *w, uint32_t n, uint16_t *o, unsigned int shift)
 	}
 }
 
-void esp_sdr_gapless_pack(const uint32_t *words, uint32_t at, uint32_t n, int8_t *out,
-			  unsigned int shift)
-{
-	uint16_t *o = (uint16_t *)out;
-
-	sat_lut_init();
-	while (n > 0U) {
-		uint32_t run = MIN(n, ESP_SDR_GAPLESS_RING - at);
-
-		pack_run(words + at, run, o, shift);
-		o += run;
-		n -= run;
-		at = 0;
-	}
-}
-
 /* ---- servos ---- */
 
 static ESP_SDR_GAPLESS_HOT void thr_update(void)

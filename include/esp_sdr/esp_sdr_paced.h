@@ -83,13 +83,6 @@ bool esp_sdr_rx_paced_poll(int32_t *i, int32_t *q);
  */
 uint32_t esp_sdr_rx_paced_fill_iq8(int8_t *out, size_t n, unsigned int shift);
 
-/**
- * @brief CPU cycles until the next receive sample is due, 0 when it is.
- *
- * I/O between polls that may take longer than this delays the sample.
- */
-uint32_t esp_sdr_rx_paced_slack(void);
-
 /** @brief Stop receiving and release the radio; no-op when stopped. */
 void esp_sdr_rx_paced_stop(void);
 
@@ -121,9 +114,6 @@ int esp_sdr_tx_paced_start(uint32_t rate_hz, unsigned int interp, unsigned int p
  * @return true when a value was written.
  */
 bool esp_sdr_tx_paced_poll(void);
-
-/** @brief CPU cycles until the next DAC value is due, 0 when it is. */
-uint32_t esp_sdr_tx_paced_slack(void);
 
 /** @brief Turn the transmit chain off and release the radio; no-op when stopped. */
 void esp_sdr_tx_paced_stop(void);

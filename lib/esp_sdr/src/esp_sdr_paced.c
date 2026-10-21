@@ -272,13 +272,6 @@ IRAM_ATTR __attribute__((optimize("O3"))) uint32_t esp_sdr_rx_paced_fill_iq8(int
 	return late;
 }
 
-uint32_t esp_sdr_rx_paced_slack(void)
-{
-	int32_t d = (int32_t)(rxp.target - cycles());
-
-	return d > 0 ? (uint32_t)d : 0U;
-}
-
 void esp_sdr_rx_paced_stop(void)
 {
 	if (!rx_on) {
@@ -461,13 +454,6 @@ bool esp_sdr_tx_paced_poll(void)
 	txp.ph = (txp.ph + 1U) & (txp.l - 1U);
 	txp.target += txp.step;
 	return true;
-}
-
-uint32_t esp_sdr_tx_paced_slack(void)
-{
-	int32_t d = (int32_t)(txp.target - cycles());
-
-	return d > 0 ? (uint32_t)d : 0U;
 }
 
 void esp_sdr_tx_paced_stop(void)
