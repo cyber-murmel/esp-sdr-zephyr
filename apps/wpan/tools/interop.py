@@ -18,24 +18,14 @@ receive or transmit I/Q conjugated (wpan set rxinvert / txinvert).
 """
 
 import argparse
-import glob
 import re
 import sys
 import time
 
 import serial
 
+from _board import ANSI, port_of
 
-def port_of(board):
-    """A board's shell port: a /dev path, or its USB serial number (as in /dev/serial/by-id)."""
-    if board.startswith("/"):
-        return board
-    ports = glob.glob(f"/dev/serial/by-id/*_{board}-if00")
-    if len(ports) != 1:
-        raise SystemExit(f"{board}: {len(ports)} matching ports in /dev/serial/by-id")
-    return ports[0]
-
-ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 STATS = re.compile(r"rx frames (\d+) test (\d+) bad (\d+) dups (\d+) lost (\d+)")
 TXDONE = re.compile(r"tx done: sent (\d+) ok (\d+) noack (\d+) busy (\d+) err (\d+)")
 

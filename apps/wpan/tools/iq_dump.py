@@ -8,22 +8,13 @@ Commands given are sent before the dump (e.g. "wpan set chan 25").
 """
 
 import base64
-import glob
 import re
 import sys
 import time
 
 import serial
 
-
-def port_of(board):
-    """A board's shell port: a /dev path, or its USB serial number (as in /dev/serial/by-id)."""
-    if board.startswith("/"):
-        return board
-    ports = glob.glob(f"/dev/serial/by-id/*_{board}-if00")
-    if len(ports) != 1:
-        raise SystemExit(f"{board}: {len(ports)} matching ports in /dev/serial/by-id")
-    return ports[0]
+from _board import ANSI, port_of
 
 
 def main():
@@ -39,7 +30,7 @@ def main():
     buf, end = b"", time.time() + 30
     while time.time() < end and b"dump end" not in buf:
         buf += s.read(65536)
-    text = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", buf.decode(errors="replace"))
+    text = ANSI.sub("", buf.decode(errors="replace"))
     end_m = re.search(r"dump end (-?\d+)", text)
     if not end_m:
         raise SystemExit("no 'dump end' line within 30 s: nothing written")
