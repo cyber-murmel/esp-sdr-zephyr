@@ -41,6 +41,7 @@
 #include <esp_sdr/esp_sdr_gapless.h>
 #endif
 
+#include "esdr_dev.h"
 #include "esdr_proto.h"
 #if defined(CONFIG_ESP_SDR_GAPLESS)
 #if !defined(CONFIG_APP_LINK_SDIO)
@@ -474,18 +475,6 @@ static unsigned int tx_power_max(void)
 #else
 	return 0U;
 #endif
-}
-
-static uint32_t rate_round(uint32_t hz)
-{
-	for (uint32_t r = LINK_RATE_MAX_HZ; r > (LINK_RATE_MAX_HZ >> (LINK_RATE_COUNT - 1U));
-	     r /= 2U) {
-		/* Above the geometric mean of r and r / 2. */
-		if (2U * (uint64_t)hz * hz >= (uint64_t)r * r) {
-			return r;
-		}
-	}
-	return LINK_RATE_MAX_HZ >> (LINK_RATE_COUNT - 1U);
 }
 
 static unsigned int dgain_db(void)
@@ -960,22 +949,18 @@ static int handle_out(uint8_t r, uint16_t value, const uint8_t *data, size_t len
 		if (len != 8U) {
 			return -EINVAL;
 		}
-		{
-			uint64_t hz = sys_get_le64(data);
-
-			if (hz < (uint64_t)ESP_SDR_FREQ_MIN_MHZ * 1000000U ||
-			    hz > (uint64_t)ESP_SDR_FREQ_MAX_MHZ * 1000000U) {
-				return -EINVAL;
-			}
-			want.freq_hz = hz;
+		if (!esdr_freq_ok(sys_get_le64(data))) {
+			return -EINVAL;
 		}
+		want.freq_hz = sys_get_le64(data);
 		radio_dirty = true;
 		return 0;
 	case ESDR_REQ_SET_SAMPLE_RATE:
 		if (len != 4U) {
 			return -EINVAL;
 		}
-		want.rate_hz = rate_round(sys_get_le32(data));
+		want.rate_hz =
+			esdr_rate_round(LINK_RATE_MAX_HZ, LINK_RATE_COUNT, sys_get_le32(data));
 		return 0;
 	case ESDR_REQ_SET_RX_GAIN:
 		if (value != ESDR_GAIN_AUTO && value > (uint16_t)esp_sdr_rx_gain_max()) {
@@ -1014,7 +999,7 @@ static int handle_out(uint8_t r, uint16_t value, const uint8_t *data, size_t len
 		/* No offset tuning: the paced receiver sums around the LO itself. */
 		return 0;
 	case ESDR_REQ_SET_DIGITAL_GAIN:
-		if (value != ESDR_DGAIN_DEFAULT && (value > ESDR_DGAIN_MAX_DB || value % 6U != 0U)) {
+		if (!esdr_dgain_ok(value)) {
 			return -EINVAL;
 		}
 		want.dgain = value;
@@ -1028,21 +1013,11 @@ static int handle_in(uint8_t r, uint8_t *buf, size_t max)
 {
 	switch (r) {
 	case ESDR_REQ_GET_INFO: {
-		struct esdr_info info = {
-			.magic = ESDR_INFO_MAGIC,
-			.proto_version = ESDR_PROTO_VERSION,
-			.info_size = sizeof(info),
-			.freq_min_hz = (uint64_t)ESP_SDR_FREQ_MIN_MHZ * 1000000U,
-			.freq_max_hz = (uint64_t)ESP_SDR_FREQ_MAX_MHZ * 1000000U,
-			.rx_rate_max_hz = LINK_RATE_MAX_HZ,
-			.rx_rate_count = LINK_RATE_COUNT,
-			.rx_gain_max = (uint16_t)esp_sdr_rx_gain_max(),
-			.tx_gain_max = (uint16_t)tx_power_max(),
-			.block_bytes = ESDR_BLOCK_BYTES,
-			.full_scale16 = 32767,
-		};
+		struct esdr_info info;
 
-		strncpy(info.firmware, "osmosdr_serial " APP_VERSION_STRING, sizeof(info.firmware) - 1);
+		esdr_info_init(&info, LINK_RATE_MAX_HZ, LINK_RATE_COUNT,
+			       (uint16_t)esp_sdr_rx_gain_max(), (uint16_t)tx_power_max(),
+			       "osmosdr_serial " APP_VERSION_STRING);
 		memcpy(buf, &info, MIN(max, sizeof(info)));
 		return (int)MIN(max, sizeof(info));
 	}
