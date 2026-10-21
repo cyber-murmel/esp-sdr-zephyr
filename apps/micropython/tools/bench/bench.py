@@ -5,7 +5,7 @@ each NAME=VALUE becomes a line NAME = VALUE in front of the script (the scripts 
 settings from globals(), with defaults), which mpremote runs on the board.
 
 usage: bench.py PORT SCRIPT [NAME=VALUE ...]
-   bench.py /dev/ttyUSB0 egg_smoke.py EGG='"spectrum"' SECS=6
+   bench.py /dev/ttyUSB0 egg_sliders.py EGG='"spectrum"' SECS=6 SLIDERS=0
    bench.py /dev/ttyACM0 datalink_auto.py SECS=25 TXG=8 RXG=32
 
 mpremote comes from $MPREMOTE, else the workspace's modules/micropython, else the PATH. The

@@ -4,7 +4,7 @@
 16 MS/s / 64 .. 1024 with offset tuning, and the native rates 80, 40 and 16 MS/s in bursts
 (esdr.BURST_RATES: contiguous within 16380 samples, enough for displays and short captures).
 Where the radio streams the whole 80 MHz without a gap (esdr.gapless_start(): the WHY2025
-badge's C6 built with gapless.conf), displays at 80 MS/s take that instead: the 10 us windows
+badge's C6, gapless by default), displays at 80 MS/s take that instead: the 10 us windows
 that stand out, as many as the link budget holds, through the channelizer, whose bursts the
 spectrum sinks draw at their channels over quiet noise (qtgui.py). Any driver string is
 accepted: the board has one radio. Settings change between captures; while only displays take the stream (qtgui sinks),
@@ -39,7 +39,7 @@ _BURST = 16380
 
 # Gapless displays: the radio may send this many bytes a second (some 1 M samples), its
 # threshold no lower than this over the quiet power (its servo raises it until the loudest
-# windows fit the budget); False once the radio refused the mode (a C6 without gapless.conf).
+# windows fit the budget); False once the radio refused the mode (a C6 built without it).
 _GAPLESS_BUDGET = 2000000
 _GAPLESS_RATIO = 1.25
 # Channels of 1 MHz: spectrum rows of 125 kHz bins.

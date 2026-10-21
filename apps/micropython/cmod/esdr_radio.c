@@ -38,8 +38,8 @@
  *   trig_stats()               snapshots, broken (a block lost)
  *   gapless_start(ratio=8, level=0, pre=1, post=1, budget=2000000, gain_servo=False,
  *                 monitor=True, channels=0, open_db=6)
- *                              P4: the whole 80 MHz without a gap (the C6 built with
- *                              gapless.conf), the 10 us windows ratio times the quiet power
+ *                              P4: the whole 80 MHz without a gap (the C6's gapless
+ *                              stream, its default build), the 10 us windows ratio times the quiet power
  *                              (or past a fixed level) and pre / post of them around, at most
  *                              budget bytes a second; monitor: their samples to rx_latest()
  *                              (full scale 16384); channels (16, 32, 40, 64, 80): the

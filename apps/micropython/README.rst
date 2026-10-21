@@ -297,7 +297,12 @@ writing), ``shell()`` (Zephyr shell commands, such as ``usj`` and ``mcuboot conf
 ``crash()`` and ``reset_reason()`` (why the board last restarted), ``sd_info()``,
 ``next_app()`` and ``home()`` (the launcher: the app the next soft reset starts, whether the
 knob ended the app). The C5's ``esdr`` (``cmod/esdr_c5.c``) has the radio part for packet
-flowgraphs, ``rx_lsb()``, ``fsk_frames()`` and ``first_start()``; its docstring lists it.
+flowgraphs, ``rx_lsb()``, ``fsk_frames()`` and ``first_start()``; its docstring lists it. The
+WHY2025 and MCH2022 badges' ``esdr`` (``cmod/esdr_radio.c``, whose docstring lists it) has the
+same calls for a radio behind a link or capturing bursts, ``radio_state()``, the triggered
+snapshots (``trig_start()``, ``trig_get()``, ``channelize()``, ``fb_image()``) and, on the
+P4, the gapless stream and its channelizer (``gapless_start()``, ``chan_power()``,
+``chan_bursts()``, ``chan_spectrum()``) and ``usb_to_c6()``.
 
 Building and flashing
 *********************
@@ -330,14 +335,14 @@ Bench scripts
 SCRIPT [NAME=VALUE ...]`` (the settings go in front of the script; each run starts with a soft
 reset):
 
-- ``egg_smoke.py``: a bundled app (``EGG='"spectrum"'``) for a few seconds, imported as the
-  launcher does, and the frames its bands drew;
-- ``egg_sliders.py``: the same with every slider moved part way through its range (floats, as
-  the knob gives them);
+- ``egg_sliders.py``: a bundled app (``EGG='"spectrum"'``) for a few seconds, imported as the
+  launcher does, with every slider moved part way through its range (floats, as the knob gives
+  them; ``SLIDERS=0``: none, a smoke run), and the frames its bands drew;
 - ``datalink_auto.py``: the Data link egg in auto mode on two boards at once (start both),
   then the node's counters: ``acked`` against ``msgs``;
-- ``trig_snapshots.py``: the WHY2025 badge's triggered snapshots, channelized: how many came,
-  how many broke, what ``channelize()`` costs;
+- ``trig_snapshots.py``: triggered snapshots (the WHY2025 and MCH2022 badges), channelized: how
+  many came, how many broke, what ``channelize()`` costs; with ``F2`` also how many come per
+  half second after retuning there and back;
 - ``burst_capture.py`` on one board while another sends bursts, then
   ``burst_analyse.py`` on its output on the host: the envelope, where the burst lies, its
   frequency and what the Data link's GFSK receiver decodes (it found truncated bursts and a DC
@@ -345,7 +350,7 @@ reset):
 
 .. code-block:: console
 
-   tools/bench/bench.py /dev/ttyUSB0 egg_smoke.py EGG='"bursts"' SECS=10
+   tools/bench/bench.py /dev/ttyUSB0 egg_sliders.py EGG='"bursts"' SECS=10 SLIDERS=0
    tools/bench/bench.py /dev/ttyACM0 burst_capture.py > burst.txt
    tools/bench/burst_analyse.py burst.txt
 
@@ -431,9 +436,10 @@ that restarted by itself. The P4 runs one CPU here: the USB threads are preempti
 MicroPython's (main, priority 10) and below the system work queue, which feeds the liveness
 watchdog; a cooperative USB thread held it off through a DFU download until the board reset.
 
-With the C6 built with ``gapless.conf`` (``apps/osmosdr_serial``), ``esdr.gapless_start()``
-streams the whole 80 MHz without a gap: the C6 keeps the 10 us windows that stand out, as many
-as the budget it is given (2 MB/s by default) holds, and their samples go to the monitor (full
+With the C6's gapless stream (``apps/osmosdr_serial``: the badge's C6 builds it by default),
+``esdr.gapless_start()`` streams the whole 80 MHz without a gap: the C6 keeps the 10 us windows
+that stand out, as many as the budget it is given (2 MB/s by default) holds, and their samples
+go to the monitor (full
 scale 16384, as bursts), so the spectrum and waterfall sinks show them; ``soapy.source`` at
 80 MS/s takes this for displays. With ``channels`` the P4 also runs the fixed-point polyphase
 filterbank and burst detector of ``apps/common`` (``esdr_pfbq.h``) on its PIE SIMD in a thread

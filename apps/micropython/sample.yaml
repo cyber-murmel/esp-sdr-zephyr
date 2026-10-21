@@ -1,9 +1,10 @@
 sample:
   name: ESP-SDR MicroPython
   description: >-
-    MicroPython as the main program: on the XIAO ESP32S3 with the display, REPL on the USB
-    CDC-ACM port; headless on the ESP32-C5-Zero, the bench's coordinator, REPL on
-    USB-Serial-JTAG
+    MicroPython as the main program: on the XIAO ESP32S3 and the Communicator with the display,
+    REPL on the USB CDC-ACM port; headless on the ESP32-C5-Zero, the bench's coordinator, REPL
+    on USB-Serial-JTAG; on the WHY2025 badge's ESP32-P4 (the radio its ESP32-C6, REPL on
+    CDC-ACM) and the MCH2022 badge's ESP32 (REPL on the console UART)
 common:
   tags: esp-sdr
   build_only: true

@@ -3,7 +3,9 @@
  *
  * The radio behind a link (esdr_remote.c): the WHY2025 badge's ESP32-C6 running
  * apps/osmosdr_serial, reached by its ESP32-P4 over the osmosdr serial protocol
- * (apps/osmosdr/src/esdr_proto.h). The transport is a UART now; the interface hides it.
+ * (apps/osmosdr/src/esdr_proto.h) on SDIO, or on a UART as a fallback; the interface hides the
+ * transport. On the MCH2022 badge's classic ESP32, esdr_local.c puts the chip's own radio
+ * behind the same interface.
  */
 
 #ifndef ESDR_REMOTE_H_
@@ -93,7 +95,7 @@ bool esdr_remote_trig_get(int8_t *dst, uint32_t after, uint32_t *seq, uint32_t *
 void esdr_remote_trig_stats(struct esdr_remote_trig_stats *st);
 
 /*
- * Gapless receive (a radio with ESDR_MODE_GAPLESS: the badge's C6 built with gapless.conf): the
+ * Gapless receive (a radio with ESDR_MODE_GAPLESS: the badge's C6, gapless by default): the
  * radio keeps the windows @p cfg selects of the whole 80 MHz and sends them as segment blocks
  * (esdr_seg.h). With @p monitor their samples go to the monitor (esdr_rx_latest()) at 32 times
  * their raw units, full scale 16384 as bursts; every block goes to the hook too. -ENOTSUP (or
