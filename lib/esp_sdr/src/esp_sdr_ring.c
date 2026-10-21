@@ -34,6 +34,7 @@
 #include <esp_sdr/esp_sdr_dsp.h>
 #include <esp_sdr/esp_sdr_ring.h>
 
+#include "esp_sdr_mark.h"
 #include "esp_sdr_priv.h"
 
 #define HOT IRAM_ATTR __attribute__((optimize("O3")))
@@ -45,8 +46,6 @@
 #define RING_MASK      (RING_PAIRS - 1U)
 /* Unit 0: its whole bank holds sentinels; stay clear of its start. */
 #define UNIT0_END_WIN  1024U
-#define NOT_FOUND      0xffffffffU
-#define RING_SENTINEL  0xa5c33c5aU
 
 /* Filter work per slice at most, and the input chunk through both stages. */
 #define SLICE_PAIRS 1024U
@@ -169,11 +168,11 @@ HOT static void fill_sentinels(unsigned int b, unsigned int at, unsigned int cou
 		unsigned int vectors;
 
 		for (unsigned int i = 0; i < head; i++) {
-			*p++ = RING_SENTINEL;
+			*p++ = ESP_SDR_MARK;
 		}
 		vectors = (n - head) / 4U;
 		if (vectors != 0U) {
-			uint32_t v = RING_SENTINEL;
+			uint32_t v = ESP_SDR_MARK;
 
 			__asm__ volatile("ee.movi.32.q q6, %[v], 0\n"
 					 "ee.movi.32.q q6, %[v], 1\n"
@@ -187,7 +186,7 @@ HOT static void fill_sentinels(unsigned int b, unsigned int at, unsigned int cou
 					 : "memory");
 		}
 		for (unsigned int i = head + vectors * 4U; i < n; i++) {
-			*p++ = RING_SENTINEL;
+			*p++ = ESP_SDR_MARK;
 		}
 		count -= n;
 		at = 0;
@@ -198,45 +197,14 @@ HOT static void fill_sentinels(unsigned int b, unsigned int at, unsigned int cou
 /* First written pair in [origin, origin + guard): sentinels up to the unit start. */
 HOT static uint32_t find_first(unsigned int b, unsigned int origin, unsigned int guard)
 {
-	const uint32_t *p = bank_ptr(b);
-	unsigned int lo = 0, hi = guard - 1U;
-
-	if (p[origin & RING_MASK] != RING_SENTINEL ||
-	    p[(origin + guard - 1U) & RING_MASK] == RING_SENTINEL) {
-		return NOT_FOUND;
-	}
-	while (lo < hi) {
-		unsigned int mid = (lo + hi) / 2U;
-
-		if (p[(origin + mid) & RING_MASK] == RING_SENTINEL) {
-			lo = mid + 1U;
-		} else {
-			hi = mid;
-		}
-	}
-	return (origin + lo) & RING_MASK;
+	return esp_sdr_mark_first(bank_ptr(b), RING_MASK, origin, guard);
 }
 
 /* One past the last written pair in [origin, origin + guard), from the last index seen. */
 HOT static uint32_t find_end(unsigned int b, unsigned int origin, unsigned int wi,
 			     unsigned int guard)
 {
-	const uint32_t *p = bank_ptr(b);
-	unsigned int lo = (wi - origin) & RING_MASK, hi = guard - 1U;
-
-	if (lo >= guard || p[(origin + guard - 1U) & RING_MASK] != RING_SENTINEL) {
-		return NOT_FOUND;
-	}
-	while (lo < hi) {
-		unsigned int mid = (lo + hi) / 2U;
-
-		if (p[(origin + mid) & RING_MASK] == RING_SENTINEL) {
-			hi = mid;
-		} else {
-			lo = mid + 1U;
-		}
-	}
-	return (origin + lo) & RING_MASK;
+	return esp_sdr_mark_end(bank_ptr(b), RING_MASK, origin, wi, guard);
 }
 
 /*
@@ -1464,11 +1432,11 @@ HOT static void ring_loop(void)
 			first = find_first(b, start_probe[b], g.sg);
 			end = find_end(b, end_probe[b], wi, g.eg);
 		}
-		if (first == NOT_FOUND || (!fresh && first != expected)) {
+		if (first == ESP_SDR_MARK_NOT_FOUND || (!fresh && first != expected)) {
 			fail(ESP_SDR_RING_START, (first & 0xffffU) | (expected << 16));
 			break;
 		}
-		if (end == NOT_FOUND) {
+		if (end == ESP_SDR_MARK_NOT_FOUND) {
 			fail(ESP_SDR_RING_END, wi);
 			break;
 		}

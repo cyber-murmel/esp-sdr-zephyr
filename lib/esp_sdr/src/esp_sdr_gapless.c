@@ -22,6 +22,7 @@
 #include <esp_sdr/esp_sdr_paced.h>
 #include <esp_sdr/esp_sdr_rx.h>
 
+#include "esp_sdr_mark.h"
 #include "esp_sdr_priv.h"
 
 extern uint32_t __esp_sdr_bank2_start[];
@@ -41,8 +42,6 @@ extern uint32_t __esp_sdr_bank2_start[];
 #define UNIT0_END_GUARD 1024U
 #define MIN_PAIRS       THRESHOLD
 #define MAX_PAIRS       (THRESHOLD + LATE_LIMIT + 64U)
-#define MARK            0xA5C33C5AU
-#define NOT_FOUND       0xffffffffU
 
 BUILD_ASSERT(START_GUARD + THRESHOLD <= ESP_SDR_GAPLESS_RING, "start window overlaps");
 BUILD_ASSERT(END_GUARD + THRESHOLD <= ESP_SDR_GAPLESS_RING, "end window overlaps unit start");
@@ -270,17 +269,17 @@ static ESP_SDR_GAPLESS_HOT void fill_marks(unsigned int b, uint32_t at, uint32_t
 		count -= n;
 		at = 0;
 		for (; n >= 8U; n -= 8U, p += 8) {
-			p[0] = MARK;
-			p[1] = MARK;
-			p[2] = MARK;
-			p[3] = MARK;
-			p[4] = MARK;
-			p[5] = MARK;
-			p[6] = MARK;
-			p[7] = MARK;
+			p[0] = ESP_SDR_MARK;
+			p[1] = ESP_SDR_MARK;
+			p[2] = ESP_SDR_MARK;
+			p[3] = ESP_SDR_MARK;
+			p[4] = ESP_SDR_MARK;
+			p[5] = ESP_SDR_MARK;
+			p[6] = ESP_SDR_MARK;
+			p[7] = ESP_SDR_MARK;
 		}
 		for (; n != 0U; n--) {
-			*p++ = MARK;
+			*p++ = ESP_SDR_MARK;
 		}
 	}
 	__asm__ volatile("fence rw, rw" ::: "memory");
@@ -289,44 +288,14 @@ static ESP_SDR_GAPLESS_HOT void fill_marks(unsigned int b, uint32_t at, uint32_t
 /* The first written sample in [origin, origin + guard): markers up to the unit's start, data on. */
 static ESP_SDR_GAPLESS_HOT uint32_t find_first(unsigned int b, uint32_t origin, uint32_t guard)
 {
-	const volatile uint32_t *p = bank_ptr(b);
-	uint32_t lo = 0, hi = guard - 1U;
-
-	if (p[origin & RING_MASK] != MARK || p[(origin + guard - 1U) & RING_MASK] == MARK) {
-		return NOT_FOUND;
-	}
-	while (lo < hi) {
-		uint32_t mid = (lo + hi) / 2U;
-
-		if (p[(origin + mid) & RING_MASK] == MARK) {
-			lo = mid + 1U;
-		} else {
-			hi = mid;
-		}
-	}
-	return (origin + lo) & RING_MASK;
+	return esp_sdr_mark_first(bank_ptr(b), RING_MASK, origin, guard);
 }
 
 /* One past the last written sample in [origin, origin + guard), from the last index seen on. */
 static ESP_SDR_GAPLESS_HOT uint32_t find_end(unsigned int b, uint32_t origin, uint32_t wi,
 					     uint32_t guard)
 {
-	const volatile uint32_t *p = bank_ptr(b);
-	uint32_t lo = (wi - origin) & RING_MASK, hi = guard - 1U;
-
-	if (lo >= guard || p[(origin + guard - 1U) & RING_MASK] != MARK) {
-		return NOT_FOUND;
-	}
-	while (lo < hi) {
-		uint32_t mid = (lo + hi) / 2U;
-
-		if (p[(origin + mid) & RING_MASK] == MARK) {
-			hi = mid;
-		} else {
-			lo = mid + 1U;
-		}
-	}
-	return (origin + lo) & RING_MASK;
+	return esp_sdr_mark_end(bank_ptr(b), RING_MASK, origin, wi, guard);
 }
 
 /* Markers into block @p b where the unit after the one from @p expected on starts and ends. */
@@ -1263,12 +1232,12 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 			first = find_first(b, start_probe[b], START_GUARD);
 			end = find_end(b, end_probe[b], wi, END_GUARD);
 		}
-		if (first == NOT_FOUND || (unit != 0U && first != expected)) {
+		if (first == ESP_SDR_MARK_NOT_FOUND || (unit != 0U && first != expected)) {
 			rs.st.error = ESP_SDR_GAPLESS_ERR_START;
 			rs.st.detail = (first & 0xffffU) | (expected << 16);
 			goto out;
 		}
-		if (end == NOT_FOUND) {
+		if (end == ESP_SDR_MARK_NOT_FOUND) {
 			rs.st.error = ESP_SDR_GAPLESS_ERR_END;
 			rs.st.detail = wi;
 			goto out;
