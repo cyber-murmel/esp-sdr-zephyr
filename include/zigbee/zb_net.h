@@ -260,9 +260,6 @@ void zb_net_bdb_set_channel(struct zb_net *n, bool primary, uint32_t mask);
 /* Returns 0 when the mode is accepted; progress and result follow as callbacks. */
 int zb_net_bdb_start(struct zb_net *n, uint8_t mode);
 
-/* Resume a formed network without BDB (ZDO_STARTUP_FROM_APP): 0 restored, 1 new, 2 not started. */
-int zb_net_startup(struct zb_net *n);
-
 /* Association permit: 0 closes, 0xFF stays open, otherwise seconds. */
 int zb_net_permit(struct zb_net *n, uint8_t seconds);
 

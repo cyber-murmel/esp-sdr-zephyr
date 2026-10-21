@@ -2,8 +2,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * Factory default NV items. Hosts read some of these before they ever write them, and crash
- * or fall back to another Z-Stack dialect when they are missing (see
- * tmp/zstack/phase2/zigpy_sequence.md section 3.3 and herdsman.md section 3).
+ * or fall back to another Z-Stack dialect when they are missing (zigpy-znp's and
+ * zigbee-herdsman's startup sequences).
  */
 #include <string.h>
 

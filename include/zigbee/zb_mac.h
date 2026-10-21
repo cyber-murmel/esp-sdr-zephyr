@@ -3,7 +3,7 @@
  *
  * The coordinator's MAC: one thread that owns the radio. It answers beacon requests, runs
  * the association handshake and the indirect transmission that goes with it, and runs energy
- * and active scans. See tmp/zstack/phase2/mac_final.md for the frame rules it follows.
+ * and active scans, with the frames of zb_mac_frame.h.
  */
 #ifndef ZIGBEE_ZB_MAC_H_
 #define ZIGBEE_ZB_MAC_H_

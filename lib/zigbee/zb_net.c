@@ -614,15 +614,6 @@ int zb_net_bdb_start(struct zb_net *n, uint8_t mode)
 	return 0;
 }
 
-int zb_net_startup(struct zb_net *n)
-{
-	if (n->formed) {
-		set_state(n, ZB_DEV_COORD);
-		return 0;
-	}
-	return 2;
-}
-
 int zb_net_permit(struct zb_net *n, uint8_t seconds)
 {
 	int r = zb_mac_permit(n->mac, seconds);

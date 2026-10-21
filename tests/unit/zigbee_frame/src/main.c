@@ -4,7 +4,7 @@
  * Unit test of lib/zigbee/zb_frame.c. Header layouts are scapy's (an independent implementation
  * of the same specification); the secured frames are built with Python cryptography (AES-CCM,
  * 4 byte tag) by the rules written in zb_frame.h: level 0 on air, level 5 in the nonce and in
- * the authenticated header. Generator: tmp/zstack/gen_frame_vectors.py.
+ * the authenticated header.
  */
 #include <errno.h>
 #include <string.h>

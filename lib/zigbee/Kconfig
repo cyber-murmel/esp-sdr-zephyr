@@ -2,20 +2,15 @@
 
 config ZIGBEE_ZNP
 	bool "Z-Stack ZNP (MT) server"
+	imply ENTROPY_GENERATOR
 	help
 	  The MT serial protocol of TI's Z-Stack 3.x network processor: frame parser,
 	  command dispatch, SYS/UTIL and the NV item store, for apps that act as a Zigbee
-	  USB stick (apps/zstack).
+	  USB stick (apps/zstack). The MAC's CSMA backoff and address allocation use
+	  sys_rand32_get(); an entropy generator (or CONFIG_TEST_RANDOM_GENERATOR in tests)
+	  must provide it.
 
 if ZIGBEE_ZNP
-
-config ZIGBEE_ZNP_RANDOM_NOTE
-	bool
-	default y
-	imply ENTROPY_GENERATOR
-	help
-	  The MAC's CSMA backoff and address allocation use sys_rand32_get(); an entropy
-	  generator (or CONFIG_TEST_RANDOM_GENERATOR in tests) must provide it.
 
 config ZNP_NV_ITEMS
 	int "NV item slots"

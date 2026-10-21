@@ -4,7 +4,8 @@
  * IEEE 802.15.4 MAC frames as a Zigbee coordinator needs them (frame version 0, no MAC
  * security): parse any frame header, build and parse beacons, build the commands and data
  * frames the coordinator sends. Buffers never include the FCS (the radio adds and checks it).
- * Portable C, no Zephyr. Layouts and examples: tmp/zstack/phase2/mac_final.md.
+ * Portable C, no Zephyr. Layouts: IEEE 802.15.4-2015 section 7; examples with their FCS in
+ * tests/unit/zigbee_mac.
  */
 #ifndef ZIGBEE_ZB_MAC_FRAME_H_
 #define ZIGBEE_ZB_MAC_FRAME_H_

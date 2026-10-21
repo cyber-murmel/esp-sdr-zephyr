@@ -2,9 +2,9 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * The ESP32-C6 native 802.15.4 radio as a zb_radio: Zephyr's ieee802154_radio_api in raw mode
- * plus the few HAL calls the driver does not expose. Details and gotchas:
- * tmp/zstack/phase2/radio.md (changes reach the hardware at the next start/tx/ed; the driver
- * has no CSMA backoff or retries; promiscuous mode stops the hardware ACKs).
+ * plus the few HAL calls the driver does not expose. Its gotchas: changes reach the hardware at
+ * the next start/tx/ed; the driver has no CSMA backoff or retries; promiscuous mode stops the
+ * hardware ACKs.
  */
 #include <errno.h>
 #include <string.h>

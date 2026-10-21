@@ -1,9 +1,8 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * Unit tests of the Zigbee MAC: the frame codec against the verified examples of
- * tmp/zstack/phase2/mac_final.md (every frame with its FCS, CRC-16/KERMIT), then the MAC state
- * machine against a mock radio.
+ * Unit tests of the Zigbee MAC: the frame codec against verified examples (every frame with its
+ * FCS, CRC-16/KERMIT), then the MAC state machine against a mock radio.
  */
 #include <errno.h>
 #include <string.h>
@@ -250,8 +249,8 @@ ZTEST(zigbee_frame, test_parse_ack_and_real_world_frames)
 {
 	struct zb_mac_hdr h;
 	static const uint8_t ack[] = {0x02, 0x00, 0x41};
-	/* Frames captured off the air (tmp/zstack/sniff, FCS removed by wpan): a data request of a
-	 * router (10 bytes), a NWK link status of PAN f630.
+	/* Frames captured off the air (FCS removed by wpan): a data request of a router (10 bytes),
+	 * a NWK link status of PAN f630.
 	 */
 	static const uint8_t datareq[] = {0x63, 0x88, 0x78, 0x30, 0xF6, 0x00, 0x00, 0xC8, 0x4F, 0x04};
 

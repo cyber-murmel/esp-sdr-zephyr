@@ -3,7 +3,7 @@
  *
  * MT handlers of the Zigbee stack: APP_CNF (BDB commissioning), ZDO (the coordinator's own
  * descriptors, scans, permit join), AF (endpoint registry) and DEBUG. Layouts follow
- * zigpy-znp and zigbee-herdsman (tmp/zstack/phase2/zigpy_sequence.md, herdsman.md).
+ * zigpy-znp and zigbee-herdsman.
  */
 #include <errno.h>
 #include <string.h>
