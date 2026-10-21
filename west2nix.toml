@@ -4,22 +4,22 @@ group-filter = ["-babblesim", "-optional", "-testing"]
 [[manifest.projects]]
 name = "zephyr"
 url = "https://github.com/cyber-murmel/zephyr"
-revision = "ffb8a7cce5d31e098a09854d065e2e5ef7c493a4"
+revision = "243ebb1f92f9e326fb42026772313fe0c09722f6"
 path = "modules/zephyr"
 west-commands = "scripts/west-commands.yml"
 
 [manifest.projects.nix]
-hash = "sha256-hsljlgGSKRWV71oK48J0J9jjmQRxdI8pq0I5ZD7JJrQ="
+hash = "sha256-ugyC6jTPQSqaJQCEVvydm4GZc+IeErQ6pXTr9yPPhzY="
 
 [[manifest.projects]]
 name = "hal_espressif"
 url = "https://github.com/cyber-murmel/hal_espressif"
-revision = "54d64a1289e8d0cddccef6359a385ffb4c68b213"
+revision = "35acb08e843f46d5fa9541f286aa56edb1b21eac"
 path = "modules/hal/espressif"
 groups = ["hal"]
 
 [manifest.projects.nix]
-hash = "sha256-2OnaUIQZHGDceOU4mvLpwgbhafByLUdmWGcjHHW7Cmw="
+hash = "sha256-5i2vT7xEhcdB03mP/qvTpzn1DvICbB/dugVNjthtkgA="
 
 [[manifest.projects]]
 name = "libvrt"
@@ -49,6 +49,51 @@ path = "modules/lib/esp-dsp"
 hash = "sha256-APW/rEinKZI4d0d+nej3FgoZ94P2IknzADzsdywHC1s="
 
 [[manifest.projects]]
+name = "micropython"
+url = "https://github.com/micropython/micropython"
+revision = "0fd6c573ea815774668bbb16b8e197c8822368b2"
+path = "modules/micropython"
+
+[manifest.projects.nix]
+hash = "sha256-5aICC0NF9l7WkSOBj6JxJp47xyahxsaWAq6D/pDcmtQ="
+
+[[manifest.projects]]
+name = "micropython-lib"
+url = "https://github.com/micropython/micropython-lib"
+revision = "ee4bb8ff139e24c42b739935fbd8ec7c4d061e02"
+path = "modules/micropython/lib/micropython-lib"
+
+[manifest.projects.nix]
+hash = "sha256-nmGwxXwAO5DBTv+4A4l70Cdct21KVkjmjGZ5YntdulE="
+
+[[manifest.projects]]
+name = "lvgl"
+url = "https://github.com/zephyrproject-rtos/lvgl"
+revision = "d1fe35d350a1503db2ec7fd4dfff8e0cc26eea7e"
+path = "modules/lib/gui/lvgl"
+
+[manifest.projects.nix]
+hash = "sha256-aVtcZotDW5sggNc/9Nmhpl3bDSbgWUCs+iKvX2kxQAk="
+
+[[manifest.projects]]
+name = "lv_binding_micropython"
+url = "https://github.com/cyber-murmel/lv_binding_micropython"
+revision = "ded0cd857fc8b813753facfbae011ac5e74961f6"
+path = "modules/lib/gui/lv_binding_micropython"
+
+[manifest.projects.nix]
+hash = "sha256-IByLogJJQ/QTv+mxTyJQym/TU8BbQotibtw7XaiC6zI="
+
+[[manifest.projects]]
+name = "pycparser"
+url = "https://github.com/eliben/pycparser"
+revision = "3cf6bf5eb16f5eadd4a058e41596145c407a79ad"
+path = "modules/lib/gui/lv_binding_micropython/pycparser"
+
+[manifest.projects.nix]
+hash = "sha256-3X0jr7bKNdz3n/82dMuwTyKHJYgLW2QEQ+Lj6esZ91Q="
+
+[[manifest.projects]]
 name = "fatfs"
 url = "https://github.com/zephyrproject-rtos/fatfs"
 revision = "4f60a12c58c3de4246857ad87c40239ecd93349b"
@@ -57,6 +102,15 @@ groups = ["fs"]
 
 [manifest.projects.nix]
 hash = "sha256-xJ4NabPhqIirDq7f9BJGMgu9RMBoWIwJvCbF4BQQgKA="
+
+[[manifest.projects]]
+name = "loramac-node"
+url = "https://github.com/zephyrproject-rtos/loramac-node"
+revision = "874544f2a8a0212a0cc12e5eea51a024fd3d93d1"
+path = "modules/lib/loramac-node"
+
+[manifest.projects.nix]
+hash = "sha256-M088uNCaXKHtrbkrNtSHGD1s/G9RFTjEeZrHjU5GrtY="
 
 [[manifest.projects]]
 name = "mbedtls"

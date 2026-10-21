@@ -35,7 +35,7 @@ in
   }),
   zephyr-src-ref ? "v4.4.0",
   # Apps left out of the firmware and the host tools.
-  excludeApps ? [ "ubertooth" ],
+  excludeApps ? [ ],
 }:
 
 let
@@ -305,8 +305,9 @@ let
     "--prefix" "QT_PLUGIN_PATH" ":" (lib.makeSearchPath qt.qtbase.qtPluginPrefix (map lib.getBin [ qt.qtbase qt.qtwayland ]))
   ];
 
-  # The apps' tools/*.py with GNU Radio's Python (each next to its siblings, which some import),
-  # esdr_usb and the link simulators.
+  # The apps' tools/*.py with GNU Radio's Python, esdr_usb and the link simulators. The tools
+  # keep the tree's layout (libexec/esp-sdr/apps/<app>/tools/), as some import their siblings
+  # and some another app's tools; modules named _*.py only serve the tools next to them.
   host-tools = pkgs.stdenv.mkDerivation {
     pname = "esp-sdr-host-tools";
     inherit version;
@@ -334,11 +335,11 @@ let
       runHook preInstall
       install -Dm755 -t $out/bin esdr_usb qam_sim ofdm_sim
       for tool in apps/*/tools/*.py; do
-        app=$(basename $(dirname $(dirname $tool)))
         name=$(basename $tool)
-        install -Dm644 $tool $out/libexec/esp-sdr/$app/$name
+        install -Dm644 $tool $out/libexec/esp-sdr/$tool
+        case $name in _*) continue ;; esac
         makeWrapper ${gnuradio.pythonEnv}/bin/python3 $out/bin/$name \
-          --add-flags $out/libexec/esp-sdr/$app/$name ${toolWrapperArgs}
+          --add-flags $out/libexec/esp-sdr/$tool ${toolWrapperArgs}
       done
       runHook postInstall
     '';
