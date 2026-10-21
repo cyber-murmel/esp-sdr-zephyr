@@ -378,8 +378,10 @@ static int link_open(void)
 
 static K_MUTEX_DEFINE(req_lock);
 static K_SEM_DEFINE(reply_sem, 0, 1);
+static struct k_spinlock pend_lock;
 static struct {
 	uint8_t req;
+	bool waiting;
 	void *buf;
 	uint16_t max, len;
 	int status;
@@ -404,6 +406,7 @@ static int request(uint8_t req, uint16_t value, const void *data, uint16_t len, 
 	pend.max = reply_max;
 	pend.len = 0;
 	pend.status = 0;
+	pend.waiting = true;
 	ret = link_send(&h, sizeof(h), data, reply == NULL ? len : 0U);
 	if (ret == 0) {
 		if (k_sem_take(&reply_sem, K_MSEC(REQUEST_TIMEOUT_MS)) != 0) {
@@ -412,6 +415,11 @@ static int request(uint8_t req, uint16_t value, const void *data, uint16_t len, 
 			ret = pend.status < 0 ? pend.status : (int)pend.len;
 		}
 	}
+	/* A reply after this finds nobody: the buffer may be gone (a USB request's). */
+	k_spinlock_key_t key = k_spin_lock(&pend_lock);
+
+	pend.waiting = false;
+	k_spin_unlock(&pend_lock, key);
 	k_mutex_unlock(&req_lock);
 	return ret;
 }
@@ -457,15 +465,18 @@ static void frame_done(void)
 	struct esdr_ser_hdr h;
 
 	memcpy(&h, rx.hdr, sizeof(h));
-	if (h.req != pend.req) {
-		return;
+	k_spinlock_key_t key = k_spin_lock(&pend_lock);
+
+	if (pend.waiting && h.req == pend.req) {
+		pend.status = (int16_t)sys_le16_to_cpu(h.status);
+		pend.len = MIN(sys_le16_to_cpu(h.len), pend.max);
+		if (pend.buf != NULL) {
+			memcpy(pend.buf, rx.hdr + sizeof(h), pend.len);
+		}
+		pend.waiting = false;
+		k_sem_give(&reply_sem);
 	}
-	pend.status = (int16_t)sys_le16_to_cpu(h.status);
-	pend.len = MIN(sys_le16_to_cpu(h.len), pend.max);
-	if (pend.buf != NULL) {
-		memcpy(pend.buf, rx.hdr + sizeof(h), pend.len);
-	}
-	k_sem_give(&reply_sem);
+	k_spin_unlock(&pend_lock, key);
 }
 
 static void parse(const uint8_t *p, uint32_t n)
