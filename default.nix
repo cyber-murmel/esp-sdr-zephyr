@@ -120,12 +120,36 @@ let
   # SoapySDRUtil and friends with the plugins.
   soapysdr = pkgs.soapysdr.override { extraPackages = soapyPlugins; };
 
+  # Espressif's RISC-V binutils: their assembler knows the ESP32-P4's PIE vector instructions
+  # (xesppie), the Zephyr SDK's does not. apps/common assembles the P4 channelizer's SIMD
+  # kernels with it (src/esdr_pfbq_pie.S); a build without it runs the C reference kernels,
+  # some 40 times slower.
+  riscv32-esp-binutils = pkgs.stdenv.mkDerivation rec {
+    pname = "riscv32-esp-elf-binutils";
+    version = "14.2.0_20241119";
+    src = pkgs.fetchurl {
+      url = "https://github.com/espressif/crosstool-NG/releases/download/esp-${version}/riscv32-esp-elf-${version}-x86_64-linux-gnu.tar.xz";
+      sha256 = "7faaa86d272f3e43c233f8a5ffeba327673224a752c2eb72394655d5e7950000";
+    };
+    nativeBuildInputs = [ pkgs.autoPatchelfHook ];
+    buildInputs = [ pkgs.stdenv.cc.cc.lib pkgs.zlib ];
+    dontConfigure = true;
+    dontBuild = true;
+    installPhase = ''
+      mkdir -p $out/bin
+      for t in as objdump readelf; do
+        cp bin/riscv32-esp-elf-$t $out/bin/
+      done
+    '';
+  };
+
   # What a firmware build needs.
   build = [
     pkgs.cmake
     pkgs.esptool
     pkgs.ninja
     python
+    riscv32-esp-binutils
     zephyr-sdk
   ];
 
@@ -333,7 +357,8 @@ pkgs.symlinkJoin {
   name = "esp-sdr-zephyr-${version}";
   paths = lib.concatMap lib.attrValues (lib.attrValues firmware) ++ [ tools ];
   passthru = {
-    inherit pkgs dev shell firmware tools host-tools soapy-esdr soapysdr westWorkspace;
+    inherit pkgs dev shell firmware tools host-tools soapy-esdr soapysdr westWorkspace
+      riscv32-esp-binutils;
     west2nix = west2nix-update;
   };
 }
