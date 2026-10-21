@@ -82,7 +82,7 @@ uint32_t esp_sdr_tx_rate_hz(enum esp_sdr_rate rate);
 #endif
 
 /** @return Raw transmit word for esp_sdr_tx_play(): I in bits 9:0, Q in bits 19:10. */
-static inline uint32_t esp_sdr_tx_word(int16_t i, int16_t q)
+static inline __attribute__((always_inline)) uint32_t esp_sdr_tx_word(int16_t i, int16_t q)
 {
 	return ((uint32_t)i & 0x3ffU) | (((uint32_t)q & 0x3ffU) << 10);
 }

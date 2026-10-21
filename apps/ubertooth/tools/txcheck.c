@@ -16,7 +16,7 @@
  *       Plans for typical ranges and the sweep rate table.
  *
  * Build, from this directory:
- *   cc -O2 -I../src -o txcheck txcheck.c ../src/gfsk_mod.c ../src/ubt_tx.c ../src/ubt_specan.c \
+ *   cc -O2 -I../src -I../../../include -o txcheck txcheck.c ../src/gfsk_mod.c ../src/ubt_tx.c ../src/ubt_specan.c \
  *      ../src/upstream/bluetooth_le.c -lm
  */
 

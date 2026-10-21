@@ -67,7 +67,7 @@ static inline uint32_t esp_sdr_replay_word(int32_t i, int32_t q)
 {
 	i = i < -511 ? -511 : (i > 511 ? 511 : i);
 	q = q < -511 ? -511 : (q > 511 ? 511 : q);
-	return ((uint32_t)i & 0x3ffU) | (((uint32_t)q & 0x3ffU) << 10);
+	return esp_sdr_tx_word((int16_t)i, (int16_t)q);
 }
 
 /**

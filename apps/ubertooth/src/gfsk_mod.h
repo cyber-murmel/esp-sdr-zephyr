@@ -56,6 +56,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <esp_sdr/esp_sdr_tx.h>
+
 /* Output rate and symbol timing. */
 #define GFSK_MOD_RATE_HZ 40000000U
 #define GFSK_MOD_SYM_HZ  1000000U
@@ -82,10 +84,10 @@
 #endif
 #define GFSK_LUT_SIZE (1U << GFSK_LUT_BITS)
 
-/* DAC word (esp_sdr_tx_word()). */
+/* DAC word of a sample within +-511. */
 static inline uint32_t gfsk_word(int32_t i, int32_t q)
 {
-	return ((uint32_t)i & 0x3ffU) | (((uint32_t)q & 0x3ffU) << 10);
+	return esp_sdr_tx_word((int16_t)i, (int16_t)q);
 }
 
 /* Sine table: one DAC word per phase step, amplitude baked in. */
