@@ -45,23 +45,18 @@ if(CONFIG_ESP_SDR_DIAG)
   zephyr_library_include_directories(${esp_sdr_hal}/include ${esp_sdr_hal}/${CONFIG_SOC_SERIES}/include)
 endif()
 
-# Three banks for the continuous ring; two: loop playback ping-pongs between
-# them, captures may use either.
-if(CONFIG_ESP_SDR_GAPLESS)
-  zephyr_linker_sources(SECTIONS esp_sdr_bank_c6_gapless.ld)
-elseif(CONFIG_SOC_SERIES_ESP32C6)
+# The dump banks. The S3 and C6 snippets pick their variant by Kconfig: on the
+# S3 three banks for the continuous ring, two for loop playback ping-pong and
+# captures into either; on the C6 two blocks for the gapless ring.
+if(CONFIG_SOC_SERIES_ESP32C6)
   zephyr_linker_sources(SECTIONS esp_sdr_bank_c6.ld)
 elseif(CONFIG_SOC_SERIES_ESP32C5)
   # Among the RAM sections, so that .noinit and .bss follow the bank.
   zephyr_linker_sources(RAM_SECTIONS esp_sdr_bank_c5.ld)
 elseif(CONFIG_SOC_SERIES_ESP32)
   zephyr_linker_sources(RAM_SECTIONS esp_sdr_bank_esp32.ld)
-elseif(CONFIG_ESP_SDR_RING)
-  zephyr_linker_sources(SECTIONS esp_sdr_bank_ring.ld)
-elseif(CONFIG_ESP_SDR_BANK1)
-  zephyr_linker_sources(SECTIONS esp_sdr_bank_tx.ld)
 else()
-  zephyr_linker_sources(SECTIONS esp_sdr_bank.ld)
+  zephyr_linker_sources(SECTIONS esp_sdr_bank_s3.ld)
 endif()
 
 if(CONFIG_ESP_SDR_PHY_ONLY)

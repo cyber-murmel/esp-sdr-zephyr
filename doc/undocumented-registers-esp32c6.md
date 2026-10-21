@@ -443,10 +443,10 @@ behaviour:
 Evidence:
 
 - `lib/esp_sdr/src/esp_sdr_rx.c:246-278`, `lib/esp_sdr/src/esp_sdr.c:123-133` (save and restore)
-- *measured* bench 2026-10-08, `lib/esp_sdr/esp_sdr_bank_c6.ld:18-20` (whole block)
+- *measured* bench 2026-10-08, `lib/esp_sdr/esp_sdr_bank_c6.ld:32-35` (whole block)
 - *working* `lib/esp_sdr/src/esp_sdr_rx.c:262-265, 274-277` (fence)
-- *measured* build 2026-10-11 (only block 2 with Wi-Fi); `modules/zephyr/soc/espressif/esp32c6/memory.h:29-40` (ROM .bss and .data); `lib/esp_sdr/esp_sdr_bank_c6.ld:29-30` (`_heap_sentry`, rfprobe heap)
-- *measured* bench 2026-10-21 (block 1 as a bank, a PHY-only image with `_end` at 0x40817620; the rotation 120 s without an error); `lib/esp_sdr/esp_sdr_bank_c6_gapless.ld`, `lib/esp_sdr/src/esp_sdr_gapless.c`
+- *measured* build 2026-10-11 (only block 2 with Wi-Fi); `modules/zephyr/soc/espressif/esp32c6/memory.h:29-40` (ROM .bss and .data); `lib/esp_sdr/esp_sdr_bank_c6.ld:47-48` (`_heap_sentry`, rfprobe heap)
+- *measured* bench 2026-10-21 (block 1 as a bank, a PHY-only image with `_end` at 0x40817620; the rotation 120 s without an error); `lib/esp_sdr/esp_sdr_bank_c6.ld`, `lib/esp_sdr/src/esp_sdr_gapless.c`
 - HP_SYSTEM_MAC_DUMP_ALLOC: `modules/hal/espressif/components/soc/esp32c6/register/soc/hp_system_reg.h:63-68`
 - HP_SYSTEM_SRAM_USAGE: `modules/hal/espressif/components/soc/esp32c6/register/soc/hp_system_reg.h:46-62`
 

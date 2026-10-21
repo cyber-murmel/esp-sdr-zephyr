@@ -368,12 +368,12 @@
               board, USB and shell die.
             Evidence: `lib/esp_sdr/src/esp_sdr_rx.c:246-278`, `lib/esp_sdr/src/esp_sdr.c:123-133`
             (save and restore)
-            Evidence: `lib/esp_sdr/esp_sdr_bank_ring.ld:4-14` (reserved banks)
+            Evidence: `lib/esp_sdr/esp_sdr_bank_s3.ld:4-34` (reserved banks)
             Evidence: *measured* `lib/esp_sdr/src/esp_sdr_tx.c:346-349` (CPU stores and the DAC)
             Evidence: *measured* hardware-quirks.md, "Capture and DAC engine";
             `lib/esp_sdr/src/esp_sdr_priv.h:236-244` (a change while running)
-            Evidence: *measured* bench 2026-10-05, `lib/esp_sdr/esp_sdr_bank.ld`; *upstream*
-            `modules/lib/esp-sdr/main/common/ring_capture.h:26` (bank 3)
+            Evidence: *measured* bench 2026-10-05, `lib/esp_sdr/esp_sdr_bank_s3.ld:43-47`;
+            *upstream* `modules/lib/esp-sdr/main/common/ring_capture.h:26` (bank 3)
           </description>
           <addressOffset>0x1c</addressOffset>
           <fields>
