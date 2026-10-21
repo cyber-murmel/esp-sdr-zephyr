@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * Transmit through the dump engine's DAC side: power ladder, one-shot
- * playback and sweeps, and the DAC session the streaming backend uses.
+ * playback and sweeps, and the DAC session the DAC stream uses.
  */
 
 #include <errno.h>

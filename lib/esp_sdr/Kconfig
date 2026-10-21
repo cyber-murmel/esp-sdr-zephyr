@@ -240,23 +240,18 @@ config ESP_SDR_CHANCAP_OUT_STACK_SIZE
 endif # ESP_SDR_CHANCAP
 
 config ESP_SDR_TX
-	bool "Transmit backend interface"
-	depends on SOC_SERIES_ESP32S3
-	help
-	  esp_sdr_tx_*() front end with a stub backend that consumes and
-	  counts samples. A real backend registers with
-	  esp_sdr_tx_set_backend().
-
-config ESP_SDR_TX_DAC
-	bool "DAC transmit backend"
-	default y
-	depends on ESP_SDR_TX && ESP_SPIRAM && ESP_SDR_RFTEST
+	bool "Transmit streaming through the DAC"
+	depends on SOC_SERIES_ESP32S3 && ESP_SPIRAM && ESP_SDR_RFTEST
 	select ESP_SDR_BANK1
 	help
-	  Default backend: buffers input samples in PSRAM and interpolates
-	  them to the 40 MS/s DAC rate in a player thread.
+	  esp_sdr_tx_start(), esp_sdr_tx_write() and esp_sdr_tx_stop():
+	  input samples buffered in PSRAM and interpolated to the 40 MS/s
+	  DAC rate in a player thread, played gapless from two banks; and
+	  esp_sdr_tx_dac_play_gen() for generated waveforms. Needs PSRAM and
+	  the RF test library, without which the MAC never turns the
+	  transmitter on.
 
-if ESP_SDR_TX_DAC
+if ESP_SDR_TX
 
 config ESP_SDR_TX_DAC_RING_SAMPLES
 	int "Input ring size in samples (PSRAM, 4 bytes each, power of two)"
@@ -311,7 +306,7 @@ config ESP_SDR_TX_DAC_LEADER_CPU
 	  that is idle while transmitting: a transmit session holds the radio,
 	  so receive capture waits and its processing CPU is free.
 
-endif # ESP_SDR_TX_DAC
+endif # ESP_SDR_TX
 
 module = ESP_SDR
 module-str = esp_sdr

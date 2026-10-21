@@ -5,13 +5,12 @@
 /**
  * @file
  * @brief ESP-SDR transmit: power steps, one-shot DAC playback and sweeps, and
- * the streaming interface with its backends.
+ * the streaming interface.
  *
  * One-shot calls (esp_sdr_tx_play(), esp_sdr_tx_sweep()) play prepared words
  * from the dump bank. The streaming interface takes complex 16-bit samples at
- * a low rate and hands them to a backend: the DAC backend
- * (CONFIG_ESP_SDR_TX_DAC) interpolates them to 40 MS/s and plays them
- * gapless, the stub backend only counts them.
+ * a low rate, interpolates them to the 40 MS/s DAC rate and plays them
+ * gapless (CONFIG_ESP_SDR_TX, which needs PSRAM and the RF test library).
  *
  * The one-shot, power and loop calls exist on the ESP32-S3 only, the streaming
  * interface with CONFIG_ESP_SDR_TX; the ESP32-C6 has esp_sdr_tx_set_lpf()
@@ -216,18 +215,6 @@ void esp_sdr_tx_loop_end(void);
 /** @} */
 #endif /* CONFIG_SOC_SERIES_ESP32S3 */
 
-/** Streaming backend operations. All may sleep; called from one thread. */
-struct esp_sdr_tx_backend {
-	/** Backend name for diagnostics. */
-	const char *name;
-	/** Prepare to transmit at @p freq_hz with @p rate_hz samples per second. */
-	int (*start)(uint64_t freq_hz, uint32_t rate_hz);
-	/** Accept up to @p count samples; returns how many were taken or a negative errno. */
-	int (*write)(const struct esp_sdr_iq16 *samples, size_t count);
-	/** Stop transmitting and drop anything queued. */
-	int (*stop)(void);
-};
-
 /** Streaming statistics since the last start. */
 struct esp_sdr_tx_stats {
 	uint64_t samples;
@@ -235,48 +222,7 @@ struct esp_sdr_tx_stats {
 	uint32_t errors;
 };
 
-#if defined(CONFIG_ESP_SDR_TX)
-/**
- * @brief Select the streaming backend; NULL restores the default (DAC if built, else the stub).
- *
- * @retval 0 on success.
- * @retval -EBUSY while transmitting.
- */
-int esp_sdr_tx_set_backend(const struct esp_sdr_tx_backend *backend);
-
-/** @return The selected streaming backend. */
-const struct esp_sdr_tx_backend *esp_sdr_tx_get_backend(void);
-
-/**
- * @brief Start streaming.
- *
- * @retval 0 on success.
- * @retval -EALREADY if already started.
- * @retval -EINVAL for a zero rate.
- */
-int esp_sdr_tx_start(uint64_t freq_hz, uint32_t rate_hz);
-
-/**
- * @brief Hand samples to the backend.
- *
- * @return Samples taken, or a negative errno (-ENOTCONN when not started).
- */
-int esp_sdr_tx_write(const struct esp_sdr_iq16 *samples, size_t count);
-
-/** @brief Stop streaming; no-op when stopped. */
-int esp_sdr_tx_stop(void);
-
-/** @return Whether streaming is started. */
-bool esp_sdr_tx_active(void);
-
-/** Copy the streaming statistics into @p stats. */
-void esp_sdr_tx_get_stats(struct esp_sdr_tx_stats *stats);
-
-/** Backend that consumes and counts samples, for tests. */
-extern const struct esp_sdr_tx_backend esp_sdr_tx_stub_backend;
-#endif /* CONFIG_ESP_SDR_TX */
-
-/** Statistics of the DAC backend since its last start. */
+/** Statistics of the DAC stream since its last start. */
 struct esp_sdr_tx_dac_stats {
 	/** Input samples played, and dropped (not there in time, or lost in a restart). */
 	uint64_t played, dropped;
@@ -302,17 +248,40 @@ struct esp_sdr_tx_dac_stats {
 	int32_t start_margin_us;
 };
 
-#if defined(CONFIG_ESP_SDR_TX_DAC)
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
 /**
- * DAC backend: interpolates the input linearly to 40 MS/s and plays it. The
- * input rate must divide 40 MS/s by at least 2 and the frequency must be a
- * whole MHz (it retunes the shared LO, so the receiver moves too). Output
- * is gapless while the fill keeps up; input that is not there in time plays
- * as zeros.
+ * @brief Start streaming.
+ *
+ * Input is interpolated linearly to the 40 MS/s DAC rate and played. The input rate must
+ * divide 40 MS/s by at least 2 and the frequency must be a whole MHz (it retunes the shared
+ * LO, so the receiver moves too). Output is gapless while the fill keeps up; input that is
+ * not there in time plays as zeros. Needs CONFIG_ESP_SDR_TX, as all the calls below.
+ *
+ * @retval 0 on success.
+ * @retval -EALREADY if already started.
+ * @retval -EBUSY while esp_sdr_tx_dac_play_gen() plays.
+ * @retval -EINVAL for an unsupported rate or frequency.
+ * @retval -ERANGE or -EAGAIN as for esp_sdr_set_freq().
  */
-extern const struct esp_sdr_tx_backend esp_sdr_tx_dac_backend;
+int esp_sdr_tx_start(uint64_t freq_hz, uint32_t rate_hz);
 
-/** Copy the DAC backend statistics into @p stats. */
+/**
+ * @brief Queue samples for the DAC.
+ *
+ * @return Samples taken, or a negative errno (-ENOTCONN when not started).
+ */
+int esp_sdr_tx_write(const struct esp_sdr_iq16 *samples, size_t count);
+
+/** @brief Stop streaming; no-op when stopped. */
+int esp_sdr_tx_stop(void);
+
+/** @return Whether streaming is started. */
+bool esp_sdr_tx_active(void);
+
+/** Copy the streaming statistics into @p stats. */
+void esp_sdr_tx_get_stats(struct esp_sdr_tx_stats *stats);
+
+/** Copy the DAC stream statistics into @p stats. */
 void esp_sdr_tx_dac_get_stats(struct esp_sdr_tx_dac_stats *stats);
 
 /**
@@ -329,11 +298,11 @@ typedef void (*esp_sdr_tx_dac_gen_t)(void *user, uint32_t *dst, uint64_t index, 
  * @brief Play @p samples generated DAC samples gapless at the current LO.
  *
  * Returns once the last sample has played, about 1.5 ms after the call plus
- * the waveform's duration. Not while the backend streams.
+ * the waveform's duration. Not while streaming.
  *
  * @retval 0 on success.
  * @retval -EINVAL without a generator or samples.
- * @retval -EBUSY while the backend streams or plays.
+ * @retval -EBUSY while streaming or playing.
  * @retval -EIO if the session could not start or was stopped, or a block was
  *	   filled late: the waveform is cut off at that point (a late block
  *	   ends the session with a block of silence, it is not resumed).
@@ -346,7 +315,7 @@ int esp_sdr_tx_dac_play_gen(esp_sdr_tx_dac_gen_t gen, void *user, uint64_t sampl
  * (CONFIG_ESP_SDR_TX_DAC_RING_SAMPLES), or new input overwrites old.
  */
 uint32_t esp_sdr_tx_dac_queued(void);
-#endif
+#endif /* CONFIG_SOC_SERIES_ESP32S3 */
 
 /** @} */
 

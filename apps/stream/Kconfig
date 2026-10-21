@@ -76,11 +76,11 @@ config APP_RX_UDP_PORT
 config APP_TX
 	bool "Transmit VITA 49.2 signal data from the host"
 	default y
-	select ESP_SDR_TX
+	depends on ESP_SDR_TX
 	help
 	  Signal data and command packets on UDP; samples go to the
-	  esp_sdr_tx streaming backend (the DAC backend with
-	  CONFIG_ESP_SDR_TX_DAC, else the stub).
+	  esp_sdr_tx stream, which plays them through the DAC
+	  (CONFIG_ESP_SDR_TX: PSRAM and the RF test library).
 
 config APP_TX_UDP_PORT
 	int "UDP port for transmit and command packets"

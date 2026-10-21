@@ -44,7 +44,6 @@ MACRO_EXPANSION        = YES
 EXPAND_ONLY_PREDEF     = YES
 PREDEFINED             = CONFIG_SOC_SERIES_ESP32S3=1 \
                          CONFIG_ESP_SDR_TX=1 \
-                         CONFIG_ESP_SDR_TX_DAC=1 \
                          CONFIG_ESP_SDR_BANK1=1 \
                          CONFIG_ESP_SDR_RING=1 \
                          "__attribute__(x)="

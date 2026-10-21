@@ -2,7 +2,7 @@
 
 config ESP_SDR_IEEE802154
 	bool "IEEE 802.15.4 radio on esp_sdr"
-	depends on ESP_SDR_TX_DAC && NETWORKING && IEEE802154 && HWINFO
+	depends on ESP_SDR_TX && NETWORKING && IEEE802154 && HWINFO
 	depends on ESP_SDR_RING && SMP
 	select ESP_SDR_RING_BOX4
 	help

@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * VITA 49.2 from the host over UDP: signal data placed by timestamp into the
- * esp_sdr_tx streaming backend, and command packets that set the transmitter
+ * esp_sdr_tx stream, and command packets that set the transmitter
  * or (by stream ID) the receiver, answered with acknowledges.
  */
 
@@ -35,7 +35,6 @@ LOG_MODULE_DECLARE(stream, LOG_LEVEL_INF);
 #define RX_WORDS       375
 #define ACK_WORDS      32
 #define IDLE_STOP_MS   500
-#define UNDERRUN_SLACK (20 * NSEC_PER_MSEC)
 #define TX_DAC_HZ      40000000.0
 #define TX_RATE_MAX_HZ (TX_DAC_HZ / 2)
 #define STACK_SIZE     2048
@@ -58,33 +57,16 @@ static bool counted;
 static uint64_t next_index;
 static bool indexed;
 static int64_t last_data_ms;
-static int64_t pace_t0_ns;
-static uint64_t pace_samples;
 static struct vrt_tx_stats stats;
 
 static K_THREAD_STACK_DEFINE(vrt_tx_stack, STACK_SIZE);
 static struct k_thread tx_thread;
-
-static int64_t now_ns(void)
-{
-	return (int64_t)k_cyc_to_ns_floor64(k_cycle_get_64());
-}
 
 static void restart(void)
 {
 	(void)esp_sdr_tx_stop();
 	counted = false;
 	indexed = false;
-}
-
-/* Self-paced backends schedule samples in real time: do not sleep the socket. */
-static bool backend_paces_itself(void)
-{
-#if defined(CONFIG_ESP_SDR_TX_DAC)
-	return esp_sdr_tx_get_backend() == &esp_sdr_tx_dac_backend;
-#else
-	return false;
-#endif
 }
 
 /* Write zeros for count samples that never arrived. */
@@ -144,7 +126,6 @@ static size_t align_to_timestamp(size_t n)
 /* Link efficient complex, tx_bits per item, I first (see iq_unpack()). */
 static void handle_data(void)
 {
-	int64_t expected, elapsed;
 	size_t n;
 	size_t skip;
 
@@ -161,8 +142,6 @@ static void handle_data(void)
 			stats.errors++;
 			return;
 		}
-		pace_t0_ns = now_ns();
-		pace_samples = 0;
 	}
 
 	BUILD_ASSERT(sizeof(struct esp_sdr_iq16) == 2 * sizeof(int16_t));
@@ -171,21 +150,6 @@ static void handle_data(void)
 	skip = align_to_timestamp(n);
 	if (n > skip && esp_sdr_tx_write(samples + skip, n - skip) < 0) {
 		stats.errors++;
-	}
-	if (backend_paces_itself()) {
-		return;
-	}
-
-	/* Hold the sample clock: sleep when ahead, restart it after an underrun. */
-	pace_samples += n;
-	expected = (int64_t)(pace_samples * NSEC_PER_SEC / tx_rate_hz);
-	elapsed = now_ns() - pace_t0_ns;
-	if (expected > elapsed) {
-		k_sleep(K_NSEC(expected - elapsed));
-	} else if (elapsed - expected > UNDERRUN_SLACK) {
-		stats.underruns++;
-		pace_t0_ns = now_ns();
-		pace_samples = 0;
 	}
 }
 

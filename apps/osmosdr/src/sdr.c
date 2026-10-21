@@ -345,7 +345,7 @@ static void usb_thread_fn(void *a, void *b, void *c)
 		/* Transmit polls the DAC backlog; the rest waits for work. */
 		(void)k_sem_take(&usb_wake, atomic_get(&tx_on) ? K_MSEC(2) : K_MSEC(100));
 		snapshot(&s, NULL);
-		if (atomic_get(&tx_on)) {
+		if (IS_ENABLED(CONFIG_ESP_SDR_TX) && atomic_get(&tx_on)) {
 			while (atomic_get(&tx_park_r) != atomic_get(&tx_park_w) &&
 			       esp_sdr_tx_dac_queued() < tx_limit) {
 				uint32_t r = (uint32_t)atomic_get(&tx_park_r);
@@ -483,7 +483,7 @@ void usb_sdr_out_done(uint8_t *data, size_t len, int err)
 		return;
 	}
 	stats.usb_out_bytes += len;
-	if (atomic_get(&tx_on)) {
+	if (IS_ENABLED(CONFIG_ESP_SDR_TX) && atomic_get(&tx_on)) {
 		uint32_t w = (uint32_t)atomic_get(&tx_park_w);
 
 		tx_convert(data, len);
@@ -786,11 +786,14 @@ static void tx_session(const struct sdr_settings *s, uint32_t gen)
 		ret = esp_sdr_tx_set_gain(s->tx_gain);
 	}
 	if (ret == 0) {
-		ret = esp_sdr_tx_start((uint64_t)mhz * 1000000U, s->rate_hz);
+		/* Transmit needs CONFIG_ESP_SDR_TX (PSRAM and the RF test library). */
+		ret = IS_ENABLED(CONFIG_ESP_SDR_TX)
+			      ? esp_sdr_tx_start((uint64_t)mhz * 1000000U, s->rate_hz)
+			      : -ENOTSUP;
 	}
 	cur_lo_mhz = 0;
 	cur_center_hz = s->freq_hz;
-	if (ret != 0) {
+	if (!IS_ENABLED(CONFIG_ESP_SDR_TX) || ret != 0) {
 		LOG_ERR("tx start %u MHz %+d kHz at %u S/s: %d", mhz, khz, s->rate_hz, ret);
 		while (current_gen() == gen) {
 			(void)k_sem_take(&rx_wake, K_MSEC(100));
