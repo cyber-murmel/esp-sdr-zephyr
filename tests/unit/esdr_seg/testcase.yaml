@@ -1,0 +1,18 @@
+common:
+  tags:
+    - esp-sdr
+    - gapless
+  platform_allow:
+    - native_sim
+    - native_sim/native/64
+tests:
+  unit.esp_sdr.esdr_seg:
+    integration_platforms:
+      - native_sim
+  # Reads past a block's end abort the test: the malformed blocks sit at the end of a buffer.
+  unit.esp_sdr.esdr_seg.asan:
+    extra_configs:
+      - CONFIG_ASAN=y
+      - CONFIG_ASAN_RECOVER=n
+    integration_platforms:
+      - native_sim/native/64

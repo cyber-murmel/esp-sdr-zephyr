@@ -289,7 +289,8 @@ let
     src = lib.fileset.toSource {
       root = ./.;
       fileset = lib.fileset.difference
-        (lib.fileset.unions ([ ./include ./apps/link/src ./apps/osmosdr/src/esdr_proto.h ] ++ toolDirs))
+        (lib.fileset.unions ([ ./include ./apps/link/src ./apps/osmosdr/src/esdr_proto.h
+          ./apps/osmosdr/src/esdr_seg.h ] ++ toolDirs))
         (pycFiles ./apps);
     };
     nativeBuildInputs = [ pkgs.makeWrapper ];
