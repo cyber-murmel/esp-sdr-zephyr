@@ -1143,15 +1143,11 @@ private:
 	 * device's sample index is filled with zeros, bounded, so GRC/gqrx see a
 	 * continuous time axis instead of a jump.
 	 */
-	/* A plausible block header (the magic alone could occur in sample data). */
+	/* A plausible header of a block kind this module decodes. */
 	static bool headerOk(const uint8_t *p)
 	{
-		struct esdr_block_hdr h{};
-
-		std::memcpy(&h, p, sizeof(h));
-		return h.magic == ESDR_BLOCK_MAGIC &&
-		       h.samples <= ESDR_BLOCK_PAYLOAD / ((h.flags & ESDR_BLK_4BIT) != 0U ? 1U : 2U) &&
-		       (h.flags & ~(0x000fU | ESDR_BLK_4BIT | ESDR_BLK_TRIGGER)) == 0U;
+		return esdr_block_hdr_ok(p, ESDR_BLK_GAP | ESDR_BLK_OVERFLOW | ESDR_BLK_16BIT |
+					    ESDR_BLK_TEST | ESDR_BLK_4BIT | ESDR_BLK_TRIGGER);
 	}
 
 	void onBlock(const uint8_t *p)

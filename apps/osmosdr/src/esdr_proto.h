@@ -20,7 +20,9 @@
 #ifndef ESDR_PROTO_H_
 #define ESDR_PROTO_H_
 
+#include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 #define ESDR_PROTO_VERSION 1U
 
@@ -256,6 +258,25 @@ struct esdr_block_hdr {
 } __attribute__((packed));
 
 #define ESDR_BLOCK_PAYLOAD (ESDR_BLOCK_BYTES - sizeof(struct esdr_block_hdr))
+
+/* All block flags above. */
+#define ESDR_BLK_KNOWN                                                                             \
+	(ESDR_BLK_GAP | ESDR_BLK_OVERFLOW | ESDR_BLK_16BIT | ESDR_BLK_TEST | ESDR_BLK_BURST |      \
+	 ESDR_BLK_4BIT | ESDR_BLK_TRIGGER | ESDR_BLK_SEG | ESDR_BLK_CHAN)
+
+/*
+ * A plausible block header at p (the magic alone could occur in sample data): no flag outside
+ * accept, and no more samples than the payload holds at the item width. For a host that
+ * resynchronises on the receive stream.
+ */
+static inline bool esdr_block_hdr_ok(const void *p, uint16_t accept)
+{
+	struct esdr_block_hdr h;
+
+	memcpy(&h, p, sizeof(h));
+	return h.magic == ESDR_BLOCK_MAGIC && (h.flags & ~(uint32_t)accept) == 0U &&
+	       h.samples <= ESDR_BLOCK_PAYLOAD / ((h.flags & ESDR_BLK_4BIT) != 0U ? 1U : 2U);
+}
 
 /* Segment flags. */
 /* Windows that passed the threshold were dropped before this segment: the link was full. */
