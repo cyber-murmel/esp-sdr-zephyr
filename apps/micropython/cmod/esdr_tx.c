@@ -37,8 +37,8 @@
 #define CHUNK 256U
 #define SINE_N 1024U
 
-#if !defined(CONFIG_ESP_SDR_TX_DAC)
-#error "esdr_tx needs CONFIG_ESP_SDR_TX_DAC"
+#if !defined(CONFIG_ESP_SDR_TX)
+#error "esdr_tx needs CONFIG_ESP_SDR_TX"
 #endif
 
 static EXT_RAM_BSS_ATTR int16_t sine_tab[SINE_N + 1U];
