@@ -143,17 +143,10 @@ static uint8_t psram_heap[CONFIG_APP_MP_PSRAM_HEAP_KB * 1024] ESDR_PSRAM __align
 
 static const struct esdr_info *radio;
 
-static void check(int ret)
-{
-	if (ret < 0) {
-		mp_raise_OSError(-ret);
-	}
-}
-
 static void need_radio(void)
 {
 	if (radio == NULL) {
-		check(esdr_remote_init(&radio));
+		esdr_check(esdr_remote_init(&radio));
 	}
 }
 
@@ -179,8 +172,8 @@ static mp_obj_t esdr_tune(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_
 	mp_arg_parse_all(n_args, pos_args, kw_args, MP_ARRAY_SIZE(allowed), allowed, args);
 	need_radio();
 	sys_put_le64((uint64_t)mp_obj_get_float(args[0].u_obj), le);
-	check(esdr_remote_request(ESDR_REQ_SET_FREQ, 0, le, sizeof(le), NULL, 0));
-	check(esdr_remote_request(ESDR_REQ_GET_STATE, 0, NULL, 0, &st, sizeof(st)));
+	esdr_check(esdr_remote_request(ESDR_REQ_SET_FREQ, 0, le, sizeof(le), NULL, 0));
+	esdr_check(esdr_remote_request(ESDR_REQ_GET_STATE, 0, NULL, 0, &st, sizeof(st)));
 	return mp_obj_new_float((mp_float_t)sys_le64_to_cpu(st.center_hz));
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(esdr_tune_obj, 1, esdr_tune);
@@ -192,7 +185,7 @@ static mp_obj_t esdr_radio_state_fn(void)
 	mp_obj_t d = mp_obj_new_dict(8);
 
 	need_radio();
-	check(esdr_remote_request(ESDR_REQ_GET_STATE, 0, NULL, 0, &st, sizeof(st)));
+	esdr_check(esdr_remote_request(ESDR_REQ_GET_STATE, 0, NULL, 0, &st, sizeof(st)));
 #define PUT(name, val) mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_##name), (val))
 	PUT(mode, MP_OBJ_NEW_SMALL_INT(st.mode));
 	PUT(bits, MP_OBJ_NEW_SMALL_INT(st.bits));
@@ -213,13 +206,13 @@ static mp_obj_t esdr_rx_gain(size_t n_args, const mp_obj_t *args)
 	if (n_args == 0) {
 		struct esdr_state st;
 
-		check(esdr_remote_request(ESDR_REQ_GET_STATE, 0, NULL, 0, &st, sizeof(st)));
+		esdr_check(esdr_remote_request(ESDR_REQ_GET_STATE, 0, NULL, 0, &st, sizeof(st)));
 		return MP_OBJ_NEW_SMALL_INT(st.rx_gain == ESDR_GAIN_AUTO ? -1 : st.rx_gain);
 	}
 	mp_int_t g = mp_obj_get_int(args[0]);
 
-	check(esdr_remote_request(ESDR_REQ_SET_RX_GAIN, g < 0 ? ESDR_GAIN_AUTO : (uint16_t)g,
-				  NULL, 0, NULL, 0));
+	esdr_check(esdr_remote_request(ESDR_REQ_SET_RX_GAIN, g < 0 ? ESDR_GAIN_AUTO : (uint16_t)g,
+				       NULL, 0, NULL, 0));
 	return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_rx_gain_obj, 0, 1, esdr_rx_gain);
@@ -244,7 +237,7 @@ static mp_obj_t esdr_rx_bandwidth(mp_obj_t hz_in)
 
 	need_radio();
 	sys_put_le32((uint32_t)mp_obj_get_int(hz_in), le);
-	check(esdr_remote_request(ESDR_REQ_SET_BANDWIDTH, 0, le, sizeof(le), NULL, 0));
+	esdr_check(esdr_remote_request(ESDR_REQ_SET_BANDWIDTH, 0, le, sizeof(le), NULL, 0));
 	return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(esdr_rx_bandwidth_obj, esdr_rx_bandwidth);
@@ -305,16 +298,16 @@ static mp_obj_t esdr_rx_start_fn(size_t n_args, const mp_obj_t *pos_args, mp_map
 	MP_STATE_PORT(esdr_rx_buf) = args[ARG_buf].u_obj;
 	if (burst) {
 #if RADIO_LINKED
-		check(esdr_remote_rx_start_burst(BURST_HZ / 1000000, BURST_HZ / rate, buf, cap,
-						 (uint64_t)args[ARG_count].u_int));
+		esdr_check(esdr_remote_rx_start_burst(BURST_HZ / 1000000, BURST_HZ / rate, buf, cap,
+						      (uint64_t)args[ARG_count].u_int));
 #else
-		check(esdr_remote_rx_start_burst(rate / 1000000, 1, buf, cap,
-						 (uint64_t)args[ARG_count].u_int));
+		esdr_check(esdr_remote_rx_start_burst(rate / 1000000, 1, buf, cap,
+						      (uint64_t)args[ARG_count].u_int));
 #endif
 		return mp_const_none;
 	}
-	check(esdr_remote_rx_start((uint32_t)rate, buf, cap, (uint64_t)args[ARG_count].u_int,
-				   args[ARG_wrap].u_bool));
+	esdr_check(esdr_remote_rx_start((uint32_t)rate, buf, cap, (uint64_t)args[ARG_count].u_int,
+					args[ARG_wrap].u_bool));
 	return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(esdr_rx_start_obj, 1, esdr_rx_start_fn);
@@ -403,8 +396,8 @@ static mp_obj_t esdr_trig_start_fn(size_t n_args, const mp_obj_t *pos, mp_map_t 
 	    args[ARG_post].u_int >= (mp_int_t)ESDR_TRIG_SAMPLES) {
 		mp_raise_ValueError(MP_ERROR_TEXT("trig_start: ratio above 1, 0 < post < TRIG_SAMPLES"));
 	}
-	check(esdr_remote_trig_start((uint16_t)(ratio * 16.0f + 0.5f),
-				     (uint32_t)args[ARG_post].u_int));
+	esdr_check(esdr_remote_trig_start((uint16_t)(ratio * 16.0f + 0.5f),
+					  (uint32_t)args[ARG_post].u_int));
 	return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(esdr_trig_start_obj, 0, esdr_trig_start_fn);
@@ -504,14 +497,14 @@ static mp_obj_t esdr_gapless_start_fn(size_t n_args, const mp_obj_t *pos, mp_map
 	cfg.flags = sys_cpu_to_le16((args[ARG_gain_servo].u_bool ? ESDR_GAPLESS_F_GAIN_SERVO : 0U) |
 				    (level != 0 ? ESDR_GAPLESS_F_FIXED_THR : 0U));
 	if (channels != 0) {
-		check(esdr_gl_start((unsigned int)channels, open_db));
+		esdr_check(esdr_gl_start((unsigned int)channels, open_db));
 	} else {
 		esdr_gl_stop();
 	}
 	ret = esdr_remote_gl_start(&cfg, args[ARG_monitor].u_bool);
 	if (ret < 0) {
 		esdr_gl_stop();
-		check(ret);
+		esdr_check(ret);
 	}
 	return mp_const_none;
 }
@@ -641,25 +634,6 @@ static MP_DEFINE_CONST_FUN_OBJ_1(esdr_chan_spectrum_obj, esdr_chan_spectrum_fn);
 
 /* ---- transmit ---- */
 
-static void tx_gen_from(struct esdr_remote_gen *g, mp_obj_t t)
-{
-	mp_obj_t *items;
-	size_t len;
-
-	mp_obj_get_array(t, &len, &items);
-	if (len != 5) {
-		mp_raise_ValueError(MP_ERROR_TEXT("gen: (wave, cycles, amp, dc_i, dc_q)"));
-	}
-	mp_int_t wave = mp_obj_get_int(items[0]);
-
-	/* gnuradio.analog's GR_CONST_WAVE .. GR_SAW_WAVE are 100 .. 105. */
-	g->wave = (int)(wave >= 100 ? wave - 100 : wave);
-	g->cycles = (float)mp_obj_get_float(items[1]);
-	g->amp = (float)mp_obj_get_float(items[2]);
-	g->dc_i = (float)mp_obj_get_float(items[3]);
-	g->dc_q = (float)mp_obj_get_float(items[4]);
-}
-
 static mp_obj_t esdr_tx_start_fn(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args)
 {
 	enum { ARG_rate, ARG_hz, ARG_gain, ARG_buf, ARG_count, ARG_scale, ARG_gen, ARG_repeat };
@@ -674,7 +648,7 @@ static mp_obj_t esdr_tx_start_fn(size_t n_args, const mp_obj_t *pos_args, mp_map
 		{MP_QSTR_repeat, MP_ARG_KW_ONLY | MP_ARG_BOOL, {.u_bool = false}},
 	};
 	mp_arg_val_t args[MP_ARRAY_SIZE(allowed)];
-	struct esdr_remote_gen gen;
+	struct esdr_gen gen;
 	mp_buffer_info_t bi = {0};
 	struct esdr_state st;
 	uint8_t le[8];
@@ -692,7 +666,7 @@ static mp_obj_t esdr_tx_start_fn(size_t n_args, const mp_obj_t *pos_args, mp_map
 		scale = (float)mp_obj_get_float(args[ARG_scale].u_obj);
 	}
 	if (args[ARG_gen].u_obj != mp_const_none) {
-		tx_gen_from(&gen, args[ARG_gen].u_obj);
+		esdr_gen_from(&gen, args[ARG_gen].u_obj);
 	} else {
 		mp_get_buffer_raise(args[ARG_buf].u_obj, &bi, MP_BUFFER_READ);
 		if ((((uintptr_t)bi.buf) & 1U) != 0U || bi.len < 4U) {
@@ -703,15 +677,15 @@ static mp_obj_t esdr_tx_start_fn(size_t n_args, const mp_obj_t *pos_args, mp_map
 	need_radio();
 	esdr_remote_tx_stop();
 	sys_put_le64((uint64_t)mp_obj_get_float(args[ARG_hz].u_obj), le);
-	check(esdr_remote_request(ESDR_REQ_SET_FREQ, 0, le, sizeof(le), NULL, 0));
-	check(esdr_remote_request(ESDR_REQ_SET_TX_GAIN, (uint16_t)args[ARG_gain].u_int, NULL, 0,
-				  NULL, 0));
-	check(esdr_remote_request(ESDR_REQ_GET_STATE, 0, NULL, 0, &st, sizeof(st)));
+	esdr_check(esdr_remote_request(ESDR_REQ_SET_FREQ, 0, le, sizeof(le), NULL, 0));
+	esdr_check(esdr_remote_request(ESDR_REQ_SET_TX_GAIN, (uint16_t)args[ARG_gain].u_int, NULL,
+				       0, NULL, 0));
+	esdr_check(esdr_remote_request(ESDR_REQ_GET_STATE, 0, NULL, 0, &st, sizeof(st)));
 	MP_STATE_PORT(esdr_tx_buf) = args[ARG_buf].u_obj;
-	check(esdr_remote_tx_start((uint32_t)args[ARG_rate].u_int, bi.buf, n,
-				   args[ARG_repeat].u_bool,
-				   args[ARG_gen].u_obj != mp_const_none ? &gen : NULL,
-				   (uint64_t)MAX(args[ARG_count].u_int, 0), scale));
+	esdr_check(esdr_remote_tx_start((uint32_t)args[ARG_rate].u_int, bi.buf, n,
+					args[ARG_repeat].u_bool,
+					args[ARG_gen].u_obj != mp_const_none ? &gen : NULL,
+					(uint64_t)MAX(args[ARG_count].u_int, 0), scale));
 	return mp_obj_new_float((mp_float_t)sys_le64_to_cpu(st.center_hz));
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(esdr_tx_start_obj, 3, esdr_tx_start_fn);
@@ -719,9 +693,9 @@ static MP_DEFINE_CONST_FUN_OBJ_KW(esdr_tx_start_obj, 3, esdr_tx_start_fn);
 /* tx_gen(wave, cycles, amp, dc_i, dc_q): the generator changes while it plays. */
 static mp_obj_t esdr_tx_gen_fn(size_t n_args, const mp_obj_t *args)
 {
-	struct esdr_remote_gen g;
+	struct esdr_gen g;
 
-	tx_gen_from(&g, mp_obj_new_tuple(n_args, args));
+	esdr_gen_from(&g, mp_obj_new_tuple(n_args, args));
 	esdr_remote_tx_set_gen(&g);
 	return mp_const_none;
 }

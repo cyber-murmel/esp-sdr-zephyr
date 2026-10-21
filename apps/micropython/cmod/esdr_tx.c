@@ -56,7 +56,7 @@ static struct {
 } job;
 
 /* Written by the REPL's CPU while running. */
-static struct esdr_tx_gen gen;
+static struct esdr_gen gen;
 static float scale = 1.0f;
 static uint32_t phase;
 
@@ -82,7 +82,7 @@ static inline int16_t clip(int32_t v)
 }
 
 /* The waveform at phase @p ph (a full turn is 2^32), full scale +-32767. */
-static inline void wave_at(enum esdr_tx_wave w, uint32_t ph, int32_t *i, int32_t *q)
+static inline void wave_at(enum esdr_wave w, uint32_t ph, int32_t *i, int32_t *q)
 {
 	*q = 0;
 	switch (w) {
@@ -115,7 +115,7 @@ static inline void wave_at(enum esdr_tx_wave w, uint32_t ph, int32_t *i, int32_t
 /* Next @p n generator samples. */
 static void generate(struct esp_sdr_iq16 *out, size_t n)
 {
-	struct esdr_tx_gen g = gen;
+	struct esdr_gen g = gen;
 	/* Q14, so that a 16 bit sample times it fits 32 bits (amplitudes up to 2). */
 	int32_t amp = (int32_t)(MIN(g.amp, 1.99f) * 16384.0f);
 	int32_t dci = (int32_t)(g.dc_i * 32767.0f), dcq = (int32_t)(g.dc_q * 32767.0f);
@@ -262,7 +262,7 @@ static void tables(void)
 }
 
 int esdr_tx_start(uint32_t mhz, int32_t khz, uint32_t rate_hz, int gain, const int16_t *buf,
-		  size_t len, bool repeat, const struct esdr_tx_gen *g, float scale_in,
+		  size_t len, bool repeat, const struct esdr_gen *g, float scale_in,
 		  uint64_t count)
 {
 	static bool started;
@@ -319,7 +319,7 @@ int esdr_tx_start(uint32_t mhz, int32_t khz, uint32_t rate_hz, int gain, const i
 	return 0;
 }
 
-void esdr_tx_set_gen(const struct esdr_tx_gen *g)
+void esdr_tx_set_gen(const struct esdr_gen *g)
 {
 	gen = *g;
 }
@@ -443,7 +443,7 @@ void esdr_tx_period(float cycles, int32_t *k_out, uint32_t *n_out)
 /* One period of the generator: @p k whole cycles in @p n samples, exact phases. */
 static void loop_fill_gen(uint32_t *w, uint32_t n, int32_t k)
 {
-	struct esdr_tx_gen g = gen;
+	struct esdr_gen g = gen;
 	int32_t amp = (int32_t)(MIN(g.amp * scale, 1.99f) * 16384.0f);
 	int32_t dci = (int32_t)(g.dc_i * 32767.0f), dcq = (int32_t)(g.dc_q * 32767.0f);
 	/* The phase step k / n turns, as 2^32 * k / n = step + rest / n, accumulated exactly. */
@@ -506,7 +506,7 @@ static int loop_play(int bank)
 }
 
 int esdr_tx_loop_start(uint32_t mhz, int32_t khz, uint32_t fs, int gain, const int16_t *buf,
-		       size_t len, uint32_t interp, const struct esdr_tx_gen *g, float scale_in)
+		       size_t len, uint32_t interp, const struct esdr_gen *g, float scale_in)
 {
 	enum esp_sdr_rate rate = fs == 80000000U ? ESP_SDR_RATE_80MSPS : ESP_SDR_RATE_40MSPS;
 	int ret = esdr_rx_init();

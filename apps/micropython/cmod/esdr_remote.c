@@ -773,7 +773,7 @@ static struct {
 	size_t n;
 	bool repeat;
 	/* The generator when there is no buffer; it and the scale may change while it plays. */
-	struct esdr_remote_gen gen;
+	struct esdr_gen gen;
 	volatile float scale;
 	uint64_t count;
 	uint32_t rate;
@@ -791,27 +791,27 @@ static int8_t to_s8(float v)
 }
 
 /* The waveform at phase @p ph (turns, 0 to 1), full scale +-32767, as esdr_tx.c on the S3. */
-static void wave_at(int wave, float ph, float *i, float *q)
+static void wave_at(enum esdr_wave wave, float ph, float *i, float *q)
 {
 	const float tau = 6.2831853f;
 
 	*q = 0.0f;
 	switch (wave) {
-	case ESDR_REMOTE_WAVE_SIN:
+	case ESDR_WAVE_SIN:
 		*i = 32767.0f * sinf(tau * ph);
 		*q = -32767.0f * cosf(tau * ph);
 		break;
-	case ESDR_REMOTE_WAVE_COS:
+	case ESDR_WAVE_COS:
 		*i = 32767.0f * cosf(tau * ph);
 		*q = 32767.0f * sinf(tau * ph);
 		break;
-	case ESDR_REMOTE_WAVE_SQR:
+	case ESDR_WAVE_SQR:
 		*i = ph < 0.5f ? 32767.0f : -32767.0f;
 		break;
-	case ESDR_REMOTE_WAVE_TRI:
+	case ESDR_WAVE_TRI:
 		*i = (ph < 0.5f ? ph : 1.0f - ph) * 4.0f * 32767.0f - 32767.0f;
 		break;
-	case ESDR_REMOTE_WAVE_SAW:
+	case ESDR_WAVE_SAW:
 		*i = (ph * 2.0f - 1.0f) * 32767.0f;
 		break;
 	default:
@@ -837,7 +837,7 @@ static void tx_fill(int8_t *p, size_t k, size_t *pos, float *phase)
 	}
 
 	k_spinlock_key_t key = k_spin_lock(&gen_lock);
-	struct esdr_remote_gen g = tx.gen;
+	struct esdr_gen g = tx.gen;
 
 	k_spin_unlock(&gen_lock, key);
 	for (size_t j = 0; j < k; j++) {
@@ -1046,7 +1046,7 @@ void esdr_remote_rx_stats(struct esdr_remote_rx_stats *st)
 }
 
 int esdr_remote_tx_start(uint32_t rate, const int16_t *buf, size_t n, bool repeat,
-			 const struct esdr_remote_gen *gen, uint64_t count, float scale)
+			 const struct esdr_gen *gen, uint64_t count, float scale)
 {
 	uint8_t le[4];
 	int ret;
@@ -1113,7 +1113,7 @@ uint64_t esdr_remote_tx_played(void)
 	return tx.active && fed > 0U ? fed - 1U : fed;
 }
 
-void esdr_remote_tx_set_gen(const struct esdr_remote_gen *gen)
+void esdr_remote_tx_set_gen(const struct esdr_gen *gen)
 {
 	k_spinlock_key_t key = k_spin_lock(&gen_lock);
 

@@ -559,22 +559,22 @@ static int tx_on(void)
 	return 0;
 }
 
-static void gen_offset(const struct esdr_remote_gen *gen)
+static void gen_offset(const struct esdr_gen *gen)
 {
 	/* A constant is the carrier itself; a tone sits cycles x rate from it. */
-	tx.offset_hz = gen->wave == ESDR_REMOTE_WAVE_CONST ? 0 :
+	tx.offset_hz = gen->wave == ESDR_WAVE_CONST ? 0 :
 		       (int64_t)(gen->cycles * (float)tx.rate);
 }
 
 int esdr_remote_tx_start(uint32_t rate, const int16_t *buf, size_t n, bool repeat,
-			 const struct esdr_remote_gen *gen, uint64_t count, float scale)
+			 const struct esdr_gen *gen, uint64_t count, float scale)
 {
 	ARG_UNUSED(n);
 	ARG_UNUSED(repeat);
 	ARG_UNUSED(scale);
 	if (buf != NULL || gen == NULL ||
-	    (gen->wave != ESDR_REMOTE_WAVE_CONST && gen->wave != ESDR_REMOTE_WAVE_COS &&
-	     gen->wave != ESDR_REMOTE_WAVE_SIN)) {
+	    (gen->wave != ESDR_WAVE_CONST && gen->wave != ESDR_WAVE_COS &&
+	     gen->wave != ESDR_WAVE_SIN)) {
 		return -ENOTSUP;
 	}
 	esdr_remote_tx_stop();
@@ -588,7 +588,7 @@ int esdr_remote_tx_start(uint32_t rate, const int16_t *buf, size_t n, bool repea
 	return tx_on();
 }
 
-void esdr_remote_tx_set_gen(const struct esdr_remote_gen *gen)
+void esdr_remote_tx_set_gen(const struct esdr_gen *gen)
 {
 	if (!tx.on) {
 		return;

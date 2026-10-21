@@ -9,8 +9,16 @@
 
 #include "py/obj.h"
 
+#include "esdr_defs.h"
+
 /* Clears the home gesture; esdr_port_init() calls it at every (soft) start. */
 void esdr_board_init(void);
+
+/* Raises OSError for a negative errno. */
+void esdr_check(int ret);
+
+/* The generator settings of the tuple @p t, (wave, cycles, amp, dc_i, dc_q); ValueError else. */
+void esdr_gen_from(struct esdr_gen *g, mp_obj_t t);
 
 extern const mp_obj_fun_builtin_fixed_t esdr_fc32_to_sc16_obj, esdr_sc16_to_fc32_obj,
 	esdr_display_size_obj, esdr_reset_reason_obj, esdr_home_obj, esdr_shift_obj;

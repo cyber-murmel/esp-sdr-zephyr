@@ -13,6 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "esdr_defs.h"
 #include "esdr_proto.h"
 
 /* Opens the link and reads the radio's struct esdr_info; 0 or a negative errno. */
@@ -57,32 +58,15 @@ bool esdr_remote_rx_busy(void);
 uint64_t esdr_remote_rx_count(void);
 void esdr_remote_rx_stats(struct esdr_remote_rx_stats *st);
 
-/* gnuradio.analog waveforms (100 + n), as esdr_tx.h on the S3. */
-enum esdr_remote_wave {
-	ESDR_REMOTE_WAVE_CONST,
-	ESDR_REMOTE_WAVE_SIN,
-	ESDR_REMOTE_WAVE_COS,
-	ESDR_REMOTE_WAVE_SQR,
-	ESDR_REMOTE_WAVE_TRI,
-	ESDR_REMOTE_WAVE_SAW,
-};
-
-/* A generated signal: @p cycles is its frequency over the rate, @p amp and the offsets in
- * full scale. */
-struct esdr_remote_gen {
-	int wave;
-	float cycles, amp, dc_i, dc_q;
-};
-
 /*
  * Transmit at @p rate S/s, by a feeder thread: @p n pairs of @p buf (int16 I, Q), once or
  * @p repeat, or without a buffer the generator @p gen; @p count pairs then stop (0: until the
  * buffer ends, or endless); @p scale on each sample. The radio is in transmit mode meanwhile.
  */
 int esdr_remote_tx_start(uint32_t rate, const int16_t *buf, size_t n, bool repeat,
-			 const struct esdr_remote_gen *gen, uint64_t count, float scale);
+			 const struct esdr_gen *gen, uint64_t count, float scale);
 /* The generator and the scale change while the signal plays. */
-void esdr_remote_tx_set_gen(const struct esdr_remote_gen *gen);
+void esdr_remote_tx_set_gen(const struct esdr_gen *gen);
 void esdr_remote_tx_set_scale(float scale);
 void esdr_remote_tx_stop(void);
 bool esdr_remote_tx_busy(void);

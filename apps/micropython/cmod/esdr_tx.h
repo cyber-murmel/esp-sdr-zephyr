@@ -13,22 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* gnuradio.analog waveforms (GR_CONST_WAVE and so on, 100 + n). */
-enum esdr_tx_wave {
-	ESDR_WAVE_CONST,
-	ESDR_WAVE_SIN,
-	ESDR_WAVE_COS,
-	ESDR_WAVE_SQR,
-	ESDR_WAVE_TRI,
-	ESDR_WAVE_SAW,
-};
-
-/* Generator settings; may change while running. @p cycles is the frequency over the rate. */
-struct esdr_tx_gen {
-	enum esdr_tx_wave wave;
-	float cycles;
-	float amp, dc_i, dc_q;
-};
+#include "esdr_defs.h"
 
 struct esdr_tx_stats {
 	uint64_t fed, played, dropped;
@@ -47,10 +32,10 @@ struct esdr_tx_stats {
  * (0: no limit). Returns once the stream is up.
  */
 int esdr_tx_start(uint32_t mhz, int32_t khz, uint32_t rate_hz, int gain, const int16_t *buf,
-		  size_t len, bool repeat, const struct esdr_tx_gen *gen, float scale,
+		  size_t len, bool repeat, const struct esdr_gen *gen, float scale,
 		  uint64_t count);
 
-void esdr_tx_set_gen(const struct esdr_tx_gen *gen);
+void esdr_tx_set_gen(const struct esdr_gen *gen);
 void esdr_tx_set_scale(float scale);
 
 void esdr_tx_stop(void);
@@ -68,7 +53,7 @@ void esdr_tx_get_stats(struct esdr_tx_stats *stats);
  * thread: the session holds the radio's mutex.
  */
 int esdr_tx_loop_start(uint32_t mhz, int32_t khz, uint32_t fs, int gain, const int16_t *buf,
-		       size_t len, uint32_t interp, const struct esdr_tx_gen *g, float scale);
+		       size_t len, uint32_t interp, const struct esdr_gen *g, float scale);
 /* After esdr_tx_set_gen() or esdr_tx_set_scale(): play the change. */
 int esdr_tx_loop_update(void);
 void esdr_tx_loop_stop(void);

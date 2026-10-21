@@ -22,4 +22,21 @@
 #define ESDR_PSRAM EXT_RAM_BSS_ATTR
 #endif
 
+/* The transmit generator's waveforms: gnuradio.analog's (GR_CONST_WAVE and so on, 100 + n). */
+enum esdr_wave {
+	ESDR_WAVE_CONST,
+	ESDR_WAVE_SIN,
+	ESDR_WAVE_COS,
+	ESDR_WAVE_SQR,
+	ESDR_WAVE_TRI,
+	ESDR_WAVE_SAW,
+};
+
+/* Generator settings: @p cycles is the frequency over the rate, @p amp and the offsets in full
+ * scale. */
+struct esdr_gen {
+	enum esdr_wave wave;
+	float cycles, amp, dc_i, dc_q;
+};
+
 #endif /* ESDR_DEFS_H */

@@ -4,7 +4,7 @@
  * The esdr module's board functions, the same wherever the radio is: the launcher's next app
  * and home gesture (the knob, or a key held), the display's size, the reset reason, and the
  * sample format converters. modesdr.c (the S3) and esdr_radio.c (the P4, the ESP32) put them in
- * their module tables (esdr_board.h).
+ * their module tables (esdr_board.h), and share the helpers of their radio bindings.
  */
 
 #include <errno.h>
@@ -93,6 +93,34 @@ INPUT_CALLBACK_DEFINE(NULL, knob_input, NULL);
 void esdr_board_init(void)
 {
 	(void)atomic_clear(&knob_home);
+}
+
+/* ---- the radio's bindings ---- */
+
+void esdr_check(int ret)
+{
+	if (ret < 0) {
+		mp_raise_OSError(-ret);
+	}
+}
+
+void esdr_gen_from(struct esdr_gen *g, mp_obj_t t)
+{
+	mp_obj_t *items;
+	size_t len;
+
+	mp_obj_get_array(t, &len, &items);
+	if (len != 5) {
+		mp_raise_ValueError(MP_ERROR_TEXT("gen: (wave, cycles, amp, dc_i, dc_q)"));
+	}
+	mp_int_t wave = mp_obj_get_int(items[0]);
+
+	/* gnuradio.analog's GR_CONST_WAVE .. GR_SAW_WAVE are 100 .. 105. */
+	g->wave = (enum esdr_wave)(wave >= 100 ? wave - 100 : wave);
+	g->cycles = (float)mp_obj_get_float(items[1]);
+	g->amp = (float)mp_obj_get_float(items[2]);
+	g->dc_i = (float)mp_obj_get_float(items[3]);
+	g->dc_q = (float)mp_obj_get_float(items[4]);
 }
 
 /* fc32_to_sc16(src, dst, scale): float32 pairs times scale to clipped int16 pairs, as many as
