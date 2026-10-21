@@ -33,7 +33,8 @@ Other links
 ===========
 
 - **UART** (chosen ``esdr,link-uart``): the WHY2025 badge's C6 to its P4 at 5 Mbaud, RTS for
-  flow control; the same rates as USB-Serial-JTAG.
+  flow control; the same rates as USB-Serial-JTAG. The badge's fallback link, built with
+  ``-DCONFIG_APP_LINK_SDIO=n -DCONFIG_ESP_SDR_GAPLESS=n`` (the gapless receiver needs SDIO).
 - **SDIO** (``CONFIG_APP_LINK_SDIO``, the WHY2025 badge's default): the C6's SDIO slave,
   function 1, 4 bit, as esp-hosted uses it (``src/link_sdio.c``, on the HAL's LL layer). The
   host's writes land in 16 buffers of 512 bytes counted by tokens; the receive blocks go out
@@ -93,13 +94,16 @@ continuous 40 MS/s stream does not fit, hence the snapshots.
 Gapless receive
 ===============
 
-Built with ``-DEXTRA_CONF_FILE=gapless.conf`` (the WHY2025 badge's C6, SDIO), the C6 receives
-the whole 80 MHz without a gap (``ESDR_MODE_GAPLESS``, ``include/esp_sdr/esp_sdr_gapless.h``,
-after upstream's ring and h0m3us3r's eSpDR): the dump engine runs as a ring that never stops
-while the CPU switches it between SRAM blocks 1 and 2 every 12288 samples (154 us), with marker
-words in the next block that prove each unit starts where the last one ended. The ring takes
-two blocks, so the image must fit block 0: the radio comes up without the Wi-Fi driver
-(``CONFIG_ESP_SDR_PHY_ONLY``), which also drops its periodic receive glitch.
+The WHY2025 badge's C6 (SDIO) is built for it by default: its board configuration holds what
+``gapless.conf`` sets, which another C6 on SDIO takes with ``-DEXTRA_CONF_FILE=gapless.conf``.
+The C6 then receives the whole 80 MHz without a gap (``ESDR_MODE_GAPLESS``,
+``include/esp_sdr/esp_sdr_gapless.h``, after upstream's ring and h0m3us3r's eSpDR): the dump
+engine runs as a ring that never stops while the CPU switches it between SRAM blocks 1 and 2
+every 12288 samples (154 us), with marker words in the next block that prove each unit starts
+where the last one ended. The ring takes two blocks, so the image must fit block 0: the radio
+comes up without the Wi-Fi driver (``CONFIG_ESP_SDR_PHY_ONLY``), which also drops its periodic
+receive glitch. The other modes (paced receive and transmit, triggered snapshots, bursts) stay
+in the image.
 
 The IQ estimator's 10 us windows decide what is kept: windows past a threshold over the quiet
 baseline, with one before and one after, are copied raw into a staging ring in block 3 while
@@ -123,7 +127,11 @@ Building and flashing
 
    west build -b xiao_esp32c6/esp32c6/hpcore esp-sdr-zephyr/apps/osmosdr_serial
    west build -b waveshare_esp32c5_zero/esp32c5/hpcore esp-sdr-zephyr/apps/osmosdr_serial
+   west build -b why2025_badge/esp32c6/hpcore esp-sdr-zephyr/apps/osmosdr_serial
    west flash --esp-device /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_<mac>-if00
+
+The WHY2025 badge's C6 reaches its USB port only while the P4 hands it over: ``west dfu --c6``
+with ``apps/micropython`` on the P4, or as ``apps/osmosdr_bridge`` describes.
 
 The board configs select the U.FL connector. The C5 has the same IQ estimator (0x24 lower) and
 its TX DC value register at 0x600a0c08, where bit 26 enables the injection. Opening the port does not reset the board as long as the host leaves

@@ -14,8 +14,22 @@ common:
     - xiao_esp32c6/esp32c6/hpcore
     - waveshare_esp32c5_zero/esp32c5/hpcore
 tests:
-  # Needs a host: run tools/esdr_serial.py (see README).
+  # Needs a host: run tools/esdr_serial.py (see README). The WHY2025 badge's C6 builds the
+  # gapless receiver on SDIO (its board configuration).
   sample.esp_sdr.osmosdr_serial:
+    build_only: true
+  # The WHY2025 badge's fallback link: UART0 to the P4 at 5 Mbaud instead of SDIO, without
+  # the gapless receiver, which needs SDIO. Twister adds the common platforms to
+  # platform_allow, hence the filter.
+  sample.esp_sdr.osmosdr_serial.uart_link:
+    platform_allow:
+      - why2025_badge/esp32c6/hpcore
+    filter: CONFIG_BOARD_WHY2025_BADGE
+    integration_platforms:
+      - why2025_badge/esp32c6/hpcore
+    extra_args:
+      - CONFIG_APP_LINK_SDIO=n
+      - CONFIG_ESP_SDR_GAPLESS=n
     build_only: true
   # Receive from the C5's diagnostic-bus ring instead of the CPU-paced IQ estimator
   # (diag.conf); exercised by tests/regression/stream_gapless.

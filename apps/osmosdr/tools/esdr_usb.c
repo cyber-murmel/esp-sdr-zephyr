@@ -36,7 +36,7 @@
  * the trigger: each ESDR_TRIG_SAMPLES of cs8 at 80 MS/s, written one after another, and a
  * line per snapshot in file.txt with its number and the samples before its trigger.
  *
- * gapless (a radio with ESDR_MODE_GAPLESS: the badge's C6 built with gapless.conf) receives
+ * gapless (a radio with ESDR_MODE_GAPLESS: the WHY2025 badge's C6, osmosdr_serial) receives
  * the whole 80 MS/s pruned to the windows past ratio times the quiet power (the threshold's
  * floor: the device raises it to fit the link) and writes the ESDR_BLK_SEG blocks as they
  * come, ESDR_BLOCK_BYTES each (esdr_seg.h parses them; ../../osmosdr_serial/tools/gapless.py
