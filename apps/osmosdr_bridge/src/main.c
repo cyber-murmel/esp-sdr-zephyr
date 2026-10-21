@@ -79,7 +79,7 @@ static struct {
 	uint64_t chan_pairs, chan_cycles, det_cycles, send_cycles;
 } st;
 
-extern uint64_t esdr_pfbq_prof[4];
+extern uint64_t esdr_pfbq_prof[5];
 
 uint64_t esdr_pfb_now(void);
 

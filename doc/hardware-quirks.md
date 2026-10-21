@@ -427,6 +427,11 @@ XIAO ESP32-C6 on the other end of a 30 dB coax attenuator.
   `esp32p4.rom.libc*.ld` scripts) at some 5.5 cycles a byte. Moving the
   channelizer's 1.5 kB history cost 13 cycles a sample until a PIE copy took
   over; copy hot data with words or vectors.
+- **The in-order P4 core waits on float results.** An independent `fmul.s`
+  issues every cycle, a dependent `fadd.s` waits 4. Interleave independent
+  chains (the detector's decisions: four channels as written-out scalars, a
+  per-channel threshold instead of byte flags) and keep loop bounds in locals:
+  with `-fno-strict-aliasing` every float store reloads struct fields.
 
 ## Building and flashing
 

@@ -48,7 +48,7 @@ static uint64_t cycles(void)
 }
 
 /* esdr_pfbq.c's profile: its clock, and the cycles per part. */
-extern uint64_t esdr_pfbq_prof[4];
+extern uint64_t esdr_pfbq_prof[5];
 
 uint64_t esdr_pfb_now(void)
 {
@@ -503,6 +503,8 @@ static const uint32_t det_runs[][2] = {{0, 36000}, {41000, 46000}, {49000, 51400
 struct det_side {
 	unsigned int opens[DET_M], closes[DET_M], taken;
 	uint64_t open_m[DET_M][4], close_m[DET_M][4], next[DET_M];
+	/* Blocks esdr_detq_block() handed out. */
+	uint32_t blocks;
 };
 
 static struct det_side dsf, dsq;
@@ -570,6 +572,18 @@ static void detq_event(const struct esdr_detq *d, const struct esdr_detq_ev *ev,
 		r->taken += n;
 	}
 	zassert_equal(pos, 4U * ev->n);
+	/* The block being decided: the event's last quads, as they are. */
+	if (esdr_detq_block(d, c, iq)) {
+		for (unsigned int i = 0; i < DET_B; i++) {
+			const struct esdr_detq_slot *sl =
+				&d->slot[(ev->first + ev->n - DET_B / 4U + i / 4U) % d->nslot];
+
+			zassert_equal(sl->m0 + i % 4U, d->cur_start + i);
+			zassert_true(sl->iq[8U * c + 2U * (i % 4U)] == iq[2U * i] &&
+				     sl->iq[8U * c + 2U * (i % 4U) + 1U] == iq[2U * i + 1U]);
+		}
+		r->blocks++;
+	}
 	if ((ev->flags & ESDR_DET_CLOSE) != 0U) {
 		zassert_true(r->closes[c] < 4U);
 		r->close_m[c][r->closes[c]++] = d->slot[ev->first].m0 + 4U * ev->n;
@@ -644,9 +658,10 @@ ZTEST(esdr_pfbq, test_detector)
 				      i);
 		}
 	}
-	printk("detector: %u samples taken (float %u); opens and closes as the float detector's\n",
-	       dsq.taken, dsf.taken);
+	printk("detector: %u samples taken (float %u), %u blocks looked at; opens and closes as "
+	       "the float detector's\n", dsq.taken, dsf.taken, dsq.blocks);
 	zassert_equal(dsq.taken, dsf.taken);
+	zassert_true(dsq.blocks > 0U);
 }
 
 /* ---- detector on a pruned stream ---- */
@@ -777,9 +792,10 @@ ZTEST(esdr_pfbq, test_bench)
 		const double n = 2000.0 * segs;
 
 		printk("bench M %2u T 8 %s: %.1f cycles a pair, with the detector %.1f (branch %.1f, "
-		       "FFT %.1f, conversion %.1f, power %.1f)\n", channels[i],
+		       "FFT %.1f, conversion %.1f, power %.1f, decisions %.1f)\n", channels[i],
 		       esdr_pfbq_pie() ? "PIE" : "C", cyc[0], cyc[1], esdr_pfbq_prof[0] / n,
-		       esdr_pfbq_prof[1] / n, esdr_pfbq_prof[2] / n, esdr_pfbq_prof[3] / n);
+		       esdr_pfbq_prof[1] / n, esdr_pfbq_prof[2] / n, esdr_pfbq_prof[3] / n,
+		       esdr_pfbq_prof[4] / n);
 	}
 }
 

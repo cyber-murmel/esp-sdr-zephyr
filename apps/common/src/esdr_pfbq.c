@@ -43,6 +43,8 @@
  */
 #define DET_FOLLOW  64.0f
 #define DET_SNAP    10.0f
+/* thr[] of a channel open or learning: below any power, the channel takes the slow path. */
+#define THR_SLOW    -1.0f
 #define DET_RELEARN 2048U
 
 /* The power kernel's sums are shifted down by this much to fit 32 bits (4 quads). */
@@ -630,10 +632,10 @@ void esdr_pfbq_reset(struct esdr_pfbq *p)
 /* ---- running ---- */
 
 #if defined(ESDR_PFBQ_PROFILE)
-/* Cycles in the branch sums, the FFTs, the conversion, the detector's block powers; the app
- * supplies the clock.
+/* Cycles in the branch sums, the FFTs, the conversion, the detector's block powers and its
+ * decisions (callbacks included); the app supplies the clock.
  */
-uint64_t esdr_pfbq_prof[4];
+uint64_t esdr_pfbq_prof[5];
 uint64_t esdr_pfb_now(void);
 #define PROF_START() uint64_t prof_t = esdr_pfb_now()
 #define PROF_END(k)  (esdr_pfbq_prof[k] += esdr_pfb_now() - prof_t)
@@ -897,7 +899,8 @@ int esdr_pfbq_push(struct esdr_pfbq *p, uint64_t index, const int8_t *iq, size_t
 /* ---- burst detector ---- */
 
 struct det_layout {
-	size_t slot, sent, use, zero, scratch, floor, learn, pw, sum, loud, quiet, learnt, open, total;
+	size_t slot, sent, use, zero, scratch, floor, thr, learn, pw, sum, loud, quiet, learnt, open,
+		total;
 };
 
 static bool det_layout(const struct esdr_detq_cfg *cfg, struct det_layout *lo)
@@ -919,7 +922,8 @@ static bool det_layout(const struct esdr_detq_cfg *cfg, struct det_layout *lo)
 	/* Masked copies: a block holds B / 4 quads. */
 	lo->scratch = lo->zero + m * VEC * sizeof(int16_t);
 	lo->floor = lo->scratch + (b / ESDR_PFBQ_FRAMES) * m * VEC * sizeof(int16_t);
-	lo->learn = lo->floor + ALIGN16(m * sizeof(float));
+	lo->thr = lo->floor + ALIGN16(m * sizeof(float));
+	lo->learn = lo->thr + ALIGN16(m * sizeof(float));
 	lo->pw = lo->learn + ALIGN16(m * ESDR_DET_LEARN * sizeof(float));
 	lo->sum = lo->pw + ALIGN16(m * sizeof(float));
 	lo->loud = lo->sum + ALIGN16(m * sizeof(uint32_t));
@@ -962,6 +966,7 @@ int esdr_detq_init(struct esdr_detq *d, const struct esdr_detq_cfg *cfg, void *m
 	memset(d->zero, 0, d->m * VEC * sizeof(int16_t));
 	d->scratch = (int16_t *)(base + lo.scratch);
 	d->floor = (float *)(base + lo.floor);
+	d->thr = (float *)(base + lo.thr);
 	d->learn = (float *)(base + lo.learn);
 	d->pw = (float *)(base + lo.pw);
 	d->sum = (uint32_t *)(base + lo.sum);
@@ -980,6 +985,7 @@ void esdr_detq_reset(struct esdr_detq *d)
 {
 	for (unsigned int k = 0; k < d->m; k++) {
 		d->floor[k] = 0.0f;
+		d->thr[k] = THR_SLOW;
 		d->learnt[k] = 0;
 		d->open[k] = 0;
 		d->quiet[k] = 0;
@@ -1092,6 +1098,7 @@ static void det_send(struct esdr_detq *d, unsigned int k, uint16_t flags, bool p
 	d->sent[k] = d->cur_start + d->b;
 	if ((flags & ESDR_DET_CLOSE) != 0U) {
 		d->open[k] = 0;
+		d->thr[k] = d->learnt[k] == ESDR_DET_LEARN ? d->floor[k] * d->ratio : THR_SLOW;
 	}
 }
 
@@ -1116,7 +1123,71 @@ static void finish(struct esdr_detq *d, esdr_detq_cb cb, void *user)
 		d->decided++;
 		d->decided_start = d->cur_start;
 	}
-	for (unsigned int k = 0; k < d->m; k++) {
+	PROF_START();
+	uint8_t slow[ESDR_PFB_M_MAX];
+	unsigned int nslow = 0;
+
+	/*
+	 * Most channels, most of the time, are closed, learnt and quiet: they only move their floor.
+	 * All of them first, against thr[] (floor * ratio, THR_SLOW for a channel open or learning:
+	 * one comparison a channel), the others after, one by one, in channel order. A quiet block
+	 * far below the floor replaces it: the floor came from bursts (a pruned stream may hold
+	 * nothing quieter at first).
+	 */
+	if (valid) {
+		const float *const pw = d->pw;
+		float *const fl = d->floor, *const thr = d->thr;
+		const float ratio = d->ratio, follow = 1.0f / DET_FOLLOW;
+		const unsigned int m = d->m;
+
+		/*
+		 * Four channels at a time, written out so that their float latencies overlap (the
+		 * core issues in order): when all four are quiet and none is far below its floor, one
+		 * branch. Otherwise the four again, one by one; nothing was stored yet.
+		 */
+		for (unsigned int k = 0; k < m; k += 4U) {
+			const float p0 = pw[k], p1 = pw[k + 1U], p2 = pw[k + 2U], p3 = pw[k + 3U];
+			const float f0 = fl[k], f1 = fl[k + 1U], f2 = fl[k + 2U], f3 = fl[k + 3U];
+			const float u0 = f0 + (p0 - f0) * follow, u1 = f1 + (p1 - f1) * follow;
+			const float u2 = f2 + (p2 - f2) * follow, u3 = f3 + (p3 - f3) * follow;
+			const bool loud = (p0 > thr[k]) | (p1 > thr[k + 1U]) | (p2 > thr[k + 2U]) |
+					  (p3 > thr[k + 3U]);
+			const bool low = (p0 * DET_SNAP < f0) | (p1 * DET_SNAP < f1) |
+					 (p2 * DET_SNAP < f2) | (p3 * DET_SNAP < f3);
+
+			if (__builtin_expect(!(loud | low), 1)) {
+				fl[k] = u0;
+				fl[k + 1U] = u1;
+				fl[k + 2U] = u2;
+				fl[k + 3U] = u3;
+				thr[k] = u0 * ratio;
+				thr[k + 1U] = u1 * ratio;
+				thr[k + 2U] = u2 * ratio;
+				thr[k + 3U] = u3 * ratio;
+				continue;
+			}
+			for (unsigned int j = k; j < k + 4U; j++) {
+				const float p = pw[j], f = fl[j];
+				float nf;
+
+				if (p > thr[j]) {
+					slow[nslow++] = (uint8_t)j;
+					continue;
+				}
+				nf = p * DET_SNAP < f ? p : f + (p - f) * follow;
+				fl[j] = nf;
+				thr[j] = nf * ratio;
+			}
+		}
+	} else {
+		for (unsigned int k = 0; k < d->m; k++) {
+			if (d->open[k] != 0U) {
+				slow[nslow++] = (uint8_t)k;
+			}
+		}
+	}
+	for (unsigned int i = 0; i < nslow; i++) {
+		const unsigned int k = slow[i];
 		const float pw = valid ? d->pw[k] : 0.0f;
 		const bool loud = pw > d->floor[k] * d->ratio;
 		uint16_t flags = 0;
@@ -1129,22 +1200,12 @@ static void finish(struct esdr_detq *d, esdr_detq_cb cb, void *user)
 				d->learn[k * ESDR_DET_LEARN + d->learnt[k]++] = pw;
 				if (d->learnt[k] == ESDR_DET_LEARN) {
 					d->floor[k] = lower_quartile(&d->learn[k * ESDR_DET_LEARN]);
-				}
-				continue;
-			}
-			if (!loud) {
-				/*
-				 * Far below: the floor came from bursts (a pruned stream may hold
-				 * nothing quieter at first), this block is the channel's own noise.
-				 */
-				if (pw * DET_SNAP < d->floor[k]) {
-					d->floor[k] = pw;
-				} else {
-					d->floor[k] += (pw - d->floor[k]) * (1.0f / DET_FOLLOW);
+					d->thr[k] = d->floor[k] * d->ratio;
 				}
 				continue;
 			}
 			d->open[k] = 1;
+			d->thr[k] = THR_SLOW;
 			d->quiet[k] = 0;
 			d->loud[k] = 1;
 			flags = ESDR_DET_OPEN;
@@ -1162,6 +1223,7 @@ static void finish(struct esdr_detq *d, esdr_detq_cb cb, void *user)
 		}
 		det_send(d, k, flags, adj && flags == ESDR_DET_OPEN, pw, cb, user);
 	}
+	PROF_END(4);
 	d->prev_start = d->cur_start;
 	d->prev_first = d->cur_first;
 	d->prev_n = d->cur_n;
@@ -1229,6 +1291,30 @@ const float *esdr_detq_floor(const struct esdr_detq *d)
 const uint8_t *esdr_detq_open(const struct esdr_detq *d)
 {
 	return d->open;
+}
+
+bool esdr_detq_block(const struct esdr_detq *d, unsigned int k, int16_t *iq)
+{
+	const size_t c = (size_t)k * VEC;
+	uint32_t *o = (uint32_t *)(void *)iq;
+
+	if (k >= d->m || d->cur_n != d->b / ESDR_PFBQ_FRAMES) {
+		return false;
+	}
+	for (unsigned int i = 0; i < d->cur_n; i++) {
+		const struct esdr_detq_slot *s = &d->slot[det_wrap(d, d->cur_first + i)];
+		const uint32_t *w = (const uint32_t *)(const void *)&s->iq[c];
+
+		if (s->valid != 0xFU || s->complete != 0xFU ||
+		    s->m0 != d->cur_start + ESDR_PFBQ_FRAMES * i) {
+			return false;
+		}
+		o[4U * i] = w[0];
+		o[4U * i + 1U] = w[1];
+		o[4U * i + 2U] = w[2];
+		o[4U * i + 3U] = w[3];
+	}
+	return true;
 }
 
 unsigned int esdr_detq_take(const struct esdr_detq *d, const struct esdr_detq_ev *ev,

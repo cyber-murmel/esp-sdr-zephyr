@@ -178,8 +178,10 @@ struct esdr_detq {
 	float ratio;
 	/* Ring of the previous and the current block's quads (2 B / 4 slots). */
 	struct esdr_detq_slot *slot;
-	/* Per channel: floor, the learning blocks' powers, block power sums, state. */
-	float *floor, *learn, *pw;
+	/* Per channel: floor, the quiet path's threshold, the learning blocks' powers, block power
+	 * sums, state.
+	 */
+	float *floor, *thr, *learn, *pw;
 	uint32_t *sum;
 	/* A quad of zeros (fills a short group of the power kernel); masked copies of a block's
 	 * quads with frames that are not complete.
@@ -243,5 +245,12 @@ const uint8_t *esdr_detq_open(const struct esdr_detq *d);
 unsigned int esdr_detq_take(const struct esdr_detq *d, const struct esdr_detq_ev *ev,
 			    uint32_t *pos, int16_t *iq, unsigned int max, uint64_t *m0,
 			    uint32_t *flags);
+
+/*
+ * From @p cb: channel @p k's B frames of the block being decided (an event's last ones) to
+ * @p iq (I then Q, 4-byte aligned) if they were all produced and are complete; false
+ * otherwise. A look at one block of any channel, cheaper than esdr_detq_take().
+ */
+bool esdr_detq_block(const struct esdr_detq *d, unsigned int k, int16_t *iq);
 
 #endif /* ESDR_PFBQ_H_ */
