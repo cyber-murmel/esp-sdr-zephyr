@@ -35,8 +35,8 @@
 			compatible = "zephyr,fstab,fatfs";
 			mount-point = "/SD:";
 			disk-access;
-			/* Never formatted: usb_disks.c sets FS_MOUNT_FLAG_NO_FORMAT (fat_fs.c refuses the
-			 * property while FLASH is formatted on mount). */
+			/* Never formatted: esdr_board.c sets FS_MOUNT_FLAG_NO_FORMAT (fat_fs.c
+			 * refuses the property while FLASH is formatted on mount). */
 		};
 
 		flash_fs: flash_fs {

@@ -5,13 +5,15 @@
  * and home gesture (the knob, or a key held), the display's size, the reset reason, and the
  * sample format converters. modesdr.c (the S3), esdr_radio.c (the P4, the ESP32) and esdr_c5.c
  * (the C5: no knob, no display) put them in their module tables (esdr_board.h), and share the
- * helpers of their radio bindings.
+ * helpers of their radio bindings. The SD card, where there is one, is never formatted.
  */
 
 #include <errno.h>
 #include <string.h>
 
 #include <zephyr/devicetree.h>
+#include <zephyr/fs/fs.h>
+#include <zephyr/init.h>
 #include <zephyr/input/input.h>
 #include <zephyr/kernel.h>
 #if defined(CONFIG_SHELL_BACKEND_DUMMY)
@@ -95,6 +97,20 @@ void esdr_board_init(void)
 {
 	(void)atomic_clear(&knob_home);
 }
+
+#if DT_NODE_EXISTS(DT_NODELABEL(sd_fs))
+FS_FSTAB_DECLARE_ENTRY(DT_NODELABEL(sd_fs));
+
+/* The SD card (fstab sd_fs): one that does not mount is left alone, never formatted
+ * (FS_FATFS_MOUNT_MKFS formats the other volumes on first use, and fat_fs.c refuses the
+ * property while it does); before MicroPython mounts the volumes. */
+static int sd_no_format(void)
+{
+	FS_FSTAB_ENTRY(DT_NODELABEL(sd_fs)).flags |= FS_MOUNT_FLAG_NO_FORMAT;
+	return 0;
+}
+SYS_INIT(sd_no_format, APPLICATION, 0);
+#endif
 
 /* ---- the radio's bindings ---- */
 

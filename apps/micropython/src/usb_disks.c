@@ -200,10 +200,6 @@ bool usb_disk_shared(const char *mnt)
 
 static int usb_disks_init(void)
 {
-#if HAS_SD
-	/* A card that does not mount is left alone, never formatted. */
-	FS_FSTAB_ENTRY(DT_NODELABEL(sd_fs)).flags |= FS_MOUNT_FLAG_NO_FORMAT;
-#endif
 	ARRAY_FOR_EACH_PTR(disks, u) {
 		k_mutex_init(&u->lock);
 		(void)disk_access_register(&u->info);

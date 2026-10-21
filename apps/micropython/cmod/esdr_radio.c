@@ -80,8 +80,6 @@
 #include <string.h>
 
 #include <zephyr/devicetree.h>
-#include <zephyr/fs/fs.h>
-#include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/byteorder.h>
 
@@ -758,19 +756,6 @@ static mp_obj_t esdr_claim(mp_obj_t mnt_in)
 	return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(esdr_claim_obj, esdr_claim);
-
-#if DT_NODE_EXISTS(DT_NODELABEL(sd_fs))
-FS_FSTAB_DECLARE_ENTRY(DT_NODELABEL(sd_fs));
-
-/* A card that does not mount is left alone, never formatted (FS_FATFS_MOUNT_MKFS formats the
- * other volumes on first use); before MicroPython mounts the volumes. */
-static int esdr_sd_no_format(void)
-{
-	FS_FSTAB_ENTRY(DT_NODELABEL(sd_fs)).flags |= FS_MOUNT_FLAG_NO_FORMAT;
-	return 0;
-}
-SYS_INIT(esdr_sd_no_format, APPLICATION, 0);
-#endif
 
 void esdr_port_init(void)
 {

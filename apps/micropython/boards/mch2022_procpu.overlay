@@ -26,7 +26,7 @@
 			disk-access;
 		};
 
-		/* The microSD card, if one mounts; never formatted (esdr_radio.c). */
+		/* The microSD card, if one mounts; never formatted (esdr_board.c). */
 		sd_fs: sd_fs {
 			compatible = "zephyr,fstab,fatfs";
 			mount-point = "/SD:";

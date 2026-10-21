@@ -40,7 +40,7 @@
 		};
 
 		/* The microSD card on the compute module (sdhc0), if one mounts; never formatted
-		 * (esdr_radio.c sets FS_MOUNT_FLAG_NO_FORMAT).
+		 * (esdr_board.c sets FS_MOUNT_FLAG_NO_FORMAT).
 		 */
 		sd_fs: sd_fs {
 			compatible = "zephyr,fstab,fatfs";
