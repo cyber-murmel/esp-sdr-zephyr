@@ -277,8 +277,7 @@ static void tune_to(double hz, uint32_t *mhz, int32_t *khz)
 	if (hz < ESP_SDR_FREQ_MIN_MHZ * 1e6 - 0.5e6 || hz > ESP_SDR_FREQ_MAX_MHZ * 1e6 + 0.5e6) {
 		mp_raise_ValueError(MP_ERROR_TEXT("frequency out of range"));
 	}
-	*mhz = (uint32_t)llround(hz / 1e6);
-	*khz = (int32_t)llround((hz - (double)*mhz * 1e6) / 1e3);
+	esdr_split_hz(hz, mhz, khz);
 	esdr_check(esp_sdr_set_freq(*mhz));
 	esdr_check(esp_sdr_set_freq_offset(*khz));
 }

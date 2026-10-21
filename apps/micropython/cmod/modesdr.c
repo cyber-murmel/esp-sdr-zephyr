@@ -204,8 +204,10 @@ static mp_obj_t esdr_tune(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_
 		mp_raise_ValueError(MP_ERROR_TEXT("frequency out of range"));
 	}
 
-	uint32_t mhz = (uint32_t)llround(lo / 1e6);
-	int32_t khz = (int32_t)llround((lo - (double)mhz * 1e6) / 1e3);
+	uint32_t mhz;
+	int32_t khz;
+
+	esdr_split_hz(lo, &mhz, &khz);
 
 	esdr_check(esp_sdr_set_freq(mhz));
 	esdr_check(esp_sdr_set_freq_offset(khz));
@@ -432,11 +434,12 @@ static mp_obj_t esdr_tx_start_fn(size_t n_args, const mp_obj_t *pos_args, mp_map
 	} else if (args[ARG_gen].u_obj != mp_const_none) {
 		esdr_gen_from(&g, args[ARG_gen].u_obj);
 	}
-	uint32_t mhz = (uint32_t)llround(hz / 1e6);
-	int32_t khz = (int32_t)llround((hz - (double)mhz * 1e6) / 1e3);
+	uint32_t mhz;
+	int32_t khz;
 	float scale = args[ARG_scale].u_obj == mp_const_none ? 1.0f
 							      : (float)mp_obj_get_float(args[ARG_scale].u_obj);
 
+	esdr_split_hz(hz, &mhz, &khz);
 	if (esdr_rx_busy()) {
 		mp_raise_OSError(EBUSY);
 	}
@@ -510,11 +513,12 @@ static mp_obj_t esdr_tx_loop_fn(size_t n_args, const mp_obj_t *pos_args, mp_map_
 	} else if (args[ARG_gen].u_obj != mp_const_none) {
 		esdr_gen_from(&g, args[ARG_gen].u_obj);
 	}
-	uint32_t mhz = (uint32_t)llround(hz / 1e6);
-	int32_t khz = (int32_t)llround((hz - (double)mhz * 1e6) / 1e3);
+	uint32_t mhz;
+	int32_t khz;
 	float scale = args[ARG_scale].u_obj == mp_const_none ? 1.0f
 							      : (float)mp_obj_get_float(args[ARG_scale].u_obj);
 
+	esdr_split_hz(hz, &mhz, &khz);
 	esdr_check(esdr_tx_loop_start(mhz, khz, (uint32_t)rate, args[ARG_gain].u_int, buf, len,
 				      (uint32_t)args[ARG_interp].u_int, &g, scale));
 	MP_STATE_PORT(esdr_tx_buf) = args[ARG_buf].u_obj;

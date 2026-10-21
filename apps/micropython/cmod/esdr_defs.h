@@ -8,6 +8,9 @@
 #ifndef ESDR_DEFS_H
 #define ESDR_DEFS_H
 
+#include <math.h>
+#include <stdint.h>
+
 #include <esp_attr.h>
 
 /*
@@ -38,5 +41,15 @@ struct esdr_gen {
 	enum esdr_wave wave;
 	float cycles, amp, dc_i, dc_q;
 };
+
+/*
+ * @p hz as the LO takes it (esp_sdr_set_freq(), esp_sdr_set_freq_offset()): the nearest whole
+ * MHz and the rest in kHz, rounded.
+ */
+static inline void esdr_split_hz(double hz, uint32_t *mhz, int32_t *khz)
+{
+	*mhz = (uint32_t)llround(hz / 1e6);
+	*khz = (int32_t)llround((hz - (double)*mhz * 1e6) / 1e3);
+}
 
 #endif /* ESDR_DEFS_H */

@@ -169,11 +169,11 @@ static void trig_burst(void)
 
 static int tune(uint64_t hz)
 {
-	uint32_t mhz = (uint32_t)((hz + 500000U) / 1000000U);
-	int64_t rest = (int64_t)hz - (int64_t)mhz * 1000000;
-	int32_t khz = (int32_t)((rest + (rest >= 0 ? 500 : -500)) / 1000);
+	uint32_t mhz;
+	int32_t khz;
 	int ret;
 
+	esdr_split_hz((double)hz, &mhz, &khz);
 	ret = esp_sdr_set_freq(mhz);
 	if (ret == 0) {
 		ret = esp_sdr_set_freq_offset(khz);
@@ -504,13 +504,14 @@ static void tx_off(void)
 /* The LO at the requested frequency plus the tone's offset; the settings' frequency stays. */
 static int tx_tune(void)
 {
-	uint64_t hz = set.freq_hz + tx.offset_hz;
-	uint32_t mhz = (uint32_t)((hz + 500000U) / 1000000U);
-	int64_t rest = (int64_t)hz - (int64_t)mhz * 1000000;
-	int ret = esp_sdr_set_freq(mhz);
+	uint32_t mhz;
+	int32_t khz;
+	int ret;
 
+	esdr_split_hz((double)(set.freq_hz + tx.offset_hz), &mhz, &khz);
+	ret = esp_sdr_set_freq(mhz);
 	if (ret == 0) {
-		ret = esp_sdr_set_freq_offset((int32_t)((rest + (rest >= 0 ? 500 : -500)) / 1000));
+		ret = esp_sdr_set_freq_offset(khz);
 	}
 	return ret;
 }
