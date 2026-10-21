@@ -25,7 +25,7 @@ elseif(CONFIG_SOC_SERIES_ESP32P4)
   include(${CMAKE_CURRENT_LIST_DIR}/../common/common.cmake)
   # The link to the radio and the USB glue, plain Zephyr code (outside MicroPython's include
   # path, whose assert.h hides the HAL's static_assert).
-  target_sources(app PRIVATE cmod/esdr_remote.c cmod/esdr_usb.c cmod/esdr_gl.c)
+  target_sources(app PRIVATE cmod/esdr_remote.c cmod/esdr_mon.c cmod/esdr_usb.c cmod/esdr_gl.c)
   target_include_directories(app PRIVATE cmod ../osmosdr/src)
   # Its SDIO side, shared with the bridge app.
   include(${CMAKE_CURRENT_LIST_DIR}/../common/esdr_sdio_host.cmake)
@@ -37,7 +37,7 @@ elseif(CONFIG_SOC_SERIES_ESP32)
   # (cmod/esdr_radio.c), the radio on the chip behind the link's interface (cmod/esdr_local.c,
   # plain Zephyr code as esdr_remote.c is on the P4).
   set(MICROPY_APP_START ON)
-  target_sources(app PRIVATE cmod/esdr_local.c src/setjmp.S)
+  target_sources(app PRIVATE cmod/esdr_local.c cmod/esdr_mon.c src/setjmp.S)
   target_include_directories(app PRIVATE cmod ../osmosdr/src)
   # The ROM's setjmp spills windows by SYSCALL, as on the S3 (setjmp.S).
   zephyr_link_libraries("-Wl,--wrap=setjmp")

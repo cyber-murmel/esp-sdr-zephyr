@@ -28,6 +28,7 @@
 #include <esp_sdr/esp_sdr_rx.h>
 
 #include "esdr_defs.h"
+#include "esdr_mon.h"
 #include "esdr_remote.h"
 #include "esdr_rx.h"
 
@@ -87,12 +88,6 @@ static struct {
 	bool have_burst;
 	struct esdr_remote_rx_stats st;
 } rx;
-
-/* The monitor: the newest ESDR_MON_SAMPLES pairs, and how many came in all. */
-static uint32_t mon[ESDR_MON_SAMPLES] ESDR_PSRAM;
-static volatile uint64_t mon_total;
-/* A display-only run captures again once the monitor has been read. */
-static volatile bool mon_read;
 
 /* A burst's samples, converted. */
 static struct esp_sdr_iq16 burst[ESP_SDR_SAMPLES_MAX] ESDR_PSRAM;
@@ -263,20 +258,12 @@ int esdr_remote_request(uint8_t req, uint16_t value, const void *data, uint16_t 
 
 /* ---- receive ---- */
 
-/* @p n pairs into the monitor (the newest of them) and the run's buffer. */
+/* @p n pairs into the monitor (esdr_mon.c, the newest of them) and the run's buffer. */
 static void rx_store_block(const struct esp_sdr_iq16 *iq, uint32_t n)
 {
-	uint32_t skip = n > ESDR_MON_SAMPLES ? n - ESDR_MON_SAMPLES : 0U;
 	uint32_t take = n;
 
-	for (uint32_t k = skip; k < n;) {
-		uint32_t at = (uint32_t)((mon_total + k) % ESDR_MON_SAMPLES);
-		uint32_t m = MIN(n - k, ESDR_MON_SAMPLES - at);
-
-		memcpy(&mon[at], &iq[k], m * sizeof(*iq));
-		k += m;
-	}
-	mon_total += n;
+	esdr_mon_put_s16((const int16_t *)iq, n);
 
 	if (rx.count != 0U) {
 		take = (uint32_t)MIN((uint64_t)take,
@@ -357,11 +344,11 @@ static void worker_fn(void *a, void *b, void *c)
 		}
 		while (rx.active) {
 			/* A display-only run: a burst per monitor read, no more. */
-			if (rx.buf == NULL && rx.count == 0U && !mon_read) {
+			if (rx.buf == NULL && rx.count == 0U && !esdr_mon_read) {
 				k_sleep(K_MSEC(2));
 				continue;
 			}
-			mon_read = false;
+			esdr_mon_read = false;
 			if (!rx_burst()) {
 				rx.active = false;
 				break;
@@ -375,25 +362,6 @@ static void worker_fn(void *a, void *b, void *c)
 
 K_THREAD_STACK_DEFINE(worker_stack, WORKER_STACK);
 static struct k_thread worker_thread;
-
-uint64_t esdr_rx_latest(int16_t *dst, size_t n)
-{
-	uint32_t *out = (uint32_t *)dst;
-	uint64_t total = mon_total;
-	size_t have = (size_t)MIN(total, (uint64_t)ESDR_MON_SAMPLES);
-	size_t lead = 0;
-
-	n = MIN(n, (size_t)ESDR_MON_SAMPLES);
-	if (have < n) {
-		lead = n - have;
-		memset(out, 0, lead * sizeof(*out));
-	}
-	for (size_t k = lead; k < n; k++) {
-		out[k] = mon[(total - (n - k)) % ESDR_MON_SAMPLES];
-	}
-	mon_read = true;
-	return total;
-}
 
 static int rx_start(int native, unsigned int decim, int16_t *buf, size_t cap, uint64_t count,
 		    bool wrap)
@@ -410,7 +378,7 @@ static int rx_start(int native, unsigned int decim, int16_t *buf, size_t cap, ui
 	rx.decim = decim;
 	rx.have_burst = false;
 	memset(&rx.st, 0, sizeof(rx.st));
-	mon_read = true;
+	esdr_mon_read = true;
 	worker_busy = true;
 	rx.active = true;
 	k_mutex_unlock(&rx_lock);

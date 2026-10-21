@@ -33,6 +33,7 @@
 
 #include "esdr_defs.h"
 #include "esdr_link_host.h"
+#include "esdr_mon.h"
 #include "esdr_remote.h"
 #include "esdr_rx.h"
 #include "esdr_seg.h"
@@ -276,10 +277,6 @@ static struct {
 	uint32_t resyncs0;
 } rx;
 
-/* The monitor: the newest ESDR_MON_SAMPLES pairs, and how many came in all. */
-static uint32_t mon[ESDR_MON_SAMPLES] ESDR_PSRAM;
-static volatile uint64_t mon_total;
-
 static void rx_done_work_fn(struct k_work *work)
 {
 	ARG_UNUSED(work);
@@ -290,13 +287,12 @@ static K_WORK_DEFINE(rx_done_work, rx_done_work_fn);
 /* The parser fills buffers under it; stop and start change them under it. */
 static K_MUTEX_DEFINE(rx_lock);
 
-/* One pair into the monitor and the buffer. */
+/* One pair into the monitor (esdr_mon.c) and the buffer. */
 static void rx_store(int16_t i, int16_t q)
 {
 	uint32_t pair = (uint16_t)i | ((uint32_t)(uint16_t)q << 16);
 
-	mon[mon_total % ESDR_MON_SAMPLES] = pair;
-	mon_total++;
+	esdr_mon_put(i, q);
 	if (rx.count != 0U && rx.st.samples >= rx.count) {
 		return;
 	}
@@ -311,14 +307,6 @@ static void rx_store(int16_t i, int16_t q)
 	rx.st.samples++;
 }
 
-/* 8-bit pairs to 16-bit ones. */
-static void widen(int16_t *dst, const int8_t *src, uint32_t n)
-{
-	for (uint32_t k = 0; k < 2U * n; k++) {
-		dst[k] = src[k];
-	}
-}
-
 /*
  * A stream block's @p n 8-bit pairs, as rx_store() one by one but in runs: into the buffer
  * (up to its wrap or its end), and the newest into the monitor. 2 MS/s over SDIO did not
@@ -326,19 +314,9 @@ static void widen(int16_t *dst, const int8_t *src, uint32_t n)
  */
 static void rx_store_block(const int8_t *iq, uint32_t n)
 {
-	/* The monitor: the last ESDR_MON_SAMPLES of them, up to its wrap at a time. */
-	uint32_t skip = n > ESDR_MON_SAMPLES ? n - ESDR_MON_SAMPLES : 0U;
-
-	for (uint32_t k = skip; k < n;) {
-		uint32_t at = (uint32_t)((mon_total + k) % ESDR_MON_SAMPLES);
-		uint32_t m = MIN(n - k, ESDR_MON_SAMPLES - at);
-
-		widen((int16_t *)&mon[at], iq + 2U * k, m);
-		k += m;
-	}
-	mon_total += n;
-
 	uint32_t take = n;
+
+	esdr_mon_put_s8(iq, n);
 
 	if (rx.count != 0U) {
 		take = (uint32_t)MIN((uint64_t)take, rx.count > rx.st.samples ?
@@ -356,7 +334,7 @@ static void rx_store_block(const int8_t *iq, uint32_t n)
 			return;
 		}
 		m = (uint32_t)MIN((uint64_t)(take - k), rx.cap - at);
-		widen(&rx.buf[2U * at], iq + 2U * k, m);
+		esdr_widen(&rx.buf[2U * at], iq + 2U * k, m);
 		rx.st.samples += m;
 		k += m;
 	}
@@ -567,9 +545,9 @@ static int gl_seg_cb(const struct esdr_seg *seg, void *user)
 		int32_t i = CLAMP(((int32_t)seg->iq[2U * k] << sh) + oi, INT16_MIN, INT16_MAX);
 		int32_t q = CLAMP(((int32_t)seg->iq[2U * k + 1U] << sh) + oq, INT16_MIN, INT16_MAX);
 
-		mon[(mon_total + k) % ESDR_MON_SAMPLES] = (uint16_t)i | ((uint32_t)(uint16_t)q << 16);
+		*esdr_mon_slot(k) = (uint16_t)i | ((uint32_t)(uint16_t)q << 16);
 	}
-	mon_total += n;
+	esdr_mon_advance(n);
 	return 0;
 }
 
@@ -703,24 +681,6 @@ static void on_block(const uint8_t *blk)
 		rx.active = false;
 		k_work_submit(&rx_done_work);
 	}
-}
-
-uint64_t esdr_rx_latest(int16_t *dst, size_t n)
-{
-	uint32_t *out = (uint32_t *)dst;
-	uint64_t total = mon_total;
-	size_t have = (size_t)MIN(total, (uint64_t)ESDR_MON_SAMPLES);
-	size_t lead = 0;
-
-	n = MIN(n, (size_t)ESDR_MON_SAMPLES);
-	if (have < n) {
-		lead = n - have;
-		memset(out, 0, lead * sizeof(*out));
-	}
-	for (size_t k = lead; k < n; k++) {
-		out[k] = mon[(total - (n - k)) % ESDR_MON_SAMPLES];
-	}
-	return total;
 }
 
 /* ---- the parser ---- */
