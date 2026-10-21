@@ -190,7 +190,7 @@
               (FE_FORCE_TXON, see "Front end").
             Evidence: *measured* `lib/esp_sdr/src/esp_sdr_priv.h:236-244` (loop mode)
             Evidence: *decompile* S3 `mac_common.o` (`dactrig()`)
-            Evidence: `lib/esp_sdr/src/esp_sdr_tx.c:222-223, 311-312` (the library skips the ramp, clears DUMP_CTRL_REG)
+            Evidence: `lib/esp_sdr/src/esp_sdr_tx.c:272-273` (the library skips the ramp, clears DUMP_CTRL_REG)
           </description>
           <addressOffset>0xd64</addressOffset>
           <fields>
@@ -198,7 +198,7 @@
               <name>DAC_RUN</name>
               <description>
                 Run bit; `dactrig()` sets it.
-                Evidence: *working* `lib/esp_sdr/src/esp_sdr_tx.c:146-156`
+                Evidence: *working* `lib/esp_sdr/src/esp_sdr_tx.c:158-166`
               </description>
               <bitRange>[31:31]</bitRange>
               <access>read-write</access>
@@ -219,7 +219,7 @@
                 Pulsed: one pass. Held: the engine replays the first DUMP_DAC_COUNT words
                 back to back, gapless, until the register is cleared. A retrigger leaves a
                 hole of about 1.35 us.
-                Evidence: *measured* `lib/esp_sdr/src/esp_sdr_tx.c:197-199, 292-302`,
+                Evidence: *measured* `lib/esp_sdr/src/esp_sdr_tx.c:163-166, 253-263`,
                 `lib/esp_sdr/src/esp_sdr_priv.h:236-244`
               </description>
               <bitRange>[19:19]</bitRange>
@@ -229,7 +229,7 @@
               <name>DAC_DONE</name>
               <description>
                 Done flag; `dactrig()` polls it.
-                Evidence: *working* `lib/esp_sdr/src/esp_sdr_tx.c:158-167`
+                Evidence: *working* `lib/esp_sdr/src/esp_sdr_tx.c:167-169`
               </description>
               <bitRange>[18:18]</bitRange>
               <access>read-only</access>
@@ -257,7 +257,7 @@
               <name>DAC_COUNT</name>
               <description>
                 Words to play, 256 to 16380.
-                Evidence: *working* `lib/esp_sdr/src/esp_sdr_tx.c:148-149`
+                Evidence: *working* `lib/esp_sdr/src/esp_sdr_tx.c:158-159`
               </description>
               <bitRange>[13:0]</bitRange>
               <access>read-write</access>
@@ -369,7 +369,7 @@
             Evidence: `lib/esp_sdr/src/esp_sdr_rx.c:246-278`, `lib/esp_sdr/src/esp_sdr.c:123-133`
             (save and restore)
             Evidence: `lib/esp_sdr/esp_sdr_bank_ring.ld:4-14` (reserved banks)
-            Evidence: *measured* `lib/esp_sdr/src/esp_sdr_tx.c:392-396` (CPU stores and the DAC)
+            Evidence: *measured* `lib/esp_sdr/src/esp_sdr_tx.c:346-349` (CPU stores and the DAC)
             Evidence: *measured* hardware-quirks.md, "Capture and DAC engine";
             `lib/esp_sdr/src/esp_sdr_priv.h:236-244` (a change while running)
             Evidence: *measured* bench 2026-10-05, `lib/esp_sdr/esp_sdr_bank.ld`; *upstream*

@@ -146,58 +146,48 @@ uint32_t esp_sdr_tx_rate_hz(enum esp_sdr_rate rate)
 	}
 }
 
-static uint32_t dac_t0;
+static enum esp_sdr_rate dac_rate;
+static uint32_t dac_usage, dac_saved;
 
-/* Start one DAC burst over the first `count` words of the bank the engine owns. */
-static void dac_trigger(enum esp_sdr_rate rate, size_t count)
+/*
+ * One DAC burst over the first `count` words of the bank the engine owns, in a session
+ * (esp_sdr_dac_begin()); true once the engine reports it done.
+ */
+static bool dac_burst(size_t count)
 {
-	uint32_t ctrl = DUMP_CTRL_RUN | (rate == ESP_SDR_RATE_80MSPS ? DAC_CTRL_80MSPS : 0U) |
+	uint32_t ctrl = DUMP_CTRL_RUN | (dac_rate == ESP_SDR_RATE_80MSPS ? DAC_CTRL_80MSPS : 0U) |
 			FIELD_PREP(DUMP_CTRL_COUNT, count);
+	uint32_t t0 = k_cycle_get_32();
+	bool done;
 
-	dac_t0 = k_cycle_get_32();
 	REG_WRITE(DAC_TRIG_REG, 0);
 	REG_WRITE(DAC_TRIG_REG, ctrl);
 	REG_WRITE(DAC_TRIG_REG, ctrl | DUMP_CTRL_TRIGGER);
 	REG_WRITE(DAC_TRIG_REG, ctrl);
-}
-
-/* True once the engine reports the burst done. */
-static bool dac_wait_done(void)
-{
-	bool done;
-
 	do {
 		done = (REG_READ(DAC_TRIG_REG) & DUMP_CTRL_DONE) != 0U;
-	} while (!done && k_cyc_to_us_floor32(k_cycle_get_32() - dac_t0) < DUMP_TIMEOUT_US);
+	} while (!done && k_cyc_to_us_floor32(k_cycle_get_32() - t0) < DUMP_TIMEOUT_US);
 	return done;
-}
-
-static bool dac_burst(enum esp_sdr_rate rate, size_t count)
-{
-	dac_trigger(rate, count);
-	return dac_wait_done();
 }
 
 int esp_sdr_tx_play_for(enum esp_sdr_rate rate, const uint32_t *words, size_t count,
 		     uint32_t duration_ms, uint32_t *bursts)
 {
 	volatile uint32_t *bank = __esp_sdr_bank_start;
-	uint32_t usage, saved, n = 0;
+	uint32_t n = 0;
 	size_t len = count;
 	int64_t end;
 	bool done;
-	int ret = 0;
+	int ret;
 
-	if (esp_sdr_tx_rate_hz(rate) == 0U || count < ESP_SDR_SAMPLES_MIN ||
-	    count > ESP_SDR_SAMPLES_MAX || duration_ms > ESP_SDR_TX_PLAY_MAX_MS ||
-	    esp_sdr_bank_usage(&usage) != 0) {
+	if (count < ESP_SDR_SAMPLES_MIN || count > ESP_SDR_SAMPLES_MAX ||
+	    duration_ms > ESP_SDR_TX_PLAY_MAX_MS) {
 		return -EINVAL;
 	}
-
-	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
-	if (!esp_sdr_ready) {
-		ret = -EAGAIN;
-		goto out;
+	/* Front end once, then retrigger back to back: the switch costs ~6 ms, a burst ~1 ms. */
+	ret = esp_sdr_dac_begin(rate);
+	if (ret != 0) {
+		return ret;
 	}
 
 	/* Each retrigger leaves a ~1.35 us hole: tile the burst over the bank to
@@ -211,39 +201,19 @@ int esp_sdr_tx_play_for(enum esp_sdr_rate rate, const uint32_t *words, size_t co
 	}
 	count = len;
 
-	/* Front end and bank switch once, then retrigger back to back: the
-	 * switch costs ~6 ms, a burst is at most ~1 ms.
-	 */
-	esp_sdr_tx_prepare();
-	saved = REG_READ(SENSITIVE_INTERNAL_SRAM_USAGE_3_REG);
-	REG_WRITE(SENSITIVE_INTERNAL_SRAM_USAGE_3_REG,
-		  (saved & ~SENSITIVE_INTERNAL_SRAM_MAC_DUMP_USAGE_M) | usage);
-
+	esp_sdr_dac_select(0);
 	end = k_uptime_get() + duration_ms;
 	do {
-		done = dac_burst(rate, count);
+		done = dac_burst(count);
 		n++;
 	} while (done && k_uptime_get() < end);
+	esp_sdr_dac_end();
 
-	REG_WRITE(DAC_TRIG_REG, 0);
-	REG_WRITE(DUMP_CTRL_REG, 0); /* dactrig() also clears the ADC-side register */
-	REG_WRITE(SENSITIVE_INTERNAL_SRAM_USAGE_3_REG, saved);
-	esp_sdr_rx_resume(); /* back to the module's resting state */
-
-	if (!done) {
-		ret = -ETIMEDOUT;
-	}
 	if (bursts != NULL) {
 		*bursts = n;
 	}
-out:
-	k_mutex_unlock(&esp_sdr_lock);
-	return ret;
+	return done ? 0 : -ETIMEDOUT;
 }
-
-
-static enum esp_sdr_rate dac_rate;
-static uint32_t dac_usage, dac_saved;
 
 int esp_sdr_dac_begin(enum esp_sdr_rate rate)
 {
@@ -352,23 +322,18 @@ int esp_sdr_tx_sweep(enum esp_sdr_rate rate, float f0_hz, float f1_hz, uint32_t 
 	double fs = (double)esp_sdr_tx_rate_hz(rate);
 	double T = (double)duration_ms / 1e3;
 	double k = (double)(f1_hz - f0_hz) / T;
-	uint32_t usage, saved;
 	uint64_t start;
-	int ret = 0;
+	int ret;
 
 	if (fs == 0.0 || duration_ms == 0U || duration_ms > ESP_SDR_TX_PLAY_MAX_MS ||
 	    (double)fabsf(f0_hz) >= fs / 2 || (double)fabsf(f1_hz) >= fs / 2 || amp < 1 ||
-	    amp > 511 || esp_sdr_bank_usage(&usage) != 0) {
+	    amp > 511) {
 		return -EINVAL;
 	}
-
-	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
-	if (!esp_sdr_ready) {
-		ret = -EAGAIN;
-		goto out;
+	ret = esp_sdr_dac_begin(rate);
+	if (ret != 0) {
+		return ret;
 	}
-	esp_sdr_tx_prepare();
-	saved = REG_READ(SENSITIVE_INTERNAL_SRAM_USAGE_3_REG);
 
 	start = k_cycle_get_64();
 	for (;;) {
@@ -379,11 +344,10 @@ int esp_sdr_tx_sweep(enum esp_sdr_rate rate, float f0_hz, float f1_hz, uint32_t 
 			break;
 		}
 		/* The engine only sees bank writes made while the CPU owns the bank. */
-		REG_WRITE(SENSITIVE_INTERNAL_SRAM_USAGE_3_REG, saved);
+		REG_WRITE(SENSITIVE_INTERNAL_SRAM_USAGE_3_REG, dac_saved);
 		sweep_fill(bank, n, t, fs, f0_hz, k, (float)amp);
-		REG_WRITE(SENSITIVE_INTERNAL_SRAM_USAGE_3_REG,
-			  (saved & ~SENSITIVE_INTERNAL_SRAM_MAC_DUMP_USAGE_M) | usage);
-		if (!dac_burst(rate, n)) {
+		esp_sdr_dac_select(0);
+		if (!dac_burst(n)) {
 			ret = -ETIMEDOUT;
 			break;
 		}
@@ -391,16 +355,10 @@ int esp_sdr_tx_sweep(enum esp_sdr_rate rate, float f0_hz, float f1_hz, uint32_t 
 		st.samples += n;
 	}
 	st.elapsed_ms = (uint32_t)(k_cyc_to_ns_floor64(k_cycle_get_64() - start) / 1000000U);
-
-	REG_WRITE(DAC_TRIG_REG, 0);
-	REG_WRITE(DUMP_CTRL_REG, 0);
-	REG_WRITE(SENSITIVE_INTERNAL_SRAM_USAGE_3_REG, saved);
-	esp_sdr_rx_resume();
+	esp_sdr_dac_end();
 	if (stats != NULL) {
 		*stats = st;
 	}
-out:
-	k_mutex_unlock(&esp_sdr_lock);
 	return ret;
 }
 
