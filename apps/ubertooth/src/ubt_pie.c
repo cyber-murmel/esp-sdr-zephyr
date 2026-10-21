@@ -10,6 +10,8 @@
 
 #include <zephyr/kernel.h>
 
+#include <esp_sdr/esp_sdr_xtensa.h>
+
 #include "ubt_pie.h"
 #include "ubt_specan.h"
 
@@ -24,15 +26,6 @@ uint8_t dsps_fft2r_sc16_initialized = 1;
 __attribute__((visibility("hidden"))) int dsp_is_power_of_two(int x)
 {
 	return x > 0 && (x & (x - 1)) == 0;
-}
-
-static inline void pie_enable(void)
-{
-	uint32_t cp;
-
-	__asm__ volatile("rsr.cpenable %0" : "=r"(cp));
-	cp |= 1U << 3;
-	__asm__ volatile("wsr.cpenable %0\n\trsync" : : "r"(cp));
 }
 
 void ubt_pie_init(int16_t *w_ram)
@@ -51,7 +44,7 @@ void ubt_pie_fft256(int16_t *iq)
 {
 	unsigned int key = arch_irq_lock();
 
-	pie_enable();
+	esp_sdr_pie_enable();
 	(void)dsps_fft2r_sc16_aes3_(iq, (int)UBT_SPECAN_N, w256);
 	arch_irq_unlock(key);
 }

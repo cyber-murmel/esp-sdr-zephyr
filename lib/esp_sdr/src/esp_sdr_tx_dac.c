@@ -22,6 +22,7 @@
 
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_tx.h>
+#include <esp_sdr/esp_sdr_xtensa.h>
 
 #include "esp_sdr_priv.h"
 
@@ -156,16 +157,6 @@ static inline uint32_t dac_word(int32_t ai, int32_t aq)
 
 #if defined(CONFIG_ESP_SDR_TX_DAC_SIMD)
 void esp_sdr_pie_ramp(uint32_t *dst, uint32_t groups, const int32_t *vec);
-
-/* The vector unit is coprocessor 3; Zephyr neither enables nor saves it. */
-static inline void pie_enable(void)
-{
-	uint32_t cp;
-
-	__asm__ volatile("rsr.cpenable %0" : "=r"(cp));
-	cp |= BIT(3);
-	__asm__ volatile("wsr.cpenable %0\n\trsync" : : "r"(cp));
-}
 #endif
 
 /* Set by the boot self-test: the vector ramp matched the scalar one bit for bit. */
@@ -355,7 +346,7 @@ static void timed_fill(int f, uint32_t *bank, uint64_t s, uint32_t n, uint32_t d
 	 * threads off this core while they are live. Interrupts do not use them.
 	 */
 	k_sched_lock();
-	pie_enable();
+	esp_sdr_pie_enable();
 	{
 		/*
 		 * Interrupts too: the USB controller and scheduler IPIs land on
@@ -447,18 +438,10 @@ static uint32_t fill_block(uint32_t *bank, uint64_t s, uint32_t n)
 	return n - data;
 }
 
-static inline uint32_t ccount(void)
-{
-	uint32_t c;
-
-	__asm__ volatile("rsr.ccount %0" : "=r"(c));
-	return c;
-}
-
 /* Spin on this core's cycle counter until t; IRAM, so a flash operation cannot stall it. */
 HOT static void spin_until(uint32_t t)
 {
-	while ((int32_t)(t - ccount()) > 0) {
+	while ((int32_t)(t - esp_sdr_ccount()) > 0) {
 	}
 }
 
@@ -470,13 +453,13 @@ HOT static void spin_until(uint32_t t)
 static unsigned int wait_until_locked(uint32_t t)
 {
 	unsigned int key;
-	int32_t d = (int32_t)(t - ccount());
+	int32_t d = (int32_t)(t - esp_sdr_ccount());
 
 	/* A sleep can end up to two ticks late (100 us each at 10 kHz): wake 300 us early. */
 	if (d > (int32_t)k_us_to_cyc_ceil32(400)) {
 		k_usleep((int32_t)k_cyc_to_us_floor32((uint32_t)d - k_us_to_cyc_ceil32(300)));
 	}
-	d = (int32_t)(ccount() - t);
+	d = (int32_t)(esp_sdr_ccount() - t);
 	if (d > 0) {
 		stats.wake_late_us_max = MAX(stats.wake_late_us_max, k_cyc_to_us_floor32((uint32_t)d));
 	}
@@ -511,9 +494,9 @@ static bool loop_start(uint64_t out)
 	if (d < (int64_t)k_us_to_cyc_ceil64(10)) {
 		return false;
 	}
-	key = wait_until_locked(ccount() + (uint32_t)d);
+	key = wait_until_locked(esp_sdr_ccount() + (uint32_t)d);
 	esp_sdr_dac_loop(0, BLOCK_WORDS);
-	loop_t0 = ccount();
+	loop_t0 = esp_sdr_ccount();
 	irq_unlock(key);
 	played_out += LOOP_STEP;
 	return true;
@@ -565,7 +548,7 @@ static void leader(void)
 
 		stats.idle_us_max = MAX(stats.idle_us_max, k_cyc_to_us_floor32(k_cycle_get_32() - sw_t));
 		zeros = fill_block(bank, s - LOOP_LEAD, BLOCK_WORDS);
-		int32_t slack = (int32_t)(t_sw - ccount());
+		int32_t slack = (int32_t)(t_sw - esp_sdr_ccount());
 		int32_t slack_us = slack / (int32_t)k_us_to_cyc_ceil32(1);
 
 		stats.slack_us_min = first ? slack_us : MIN(stats.slack_us_min, slack_us);
@@ -728,7 +711,7 @@ static bool pie_selftest(void)
 		{3 << (I_FRAC - 1), -(5 << (Q_FRAC - 1)), 1, -1},
 	};
 
-	pie_enable();
+	esp_sdr_pie_enable();
 	for (size_t c = 0; c < ARRAY_SIZE(cases); c++) {
 		for (uint32_t off = 0; off < 4U; off++) {
 			uint32_t n = 199U;

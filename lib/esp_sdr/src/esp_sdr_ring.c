@@ -33,6 +33,7 @@
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_dsp.h>
 #include <esp_sdr/esp_sdr_ring.h>
+#include <esp_sdr/esp_sdr_xtensa.h>
 
 #include "esp_sdr_mark.h"
 #include "esp_sdr_priv.h"
@@ -129,14 +130,6 @@ static ALWAYS_INLINE bool stall_poll(void)
 
 static atomic_t stop_req;
 static atomic_t active;
-
-static inline uint32_t ccount(void)
-{
-	uint32_t c;
-
-	__asm__ volatile("rsr.ccount %0" : "=r"(c));
-	return c;
-}
 
 static inline uint32_t *bank_ptr(unsigned int b)
 {
@@ -575,7 +568,7 @@ void esp_sdr_ring_wmac_release(bool was_enabled)
 /* Per-stage cycles for esp_sdr_ring_bench(): unpack, stage 1, stage 2, sink. */
 static bool prof;
 static uint32_t prof_cyc[4];
-#define PROF(k, t) do { if (prof) { uint32_t t1_ = ccount(); prof_cyc[k] += t1_ - (t); (t) = t1_; } } while (0)
+#define PROF(k, t) do { if (prof) { uint32_t t1_ = esp_sdr_ccount(); prof_cyc[k] += t1_ - (t); (t) = t1_; } } while (0)
 
 #if defined(CONFIG_ESP_SDR_RING_BOX4)
 /* Boxcar-of-4 state (ESP_SDR_RING_DECIM_BOX4): partial sums and the pair phase. */
@@ -655,7 +648,7 @@ HOT static void box4_feed(const uint32_t *p, uint32_t a, uint32_t m)
 			g--;
 		}
 		if (b4.ph == 0U && g != 0U) {
-			uint32_t t = prof ? ccount() : 0U;
+			uint32_t t = prof ? esp_sdr_ccount() : 0U;
 
 			esp_sdr_ring_unpack_iq10(w, fs1_wi, fs1_wq, g);
 			if (fir_rot) {
@@ -781,7 +774,7 @@ HOT static void raw_feed(const uint32_t *p, uint32_t a, uint32_t m)
 {
 	while (m != 0U) {
 		uint32_t take = MIN(m, FIR_CHUNK), done = 0, g, n;
-		uint32_t t = prof ? ccount() : 0U;
+		uint32_t t = prof ? esp_sdr_ccount() : 0U;
 
 		while ((fs1.n & 7U) != 0U && done < take) {
 			fir_scalar(p[a + done++]);
@@ -847,7 +840,7 @@ HOT static void fir_feed(const uint32_t *p, uint32_t a, uint32_t m)
 #if defined(CONFIG_ESP_SDR_RING_FIR)
 	while (m != 0U) {
 		uint32_t take = MIN(m, FIR_CHUNK), done = 0, g, k2;
-		uint32_t t = prof ? ccount() : 0U;
+		uint32_t t = prof ? esp_sdr_ccount() : 0U;
 
 		while ((fs1.n & 7U) != 0U && done < take) {
 			fir_scalar(p[a + done++]);
@@ -1061,16 +1054,6 @@ static inline void fail(enum esp_sdr_ring_status code, uint32_t detail)
 	}
 }
 
-/* The vector unit is coprocessor 3; Zephyr neither enables nor saves it. */
-static inline void pie_enable(void)
-{
-	uint32_t cp;
-
-	__asm__ volatile("rsr.cpenable %0" : "=r"(cp));
-	cp |= BIT(3);
-	__asm__ volatile("wsr.cpenable %0\n\trsync" : : "r"(cp));
-}
-
 /* Prepare bank nb for the unit after the one now expected at e. */
 HOT static void prepare(unsigned int nb, uint32_t e, uint32_t *start_probe, uint32_t *end_probe)
 {
@@ -1177,7 +1160,7 @@ static __attribute__((noinline, optimize("O3"))) void burst_run(uint32_t cpp, ui
 	atomic_val_t s;
 	uint32_t t, lines;
 
-#define PAIR_NOW() (p_stop + (ccount() - t_stop) / cpp)
+#define PAIR_NOW() (p_stop + (esp_sdr_ccount() - t_stop) / cpp)
 	/* The last unit to the PHY first: its verdict runs meanwhile on the other CPU. */
 	while (fir_slice(rs.g.slice)) {
 	}
@@ -1194,11 +1177,11 @@ static __attribute__((noinline, optimize("O3"))) void burst_run(uint32_t cpp, ui
 	bst.ready_last_pairs = (int32_t)(PAIR_NOW() - burst.end_pair);
 	bst.ready_max_pairs = MAX(bst.ready_max_pairs, bst.ready_last_pairs);
 	for (;;) {
-		uint32_t tw = ccount();
+		uint32_t tw = esp_sdr_ccount();
 
 		(void)stall_poll();
 		(void)irq_window(&lines);
-		bst.window_max_cyc = MAX(bst.window_max_cyc, ccount() - tw);
+		bst.window_max_cyc = MAX(bst.window_max_cyc, esp_sdr_ccount() - tw);
 		s = atomic_get(&burst_state);
 		if (s == BURST_FIRE || s == BURST_CANCEL) {
 			break;
@@ -1223,7 +1206,7 @@ static __attribute__((noinline, optimize("O3"))) void burst_run(uint32_t cpp, ui
 			/* Spin to the fire pair, unless it has passed. */
 			if (at > p_stop) {
 				t = t_stop + (uint32_t)(at - p_stop) * cpp;
-				while ((int32_t)(t - ccount()) > 0) {
+				while ((int32_t)(t - esp_sdr_ccount()) > 0) {
 				}
 			}
 			select_bank(saved, BIT(BURST_BANK));
@@ -1231,7 +1214,7 @@ static __attribute__((noinline, optimize("O3"))) void burst_run(uint32_t cpp, ui
 			REG_WRITE(DAC_TRIG_REG, dac_ctrl);
 			REG_WRITE(DAC_TRIG_REG, dac_ctrl | DUMP_CTRL_TRIGGER);
 			REG_WRITE(DAC_TRIG_REG, dac_ctrl);
-			t = ccount();
+			t = esp_sdr_ccount();
 			f = (int32_t)(p_stop + (t - t_stop) / cpp - burst.end_pair);
 			bst.fired++;
 			/* More than 2 us after the fire pair: the front end or the verdict was late. */
@@ -1247,9 +1230,9 @@ static __attribute__((noinline, optimize("O3"))) void burst_run(uint32_t cpp, ui
 			bst.fire_max_pairs = bst.fired == 1U ? f : MAX(bst.fire_max_pairs, f);
 			/* One pass at 40 MS/s: 6 cycles per word at 240 MHz, plus a margin. */
 			while ((REG_READ(DAC_TRIG_REG) & DUMP_CTRL_DONE) == 0U &&
-			       ccount() - t < 7U * burst.words + 24000U) {
+			       esp_sdr_ccount() - t < 7U * burst.words + 24000U) {
 			}
-			bst.dac_last_cyc = (REG_READ(DAC_TRIG_REG) & DUMP_CTRL_DONE) != 0U ? ccount() - t
+			bst.dac_last_cyc = (REG_READ(DAC_TRIG_REG) & DUMP_CTRL_DONE) != 0U ? esp_sdr_ccount() - t
 											   : 0U;
 			REG_WRITE(DAC_TRIG_REG, 0);
 		}
@@ -1290,7 +1273,7 @@ static __attribute__((noinline)) void engine_start(uint32_t ctrl, uint32_t saved
 	REG_WRITE(DUMP_CTRL_REG, ctrl);
 	select_bank(saved, BIT(0));
 	REG_WRITE(DUMP_CTRL_REG, ctrl | DUMP_CTRL_RUN);
-	*epoch = ccount();
+	*epoch = esp_sdr_ccount();
 	*w0 = write_index();
 }
 
@@ -1334,8 +1317,8 @@ HOT static void ring_loop(void)
 			}
 			wi = write_index();
 			written = (wi - expected) & RING_MASK;
-			if (ccount() - epoch > max_age) {
-				fail(ESP_SDR_RING_AGE, ccount() - epoch);
+			if (esp_sdr_ccount() - epoch > max_age) {
+				fail(ESP_SDR_RING_AGE, esp_sdr_ccount() - epoch);
 				break;
 			}
 			if (written >= g.thr) {
@@ -1366,11 +1349,11 @@ HOT static void ring_loop(void)
 
 			if (rs.q_len != 0U &&
 			    (int32_t)(written + rs.slice_cost / cpp + 256U) < limit) {
-				uint32_t t0 = ccount(), dt;
+				uint32_t t0 = esp_sdr_ccount(), dt;
 				uint32_t left = rs.q[0].count - rs.q[0].pos;
 
 				fir_slice(g.slice);
-				dt = ccount() - t0;
+				dt = esp_sdr_ccount() - t0;
 				rs.fir_cycles += dt;
 				rs.fir_pairs += MIN(left, g.slice);
 				rs.slice_cost = MAX(rs.slice_cost, dt);
@@ -1382,10 +1365,10 @@ HOT static void ring_loop(void)
 			}
 			if (armed && gen_pos < burst.words &&
 			    (int32_t)(written + rs.gen_cost / cpp + 64U) < limit) {
-				uint32_t t0 = ccount();
+				uint32_t t0 = esp_sdr_ccount();
 
 				(void)gen_slice(&gen_pos, GEN_SLICE);
-				rs.gen_cost = MAX(rs.gen_cost, ccount() - t0);
+				rs.gen_cost = MAX(rs.gen_cost, esp_sdr_ccount() - t0);
 			}
 		}
 		if (st->status != ESP_SDR_RING_OK) {
@@ -1418,10 +1401,10 @@ HOT static void ring_loop(void)
 				release_bank(next);
 			}
 			select_bank(saved, BIT(next));
-			epoch = ccount();
+			epoch = esp_sdr_ccount();
 		}
-		t = ccount();
-		while (ccount() - t < settle) {
+		t = esp_sdr_ccount();
+		while (esp_sdr_ccount() - t < settle) {
 		}
 
 		/* 3. Locate the finished unit exactly. */
@@ -1470,7 +1453,7 @@ HOT static void ring_loop(void)
 				break;
 			}
 			engine_start(ctrl, saved, &epoch, &w0);
-			t_go = ccount();
+			t_go = esp_sdr_ccount();
 			/* The pair index keeps counting real time across the gap. */
 			index += (t_go - t) / cpp;
 			bst.rx_back_last_pairs = (int32_t)(index - burst.end_pair);
@@ -1557,7 +1540,7 @@ int esp_sdr_ring_run(const struct esp_sdr_ring_cfg *cfg, struct esp_sdr_ring_sta
 	atomic_set(&stop_req, 0);
 	atomic_set(&active, 1);
 
-	pie_enable();
+	esp_sdr_pie_enable();
 	/* Local mask only: irq_lock() would take the global SMP lock for the run. */
 	key = arch_irq_lock();
 	rs.irq_key = key;
@@ -1606,16 +1589,16 @@ int esp_sdr_ring_bench(const struct esp_sdr_ring_cfg *cfg, unsigned int units,
 	fir_rot = cfg->shift_fs4;
 	fir_setup(d);
 	memset(prof_cyc, 0, sizeof(prof_cyc));
-	pie_enable();
+	esp_sdr_pie_enable();
 	key = arch_irq_lock();
 	prof = true;
-	t0 = ccount();
+	t0 = esp_sdr_ccount();
 	for (unsigned int u = 0; u < units; u++) {
 		unit_accept(0, (u * rs.g.thr) & RING_MASK, rs.g.thr, (uint64_t)u * rs.g.thr);
 		while (fir_slice(SLICE_PAIRS)) {
 		}
 	}
-	total = ccount() - t0;
+	total = esp_sdr_ccount() - t0;
 	prof = false;
 	arch_irq_unlock(key);
 	k_mutex_unlock(&esp_sdr_lock);
