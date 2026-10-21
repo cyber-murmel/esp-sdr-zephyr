@@ -57,7 +57,7 @@ static void direct_channel(const struct chancap_pfb *p, unsigned int c, unsigned
 	double f = centre(p, c) * FS / (double)p->m, si = 0.0, sq = 0.0;
 	unsigned int n = j * p->d + p->m - 1U;
 
-	chancap_design_lowpass(h, p->l, 0.05f, chancap_kaiser_beta(50.0f));
+	chancap_design_lowpass(h, p->l, 0.05f, esp_sdr_kaiser_beta(50.0f));
 	for (unsigned int t = 0; t < p->l; t++) {
 		unsigned int at = n - t;
 		double ph = -ESP_SDR_TAU * f * (double)at / FS;
@@ -113,7 +113,7 @@ ZTEST(chancap_dsp, test_design_dc_gain)
 	int16_t h[CHANCAP_L_MAX];
 	int32_t sum = 0;
 
-	chancap_design_lowpass(h, 64, 0.05f, chancap_kaiser_beta(50.0f));
+	chancap_design_lowpass(h, 64, 0.05f, esp_sdr_kaiser_beta(50.0f));
 	for (unsigned int n = 0; n < 64; n++) {
 		sum += h[n];
 		/* The rounding fix-up lands on one of the two centre taps. */
@@ -210,7 +210,7 @@ static void ddc_direct(const struct chancap_ddc *c, int num, unsigned int den, u
 	double f = (double)num / (double)den * FS, si = 0.0, sq = 0.0;
 	unsigned int n = j * c->d + c->d - 1U;
 
-	chancap_design_lowpass(h, CHANCAP_DDC_L, 0.075f, chancap_kaiser_beta(40.0f));
+	chancap_design_lowpass(h, CHANCAP_DDC_L, 0.075f, esp_sdr_kaiser_beta(40.0f));
 	for (unsigned int t = 0; t < CHANCAP_DDC_L; t++) {
 		unsigned int at = n - t;
 		double ph = -ESP_SDR_TAU * f * (double)at / FS;

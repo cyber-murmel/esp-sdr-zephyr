@@ -2,8 +2,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * Unit test of include/esp_sdr/esp_sdr_dsp.h: the turn constant, the windows' defining values,
- * sinc, the radix-2 FFT against a direct DFT (whole tables and a stride through larger ones),
- * and the whole-cycle tone period and phase. Runs on native_sim.
+ * sinc, the Kaiser window's I0 and beta, the radix-2 FFT against a direct DFT (whole tables and a
+ * stride through larger ones), and the whole-cycle tone period and phase. Runs on native_sim.
  */
 #include <math.h>
 
@@ -89,6 +89,27 @@ ZTEST(dsp, test_sinc)
 	/* Just off zero, on the other branch: still continuous. */
 	zassert_within(esp_sdr_sinc(1e-6), 1.0, 1e-11);
 	zassert_within(esp_sdr_sincf(1e-5f), 1.0f, 1e-6f);
+}
+
+ZTEST(dsp, test_kaiser)
+{
+	/* I0 against its series in double, summed to the end: float precision over the range. */
+	for (int i = 0; i <= 100; i++) {
+		double x = 0.1 * i, t = 1.0, s = 1.0;
+
+		for (int k = 1; k < 60; k++) {
+			t *= (x / (2.0 * k)) * (x / (2.0 * k));
+			s += t;
+		}
+		zassert_within((double)esp_sdr_bessel_i0f((float)x), s, 1e-6 * s, "I0(%g)", x);
+	}
+	zassert_equal(esp_sdr_bessel_i0f(0.0f), 1.0f);
+	zassert_within(esp_sdr_bessel_i0f(1.0f), 1.2660659f, 1e-6f);
+	/* Kaiser's formula on both branches, and the rectangular window below 21 dB. */
+	zassert_within(esp_sdr_kaiser_beta(60.0f), 5.65326f, 1e-5f);
+	zassert_within(esp_sdr_kaiser_beta(40.0f), 3.39532f, 1e-5f);
+	zassert_equal(esp_sdr_kaiser_beta(21.0f), 0.0f);
+	zassert_equal(esp_sdr_kaiser_beta(10.0f), 0.0f);
 }
 
 static void dft(uint32_t n)

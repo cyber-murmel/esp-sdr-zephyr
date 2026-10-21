@@ -54,38 +54,10 @@
 
 /* ---- prototype ---- */
 
-static float bessel_i0(float x)
-{
-	float s = 1.0f, t = 1.0f;
-
-	for (int k = 1; k < 50; k++) {
-		float q = x / (2.0f * (float)k);
-
-		t *= q * q;
-		s += t;
-		if (t < 1e-9f * s) {
-			break;
-		}
-	}
-	return s;
-}
-
-/* Kaiser's beta for a stop band of @p db. */
-static float kaiser_beta(float db)
-{
-	if (db > 50.0f) {
-		return 0.1102f * (db - 8.7f);
-	}
-	if (db >= 21.0f) {
-		return 0.5842f * powf(db - 21.0f, 0.4f) + 0.07886f * (db - 21.0f);
-	}
-	return 0.0f;
-}
-
 void esdr_pfb_proto(float *h, unsigned int m, unsigned int t, float stop_db, float gain)
 {
 	const unsigned int l = m * t;
-	const float beta = kaiser_beta(stop_db), i0b = bessel_i0(beta);
+	const float beta = esp_sdr_kaiser_beta(stop_db), i0b = esp_sdr_bessel_i0f(beta);
 	const float mid = 0.5f * (float)(l - 1U), span = 2.0f / (float)(l - 1U);
 	double sum = 0.0;
 
@@ -94,7 +66,8 @@ void esdr_pfb_proto(float *h, unsigned int m, unsigned int t, float stop_db, flo
 		float off = (float)n - mid, a = (ESP_SDR_TAU_F / 2.0f) * off / (float)m;
 		float r = off * span;
 
-		h[n] = sinf(a) / a * bessel_i0(beta * sqrtf(fmaxf(1.0f - r * r, 0.0f))) / i0b;
+		h[n] = sinf(a) / a * esp_sdr_bessel_i0f(beta * sqrtf(fmaxf(1.0f - r * r, 0.0f))) /
+		       i0b;
 		h[l - 1U - n] = h[n];
 		sum += 2.0 * (double)h[n];
 	}
