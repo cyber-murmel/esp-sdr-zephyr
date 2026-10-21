@@ -318,7 +318,8 @@ unsigned int esp_sdr_tx_paced_power_max(void)
 	return TX_POWER_MAX;
 }
 
-void esp_sdr_tx_paced_range(uint32_t *min_mhz, uint32_t *max_mhz)
+/* Transmit range in MHz: what the vendor tone path tunes (C6 2.4 GHz, C5 also 5 GHz). */
+static void tx_range(uint32_t *min_mhz, uint32_t *max_mhz)
 {
 #if defined(CONFIG_SOC_SERIES_ESP32C5)
 	/* The C5's tone path takes any MHz, 2.4 and 5 GHz. */
@@ -334,7 +335,7 @@ int esp_sdr_tx_chain_on(unsigned int power)
 {
 	uint32_t min_mhz, max_mhz;
 
-	esp_sdr_tx_paced_range(&min_mhz, &max_mhz);
+	tx_range(&min_mhz, &max_mhz);
 	if (power > TX_POWER_MAX) {
 		return -EINVAL;
 	}

@@ -181,21 +181,6 @@ struct esp_sdr_ring_stats {
  */
 int esp_sdr_ring_run(const struct esp_sdr_ring_cfg *cfg, struct esp_sdr_ring_stats *stats);
 
-/**
- * @brief Hold off the Wi-Fi MAC interrupt on the calling CPU.
- *
- * The ring does this on its own CPU for a run. Its handler runs for hundreds of microseconds per
- * packet the receiver decodes, and the HAL allocates it on the CPU that started Wi-Fi: a
- * consumer of the ring's output on that other CPU calls this from a thread pinned there, for as
- * long as the run lasts (the MAC needs no serving while the ring owns the radio).
- *
- * @return Whether the line was enabled, for esp_sdr_ring_wmac_release().
- */
-bool esp_sdr_ring_wmac_hold(void);
-
-/** @brief Undo esp_sdr_ring_wmac_hold() on the same CPU. */
-void esp_sdr_ring_wmac_release(bool was_enabled);
-
 struct esp_sdr_ring_bench_result {
 	uint32_t pairs, samples;
 	/*

@@ -37,6 +37,7 @@
 #include <esp_sdr/esp_sdr_chancap.h>
 
 #include "esp_sdr_chancap_dsp.h"
+#include "esp_sdr_priv.h"
 
 LOG_MODULE_DECLARE(esp_sdr, CONFIG_ESP_SDR_LOG_LEVEL);
 

@@ -478,4 +478,14 @@ void esp_sdr_dac_halt(void);
 /* Back to RX and release the lock. */
 void esp_sdr_dac_end(void);
 
+/*
+ * Hold off the Wi-Fi MAC interrupt on the calling CPU (esp_sdr_ring.c); returns whether the
+ * line was enabled, for esp_sdr_ring_wmac_release() on the same CPU. The ring does this on
+ * its own CPU for a run. The handler runs for hundreds of microseconds per packet the receiver
+ * decodes, on the CPU that started Wi-Fi: a consumer of the ring's output on that CPU (the
+ * channelizer) holds it off from a thread pinned there while the run lasts.
+ */
+bool esp_sdr_ring_wmac_hold(void);
+void esp_sdr_ring_wmac_release(bool was_enabled);
+
 #endif /* ESP_SDR_PRIV_H_ */

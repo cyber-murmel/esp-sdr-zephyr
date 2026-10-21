@@ -229,16 +229,6 @@ int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cfg,
 /** @brief Forget the learnt baseline (after a retune or a gain change). */
 void esp_sdr_gapless_reset(void);
 
-/**
- * @brief The int8 shift for a window of power @p power per sample about its mean (raw units
- * squared) and DC @p dc_i, @p dc_q: the smallest that keeps the DC plus 4 times the rms per
- * component below full scale.
- */
-unsigned int esp_sdr_gapless_shift(uint32_t power, int32_t dc_i, int32_t dc_q);
-
-/** @brief @p power per sample (raw units squared) in dB below full scale, times 10. */
-int16_t esp_sdr_gapless_dbfs_x10(uint32_t power);
-
 /** @} */
 
 #ifdef __cplusplus

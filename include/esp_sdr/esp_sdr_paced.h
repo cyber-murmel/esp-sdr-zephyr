@@ -121,9 +121,6 @@ void esp_sdr_tx_paced_stop(void);
 /** @brief Highest power step: 2 dB per step of the vendor tone's backoff (none on the C5). */
 unsigned int esp_sdr_tx_paced_power_max(void);
 
-/** @brief Transmit range in MHz: what the vendor tone path tunes (C6 2.4 GHz, C5 also 5 GHz). */
-void esp_sdr_tx_paced_range(uint32_t *min_mhz, uint32_t *max_mhz);
-
 /** @brief The CPU cycle counter the paced streams run on. */
 static inline uint32_t esp_sdr_paced_cycles(void)
 {
