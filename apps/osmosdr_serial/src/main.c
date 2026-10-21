@@ -37,8 +37,29 @@
 #if defined(CONFIG_ESP_SDR_TRIG)
 #include <esp_sdr/esp_sdr_trig.h>
 #endif
+#if defined(CONFIG_ESP_SDR_GAPLESS)
+#include <esp_sdr/esp_sdr_gapless.h>
+#endif
 
 #include "esdr_proto.h"
+#if defined(CONFIG_ESP_SDR_GAPLESS)
+#if !defined(CONFIG_APP_LINK_SDIO)
+#error "the gapless receiver needs the SDIO link (CONFIG_APP_LINK_SDIO)"
+#endif
+/* The sink writes blocks with interrupts off: the codec's functions in IRAM too. */
+#define ESDR_SEG_HOT ESP_SDR_GAPLESS_HOT
+#include "esdr_seg.h"
+/* What the gapless run calls with interrupts off lives in IRAM. */
+#define APP_HOT ESP_SDR_GAPLESS_HOT
+/*
+ * The ring takes SRAM blocks 1 and 2 and the image must fit block 0: the large buffers go to
+ * block 3 (not zeroed at boot: main() clears them).
+ */
+#define APP_HIGH __attribute__((section(".esp_sdr_high")))
+#else
+#define APP_HOT
+#define APP_HIGH
+#endif
 #if defined(CONFIG_APP_LINK_SDIO)
 #include "link_sdio.h"
 #endif
@@ -105,6 +126,8 @@ struct settings {
 	/* ESDR_REQ_SET_TRIGGER: threshold over the baseline in sixteenths, samples after. */
 	uint16_t trig_ratio;
 	uint32_t trig_post;
+	/* ESDR_REQ_SET_GAPLESS. */
+	struct esdr_gapless_cfg gapless;
 };
 
 /* As the device starts, and again after ESDR_REQ_RESET. */
@@ -113,6 +136,7 @@ struct settings {
 		.mode = ESDR_MODE_OFF, .bits = 8, .rx_gain = ESDR_GAIN_AUTO, .tx_gain = 8,         \
 		.dgain = ESDR_DGAIN_DEFAULT, .freq_hz = (uint64_t)CONFIG_APP_FREQ_MHZ * 1000000U,  \
 		.rate_hz = RATE_MAX_HZ, .trig_ratio = 128, .trig_post = ESDR_TRIG_SAMPLES / 2U,     \
+		.gapless = {.ratio_x16 = 64, .pre = 1, .post = 1},                                 \
 	}
 
 static const struct settings want_start = SETTINGS_START;
@@ -239,7 +263,7 @@ static struct {
 	uint32_t fill_n;
 	uint16_t next_flags;
 	uint64_t index;
-} out;
+} out APP_HIGH;
 
 #if defined(CONFIG_APP_LINK_SDIO)
 /*
@@ -247,7 +271,7 @@ static struct {
  * once the host has read its chain. Replies are copied into a bounce buffer behind them.
  */
 static uint32_t out_queued;
-static uint8_t bounce[2][ESDR_BLOCK_BYTES] __aligned(4);
+static uint8_t bounce[2][ESDR_BLOCK_BYTES] __aligned(4) APP_HIGH;
 static uint32_t bounce_next;
 
 static void sdio_out(void)
@@ -375,7 +399,7 @@ static struct {
 } req;
 
 /* One byte from the host. */
-static void req_feed(uint8_t b)
+static APP_HOT void req_feed(uint8_t b)
 {
 	if (req.tx_left > 0U) {
 		txr.buf[txr.head++ % TX_RING_BYTES] = b;
@@ -410,7 +434,7 @@ static void req_feed(uint8_t b)
 }
 
 /* Read from the host while there is room for transmit data; at most @p max bytes. */
-static void in_service(uint32_t max)
+static APP_HOT void in_service(uint32_t max)
 {
 	while (max-- > 0U && !req.ready && link_readable()) {
 		if (req.tx_left > 0U && txr.head - txr.tail >= TX_RING_BYTES) {
@@ -502,6 +526,9 @@ static int radio_apply(void)
 #if defined(CONFIG_ESP_SDR_TRIG)
 	/* The trigger's quiet baseline moves with the frequency and the gain. */
 	esp_sdr_trig_reset();
+#endif
+#if defined(CONFIG_ESP_SDR_GAPLESS)
+	esp_sdr_gapless_reset();
 #endif
 	return ret;
 }
@@ -667,12 +694,245 @@ static int set_trigger(uint16_t value, const uint8_t *data, size_t len)
 }
 #endif
 
+#if defined(CONFIG_ESP_SDR_GAPLESS)
+/*
+ * ESDR_MODE_GAPLESS: the whole 80 MHz without a gap (esp_sdr_gapless.h), its kept windows as
+ * segments (esdr_seg.h) in the stream's blocks, queued to the link straight from them.
+ * Every sample keeps its index on the 80 MS/s axis: a run's own index counts from the
+ * systimer's time at its start, so the axis goes on across the runs a request or a ring error
+ * starts anew (the first segment of a run is flagged ESDR_SEG_RESTART).
+ */
+/* The sink's blocks are the stream's (out.blk). */
+#define GL_BLOCKS OUT_BLOCKS
+/* A block that has waited this long goes out part full (1 ms). */
+#define GL_FLUSH_CYC (ESP_SDR_CPU_HZ / 1000U)
+/* Payload bytes per second the SDIO link carries, for the threshold servo. */
+#define GL_LINK_BPS 11000000U
+
+BUILD_ASSERT(ESDR_GAPLESS_RATE_HZ % CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC == 0,
+	     "the gapless axis counts in whole systimer cycles");
+
+static struct {
+	struct esdr_seg_writer w;
+	/* Blocks finished, queued to the link and read by the host (running counts). */
+	uint32_t filled, queued, done, done_base;
+	bool open;
+	uint32_t t_open;
+	/* The run's index 0 on the stream's axis, and the flags of its first segment. */
+	uint64_t base;
+	uint8_t first_flags;
+} gl;
+
+static struct esdr_gapless_stats gl_stats;
+
+static APP_HOT void gl_finish(void)
+{
+	(void)esdr_seg_writer_finish(&gl.w, 0U);
+	gl.filled++;
+	gl.open = false;
+}
+
+static APP_HOT uint32_t gl_reserve(const struct esp_sdr_gapless_seg *seg, int8_t **dst,
+				   void *user)
+{
+	const struct esdr_seg_meta m = {
+		.shift = seg->shift,
+		.flags = seg->flags | gl.first_flags,
+		.gain = seg->gain,
+		.dc_i = seg->dc_i,
+		.dc_q = seg->dc_q,
+		.power_dbfs_x10 = seg->power_dbfs_x10,
+	};
+
+	ARG_UNUSED(user);
+	/* Into the open block, else into a fresh one. */
+	for (int k = 0; k < 2; k++) {
+		uint32_t n;
+
+		if (!gl.open) {
+			if (gl.filled - gl.done >= GL_BLOCKS) {
+				gl_stats.link_full++;
+				return 0U;
+			}
+			esdr_seg_writer_begin(&gl.w, out.blk[gl.filled % GL_BLOCKS]);
+			gl.open = true;
+			gl.t_open = esp_sdr_paced_cycles();
+		}
+		n = esdr_seg_writer_put(&gl.w, gl.base + seg->index, seg->pairs, &m, dst);
+		if (n > 0U) {
+			gl.first_flags = 0U;
+			return n;
+		}
+		gl_finish();
+	}
+	return 0U;
+}
+
+static APP_HOT void gl_commit(uint32_t pairs, void *user)
+{
+	ARG_UNUSED(pairs);
+	ARG_UNUSED(user);
+}
+
+/*
+ * Full blocks, and part full ones that waited GL_FLUSH_CYC, to the link; requests in. Finishing
+ * zeroes the block's tail (the ROM's memset, a cycle a byte at worst): a part full one waits
+ * for a budget that covers it.
+ */
+static APP_HOT bool gl_service(uint32_t budget, void *user)
+{
+	ARG_UNUSED(user);
+	if (gl.open && gl.w.samples != 0U &&
+	    (esdr_seg_writer_room(&gl.w) == 0U ||
+	     (esp_sdr_paced_cycles() - gl.t_open >= GL_FLUSH_CYC &&
+	      budget >= ESDR_BLOCK_BYTES - gl.w.pos + 200U))) {
+		gl_finish();
+	}
+	while (gl.queued != gl.filled &&
+	       sdio_link_queue(out.blk[gl.queued % GL_BLOCKS], ESDR_BLOCK_BYTES, true)) {
+		gl.queued++;
+	}
+	sdio_link_pump();
+	gl.done = sdio_link_blocks_done() - gl.done_base;
+	in_service(16);
+	return true;
+}
+
+static APP_HOT bool gl_stop(void *user)
+{
+	ARG_UNUSED(user);
+	return req.ready;
+}
+
+static void gl_account(const struct esp_sdr_gapless_stats *st, int ret)
+{
+	gl_stats.pairs += st->pairs;
+	gl_stats.kept_pairs += st->kept_pairs;
+	gl_stats.dropped_pairs += st->dropped_pairs;
+	gl_stats.abandoned_pairs += st->abandoned_pairs;
+	gl_stats.runs++;
+	gl_stats.units += st->units;
+	gl_stats.windows += st->windows;
+	gl_stats.loud_windows += st->loud_windows;
+	gl_stats.kept_windows += st->kept_windows;
+	if (ret == -EIO) {
+		gl_stats.ring_errors++;
+		gl_stats.ring_last_error = st->error;
+		gl_stats.ring_last_detail = st->detail;
+	}
+	gl_stats.overrun_activity = st->overrun_activity;
+	gl_stats.overrun_cycles = st->overrun_cycles;
+	gl_stats.overrun_room = st->overrun_room;
+	gl_stats.late_max = MAX(gl_stats.late_max, st->late_max);
+	gl_stats.idle_cycles_min = gl_stats.runs == 1U ? st->idle_cycles_min
+						       : MIN(gl_stats.idle_cycles_min, st->idle_cycles_min);
+	gl_stats.stage_bytes = CONFIG_ESP_SDR_GAPLESS_STAGE_KB * 1024U;
+	gl_stats.stage_peak_bytes = MAX(gl_stats.stage_peak_bytes, st->stage_peak * 4U);
+	gl_stats.baseline = st->baseline;
+	gl_stats.ratio_x16 = st->ratio_x16;
+	gl_stats.gain = st->gain;
+	gl_stats.gain_steps += st->gain_steps;
+	stats.rx_samples += st->kept_pairs;
+}
+
+static void run_gapless(void)
+{
+	const struct esdr_gapless_cfg *g = &want.gapless;
+	struct esp_sdr_gapless_cfg cfg = {
+		.ratio_x16 = g->ratio_x16,
+		.pre = g->pre == 0xffU ? 1U : g->pre,
+		.post = g->post == 0xffU ? 1U : g->post,
+		.level = g->level,
+		.budget_bps = (g->flags & ESDR_GAPLESS_F_FIXED_THR) != 0U ? 0U
+			      : g->budget_bps != 0U ? MIN(g->budget_bps, GL_LINK_BPS)
+						    : GL_LINK_BPS,
+		.headroom_lo = g->headroom_lo,
+		.headroom_hi = g->headroom_hi,
+		.gain_servo = (g->flags & ESDR_GAPLESS_F_GAIN_SERVO) != 0U ||
+			      want.rx_gain == ESDR_GAIN_AUTO,
+	};
+	const struct esp_sdr_gapless_sink sink = {
+		.reserve = gl_reserve,
+		.commit = gl_commit,
+		.service = gl_service,
+		.stop = gl_stop,
+	};
+	struct esp_sdr_gapless_stats st;
+	int64_t end;
+
+	memset(&gl, 0, sizeof(gl));
+	gl.done_base = sdio_link_blocks_done();
+	/*
+	 * The whole 80 MHz: the PHY's 40 MHz mode and the widest low-pass (unless the host set a
+	 * bandwidth); the 20 MHz mode's filters would leave little beyond +-10 MHz.
+	 */
+	(void)esp_sdr_set_channel_bw(2);
+	if (want.bandwidth_hz == 0U) {
+		(void)esp_sdr_rx_set_lpf(0);
+	}
+	while (!req.ready && want.mode == ESDR_MODE_GAPLESS) {
+		int ret;
+
+		gl.base = k_cycle_get_64() *
+			  (ESDR_GAPLESS_RATE_HZ / CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC);
+		gl.first_flags = ESDR_SEG_RESTART;
+		ret = esp_sdr_gapless_run(&cfg, &sink, &st);
+		gl_account(&st, ret);
+		if (ret != 0 && ret != -EIO) {
+			want.mode = ESDR_MODE_OFF;
+			break;
+		}
+	}
+	/* What is left goes out before the reply. */
+	if (gl.open && gl.w.samples != 0U) {
+		gl_finish();
+	}
+	end = k_uptime_get() + 100;
+	do {
+		(void)gl_service(UINT32_MAX, NULL);
+	} while (gl.done != gl.filled && k_uptime_get() <= end);
+	gl_stats.blocks_sent += gl.done;
+	stats.rx_blocks += gl.done;
+	stats.usb_in_bytes += gl.done * ESDR_BLOCK_BYTES;
+	/* The other modes' filters come back with the next radio_apply(). */
+	(void)esp_sdr_set_channel_bw(0);
+	radio_dirty = true;
+}
+
+static int set_gapless(const uint8_t *data, size_t len)
+{
+	struct esdr_gapless_cfg g;
+
+	if (len != sizeof(g)) {
+		return -EINVAL;
+	}
+	memcpy(&g, data, sizeof(g));
+	g.ratio_x16 = sys_le16_to_cpu(g.ratio_x16);
+	g.level = sys_le32_to_cpu(g.level);
+	g.budget_bps = sys_le32_to_cpu(g.budget_bps);
+	g.flags = sys_le16_to_cpu(g.flags);
+	if (g.ratio_x16 == 0U) {
+		g.ratio_x16 = 64U;
+	}
+	if ((g.pre > 4U && g.pre != 0xffU) || (g.post > 4U && g.post != 0xffU) ||
+	    g.headroom_lo > g.headroom_hi || g.headroom_hi >= 50U || g.ratio_x16 <= 16U) {
+		return -EINVAL;
+	}
+	want.gapless = g;
+	return 0;
+}
+#endif
+
 static int handle_out(uint8_t r, uint16_t value, const uint8_t *data, size_t len)
 {
 	switch (r) {
 #if defined(CONFIG_ESP_SDR_TRIG)
 	case ESDR_REQ_SET_TRIGGER:
 		return set_trigger(value, data, len);
+#endif
+#if defined(CONFIG_ESP_SDR_GAPLESS)
+	case ESDR_REQ_SET_GAPLESS:
+		return set_gapless(data, len);
 #endif
 	case ESDR_REQ_CAPTURE_BURST:
 		return capture_burst(value, data, len);
@@ -690,7 +950,8 @@ static int handle_out(uint8_t r, uint16_t value, const uint8_t *data, size_t len
 		}
 		if (value != ESDR_MODE_OFF && value != ESDR_MODE_RX &&
 		    !(IS_ENABLED(CONFIG_ESP_SDR_PACED) && value == ESDR_MODE_TX) &&
-		    !(IS_ENABLED(CONFIG_ESP_SDR_TRIG) && value == ESDR_MODE_TRIGGER)) {
+		    !(IS_ENABLED(CONFIG_ESP_SDR_TRIG) && value == ESDR_MODE_TRIGGER) &&
+		    !(IS_ENABLED(CONFIG_ESP_SDR_GAPLESS) && value == ESDR_MODE_GAPLESS)) {
 			return -ENOTSUP;
 		}
 		want.mode = value;
@@ -807,6 +1068,11 @@ static int handle_in(uint8_t r, uint8_t *buf, size_t max)
 	case ESDR_REQ_GET_STATS:
 		memcpy(buf, &stats, MIN(max, sizeof(stats)));
 		return (int)MIN(max, sizeof(stats));
+#if defined(CONFIG_ESP_SDR_GAPLESS)
+	case ESDR_REQ_GET_GAPLESS_STATS:
+		memcpy(buf, &gl_stats, MIN(max, sizeof(gl_stats)));
+		return (int)MIN(max, sizeof(gl_stats));
+#endif
 	default:
 		return -ENOTSUP;
 	}
@@ -1246,6 +1512,7 @@ int main(void)
 	int ret;
 
 	printk("osmosdr_serial %s\n", APP_VERSION_STRING);
+	memset(&out, 0, sizeof(out));
 	link_init();
 	ret = esp_sdr_init();
 	if (ret != 0) {
@@ -1265,6 +1532,10 @@ int main(void)
 #if defined(CONFIG_ESP_SDR_TRIG)
 		} else if (want.mode == ESDR_MODE_TRIGGER) {
 			run_trig();
+#endif
+#if defined(CONFIG_ESP_SDR_GAPLESS)
+		} else if (want.mode == ESDR_MODE_GAPLESS) {
+			run_gapless();
 #endif
 		} else {
 			uint32_t got = req.got + req.tx_left;

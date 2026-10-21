@@ -90,6 +90,32 @@ The SDIO link tops out at about 13 MB/s within a transfer whatever the bus clock
 (larger ones corrupt data) all give the same, which places the limit in the C6's slave. A
 continuous 40 MS/s stream does not fit, hence the snapshots.
 
+Gapless receive
+===============
+
+Built with ``-DEXTRA_CONF_FILE=gapless.conf`` (the WHY2025 badge's C6, SDIO), the C6 receives
+the whole 80 MHz without a gap (``ESDR_MODE_GAPLESS``, ``include/esp_sdr/esp_sdr_gapless.h``,
+after upstream's ring and h0m3us3r's eSpDR): the dump engine runs as a ring that never stops
+while the CPU switches it between SRAM blocks 1 and 2 every 12288 samples (154 us), with marker
+words in the next block that prove each unit starts where the last one ended. The ring takes
+two blocks, so the image must fit block 0: the radio comes up without the Wi-Fi driver
+(``CONFIG_ESP_SDR_PHY_ONLY``), which also drops its periodic receive glitch.
+
+The IQ estimator's 10 us windows decide what is kept: windows past a threshold over the quiet
+baseline, with one before and one after, are copied raw into a staging ring in block 3 while
+their block can still be read, then packed to int8 with a shift from the window's power and DC
+(the DC left in and reported) into ``ESDR_BLK_SEG`` blocks of segments (``esdr_seg.h``). Every
+segment keeps its index on the 80 MS/s axis, across the runs a request or a ring error
+restarts. Two servos keep 5 to 10 % headroom (``ESDR_REQ_SET_GAPLESS``): the threshold rises and
+falls so that what is kept fills the link's budget short of it, and with automatic gain the
+receive gain steps so that the loudest windows' peaks stay short of full scale.
+
+On the badge the ring ran 120 s (9.6 G samples) without an error. The CPU packs some 1000
+samples a unit while kept windows come in, about the link's 11 MB/s; a burst longer than the
+staging ring keeps its start and drops its tail. ``../osmosdr/tools/esdr_usb gapless`` records
+the blocks through ``apps/osmosdr_bridge``, ``tools/gapless.py`` checks them (with a carrier on
+air, its phase across the gaps proves every segment's index).
+
 Building and flashing
 *********************
 
