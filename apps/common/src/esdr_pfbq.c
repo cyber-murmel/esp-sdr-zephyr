@@ -36,8 +36,13 @@
 /* int16 in a vector: 4 frames, I and Q. */
 #define VEC 8U
 
-/* Detector: floor follower over quiet blocks; blocks loud in a row before a channel relearns. */
+/*
+ * Detector: floor follower over quiet blocks; a quiet block this many times below the floor
+ * replaces it (10 dB: noise of a right floor does not get there, even in a block of B / 2
+ * frames); blocks loud in a row before a channel relearns.
+ */
 #define DET_FOLLOW  64.0f
+#define DET_SNAP    10.0f
 #define DET_RELEARN 2048U
 
 /* The power kernel's sums are shifted down by this much to fit 32 bits (4 quads). */
@@ -1108,6 +1113,8 @@ static void finish(struct esdr_detq *d, esdr_detq_cb cb, void *user)
 		PROF_START();
 		block_power(d, ncomp);
 		PROF_END(3);
+		d->decided++;
+		d->decided_start = d->cur_start;
 	}
 	for (unsigned int k = 0; k < d->m; k++) {
 		const float pw = valid ? d->pw[k] : 0.0f;
@@ -1126,7 +1133,15 @@ static void finish(struct esdr_detq *d, esdr_detq_cb cb, void *user)
 				continue;
 			}
 			if (!loud) {
-				d->floor[k] += (pw - d->floor[k]) * (1.0f / DET_FOLLOW);
+				/*
+				 * Far below: the floor came from bursts (a pruned stream may hold
+				 * nothing quieter at first), this block is the channel's own noise.
+				 */
+				if (pw * DET_SNAP < d->floor[k]) {
+					d->floor[k] = pw;
+				} else {
+					d->floor[k] += (pw - d->floor[k]) * (1.0f / DET_FOLLOW);
+				}
 				continue;
 			}
 			d->open[k] = 1;
@@ -1191,6 +1206,29 @@ void esdr_detq_flush(struct esdr_detq *d, esdr_detq_cb cb, void *user)
 	if (d->have_cur) {
 		finish(d, cb, user);
 	}
+}
+
+uint32_t esdr_detq_decided(const struct esdr_detq *d, uint64_t *start)
+{
+	if (start != NULL) {
+		*start = d->decided_start;
+	}
+	return d->decided;
+}
+
+const float *esdr_detq_power(const struct esdr_detq *d)
+{
+	return d->pw;
+}
+
+const float *esdr_detq_floor(const struct esdr_detq *d)
+{
+	return d->floor;
+}
+
+const uint8_t *esdr_detq_open(const struct esdr_detq *d)
+{
+	return d->open;
 }
 
 unsigned int esdr_detq_take(const struct esdr_detq *d, const struct esdr_detq_ev *ev,

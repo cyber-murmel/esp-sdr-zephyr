@@ -29,7 +29,8 @@
  * Detector: the power of every channel over blocks of B frames on the absolute frame grid
  * (m / B), complete frames only (a block of fewer than B / 2 decides nothing), against a floor
  * per channel learnt as the lower quartile of its first blocks and then following its quiet
- * ones. A channel opens on a block above floor * open_ratio and closes after hang quiet blocks;
+ * ones; a quiet block 10 dB below the floor replaces it (a pruned stream may bring a channel's
+ * bursts first and its noise only later). A channel opens on a block above floor * open_ratio and closes after hang quiet blocks;
  * while open, every block's frames go to the consumer, the first time with the block before as
  * pre-roll. A channel loud for 2048 blocks in a row closes and learns its floor again. The
  * frames stay in the channelizer's ring (cfg.frames), the detector keeps pointers to them.

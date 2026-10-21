@@ -194,6 +194,9 @@ struct esdr_detq {
 	uint16_t wr, cur_first, cur_n, prev_first, prev_n;
 	uint64_t cur_start, prev_start, last_m;
 	bool have_cur, have_prev, have_last;
+	/* Blocks decided (with every channel's power); the last one's first frame. */
+	uint32_t decided;
+	uint64_t decided_start;
 };
 
 /* Quads the producer must keep (esdr_pfbq_cfg.quads) for a detector of @p block frames. */
@@ -217,6 +220,18 @@ void esdr_detq_quad(struct esdr_detq *d, uint64_t m0, const int16_t *iq, uint8_t
 
 /* Ends the current block now (the stream stopped). */
 void esdr_detq_flush(struct esdr_detq *d, esdr_detq_cb cb, void *user);
+
+/*
+ * For a consumer that watches every channel, not only the ones that open: blocks decided so
+ * far (a block of mostly transients decides nothing), and of the last one its first frame, each
+ * channel's mean power per complete frame and floor (output units squared) and whether the
+ * channel is open (1) after it, M entries each. Valid until the next esdr_detq_quad() or
+ * esdr_detq_flush().
+ */
+uint32_t esdr_detq_decided(const struct esdr_detq *d, uint64_t *start);
+const float *esdr_detq_power(const struct esdr_detq *d);
+const float *esdr_detq_floor(const struct esdr_detq *d);
+const uint8_t *esdr_detq_open(const struct esdr_detq *d);
 
 /*
  * Up to @p max samples of @p ev's channel from its frame @p *pos on (frames counted over the

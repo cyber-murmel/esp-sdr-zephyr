@@ -649,6 +649,82 @@ ZTEST(esdr_pfbq, test_detector)
 	zassert_equal(dsq.taken, dsf.taken);
 }
 
+/* ---- detector on a pruned stream ---- */
+
+struct snap_ctx {
+	unsigned int opens, closes;
+	uint64_t open_m[4];
+};
+
+static struct snap_ctx sc;
+
+static void snap_event(const struct esdr_detq *d, const struct esdr_detq_ev *ev, void *user)
+{
+	struct snap_ctx *c = user;
+
+	if (ev->chan != 5U) {
+		return;
+	}
+	if ((ev->flags & ESDR_DET_OPEN) != 0U && c->opens < 4U) {
+		c->open_m[c->opens++] = d->cur_start;
+	}
+	c->closes += (ev->flags & ESDR_DET_CLOSE) != 0U;
+}
+
+static void snap_quad(uint64_t m0, const int16_t *iq, uint8_t valid, uint8_t complete,
+		      void *user)
+{
+	esdr_detq_quad(&detq, m0, iq, valid, complete, snap_event, user);
+}
+
+/*
+ * A pruned stream brings a channel's carrier first: its floor is learnt from the carrier. Quiet
+ * blocks of noise then put it right, and the next burst opens the channel.
+ */
+ZTEST(esdr_pfbq, test_detector_snap)
+{
+	struct esdr_detq_cfg qcfg = {.channels = DET_M, .block = DET_B, .hang = DET_HANG};
+	const uint64_t i0 = 64000000ULL;
+	/* Carrier, quiet, carrier: pair offsets. */
+	const uint32_t edge[] = {0, 24000, 30000, 40000};
+	static int8_t in[2U * 2000U];
+	uint64_t want;
+
+	zassert_ok(esdr_detq_init(&detq, &qcfg, dqmem, sizeof(dqmem)));
+	setup_q(&pq, qmem, sizeof(qmem), DET_M, 8, ESDR_DETQ_QUADS(DET_B), 0, 32.0f);
+	memset(&sc, 0, sizeof(sc));
+	test_rng_seed(7);
+	for (uint32_t off = 0; off < edge[3]; off += 2000U) {
+		for (uint32_t j = 0; j < 2000U; j++) {
+			uint64_t i = i0 + off + j;
+			bool on = off + j < edge[1] || off + j >= edge[2];
+			double re = test_rng_gauss() * DET_SIGMA, im = test_rng_gauss() * DET_SIGMA;
+
+			if (on) {
+				uint64_t den = 10U * DET_M;
+				double a = ESP_SDR_TAU * (double)(51U * (i % den) % den) / den;
+
+				re += DET_AMP * 2.0 * cos(a);
+				im += DET_AMP * 2.0 * sin(a);
+			}
+			in[2U * j] = (int8_t)CLAMP(lround(re), -128, 127);
+			in[2U * j + 1U] = (int8_t)CLAMP(lround(im), -128, 127);
+		}
+		zassert_true(esdr_pfbq_push(&pq, i0 + off, in, 2000U, 0, 0, 0, snap_quad, &sc) >= 0);
+	}
+	(void)esdr_pfbq_flush(&pq, snap_quad, &sc);
+	esdr_detq_flush(&detq, snap_event, &sc);
+	/* The first carrier was the floor; the second opened, in its first block or the next. */
+	want = (i0 + edge[2]) / (DET_M / 2U);
+	zassert_equal(sc.opens, 1U, "channel 5 opened %u times", sc.opens);
+	zassert_true(sc.open_m[0] + DET_B >= want && sc.open_m[0] <= want + DET_B,
+		     "opened at frame %llu, the burst came at %llu",
+		     (unsigned long long)sc.open_m[0], (unsigned long long)want);
+	printk("detector: a floor learnt from a carrier came right in the quiet blocks; the next "
+	       "burst opened %lld frames after its start\n",
+	       (long long)sc.open_m[0] - (long long)want);
+}
+
 /* ---- benchmark ---- */
 
 static volatile int32_t bench_sink;
