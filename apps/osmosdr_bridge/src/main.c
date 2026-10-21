@@ -9,7 +9,8 @@
  *
  * The SDIO side is ../../common/src/esdr_sdio_host.c (the C6's SLC protocol on function 1, as
  * the MicroPython app uses it too): a reader thread takes the C6's stream and splits it into
- * frames and blocks; frames go out as one write each once the C6 has buffer tokens for them.
+ * frames and blocks (../../common/src/esdr_link_host.c, shared too); frames go out as one write
+ * each once the C6 has buffer tokens for them.
  *
  * With a channelizer set (ESDR_REQ_SET_CHANNELIZER, answered here), the gapless stream's
  * segment blocks (ESDR_BLK_SEG) go to a thread instead that runs them through the fixed-point
@@ -35,6 +36,7 @@
 #include <sample_usbd.h>
 
 #include "app_clock.h"
+#include "esdr_link_host.h"
 #include "esdr_pfbq.h"
 #include "esdr_proto.h"
 #include "esdr_sdio_host.h"
@@ -48,8 +50,6 @@ LOG_MODULE_REGISTER(bridge, LOG_LEVEL_INF);
 #define SDIO_CHUNK      16384U
 #define SDIO_READY_MS   5000
 
-#define REPLY_MAX          512U
-#define REQUEST_TIMEOUT_MS 1000
 /* Bulk IN blocks in flight or waiting: 64 KB, 16 ms at 2 MS/s. */
 #define POOL      16U
 #define OUT_BUFS  2U
@@ -71,7 +71,7 @@ static uint8_t outb[OUT_BUFS][OUT_BYTES] __aligned(64);
 K_MSGQ_DEFINE(pool_free, sizeof(uint8_t), POOL, 1);
 
 static struct {
-	uint32_t blocks, dropped, resyncs, tx_frames;
+	uint32_t blocks, dropped, tx_frames;
 	/* Channelizer: segment blocks taken and dropped (it fell behind), channel blocks sent. */
 	uint32_t seg_blocks, seg_dropped, chan_blocks, chan_dropped;
 	/* Input pairs channelized, CPU cycles (mcycle) that took; of them the detector's and the
@@ -362,80 +362,25 @@ static int set_channelizer(const uint8_t *data, size_t len)
 	return 0;
 }
 
-/* ---- SDIO (../../common/src/esdr_sdio_host.c) ---- */
+/* ---- the radio: SDIO (../../common/src/esdr_sdio_host.c), the transport's host side
+ * (../../common/src/esdr_link_host.c) ---- */
 
 static int link_send(const void *a, size_t na, const void *b, size_t nb)
 {
-	return esdr_sdio_send(a, na, b, nb, REQUEST_TIMEOUT_MS);
+	return esdr_sdio_send(a, na, b, nb, ESDR_LINK_TIMEOUT_MS);
 }
 
-static int link_open(void)
+static uint8_t *get_block(void *user)
 {
-	return esdr_sdio_open(sdhc, SDIO_READY_MS);
+	uint8_t i;
+
+	ARG_UNUSED(user);
+	return k_msgq_get(&pool_free, &i, K_NO_WAIT) == 0 ? pool[i] : NULL;
 }
 
-/* ---- requests ---- */
-
-static K_MUTEX_DEFINE(req_lock);
-static K_SEM_DEFINE(reply_sem, 0, 1);
-static struct k_spinlock pend_lock;
-static struct {
-	uint8_t req;
-	bool waiting;
-	void *buf;
-	uint16_t max, len;
-	int status;
-} pend;
-
-static int request(uint8_t req, uint16_t value, const void *data, uint16_t len, void *reply,
-		   uint16_t reply_max)
+static void block_done(uint8_t *b, void *user)
 {
-	struct esdr_ser_hdr h = {
-		.magic = sys_cpu_to_le32(ESDR_SER_MAGIC),
-		.req = req,
-		.flags = reply != NULL ? ESDR_SER_IN : 0U,
-		.value = sys_cpu_to_le16(value),
-		.len = sys_cpu_to_le16(reply != NULL ? reply_max : len),
-	};
-	int ret;
-
-	k_mutex_lock(&req_lock, K_FOREVER);
-	k_sem_reset(&reply_sem);
-	pend.req = req;
-	pend.buf = reply;
-	pend.max = reply_max;
-	pend.len = 0;
-	pend.status = 0;
-	pend.waiting = true;
-	ret = link_send(&h, sizeof(h), data, reply == NULL ? len : 0U);
-	if (ret == 0) {
-		if (k_sem_take(&reply_sem, K_MSEC(REQUEST_TIMEOUT_MS)) != 0) {
-			ret = -ETIMEDOUT;
-		} else {
-			ret = pend.status < 0 ? pend.status : (int)pend.len;
-		}
-	}
-	/* A reply after this finds nobody: the buffer may be gone (a USB request's). */
-	k_spinlock_key_t key = k_spin_lock(&pend_lock);
-
-	pend.waiting = false;
-	k_spin_unlock(&pend_lock, key);
-	k_mutex_unlock(&req_lock);
-	return ret;
-}
-
-/* ---- the C6's stream: frames and blocks ---- */
-
-static struct {
-	uint8_t hdr[sizeof(struct esdr_ser_hdr) + REPLY_MAX];
-	/* Bytes of the frame or block in hand; the block's pool buffer (NULL: dropped). */
-	uint32_t have, need;
-	uint8_t *blk;
-	bool is_blk;
-} rx;
-
-static void block_done(uint8_t *b)
-{
+	ARG_UNUSED(user);
 	st.blocks++;
 	if (b == NULL) {
 		st.dropped++;
@@ -460,96 +405,19 @@ static void block_done(uint8_t *b)
 	}
 }
 
-static void frame_done(void)
+static struct esdr_link link = {
+	.send = link_send,
+	.get_block = get_block,
+	.on_block = block_done,
+};
+
+static int request(uint8_t req, uint16_t value, const void *data, uint16_t len, void *reply,
+		   uint16_t reply_max)
 {
-	struct esdr_ser_hdr h;
-
-	memcpy(&h, rx.hdr, sizeof(h));
-	k_spinlock_key_t key = k_spin_lock(&pend_lock);
-
-	if (pend.waiting && h.req == pend.req) {
-		pend.status = (int16_t)sys_le16_to_cpu(h.status);
-		pend.len = MIN(sys_le16_to_cpu(h.len), pend.max);
-		if (pend.buf != NULL) {
-			memcpy(pend.buf, rx.hdr + sizeof(h), pend.len);
-		}
-		pend.waiting = false;
-		k_sem_give(&reply_sem);
-	}
-	k_spin_unlock(&pend_lock, key);
+	return esdr_link_request(&link, req, value, data, len, reply, reply_max);
 }
 
-static void parse(const uint8_t *p, uint32_t n)
-{
-	while (n > 0U) {
-		if (rx.have < 4U) {
-			uint8_t c = *p++;
-
-			n--;
-			if (rx.have == 0U && c == 0U) {
-				/* Padding to whole words between frames. */
-				continue;
-			}
-			rx.hdr[rx.have++] = c;
-			if (rx.have == 4U) {
-				uint32_t magic = sys_get_le32(rx.hdr);
-
-				if (magic == ESDR_BLOCK_MAGIC) {
-					uint8_t i;
-
-					rx.is_blk = true;
-					rx.need = ESDR_BLOCK_BYTES;
-					rx.blk = k_msgq_get(&pool_free, &i, K_NO_WAIT) == 0 ? pool[i]
-											    : NULL;
-					if (rx.blk != NULL) {
-						memcpy(rx.blk, rx.hdr, 4);
-					}
-				} else if (magic == ESDR_SER_MAGIC) {
-					rx.is_blk = false;
-					rx.need = sizeof(struct esdr_ser_hdr);
-				} else {
-					/* Not a magic: slide by a byte. */
-					memmove(rx.hdr, rx.hdr + 1, 3);
-					rx.have = 3;
-					st.resyncs++;
-				}
-			}
-			continue;
-		}
-		uint32_t k = MIN(n, rx.need - rx.have);
-
-		if (rx.is_blk) {
-			if (rx.blk != NULL) {
-				memcpy(rx.blk + rx.have, p, k);
-			}
-		} else {
-			memcpy(rx.hdr + rx.have, p, k);
-		}
-		rx.have += k;
-		p += k;
-		n -= k;
-		if (rx.have < rx.need) {
-			continue;
-		}
-		if (rx.is_blk) {
-			block_done(rx.blk);
-			rx.have = 0;
-			continue;
-		}
-		if (rx.need == sizeof(struct esdr_ser_hdr)) {
-			/* A reply's data, if any, follows its header. */
-			uint32_t len = sys_le16_to_cpu(((struct esdr_ser_hdr *)rx.hdr)->len);
-
-			if (len > 0U && len <= REPLY_MAX) {
-				rx.need += len;
-				continue;
-			}
-		}
-		frame_done();
-		rx.have = 0;
-	}
-}
-
+/* The C6's stream: frames and blocks. */
 static void reader_fn(void *a, void *b, void *c)
 {
 	ARG_UNUSED(a);
@@ -562,7 +430,7 @@ static void reader_fn(void *a, void *b, void *c)
 			k_sleep(K_TICKS(1));
 			continue;
 		}
-		parse(chunk, (uint32_t)n);
+		esdr_link_feed(&link, chunk, (uint32_t)n);
 	}
 }
 K_THREAD_STACK_DEFINE(reader_stack, READER_STACK);
@@ -631,7 +499,7 @@ int usb_sdr_control_in(uint8_t req, uint16_t value, uint8_t *buf, size_t max)
 		memcpy(buf, &cs, MIN(max, sizeof(cs)));
 		return (int)MIN(max, sizeof(cs));
 	}
-	return request(req, value, NULL, 0, buf, (uint16_t)MIN(max, REPLY_MAX));
+	return request(req, value, NULL, 0, buf, (uint16_t)MIN(max, ESDR_SER_MAX_DATA));
 }
 
 void usb_sdr_in_done(uint8_t *data, size_t len, int err)
@@ -645,16 +513,8 @@ void usb_sdr_in_done(uint8_t *data, size_t len, int err)
 
 void usb_sdr_out_done(uint8_t *data, size_t len, int err)
 {
-	if (err == 0 && len > 0U) {
-		struct esdr_ser_hdr h = {
-			.magic = sys_cpu_to_le32(ESDR_SER_MAGIC),
-			.req = ESDR_SER_TX_DATA,
-			.len = sys_cpu_to_le16((uint16_t)len),
-		};
-
-		if (link_send(&h, sizeof(h), data, len) == 0) {
-			st.tx_frames++;
-		}
+	if (err == 0 && len > 0U && esdr_link_send_tx(&link, data, len) == 0) {
+		st.tx_frames++;
 	}
 	if (err != -ECONNABORTED && usb_sdr_enabled()) {
 		(void)usb_sdr_submit_out(data, OUT_BYTES);
@@ -708,7 +568,8 @@ int main(void)
 	for (uint8_t i = 0; i < POOL; i++) {
 		(void)k_msgq_put(&pool_free, &i, K_NO_WAIT);
 	}
-	ret = link_open();
+	esdr_link_init(&link);
+	ret = esdr_sdio_open(sdhc, SDIO_READY_MS);
 	/* The reader enumerates the C6 again whenever it answers nothing (a reset, a new image). */
 	k_thread_create(&reader_thread, reader_stack, K_THREAD_STACK_SIZEOF(reader_stack),
 			reader_fn, NULL, NULL, NULL, READER_PRIO, 0, K_NO_WAIT);
@@ -745,7 +606,7 @@ int main(void)
 	for (;;) {
 		k_sleep(K_SECONDS(10));
 		LOG_INF("blocks %u, dropped %u, resyncs %u, tx frames %u", st.blocks, st.dropped,
-			st.resyncs, st.tx_frames);
+			link.resyncs, st.tx_frames);
 		if (st.seg_blocks != 0U) {
 			LOG_INF("channelizer: %u segment blocks (%u dropped), %u channel blocks (%u "
 				"dropped)", st.seg_blocks, st.seg_dropped, st.chan_blocks,

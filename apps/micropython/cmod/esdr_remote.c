@@ -9,9 +9,11 @@
  *
  * Receive: the UART's interrupt or the SDIO reader thread fills a byte ring, a parser thread
  * splits it into reply frames (struct esdr_ser_hdr) and sample blocks (struct
- * esdr_block_hdr). Samples go to the capture buffer and the monitor (esdr_rx_latest()), the
- * gapless stream's segments to the monitor and a hook (esdr_gl.c). Transmit: requests and
- * transmit frames go out one frame at a time; a feeder thread streams a buffer.
+ * esdr_block_hdr) by the transport's host side, shared with the bridge app
+ * (../../common/src/esdr_link_host.c). Samples go to the capture buffer and the monitor
+ * (esdr_rx_latest()), the gapless stream's segments to the monitor and a hook (esdr_gl.c).
+ * Transmit: requests and transmit frames go out one frame at a time; a feeder thread streams a
+ * buffer.
  */
 
 #include <errno.h>
@@ -21,6 +23,7 @@
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/uart.h>
+#include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/util.h>
@@ -28,6 +31,7 @@
 #include <esp_assert.h>
 #include <hal/uart_ll.h>
 
+#include "esdr_link_host.h"
 #include "esdr_remote.h"
 #include "esdr_rx.h"
 #include "esdr_seg.h"
@@ -41,9 +45,6 @@
 
 /* At 500 kB/s: 130 ms of bytes while the parser is held up (over SDIO at 4 MB/s, 16 ms). */
 #define RING_BYTES 65536U
-/* Replies carry at most this much data (struct esdr_stats is the largest). */
-#define REPLY_MAX 512U
-#define REQUEST_TIMEOUT_MS 1000
 #define TX_FRAME_PAIRS (ESDR_BLOCK_BYTES / 2U)
 
 #define PARSER_STACK 2048
@@ -69,9 +70,6 @@ static bool opened;
 static uint8_t ring[RING_BYTES] __attribute__((section(".ext_ram.bss")));
 static volatile uint32_t ring_head, ring_tail;
 static K_SEM_DEFINE(ring_sem, 0, 1);
-
-/* One writer at a time (a frame goes out whole). */
-static K_MUTEX_DEFINE(write_lock);
 
 #if DT_NODE_EXISTS(LINK_SDIO)
 /* ---- the link: SDIO ---- */
@@ -115,9 +113,9 @@ static void reader_fn(void *a, void *b, void *c)
 K_THREAD_STACK_DEFINE(reader_stack, READER_STACK);
 static struct k_thread reader_thread;
 
-static void link_send(const void *a, size_t na, const void *b, size_t nb)
+static int link_send(const void *a, size_t na, const void *b, size_t nb)
 {
-	(void)esdr_sdio_send(a, na, b, nb, REQUEST_TIMEOUT_MS);
+	return esdr_sdio_send(a, na, b, nb, ESDR_LINK_TIMEOUT_MS);
 }
 
 static int link_open(void)
@@ -135,10 +133,12 @@ static int link_open(void)
 #else
 /* ---- the link: a UART ---- */
 
-static const struct device *const link = DEVICE_DT_GET(LINK_UART);
+static const struct device *const link_uart = DEVICE_DT_GET(LINK_UART);
 static uart_dev_t *const link_hw = (uart_dev_t *)DT_REG_ADDR(LINK_UART);
 /* The transmit FIFO is down to CONFIG_UART_ESP32_TX_FIFO_THRESH bytes. */
 static K_SEM_DEFINE(tx_room, 0, 1);
+/* One writer at a time (a frame goes out whole). */
+static K_MUTEX_DEFINE(write_lock);
 
 static void link_isr(const struct device *dev, void *user_data)
 {
@@ -181,7 +181,7 @@ static void link_write(const void *p, size_t n)
 			/* 128 bytes leave in 256 us, unless the radio holds CTS. (A tick's sleep here
 			 * took 2 ms: 64 kB/s.) */
 			k_sem_reset(&tx_room);
-			uart_irq_tx_enable(link);
+			uart_irq_tx_enable(link_uart);
 			(void)k_sem_take(&tx_room, TX_ROOM_WAIT);
 			continue;
 		}
@@ -192,12 +192,15 @@ static void link_write(const void *p, size_t n)
 	}
 }
 
-static void link_send(const void *a, size_t na, const void *b, size_t nb)
+static int link_send(const void *a, size_t na, const void *b, size_t nb)
 {
+	k_mutex_lock(&write_lock, K_FOREVER);
 	link_write(a, na);
 	if (nb > 0U) {
 		link_write(b, nb);
 	}
+	k_mutex_unlock(&write_lock);
+	return 0;
 }
 
 static int link_open(void)
@@ -211,66 +214,45 @@ static int link_open(void)
 	};
 	int ret;
 
-	if (!device_is_ready(link)) {
+	if (!device_is_ready(link_uart)) {
 		return -ENODEV;
 	}
 	/* The rate set at boot from current-speed does not hold on the P4: set it again. */
-	ret = uart_configure(link, &cfg);
+	ret = uart_configure(link_uart, &cfg);
 	if (ret < 0) {
 		return ret;
 	}
 	/* CTS (the radio's RTS) holds the transmitter while the radio's ring is full. */
 	uart_ll_set_hw_flow_ctrl(link_hw, UART_HW_FLOWCTRL_CTS, 0);
-	uart_irq_callback_user_data_set(link, link_isr, NULL);
-	uart_irq_rx_enable(link);
+	uart_irq_callback_user_data_set(link_uart, link_isr, NULL);
+	uart_irq_rx_enable(link_uart);
 	return 0;
 }
 #endif
 
 /* ---- requests ---- */
 
-static K_MUTEX_DEFINE(req_lock);
-static K_SEM_DEFINE(reply_sem, 0, 1);
-static struct {
-	uint8_t req;
-	bool waiting;
-	void *buf;
-	uint16_t max, len;
-	int status;
-} pend;
+static uint8_t *get_frame(void *user);
+static void frame_done(uint8_t *blk, void *user);
+
+static struct esdr_link link = {
+	.send = link_send,
+	.get_block = get_frame,
+	.on_block = frame_done,
+};
 
 int esdr_remote_request(uint8_t req, uint16_t value, const void *data, uint16_t len,
 			void *reply, uint16_t reply_max)
 {
-	struct esdr_ser_hdr h = {
-		.magic = sys_cpu_to_le32(ESDR_SER_MAGIC),
-		.req = req,
-		.flags = reply != NULL ? ESDR_SER_IN : 0U,
-		.value = sys_cpu_to_le16(value),
-		.len = sys_cpu_to_le16(reply != NULL ? reply_max : len),
-	};
-	int ret;
-
-	k_mutex_lock(&req_lock, K_FOREVER);
-	k_sem_reset(&reply_sem);
-	pend.req = req;
-	pend.buf = reply;
-	pend.max = reply_max;
-	pend.len = 0;
-	pend.status = 0;
-	pend.waiting = true;
-	k_mutex_lock(&write_lock, K_FOREVER);
-	link_send(&h, sizeof(h), data, reply == NULL ? len : 0U);
-	k_mutex_unlock(&write_lock);
-	if (k_sem_take(&reply_sem, K_MSEC(REQUEST_TIMEOUT_MS)) != 0) {
-		ret = -ETIMEDOUT;
-	} else {
-		ret = pend.status < 0 ? pend.status : (int)pend.len;
-	}
-	pend.waiting = false;
-	k_mutex_unlock(&req_lock);
-	return ret;
+	return esdr_link_request(&link, req, value, data, len, reply, reply_max);
 }
+
+static int link_init(void)
+{
+	esdr_link_init(&link);
+	return 0;
+}
+SYS_INIT(link_init, APPLICATION, 0);
 
 /* ---- receive: samples ---- */
 
@@ -289,6 +271,8 @@ static struct {
 	uint8_t decim;
 	int32_t hb_i[7], hb_q[7];
 	uint32_t hb_n;
+	/* The link's resyncs when the run started. */
+	uint32_t resyncs0;
 } rx;
 
 /* The monitor: the newest ESDR_MON_SAMPLES pairs, and how many came in all. */
@@ -742,100 +726,19 @@ uint64_t esdr_rx_latest(int16_t *dst, size_t n)
 
 /* Word aligned: a block's hook copies it by words (esdr_gl.c). */
 static uint8_t frame[ESDR_BLOCK_BYTES] __aligned(4);
-static uint32_t have;
 
-static void on_frame(void)
+static uint8_t *get_frame(void *user)
 {
-	struct esdr_ser_hdr h;
-	uint16_t len;
-
-	memcpy(&h, frame, sizeof(h));
-	len = sys_le16_to_cpu(h.len);
-	if (!pend.waiting || h.req != pend.req) {
-		return;
-	}
-	pend.status = (int16_t)sys_le16_to_cpu((uint16_t)h.status);
-	pend.len = MIN(len, pend.max);
-	if (pend.buf != NULL) {
-		memcpy(pend.buf, frame + sizeof(h), pend.len);
-	}
-	k_sem_give(&reply_sem);
+	ARG_UNUSED(user);
+	return frame;
 }
 
-/* A frame or block starts with its magic: drop bytes until the buffer starts like one. */
-static void resync(void)
+static void frame_done(uint8_t *blk, void *user)
 {
-	static const uint32_t magics[] = {ESDR_SER_MAGIC, ESDR_BLOCK_MAGIC};
-
-	while (have > 0U) {
-		for (size_t m = 0; m < ARRAY_SIZE(magics); m++) {
-			uint8_t want[4];
-
-			sys_put_le32(magics[m], want);
-			if (memcmp(frame, want, MIN(have, 4U)) == 0) {
-				return;
-			}
-		}
-		memmove(frame, frame + 1, --have);
-		rx.st.resyncs++;
-	}
-}
-
-static void parse(void)
-{
-	while (ring_tail != ring_head) {
-		uint32_t need;
-
-		if (have < 4U) {
-			uint8_t c = ring[ring_tail % RING_BYTES];
-
-			ring_tail++;
-			if (have == 0U && c == 0U) {
-				/* Padding to whole words between frames (SDIO). */
-				continue;
-			}
-			frame[have++] = c;
-			resync();
-			continue;
-		}
-		if (sys_get_le32(frame) == ESDR_BLOCK_MAGIC) {
-			need = ESDR_BLOCK_BYTES;
-		} else if (have < sizeof(struct esdr_ser_hdr)) {
-			need = sizeof(struct esdr_ser_hdr);
-		} else {
-			need = sizeof(struct esdr_ser_hdr) +
-			       sys_le16_to_cpu(((struct esdr_ser_hdr *)frame)->len);
-			if (need > sizeof(struct esdr_ser_hdr) + REPLY_MAX) {
-				/* Not a reply: look for the next magic. */
-				memmove(frame, frame + 1, --have);
-				rx.st.resyncs++;
-				resync();
-				continue;
-			}
-		}
-		/* Copy what the ring holds of the rest, up to its wrap. */
-		uint32_t avail = ring_head - ring_tail;
-		uint32_t to_end = RING_BYTES - ring_tail % RING_BYTES;
-		uint32_t k = MIN(MIN(need - have, avail), to_end);
-
-		memcpy(frame + have, &ring[ring_tail % RING_BYTES], k);
-		have += k;
-		ring_tail += k;
-		if (have == need) {
-			if (sys_get_le32(frame) == ESDR_BLOCK_MAGIC) {
-				k_mutex_lock(&rx_lock, K_FOREVER);
-				on_block(frame);
-				k_mutex_unlock(&rx_lock);
-			} else if (need == sizeof(struct esdr_ser_hdr) &&
-				   ((struct esdr_ser_hdr *)frame)->len != 0U) {
-				/* The header is in; its data follows (the next pass sizes it). */
-				continue;
-			} else {
-				on_frame();
-			}
-			have = 0;
-		}
-	}
+	ARG_UNUSED(user);
+	k_mutex_lock(&rx_lock, K_FOREVER);
+	on_block(blk);
+	k_mutex_unlock(&rx_lock);
 }
 
 static void parser_fn(void *a, void *b, void *c)
@@ -844,13 +747,19 @@ static void parser_fn(void *a, void *b, void *c)
 	ARG_UNUSED(b);
 	ARG_UNUSED(c);
 	for (;;) {
-		if (k_sem_take(&ring_sem, K_MSEC(20)) != 0 && have > 0U) {
+		if (k_sem_take(&ring_sem, K_MSEC(20)) != 0 && esdr_link_busy(&link)) {
 			/* 20 ms without a byte inside a frame: it lost bytes (the radio sends a
 			 * frame or block in one go). Drop it, or it swallows the next replies. */
-			have = 0;
-			rx.st.resyncs++;
+			(void)esdr_link_abort(&link);
 		}
-		parse();
+		/* What the ring holds, up to its wrap at a time. */
+		while (ring_tail != ring_head) {
+			uint32_t at = ring_tail % RING_BYTES;
+			uint32_t k = MIN(ring_head - ring_tail, RING_BYTES - at);
+
+			esdr_link_feed(&link, &ring[at], k);
+			ring_tail += k;
+		}
 	}
 }
 K_THREAD_STACK_DEFINE(parser_stack, PARSER_STACK);
@@ -943,7 +852,7 @@ static void tx_fill(int8_t *p, size_t k, size_t *pos, float *phase)
 
 static void feeder_fn(void *a, void *b, void *c)
 {
-	static uint8_t out[sizeof(struct esdr_ser_hdr) + ESDR_BLOCK_BYTES];
+	static int8_t out[ESDR_BLOCK_BYTES];
 
 	ARG_UNUSED(a);
 	ARG_UNUSED(b);
@@ -956,10 +865,6 @@ static void feeder_fn(void *a, void *b, void *c)
 		while (!tx.stop && (tx.count == 0U || tx.played < tx.count) &&
 		       (tx.use_gen || tx.repeat || pos < tx.n)) {
 			size_t k = TX_FRAME_PAIRS;
-			struct esdr_ser_hdr h = {
-				.magic = sys_cpu_to_le32(ESDR_SER_MAGIC),
-				.req = ESDR_SER_TX_DATA,
-			};
 
 			if (!tx.use_gen && !tx.repeat) {
 				k = MIN(k, tx.n - pos);
@@ -967,12 +872,8 @@ static void feeder_fn(void *a, void *b, void *c)
 			if (tx.count != 0U) {
 				k = (size_t)MIN((uint64_t)k, tx.count - tx.played);
 			}
-			h.len = sys_cpu_to_le16((uint16_t)(2U * k));
-			memcpy(out, &h, sizeof(h));
-			tx_fill((int8_t *)(out + sizeof(h)), k, &pos, &phase);
-			k_mutex_lock(&write_lock, K_FOREVER);
-			link_send(out, sizeof(h) + 2U * k, NULL, 0);
-			k_mutex_unlock(&write_lock);
+			tx_fill(out, k, &pos, &phase);
+			(void)esdr_link_send_tx(&link, out, 2U * k);
 			tx.played += k;
 		}
 		/* A buffer that ended plays out first (the radio replies once it has): the data
@@ -1081,6 +982,7 @@ int esdr_remote_rx_start(uint32_t rate, int16_t *buf, size_t cap, uint64_t count
 	rx.have_index = false;
 	rx.burst_mhz = 0;
 	memset(&rx.st, 0, sizeof(rx.st));
+	rx.resyncs0 = link.resyncs;
 	rx.active = true;
 	k_mutex_unlock(&rx_lock);
 	ret = esdr_remote_request(ESDR_REQ_SET_MODE, ESDR_MODE_RX, NULL, 0, NULL, 0);
@@ -1103,6 +1005,7 @@ int esdr_remote_rx_start_burst(uint16_t mhz, unsigned int decim, int16_t *buf, s
 	rx.burst_mhz = mhz;
 	rx.decim = (uint8_t)decim;
 	memset(&rx.st, 0, sizeof(rx.st));
+	rx.resyncs0 = link.resyncs;
 	rx.active = true;
 	burst_running = true;
 	k_mutex_unlock(&rx_lock);
@@ -1138,6 +1041,7 @@ uint64_t esdr_remote_rx_count(void)
 void esdr_remote_rx_stats(struct esdr_remote_rx_stats *st)
 {
 	*st = rx.st;
+	st->resyncs = link.resyncs - rx.resyncs0;
 }
 
 int esdr_remote_tx_start(uint32_t rate, const int16_t *buf, size_t n, bool repeat,
