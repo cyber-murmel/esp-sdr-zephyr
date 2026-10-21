@@ -145,6 +145,20 @@ The capture and DAC playback use the Wi-Fi MAC's undocumented dump engine
   banks 0 to 2 and proves continuity with sentinel windows: the switch must
   come within 2000 pairs (125 us at 16 MS/s) of its threshold, and a bank
   must be filtered before the engine comes round to it again.
+- **The C6's gapless ring needs the radio without the Wi-Fi driver.** The C6
+  engine takes a whole 128 KiB block, and the rotation needs two (blocks 1
+  and 2): a Wi-Fi image fills blocks 0 and 1. `CONFIG_ESP_SDR_PHY_ONLY` brings
+  the PHY up through the HAL (`esp_timer_init()`, the Wi-Fi power domain and
+  modem clock, `esp_phy_enable()`, `phy_wifi_enable_set()`) in about 70 ms and
+  the image fits block 0. Without the driver nothing sets a receive gain (the
+  level stays some 20 dB low until one is forced) and its periodic receive
+  glitch is gone. `lib/esp_sdr/src/esp_sdr_gapless.c` runs with interrupts
+  off; everything on its path must be in IRAM (`ESP_SDR_GAPLESS_HOT`), since a
+  flash cache miss of thousands of cycles made switches late. A unit is
+  readable for about one unit only, so kept windows are copied raw into a
+  staging ring at once (2.5 cycles a sample) and packed to int8 later (9 to
+  13); the window readings with their decisions cost 300 to 450 cycles, the
+  markers into the next block 2000 per unit.
 - **The Wi-Fi MAC interrupt must not run inside the ring.** The ring masks
   interrupts on its CPU and opens short windows for the kernel timer and
   IPIs (`irq_window()`). CPU interrupt line 0 is the Wi-Fi MAC's

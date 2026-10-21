@@ -368,20 +368,26 @@
               in block 3.
             - On the RISC-V core the switch must land before the engine starts: a
               `fence rw, rw` and a read-back follow each write.
-            - Only block 2 can be the engine's. Block 3 ends in the ROM's .bss and .data
-              (0x4087e610 to 0x40880000), which ROM functions use at any time, and a
-              Zephyr image with Wi-Fi fills blocks 0 and 1 (the C6 build of `apps/rfprobe`
-              has `_end` at 0x408366b0 and its libc heap above that up to block 2), so
-              upstream's rotation over blocks 1 and 2 does not fit.
+            - Block 3 ends in the ROM's .bss and .data (0x4087e610 to 0x40880000), which
+              ROM functions use at any time: it is never the engine's. A Zephyr image with
+              Wi-Fi fills blocks 0 and 1 (the C6 build of `apps/rfprobe` has `_end` at
+              0x408366b0 and its libc heap above that up to block 2), so with Wi-Fi only
+              block 2 can be the engine's. Without the Wi-Fi driver (the PHY brought up
+              alone, `CONFIG_ESP_SDR_PHY_ONLY`) an image fits block 0 and block 1 works as
+              a bank too (bit 9): upstream's rotation over blocks 1 and 2 then runs, the
+              switch one write of this register between units.
 
             Evidence: `lib/esp_sdr/src/esp_sdr_rx.c:246-278`, `lib/esp_sdr/src/esp_sdr.c:123-133`
             (save and restore)
             Evidence: *measured* bench 2026-10-08, `lib/esp_sdr/esp_sdr_bank_c6.ld:18-20`
             (whole block)
             Evidence: *working* `lib/esp_sdr/src/esp_sdr_rx.c:262-265, 274-277` (fence)
-            Evidence: *measured* build 2026-10-11 (only block 2);
+            Evidence: *measured* build 2026-10-11 (only block 2 with Wi-Fi);
             `modules/zephyr/soc/espressif/esp32c6/memory.h:29-40` (ROM .bss and .data);
             `lib/esp_sdr/esp_sdr_bank_c6.ld:29-30` (`_heap_sentry`, rfprobe heap)
+            Evidence: *measured* bench 2026-10-21 (block 1 as a bank, a PHY-only image with
+            `_end` at 0x40817620; the rotation 120 s without an error);
+            `lib/esp_sdr/esp_sdr_bank_c6_gapless.ld`, `lib/esp_sdr/src/esp_sdr_gapless.c`
           </description>
           <addressOffset>0x4</addressOffset>
           <fields>

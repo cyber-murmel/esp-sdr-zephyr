@@ -17,7 +17,13 @@
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_rx.h>
 
+#if defined(CONFIG_ESP_SDR_PHY_ONLY)
+#include <esp_phy_init.h>
+#include <esp_private/esp_modem_clock.h>
+#include <esp_timer.h>
+#else
 #include <esp_wifi.h>
+#endif
 
 /* Upstream helpers, used unmodified. */
 #if !defined(CONFIG_SOC_SERIES_ESP32C5)
@@ -178,15 +184,52 @@ int esp_sdr_bank_usage(uint32_t *usage)
 	return 0;
 }
 
+#if defined(CONFIG_ESP_SDR_PHY_ONLY)
+/* The Wi-Fi driver's power-up (wifi_init.c, esp_adapter.c) without the driver. */
+static int radio_up(void)
+{
+	/* The PHY's PLL tracking timer needs it; the radio drivers start it at boot. */
+	esp_err_t err = esp_timer_init();
+
+	if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+		return -EIO;
+	}
+	esp_wifi_bt_power_domain_on();
+	modem_clock_module_mac_reset(PERIPH_WIFI_MODULE);
+	modem_clock_module_enable(PERIPH_WIFI_MODULE);
+	esp_phy_enable(PHY_MODEM_WIFI);
+	phy_wifi_enable_set(1);
+	return 0;
+}
+#else
+static int radio_up(void)
+{
+	/* The driver already applies its Kconfig power-save mode at boot. */
+	if (esp_wifi_set_ps(WIFI_PS_NONE) != ESP_OK) {
+		LOG_WRN("power save still enabled");
+	}
+	/* Promiscuous first: NULL mode only accepts a channel in promiscuous mode. */
+	if (esp_wifi_set_promiscuous(true) != ESP_OK) {
+		return -EIO;
+	}
+	if (esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE) != ESP_OK) {
+		(void)esp_wifi_set_promiscuous(false);
+		return -EIO;
+	}
+	return 0;
+}
+#endif
+
 int esp_sdr_init(void)
 {
-	const struct device *wifi = DEVICE_DT_GET(DT_NODELABEL(wifi));
 	uint32_t usage;
 	int ret = 0;
 
-	if (!device_is_ready(wifi)) {
+#if !defined(CONFIG_ESP_SDR_PHY_ONLY)
+	if (!device_is_ready(DEVICE_DT_GET(DT_NODELABEL(wifi)))) {
 		return -ENODEV;
 	}
+#endif
 	if (esp_sdr_bank_usage(&usage) != 0) {
 		LOG_ERR("capture bank %p is not a dump bank", (void *)__esp_sdr_bank_start);
 		return -ENOMEM;
@@ -196,18 +239,8 @@ int esp_sdr_init(void)
 	if (esp_sdr_ready) {
 		goto out;
 	}
-	/* The driver already applies its Kconfig power-save mode at boot. */
-	if (esp_wifi_set_ps(WIFI_PS_NONE) != ESP_OK) {
-		LOG_WRN("power save still enabled");
-	}
-	/* Promiscuous first: NULL mode only accepts a channel in promiscuous mode. */
-	if (esp_wifi_set_promiscuous(true) != ESP_OK) {
-		ret = -EIO;
-		goto out;
-	}
-	if (esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE) != ESP_OK) {
-		(void)esp_wifi_set_promiscuous(false);
-		ret = -EIO;
+	ret = radio_up();
+	if (ret != 0) {
 		goto out;
 	}
 	esp_sdr_rx_prepare();
