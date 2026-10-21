@@ -20,42 +20,14 @@
 #include "py/obj.h"
 #include "py/runtime.h"
 
+#include "esdr_board.h"
 #include "esdr_defs.h"
+#include "esdr_gui.h"
 
 #define NFFT_MAX 1024U
 
-static ESDR_PSRAM float re[NFFT_MAX], im[NFFT_MAX];
-static ESDR_PSRAM float tw_cos[NFFT_MAX / 2], tw_sin[NFFT_MAX / 2], win[NFFT_MAX];
 /* Per channel: the sum and the largest over the snapshot, the largest over the image row. */
 static ESDR_PSRAM float sum[NFFT_MAX], big[NFFT_MAX], rowbig[NFFT_MAX];
-static uint32_t tab_n;
-static float win_sum;
-
-static void tables(uint32_t n)
-{
-	if (tab_n == n) {
-		return;
-	}
-	esp_sdr_fft_twiddles(tw_cos, tw_sin, n);
-	win_sum = 0.0f;
-	for (uint32_t k = 0; k < n; k++) {
-		win[k] = esp_sdr_window(ESP_SDR_WINDOW_HANN, k, n);
-		win_sum += win[k];
-	}
-	tab_n = n;
-}
-
-static void *buffer(mp_obj_t obj, size_t *len, mp_uint_t flags, size_t align)
-{
-	mp_buffer_info_t bi;
-
-	mp_get_buffer_raise(obj, &bi, flags);
-	if (((uintptr_t)bi.buf & (align - 1U)) != 0U) {
-		mp_raise_ValueError(MP_ERROR_TEXT("unaligned buffer"));
-	}
-	*len = bi.len;
-	return bi.buf;
-}
 
 static void image_row(uint8_t *px, uint32_t n, float lo, float span)
 {
@@ -70,10 +42,10 @@ static void image_row(uint8_t *px, uint32_t n, float lo, float span)
 /*
  * channelize(snap, nfft, mean=None, peak=None, image=None, lo=-100, hi=-20) -> frames: snap
  * (int8 I, Q, full scale 128), its mean taken off, cut into frames of nfft samples (a power of
- * two, 16 to 1024), each Hann windowed and transformed: nfft channels, DC centred. mean and
- * peak (float32, nfft entries) get each channel's mean and largest power over the frames in dB
- * relative to a full-scale tone; image (bytes, rows of nfft) one row per group of frames, the
- * largest power, lo..hi dB as 0..255. Returns the number of frames.
+ * two, 16 to 1024), each Hann windowed (psd()'s window) and transformed: nfft channels, DC
+ * centred. mean and peak (float32, nfft entries) get each channel's mean and largest power over
+ * the frames in dB relative to a full-scale tone; image (bytes, rows of nfft) one row per group
+ * of frames, the largest power, lo..hi dB as 0..255. Returns the number of frames.
  */
 static mp_obj_t esdr_channelize(size_t n_args, const mp_obj_t *pos, mp_map_t *kw)
 {
@@ -94,7 +66,7 @@ static mp_obj_t esdr_channelize(size_t n_args, const mp_obj_t *pos, mp_map_t *kw
 
 	mp_arg_parse_all(n_args, pos, kw, MP_ARRAY_SIZE(allowed), allowed, a);
 
-	const int8_t *src = buffer(a[ARG_snap].u_obj, &len, MP_BUFFER_READ, 1);
+	const int8_t *src = esdr_buffer(a[ARG_snap].u_obj, &len, MP_BUFFER_READ, 1);
 	uint32_t n = (uint32_t)a[ARG_nfft].u_int;
 	uint32_t samples = (uint32_t)(len / 2U);
 	uint32_t frames = samples / (n != 0U ? n : 1U), rows = 0;
@@ -113,13 +85,13 @@ static mp_obj_t esdr_channelize(size_t n_args, const mp_obj_t *pos, mp_map_t *kw
 		mp_raise_ValueError(MP_ERROR_TEXT("channelize: nfft 16..1024, a power of two"));
 	}
 	if (a[ARG_mean].u_obj != mp_const_none) {
-		mean = buffer(a[ARG_mean].u_obj, &mlen, MP_BUFFER_WRITE, 4);
+		mean = esdr_buffer(a[ARG_mean].u_obj, &mlen, MP_BUFFER_WRITE, 4);
 	}
 	if (a[ARG_peak].u_obj != mp_const_none) {
-		peak = buffer(a[ARG_peak].u_obj, &plen, MP_BUFFER_WRITE, 4);
+		peak = esdr_buffer(a[ARG_peak].u_obj, &plen, MP_BUFFER_WRITE, 4);
 	}
 	if (a[ARG_image].u_obj != mp_const_none) {
-		image = buffer(a[ARG_image].u_obj, &ilen, MP_BUFFER_WRITE, 1);
+		image = esdr_buffer(a[ARG_image].u_obj, &ilen, MP_BUFFER_WRITE, 1);
 		rows = (uint32_t)MIN(ilen / n, frames);
 		if (rows == 0U) {
 			image = NULL;
@@ -128,7 +100,8 @@ static mp_obj_t esdr_channelize(size_t n_args, const mp_obj_t *pos, mp_map_t *kw
 	if ((mean != NULL && mlen / 4U < n) || (peak != NULL && plen / 4U < n)) {
 		mp_raise_ValueError(MP_ERROR_TEXT("channelize: mean, peak of nfft floats"));
 	}
-	tables(n);
+	/* The FFT's buffers and tables are esdr_gui.c's, as psd() uses them. */
+	struct esdr_fft *ft = esdr_fft_tables(n, ESDR_FFT_HANN);
 
 	/* The receiver's DC (the raw samples keep it): the snapshot's mean. */
 	int32_t si = 0, sq = 0;
@@ -139,7 +112,7 @@ static mp_obj_t esdr_channelize(size_t n_args, const mp_obj_t *pos, mp_map_t *kw
 	}
 
 	float di = (float)si / (float)(frames * n), dq = (float)sq / (float)(frames * n);
-	float norm = 1.0f / (win_sum * win_sum * 128.0f * 128.0f);
+	float norm = 1.0f / (ft->win_sum * ft->win_sum * 128.0f * 128.0f);
 	uint32_t row = 0;
 
 	memset(sum, 0, n * sizeof(float));
@@ -149,13 +122,13 @@ static mp_obj_t esdr_channelize(size_t n_args, const mp_obj_t *pos, mp_map_t *kw
 		const int8_t *p = src + 2U * f * n;
 
 		for (uint32_t k = 0; k < n; k++) {
-			re[k] = ((float)p[2U * k] - di) * win[k];
-			im[k] = ((float)p[2U * k + 1U] - dq) * win[k];
+			ft->re[k] = ((float)p[2U * k] - di) * ft->win[k];
+			ft->im[k] = ((float)p[2U * k + 1U] - dq) * ft->win[k];
 		}
-		esp_sdr_fft(re, im, n, tw_cos, tw_sin, n);
+		esp_sdr_fft(ft->re, ft->im, n, ft->tw_cos, ft->tw_sin, n);
 		for (uint32_t k = 0; k < n; k++) {
 			uint32_t m = (k + n / 2U) & (n - 1U);
-			float pw = (re[k] * re[k] + im[k] * im[k]) * norm;
+			float pw = (ft->re[k] * ft->re[k] + ft->im[k] * ft->im[k]) * norm;
 
 			sum[m] += pw;
 			big[m] = MAX(big[m], pw);
@@ -186,12 +159,12 @@ MP_DEFINE_CONST_FUN_OBJ_KW(esdr_channelize_obj, 2, esdr_channelize);
 static mp_obj_t esdr_fb_image(size_t n_args, const mp_obj_t *args)
 {
 	size_t flen, ilen, plen;
-	uint16_t *px = buffer(args[0], &flen, MP_BUFFER_WRITE, 2);
+	uint16_t *px = esdr_buffer(args[0], &flen, MP_BUFFER_WRITE, 2);
 	int stride = mp_obj_get_int(args[1]), x = mp_obj_get_int(args[2]);
 	int y = mp_obj_get_int(args[3]), w = mp_obj_get_int(args[4]), h = mp_obj_get_int(args[5]);
-	const uint8_t *img = buffer(args[6], &ilen, MP_BUFFER_READ, 1);
+	const uint8_t *img = esdr_buffer(args[6], &ilen, MP_BUFFER_READ, 1);
 	int cols = mp_obj_get_int(args[7]);
-	const uint16_t *pal = buffer(args[8], &plen, MP_BUFFER_READ, 2);
+	const uint16_t *pal = esdr_buffer(args[8], &plen, MP_BUFFER_READ, 2);
 	int rows = cols > 0 ? (int)(ilen / (size_t)cols) : 0;
 
 	ARG_UNUSED(n_args);
@@ -217,8 +190,8 @@ MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_fb_image_obj, 9, 9, esdr_fb_image);
 static mp_obj_t esdr_stretch(mp_obj_t src_in, mp_obj_t dst_in)
 {
 	size_t slen, dlen;
-	const float *src = buffer(src_in, &slen, MP_BUFFER_READ, 4);
-	float *dst = buffer(dst_in, &dlen, MP_BUFFER_WRITE, 4);
+	const float *src = esdr_buffer(src_in, &slen, MP_BUFFER_READ, 4);
+	float *dst = esdr_buffer(dst_in, &dlen, MP_BUFFER_WRITE, 4);
 	size_t n = slen / 4U, w = dlen / 4U;
 
 	if (n == 0U) {

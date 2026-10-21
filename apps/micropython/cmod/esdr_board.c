@@ -105,6 +105,18 @@ void esdr_check(int ret)
 	}
 }
 
+void *esdr_buffer(mp_obj_t obj, size_t *len, mp_uint_t flags, size_t align)
+{
+	mp_buffer_info_t bi;
+
+	mp_get_buffer_raise(obj, &bi, flags);
+	if (((uintptr_t)bi.buf & (align - 1U)) != 0U) {
+		mp_raise_ValueError(MP_ERROR_TEXT("unaligned buffer"));
+	}
+	*len = bi.len;
+	return bi.buf;
+}
+
 void esdr_gen_from(struct esdr_gen *g, mp_obj_t t)
 {
 	mp_obj_t *items;

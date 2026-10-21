@@ -17,6 +17,10 @@ void esdr_board_init(void);
 /* Raises OSError for a negative errno. */
 void esdr_check(int ret);
 
+/* The data of the buffer @p obj (@p flags: MP_BUFFER_READ or _WRITE) and its length in bytes;
+ * ValueError unless aligned to @p align bytes. */
+void *esdr_buffer(mp_obj_t obj, size_t *len, mp_uint_t flags, size_t align);
+
 /* The generator settings of the tuple @p t, (wave, cycles, amp, dc_i, dc_q); ValueError else. */
 void esdr_gen_from(struct esdr_gen *g, mp_obj_t t);
 

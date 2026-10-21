@@ -19,26 +19,21 @@
 #include "py/obj.h"
 #include "py/runtime.h"
 
+#include "esdr_board.h"
 #include "esdr_defs.h"
+#include "esdr_gui.h"
 #include "esdr_rx.h"
 
-#define FFT_MAX 4096U
 #define FULL_SCALE 16384.0f
 
-static ESDR_PSRAM float fft_re[FFT_MAX];
-static ESDR_PSRAM float fft_im[FFT_MAX];
-static ESDR_PSRAM float tw_cos[FFT_MAX / 2];
-static ESDR_PSRAM float tw_sin[FFT_MAX / 2];
-static ESDR_PSRAM float win[FFT_MAX];
+static ESDR_PSRAM struct esdr_fft fft;
 static uint32_t tw_n, win_n;
 static int win_kind = -1;
-static float win_sum;
 
-/* gnuradio.fft.window kinds: 0 Hamming, 1 Hann, 2 Blackman, 3 rectangular, others Blackman-Harris. */
-static void tables(uint32_t n, int kind)
+struct esdr_fft *esdr_fft_tables(uint32_t n, int kind)
 {
 	if (tw_n != n) {
-		esp_sdr_fft_twiddles(tw_cos, tw_sin, n);
+		esp_sdr_fft_twiddles(fft.tw_cos, fft.tw_sin, n);
 		tw_n = n;
 	}
 	if (win_n != n || win_kind != kind) {
@@ -46,33 +41,22 @@ static void tables(uint32_t n, int kind)
 						    ? (enum esp_sdr_window)kind
 						    : ESP_SDR_WINDOW_BLACKMAN_HARRIS;
 
-		win_sum = 0.0f;
+		fft.win_sum = 0.0f;
 		for (uint32_t k = 0; k < n; k++) {
-			win[k] = esp_sdr_window(shape, k, n - 1U);
-			win_sum += win[k];
+			fft.win[k] = esp_sdr_window(shape, k, n - 1U);
+			fft.win_sum += fft.win[k];
 		}
 		win_n = n;
 		win_kind = kind;
 	}
-}
-
-static void *buffer(mp_obj_t obj, size_t *len, mp_uint_t flags, size_t align)
-{
-	mp_buffer_info_t bi;
-
-	mp_get_buffer_raise(obj, &bi, flags);
-	if (((uintptr_t)bi.buf & (align - 1U)) != 0U) {
-		mp_raise_ValueError(MP_ERROR_TEXT("unaligned buffer"));
-	}
-	*len = bi.len;
-	return bi.buf;
+	return &fft;
 }
 
 /* rx_latest(buf) -> int: the latest samples of a monitored capture into buf (int16 I, Q). */
 static mp_obj_t esdr_rx_latest_fn(mp_obj_t buf_in)
 {
 	size_t len;
-	int16_t *buf = buffer(buf_in, &len, MP_BUFFER_WRITE, 4);
+	int16_t *buf = esdr_buffer(buf_in, &len, MP_BUFFER_WRITE, 4);
 
 	return mp_obj_new_int_from_ull(esdr_rx_latest(buf, len / 4U));
 }
@@ -87,33 +71,34 @@ MP_DEFINE_CONST_FUN_OBJ_1(esdr_rx_latest_obj, esdr_rx_latest_fn);
 static mp_obj_t esdr_psd(size_t n_args, const mp_obj_t *args)
 {
 	size_t len, cols, slen;
-	const int16_t *src = buffer(args[0], &len, MP_BUFFER_READ, 2);
-	float *out = buffer(args[1], &cols, MP_BUFFER_WRITE, 4);
-	float *state = buffer(args[2], &slen, MP_BUFFER_WRITE, 4);
+	const int16_t *src = esdr_buffer(args[0], &len, MP_BUFFER_READ, 2);
+	float *out = esdr_buffer(args[1], &cols, MP_BUFFER_WRITE, 4);
+	float *state = esdr_buffer(args[2], &slen, MP_BUFFER_WRITE, 4);
 	float alpha = (float)mp_obj_get_float(args[3]);
 	int kind = (int)mp_obj_get_int(args[4]);
 	uint32_t n = (uint32_t)(len / 4U);
 
 	ARG_UNUSED(n_args);
 	cols /= 4U;
-	if (n < 16U || n > FFT_MAX || (n & (n - 1U)) != 0U || slen / 4U < n || cols == 0U) {
+	if (n < 16U || n > ESDR_FFT_MAX || (n & (n - 1U)) != 0U || slen / 4U < n || cols == 0U) {
 		mp_raise_ValueError(MP_ERROR_TEXT("psd: 16..4096 samples, a power of two"));
 	}
 	if (!(alpha > 0.0f) || alpha > 1.0f) {
 		alpha = 1.0f;
 	}
-	tables(n, kind);
-	for (uint32_t k = 0; k < n; k++) {
-		fft_re[k] = (float)src[2U * k] * win[k] / FULL_SCALE;
-		fft_im[k] = (float)src[2U * k + 1U] * win[k] / FULL_SCALE;
-	}
-	esp_sdr_fft(fft_re, fft_im, n, tw_cos, tw_sin, n);
+	struct esdr_fft *f = esdr_fft_tables(n, kind);
 
-	float norm = 1.0f / (win_sum * win_sum);
+	for (uint32_t k = 0; k < n; k++) {
+		f->re[k] = (float)src[2U * k] * f->win[k] / FULL_SCALE;
+		f->im[k] = (float)src[2U * k + 1U] * f->win[k] / FULL_SCALE;
+	}
+	esp_sdr_fft(f->re, f->im, n, f->tw_cos, f->tw_sin, n);
+
+	float norm = 1.0f / (f->win_sum * f->win_sum);
 
 	for (uint32_t k = 0; k < n; k++) {
 		uint32_t m = (k + n / 2U) & (n - 1U);
-		float p = (fft_re[k] * fft_re[k] + fft_im[k] * fft_im[k]) * norm;
+		float p = (f->re[k] * f->re[k] + f->im[k] * f->im[k]) * norm;
 
 		state[m] = alpha >= 1.0f ? p : alpha * p + (1.0f - alpha) * state[m];
 	}
@@ -138,9 +123,9 @@ MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_psd_obj, 5, 5, esdr_psd);
 static mp_obj_t esdr_iq_cols(mp_obj_t src_in, mp_obj_t i_in, mp_obj_t q_in)
 {
 	size_t len, cols, qlen;
-	const int16_t *src = buffer(src_in, &len, MP_BUFFER_READ, 2);
-	float *oi = buffer(i_in, &cols, MP_BUFFER_WRITE, 4);
-	float *oq = buffer(q_in, &qlen, MP_BUFFER_WRITE, 4);
+	const int16_t *src = esdr_buffer(src_in, &len, MP_BUFFER_READ, 2);
+	float *oi = esdr_buffer(i_in, &cols, MP_BUFFER_WRITE, 4);
+	float *oq = esdr_buffer(q_in, &qlen, MP_BUFFER_WRITE, 4);
 	size_t n = len / 4U;
 
 	cols = MIN(cols, qlen) / 4U;
@@ -164,7 +149,7 @@ static void fb_rect(struct fb_rect *r, const mp_obj_t *args)
 {
 	size_t len;
 
-	r->px = buffer(args[0], &len, MP_BUFFER_WRITE, 2);
+	r->px = esdr_buffer(args[0], &len, MP_BUFFER_WRITE, 2);
 	r->stride = (int)mp_obj_get_int(args[1]);
 	r->x = (int)mp_obj_get_int(args[2]);
 	r->y = (int)mp_obj_get_int(args[3]);
@@ -203,7 +188,7 @@ static mp_obj_t esdr_fb_trace(size_t n_args, const mp_obj_t *args)
 
 	ARG_UNUSED(n_args);
 	fb_rect(&r, args);
-	v = buffer(args[6], &len, MP_BUFFER_READ, 4);
+	v = esdr_buffer(args[6], &len, MP_BUFFER_READ, 4);
 	if (len / 4U < (size_t)r.w || !(vmax > vmin)) {
 		mp_raise_ValueError(MP_ERROR_TEXT("fb_trace: a value per column, vmax > vmin"));
 	}
@@ -234,8 +219,8 @@ static mp_obj_t esdr_fb_wf_row(size_t n_args, const mp_obj_t *args)
 
 	ARG_UNUSED(n_args);
 	fb_rect(&r, args);
-	v = buffer(args[6], &len, MP_BUFFER_READ, 4);
-	pal = buffer(args[9], &plen, MP_BUFFER_READ, 2);
+	v = esdr_buffer(args[6], &len, MP_BUFFER_READ, 4);
+	pal = esdr_buffer(args[9], &plen, MP_BUFFER_READ, 2);
 	plen /= 2U;
 	if (len / 4U < (size_t)r.w || plen == 0U || !(vmax > vmin)) {
 		mp_raise_ValueError(MP_ERROR_TEXT("fb_wf_row: a value per column, a palette"));
@@ -279,7 +264,7 @@ static mp_obj_t esdr_fb_points(size_t n_args, const mp_obj_t *args)
 
 	ARG_UNUSED(n_args);
 	fb_rect(&r, args);
-	v = buffer(args[6], &len, MP_BUFFER_READ, 2);
+	v = esdr_buffer(args[6], &len, MP_BUFFER_READ, 2);
 	if (!(xmax > xmin) || !(ymax > ymin)) {
 		mp_raise_ValueError(MP_ERROR_TEXT("fb_points: xmax > xmin, ymax > ymin"));
 	}
