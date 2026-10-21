@@ -1,5 +1,5 @@
 tests:
-  unit.esp_sdr.link_qam:
+  unit.esp_sdr.link:
     tags:
       - esp-sdr
       - link
