@@ -208,7 +208,8 @@ export changes.
 The menu lists:
 
 - the apps bundled with the firmware, ``eggs/``: Spectrum, Waterfall (250 kS/s, gapless),
-  Wideband (80 MS/s: the gapless stream where the radio has it, else bursts), Constellation,
+  Wideband (80 MS/s: the bursts in the gapless stream where the radio has it, else bursts),
+  Constellation,
   Receiver (tabs, radio buttons, a check box), Tone (transmits), Data link (two-way messages,
   `Data link`_) and, on the WHY2025 badge, Channelizer (80 MHz in 64 channels from triggered
   snapshots, ``esdr.trig_get()`` and ``esdr.channelize()``; not a GRC export: the snapshots are
@@ -436,11 +437,18 @@ as the budget it is given (2 MB/s by default) holds, and their samples go to the
 scale 16384, as bursts), so the spectrum and waterfall sinks show them; ``soapy.source`` at
 80 MS/s takes this for displays. With ``channels`` the P4 also runs the fixed-point polyphase
 filterbank and burst detector of ``apps/common`` (``esdr_pfbq.h``) on its PIE SIMD in a thread
-of its own (``cmod/esdr_gl.c``, some 80 to 100 cycles a sample, its memory in PSRAM): per
+of its own (``cmod/esdr_gl.c``, some 80 to 130 cycles a sample with more on the air, its memory
+in PSRAM): per
 channel the power, floor, peak and share of time open (``esdr.chan_power()``), and the bursts
 that ended (``esdr.chan_bursts()``: frequency, start, length from the opening block to the last
 loud one, level). A hole in the stream longer than 0.5 ms ends a burst; the radio's budget can
-cut a long burst short or into pieces. The Bursts app shows them.
+cut a long burst short or into pieces. The Bursts app shows them. ``esdr.chan_spectrum()`` makes
+spectrum rows of the bursts alone: a loud block of a channel in a burst is transformed over its
+16 frames, the passband's 8 bins averaged over the burst and placed at the channel's frequency
+(peak hold over the row), and the rest of the row reads the channels' floors with a little
+noise, so the time the radio kept nothing and the quiet channels look quiet. ``soapy.source``
+runs the channelizer on 80 channels for displays (125 kHz bins), and the spectrum and waterfall
+sinks draw these rows (some 10 to 20 cycles a sample more).
 
 The MCH2022 badge
 *****************

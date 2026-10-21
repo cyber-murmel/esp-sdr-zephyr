@@ -4,7 +4,8 @@
  * The gapless stream's channelizer on the WHY2025 badge's ESP32-P4 (esdr_gl.c): the radio's
  * segment blocks (esdr_remote_gl_hook()) through the fixed-point filterbank and burst detector
  * of ../../common/include/esdr_pfbq.h in a thread of its own; per channel the power, floor,
- * peak and how often it was open since the last look, and the bursts that ended.
+ * peak and how often it was open since the last look, the bursts that ended, and rows of a
+ * spectrum of the band made of the bursts alone.
  *
  * Channels are reported in display order, the lowest frequency first: entry i is channel
  * (i + M / 2) mod M, offset (i - M / 2) * 80 MHz / M from the centre. Powers are in dB of a
@@ -46,10 +47,26 @@ struct esdr_gl_burst {
 /* The bursts that ended since the last call, oldest first, up to @p max. Returns the count. */
 unsigned int esdr_gl_bursts(struct esdr_gl_burst *out, unsigned int max);
 
+/* Bins of a spectrum row a channel (esdr_gl_spectrum()), and at most. */
+#define ESDR_GL_SPEC_BINS     8U
+#define ESDR_GL_SPEC_BINS_MAX (80U * ESDR_GL_SPEC_BINS)
+
+/*
+ * A row of the bursts' spectrum since the last call to @p out, n = ESDR_GL_SPEC_BINS M bins,
+ * dB of a full-scale carrier, the lowest frequency first: bin j at (j - n / 2) * 80 MHz / n
+ * from the centre (250 kHz at M = 40). Each burst the detector found reads at its channel's
+ * place in the band: the mean over its loud blocks of their 16-frame transforms (Hann), the
+ * largest of the row's bursts per bin. The other bins read their channel's floor, a few dB
+ * either side at random: the time the radio kept nothing and the channels without a burst
+ * look quiet. Returns n, -ENODEV if the channelizer does not run, -EINVAL if @p max is short.
+ * The first call starts the transforms; they stop a second after the last.
+ */
+int esdr_gl_spectrum(float *out, unsigned int max);
+
 struct esdr_gl_stats {
 	/* Segment blocks taken and dropped (the thread fell behind), pairs channelized, CPU cycles
-	 * that took; bursts ended, and dropped from a full ring. */
-	uint32_t blocks, dropped, bursts, bursts_lost;
+	 * that took; bursts ended, and dropped from a full ring; the thread's stack never used. */
+	uint32_t blocks, dropped, bursts, bursts_lost, stack_free;
 	uint64_t pairs, cycles;
 };
 

@@ -5,8 +5,9 @@
 (esdr.BURST_RATES: contiguous within 16380 samples, enough for displays and short captures).
 Where the radio streams the whole 80 MHz without a gap (esdr.gapless_start(): the WHY2025
 badge's C6 built with gapless.conf), displays at 80 MS/s take that instead: the 10 us windows
-that stand out, as many as the link budget holds. Any driver string is accepted: the board has
-one radio. Settings change between captures; while only displays take the stream (qtgui sinks),
+that stand out, as many as the link budget holds, through the channelizer, whose bursts the
+spectrum sinks draw at their channels over quiet noise (qtgui.py). Any driver string is
+accepted: the board has one radio. Settings change between captures; while only displays take the stream (qtgui sinks),
 a change restarts it at once."""
 
 import esdr
@@ -41,6 +42,8 @@ _BURST = 16380
 # windows fit the budget); False once the radio refused the mode (a C6 without gapless.conf).
 _GAPLESS_BUDGET = 2000000
 _GAPLESS_RATIO = 1.25
+# Channels of 1 MHz: spectrum rows of 125 kHz bins.
+_GAPLESS_CHANNELS = 80
 _gapless_ok = [hasattr(esdr, "gapless_start")]
 
 
@@ -151,7 +154,7 @@ class source(gr.basic_block):
         esdr.rx_gain(-1 if self._auto else self._gain)
         try:
             esdr.gapless_start(ratio=_GAPLESS_RATIO, budget=_GAPLESS_BUDGET,
-                               gain_servo=self._auto)
+                               gain_servo=self._auto, channels=_GAPLESS_CHANNELS)
         except OSError:
             print("soapy: the radio streams no gapless 80 MHz: bursts")
             _gapless_ok[0] = False

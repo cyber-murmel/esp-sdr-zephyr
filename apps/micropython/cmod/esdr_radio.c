@@ -52,6 +52,11 @@
  *                              carrier), share of blocks open; the blocks that took
  *   chan_bursts() -> [(offset_hz, start_s, length_s, peak_db)]   bursts ended since the last
  *                              call
+ *   chan_spectrum(out) -> bins a row of the band's spectrum made of the bursts found since the
+ *                              last call, each at its channel, over the channels' floors
+ *                              (esdr_gl_spectrum(): dB of a full-scale carrier, the lowest
+ *                              frequency first, 8 bins a channel) into out (float32, up to
+ *                              CHAN_SPEC_MAX entries); 0 without a channelizer
  *   GAPLESS_RATE               80 MS/s
  *   channelize(snap, nfft, mean=None, peak=None, image=None, lo=-100, hi=-20) -> frames
  *                              (esdr_chan.c)
@@ -543,6 +548,7 @@ static mp_obj_t esdr_gapless_stats_fn(void)
 	PUT(chan_cycles, mp_obj_new_int_from_ull(cs.cycles));
 	PUT(bursts, mp_obj_new_int_from_uint(cs.bursts));
 	PUT(bursts_lost, mp_obj_new_int_from_uint(cs.bursts_lost));
+	PUT(chan_stack_free, mp_obj_new_int_from_uint(cs.stack_free));
 	/* The radio's own counters (the request restarts its run). */
 	int ret = esdr_remote_gl_busy() ? esdr_remote_gl_radio_stats(&rs) : -ENODEV;
 
@@ -612,6 +618,27 @@ static mp_obj_t esdr_chan_bursts_fn(void)
 	return list;
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(esdr_chan_bursts_obj, esdr_chan_bursts_fn);
+
+/* chan_spectrum(out) -> bins */
+static mp_obj_t esdr_chan_spectrum_fn(mp_obj_t out_in)
+{
+	mp_buffer_info_t bi;
+	int n;
+
+	mp_get_buffer_raise(out_in, &bi, MP_BUFFER_WRITE);
+	if (((uintptr_t)bi.buf & 3U) != 0U) {
+		mp_raise_ValueError(MP_ERROR_TEXT("chan_spectrum: an aligned float32 array"));
+	}
+	n = esdr_gl_spectrum(bi.buf, bi.len / 4U);
+	if (n == -ENODEV) {
+		return MP_OBJ_NEW_SMALL_INT(0);
+	}
+	if (n < 0) {
+		mp_raise_ValueError(MP_ERROR_TEXT("chan_spectrum: 8 float32 entries a channel"));
+	}
+	return MP_OBJ_NEW_SMALL_INT(n);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(esdr_chan_spectrum_obj, esdr_chan_spectrum_fn);
 #endif
 
 /* ---- transmit ---- */
@@ -931,6 +958,8 @@ static const mp_rom_map_elem_t esdr_globals_table[] = {
 	{MP_ROM_QSTR(MP_QSTR_gapless_stats), MP_ROM_PTR(&esdr_gapless_stats_obj)},
 	{MP_ROM_QSTR(MP_QSTR_chan_power), MP_ROM_PTR(&esdr_chan_power_obj)},
 	{MP_ROM_QSTR(MP_QSTR_chan_bursts), MP_ROM_PTR(&esdr_chan_bursts_obj)},
+	{MP_ROM_QSTR(MP_QSTR_chan_spectrum), MP_ROM_PTR(&esdr_chan_spectrum_obj)},
+	{MP_ROM_QSTR(MP_QSTR_CHAN_SPEC_MAX), MP_ROM_INT(ESDR_GL_SPEC_BINS_MAX)},
 	{MP_ROM_QSTR(MP_QSTR_GAPLESS_RATE), MP_ROM_INT(ESDR_GAPLESS_RATE_HZ)},
 #endif
 	{MP_ROM_QSTR(MP_QSTR_iq_cols), MP_ROM_PTR(&esdr_iq_cols_obj)},

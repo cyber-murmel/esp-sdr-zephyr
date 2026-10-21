@@ -2,10 +2,13 @@
 """qtgui for GRC Qt GUI exports on the board. freq_sink, waterfall_sink and time_sink draw
 on the board's display (_gui.py); the other sinks accept their samples and draw nothing.
 Range and RangeWidget become variables the encoder changes. Line colours, labels, grids and
-other styling calls are accepted and ignored."""
+other styling calls are accepted and ignored. While the radio streams gapless with the
+channelizer (soapy.source at 80 MS/s), the spectrum sinks draw the bursts it found, each at its
+channel, over quiet noise (esdr.chan_spectrum()), instead of the latest samples' spectrum."""
 
 import array
 import framebuf
+import time
 
 import esdr
 from gnuradio import _gui, gr
@@ -117,6 +120,27 @@ class _sink(gr.basic_block):
 
 LABEL = _gui.LABEL
 
+# Rows of the bursts' spectrum: the bins, their count (0: no channelizer), when they were taken.
+# Each call takes what came since the last, so sinks drawing within _ROW_MS share one row.
+_ROW_MS = 40
+_row = [None, 0, 0]
+
+
+def _composed(cols):
+    """A row of the bursts' spectrum over cols; False without a channelizer."""
+    if not hasattr(esdr, "chan_spectrum"):
+        return False
+    now = time.ticks_ms()
+    if _row[0] is None:
+        _row[0] = array.array("f", [0.0] * esdr.CHAN_SPEC_MAX)
+    if not _row[1] or time.ticks_diff(now, _row[2]) >= _ROW_MS:
+        _row[1] = esdr.chan_spectrum(_row[0])
+        _row[2] = now
+    if not _row[1]:
+        return False
+    esdr.stretch(memoryview(_row[0])[: _row[1]], cols)
+    return True
+
 
 class _spectrum(_sink):
     def __init__(self, name, kind, size, wintype, fc, bw, title):
@@ -154,6 +178,8 @@ class _spectrum(_sink):
         return "{} {}".format(self._title, _gui.eng(self._fc, "Hz"))
 
     def _spectrum(self):
+        if _composed(self._cols):
+            return
         esdr.rx_latest(self._src)
         esdr.psd(self._src, self._cols, self._state, self._avg, self._win)
 
