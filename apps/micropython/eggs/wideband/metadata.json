@@ -1,7 +1,0 @@
-{
-  "name": "Wideband",
-  "description": "A waterfall of 80 MHz without a gap where the radio streams it (the WHY2025 badge: the bursts its channelizer finds, each at its channel, over quiet noise), else from bursts at 80 MS/s; the knob tunes from 1.8 to 2.8 GHz and sets the level (the top of the colour scale).",
-  "category": "receive",
-  "author": "esp-sdr",
-  "revision": 5
-}

@@ -207,8 +207,8 @@ export changes.
 
 The menu lists:
 
-- the apps bundled with the firmware, ``eggs/``: Spectrum, Waterfall (250 kS/s, gapless),
-  Wideband (80 MS/s: the bursts in the gapless stream where the radio has it, else bursts),
+- the apps bundled with the firmware, ``eggs/``: Spectrum, Waterfall (250 kS/s to 2 MS/s,
+  gapless, or 80 MS/s: the bursts in the gapless stream where the radio has it, else bursts),
   Constellation,
   Receiver (tabs, radio buttons, a check box), Tone (transmits), Data link (two-way messages,
   `Data link`_) and, on the WHY2025 and MCH2022 badges, Bursts (80 MHz in channels, not a GRC
