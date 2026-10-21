@@ -427,6 +427,14 @@ XIAO ESP32-C6 on the other end of a 30 dB coax attenuator.
   `esp32p4.rom.libc*.ld` scripts) at some 5.5 cycles a byte. Moving the
   channelizer's 1.5 kB history cost 13 cycles a sample until a PIE copy took
   over; copy hot data with words or vectors.
+- **The ESP32-P4's float registers are not switched by default.** Zephyr's
+  SoC defconfig turns `CONFIG_FPU` on without `CONFIG_FPU_SHARING`, so a
+  thread that preempts another in float code leaves its own register values
+  behind. In `apps/micropython` the channelizer thread (above MicroPython)
+  made `esdr.fb_wf_row()` see a valid range as `vmax <= vmin` after seconds
+  to minutes. Both P4 apps set `CONFIG_FPU_SHARING=y`; the lazy switch works
+  on the v1.0 silicon (Zephyr decodes the trapping instruction from `mtval`,
+  which the P4 fills, so ESP-IDF's FPU reason CSR erratum does not matter).
 - **The in-order P4 core waits on float results.** An independent `fmul.s`
   issues every cycle, a dependent `fadd.s` waits 4. Interleave independent
   chains (the detector's decisions: four channels as written-out scalars, a
