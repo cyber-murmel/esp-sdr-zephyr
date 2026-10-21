@@ -81,23 +81,9 @@ static struct {
 
 extern uint64_t esdr_pfbq_prof[5];
 
-uint64_t esdr_pfb_now(void);
-
-static inline uint64_t mcycle(void)
+uint64_t esdr_pfbq_now(void)
 {
-	uint32_t hi, lo, hi2;
-
-	do {
-		__asm__ volatile("csrr %0, mcycleh" : "=r"(hi));
-		__asm__ volatile("csrr %0, mcycle" : "=r"(lo));
-		__asm__ volatile("csrr %0, mcycleh" : "=r"(hi2));
-	} while (hi != hi2);
-	return ((uint64_t)hi << 32) | lo;
-}
-
-uint64_t esdr_pfb_now(void)
-{
-	return mcycle();
+	return esdr_pfbq_cycles();
 }
 
 /* ---- channelizer (ESDR_REQ_SET_CHANNELIZER) ---- */
@@ -272,7 +258,7 @@ static void det_cb(const struct esdr_detq *d, const struct esdr_detq_ev *ev, voi
 	if (ev->chan >= 96U || (ch.cfg.mask[ev->chan / 32U] & BIT(ev->chan % 32U)) == 0U) {
 		return;
 	}
-	uint64_t t0 = mcycle();
+	uint64_t t0 = esdr_pfbq_cycles();
 
 	while (pos < 4U * ev->n) {
 		int16_t *o = chan_room(&max);
@@ -287,16 +273,16 @@ static void det_cb(const struct esdr_detq *d, const struct esdr_detq_ev *ev, voi
 		chan_commit(ev, n, m0, fl, first, pos >= 4U * ev->n);
 		first = false;
 	}
-	st.send_cycles += mcycle() - t0;
+	st.send_cycles += esdr_pfbq_cycles() - t0;
 }
 
 static void quad_cb(uint64_t m0, const int16_t *iq, uint8_t valid, uint8_t complete, void *user)
 {
-	uint64_t t0 = mcycle();
+	uint64_t t0 = esdr_pfbq_cycles();
 
 	ARG_UNUSED(user);
 	esdr_detq_quad(&ch.det, m0, iq, valid, complete, det_cb, NULL);
-	st.det_cycles += mcycle() - t0;
+	st.det_cycles += esdr_pfbq_cycles() - t0;
 }
 
 static int seg_cb(const struct esdr_seg *seg, void *user)
@@ -337,7 +323,7 @@ static void chan_fn(void *a, void *b, void *c)
 			}
 		}
 		if (ch.cfg.channels != 0U) {
-			uint64_t t0 = mcycle();
+			uint64_t t0 = esdr_pfbq_cycles();
 
 			if (esdr_seg_parse(pool[i], ESDR_BLOCK_BYTES, seg_cb, NULL) < 0) {
 				st.seg_dropped++;
@@ -346,7 +332,7 @@ static void chan_fn(void *a, void *b, void *c)
 			if (ch.out >= 0 && k_uptime_get() - ch.opened >= CHAN_FLUSH_MS) {
 				chan_flush();
 			}
-			st.chan_cycles += mcycle() - t0;
+			st.chan_cycles += esdr_pfbq_cycles() - t0;
 		} else {
 			chan_flush();
 		}

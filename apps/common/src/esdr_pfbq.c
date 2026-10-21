@@ -583,9 +583,8 @@ void esdr_pfbq_reset(struct esdr_pfbq *p)
  * decisions (callbacks included); the app supplies the clock.
  */
 uint64_t esdr_pfbq_prof[5];
-uint64_t esdr_pfb_now(void);
-#define PROF_START() uint64_t prof_t = esdr_pfb_now()
-#define PROF_END(k)  (esdr_pfbq_prof[k] += esdr_pfb_now() - prof_t)
+#define PROF_START() uint64_t prof_t = esdr_pfbq_now()
+#define PROF_END(k)  (esdr_pfbq_prof[k] += esdr_pfbq_now() - prof_t)
 #else
 #define PROF_START() do { } while (0)
 #define PROF_END(k)  do { } while (0)

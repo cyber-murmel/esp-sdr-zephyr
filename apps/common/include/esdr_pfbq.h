@@ -124,6 +124,27 @@ int esdr_pfbq_flush(struct esdr_pfbq *p, esdr_pfbq_quad_cb cb, void *user);
 int16_t esdr_pfbq_tap(const struct esdr_pfbq *p, unsigned int n);
 unsigned int esdr_pfbq_qt(const struct esdr_pfbq *p);
 
+/*
+ * The clock of the profile (esdr_pfbq_prof[]) of a build with ESDR_PFBQ_PROFILE: the app
+ * defines it, on the P4 as esdr_pfbq_cycles().
+ */
+uint64_t esdr_pfbq_now(void);
+
+#if defined(__riscv)
+/* The core's cycle counter (mcycle), 64 bits. */
+static inline uint64_t esdr_pfbq_cycles(void)
+{
+	uint32_t hi, lo, hi2;
+
+	do {
+		__asm__ volatile("csrr %0, mcycleh" : "=r"(hi));
+		__asm__ volatile("csrr %0, mcycle" : "=r"(lo));
+		__asm__ volatile("csrr %0, mcycleh" : "=r"(hi2));
+	} while (hi != hi2);
+	return ((uint64_t)hi << 32) | lo;
+}
+#endif
+
 /* True when the build has the PIE kernels (banks use them unless told otherwise). */
 bool esdr_pfbq_pie(void);
 

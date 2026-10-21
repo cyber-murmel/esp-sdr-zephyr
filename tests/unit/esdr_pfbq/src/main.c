@@ -41,17 +41,14 @@ static uint64_t cycles(void)
 
 	return test_host_cycles();
 #else
-	uint32_t v;
-
-	__asm__ volatile("csrr %0, mcycle" : "=r"(v));
-	return v;
+	return esdr_pfbq_cycles();
 #endif
 }
 
 /* esdr_pfbq.c's profile: its clock, and the cycles per part. */
 extern uint64_t esdr_pfbq_prof[5];
 
-uint64_t esdr_pfb_now(void)
+uint64_t esdr_pfbq_now(void)
 {
 	return cycles();
 }
