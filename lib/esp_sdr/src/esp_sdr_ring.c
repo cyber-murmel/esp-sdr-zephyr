@@ -39,8 +39,6 @@
 #define HOT IRAM_ATTR __attribute__((optimize("O3")))
 
 #define DUMP_WRITE_INDEX_REG 0x60033d60U
-/* Circular 16384-pair ring, I/Q source 0. */
-#define DUMP_CTRL_CIRCULAR   0x00024000U
 
 #define RING_BANKS     3U
 #define RING_PAIRS     16384U

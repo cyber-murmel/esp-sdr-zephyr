@@ -99,7 +99,8 @@
                 With DUMP_RUN and no trigger, the engine writes continuously round a
                 16384-pair ring (0x00024000 = this bit plus count 16384). In `adctrig()`
                 the same bit skips the final count check.
-                Evidence: *working* `lib/esp_sdr/src/esp_sdr_ring.c:41-42, 876-881`;
+                Evidence: *working* `lib/esp_sdr/src/esp_sdr_priv.h:290-294`,
+                `lib/esp_sdr/src/esp_sdr_ring.c:1349`;
                 *decompile* S3 `mac_common.o`
               </description>
               <bitRange>[17:17]</bitRange>

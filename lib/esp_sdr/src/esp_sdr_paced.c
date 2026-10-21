@@ -36,20 +36,6 @@ extern void esp_phy_wifi_tx_tone(uint32_t start, uint32_t chan, uint32_t backoff
 static struct esp_sdr_paced_stats stats;
 static bool rx_on, tx_on;
 
-static inline uint32_t cycles(void)
-{
-	return esp_sdr_paced_cycles();
-}
-
-static void cycles_enable(void)
-{
-#if defined(CONFIG_SOC_SERIES_ESP32C6)
-	/* The machine performance counter (mpccr) counts CPU cycles. */
-	__asm__ volatile("csrw 0x7e0, %0" ::"r"(1));
-	__asm__ volatile("csrw 0x7e1, %0" ::"r"(1));
-#endif
-}
-
 static inline void note_late(uint32_t late, uint32_t step)
 {
 	if (late > stats.late_max) {
@@ -106,10 +92,7 @@ static void dc_track(void)
 
 static void dc_measure(uint32_t inputs)
 {
-	uint32_t ctrl1 = (sys_read32(IQE_CTRL1_REG) &
-			  ~(IQE_CTRL1_SRC | IQE_CTRL1_COUNT | IQE_CTRL1_START | IQE_CTRL1_EN)) |
-			 FIELD_PREP(IQE_CTRL1_SRC, 2) | FIELD_PREP(IQE_CTRL1_COUNT, IQE_COUNT_MAX - 1U);
-	uint32_t c0 = sys_read32(IQE_CTRL0_REG);
+	uint32_t ctrl1;
 	int64_t si, sq;
 
 	rxp.oi = 0;
@@ -122,7 +105,7 @@ static void dc_measure(uint32_t inputs)
 	}
 	/* The chain settles after the retune esp_sdr_rx_prepare() may have done. */
 	k_busy_wait(2000);
-	sys_write32((c0 & ~IQE_CTRL0_MODE) | FIELD_PREP(IQE_CTRL0_MODE, 1), IQE_CTRL0_REG);
+	ctrl1 = iqe_window_mode();
 	sys_write32(ctrl1, IQE_CTRL1_REG);
 	sys_write32(ctrl1 | IQE_CTRL1_EN, IQE_CTRL1_REG);
 	k_busy_wait(1);
@@ -141,8 +124,6 @@ static void dc_measure(uint32_t inputs)
 
 int esp_sdr_rx_paced_start(uint32_t rate_hz)
 {
-	uint32_t c0;
-
 	if (rate_hz < 10000U || ESP_SDR_CPU_HZ % rate_hz != 0U ||
 	    ESP_SDR_PACED_INPUT_HZ % rate_hz != 0U) {
 		return -EINVAL;
@@ -152,7 +133,7 @@ int esp_sdr_rx_paced_start(uint32_t rate_hz)
 	}
 	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
 	esp_sdr_rx_prepare();
-	cycles_enable();
+	esp_sdr_paced_cycles_enable();
 	memset(&stats, 0, sizeof(stats));
 	rxp.step = ESP_SDR_CPU_HZ / rate_hz;
 	rxp.rearm_every = MAX(1U, IQE_RUN_CYCLES / rxp.step);
@@ -160,23 +141,19 @@ int esp_sdr_rx_paced_start(uint32_t rate_hz)
 	dc_measure(ESP_SDR_PACED_INPUT_HZ / rate_hz);
 	rxp.pi = 0;
 	rxp.pq = 0;
-	c0 = sys_read32(IQE_CTRL0_REG);
-	sys_write32((c0 & ~IQE_CTRL0_MODE) | FIELD_PREP(IQE_CTRL0_MODE, 1), IQE_CTRL0_REG);
-	rxp.ctrl1 = (sys_read32(IQE_CTRL1_REG) &
-		     ~(IQE_CTRL1_SRC | IQE_CTRL1_COUNT | IQE_CTRL1_START | IQE_CTRL1_EN)) |
-		    FIELD_PREP(IQE_CTRL1_SRC, 2) | FIELD_PREP(IQE_CTRL1_COUNT, IQE_COUNT_MAX - 1U);
+	rxp.ctrl1 = iqe_window_mode();
 	sys_write32(rxp.ctrl1, IQE_CTRL1_REG);
 	sys_write32(rxp.ctrl1 | IQE_CTRL1_EN, IQE_CTRL1_REG);
 	k_busy_wait(1);
 	sys_write32(rxp.ctrl1 | IQE_CTRL1_EN | IQE_CTRL1_START, IQE_CTRL1_REG);
-	rxp.target = cycles() + rxp.step;
+	rxp.target = esp_sdr_paced_cycles() + rxp.step;
 	rx_on = true;
 	return 0;
 }
 
 bool esp_sdr_rx_paced_poll(int32_t *i, int32_t *q)
 {
-	uint32_t now = cycles();
+	uint32_t now = esp_sdr_paced_cycles();
 	int32_t si, sq, q1;
 
 	if ((int32_t)(now - rxp.target) < 0) {
@@ -236,7 +213,7 @@ IRAM_ATTR __attribute__((optimize("O3"))) uint32_t esp_sdr_rx_paced_fill_iq8(int
 		int32_t q1, si, sq;
 
 		do {
-			now = cycles();
+			now = esp_sdr_paced_cycles();
 		} while ((int32_t)(now - target) < 0);
 		if (unlikely(now - target >= step)) {
 			late++;
@@ -389,7 +366,7 @@ int esp_sdr_tx_paced_start(uint32_t rate_hz, unsigned int interp, unsigned int p
 		k_mutex_unlock(&esp_sdr_lock);
 		return ret;
 	}
-	cycles_enable();
+	esp_sdr_paced_cycles_enable();
 	memset(&stats, 0, sizeof(stats));
 	fir_design(interp);
 	memset(txp.hi, 0, sizeof(txp.hi));
@@ -403,7 +380,7 @@ int esp_sdr_tx_paced_start(uint32_t rate_hz, unsigned int interp, unsigned int p
 	txp.upper = (txp.orig & ~TXDC_IQ) | TXDC_INJECT;
 	txp.next = txp.upper;
 	txp.step = ESP_SDR_CPU_HZ / (rate_hz * interp);
-	txp.target = cycles() + txp.step;
+	txp.target = esp_sdr_paced_cycles() + txp.step;
 	tx_on = true;
 	return 0;
 }
@@ -415,7 +392,7 @@ static inline uint32_t iq10(int32_t i, int32_t q)
 
 bool esp_sdr_tx_paced_poll(void)
 {
-	uint32_t now = cycles();
+	uint32_t now = esp_sdr_paced_cycles();
 	const int16_t *c, *xi, *xq;
 	int32_t ai, aq;
 
@@ -470,10 +447,10 @@ void esp_sdr_tx_paced_stop(void)
 void esp_sdr_paced_sync(void)
 {
 	if (tx_on) {
-		txp.target = cycles() + txp.step;
+		txp.target = esp_sdr_paced_cycles() + txp.step;
 		return;
 	}
-	rxp.target = cycles() + rxp.step;
+	rxp.target = esp_sdr_paced_cycles() + rxp.step;
 }
 
 uint32_t esp_sdr_paced_deadline(void)

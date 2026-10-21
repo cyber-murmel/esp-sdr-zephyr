@@ -20,21 +20,10 @@
 extern uint32_t __esp_sdr_bank_end[];
 
 /*
- * DUMP_CTRL_REG circular mode (upstream's ring): bit 17, with the count
- * field's 16384 (bit 14). The ring stays 16384 words whatever the count;
- * DUMP_MODE_REG's low bits give the write index (bit 14 toggles per lap) and
- * read 0 once the engine stops.
+ * In circular mode (DUMP_CTRL_CIRCULAR) DUMP_MODE_REG's low bits give the write index (bit 14
+ * toggles per lap) and read 0 once the engine stops.
  */
-#define DUMP_CTRL_CIRCULAR (BIT(17) | BIT(14))
-#define DUMP_INDEX_M       GENMASK(14, 0)
-
-/*
- * The estimator's sums over its inputs since its start (wrap at 2^32), measured against the
- * ring: I^2 + Q^2 over 8 here, I^2, Q^2 and I*Q over 4 in the three after it. With the sums of
- * I and Q (IQE_SUM_I_REG, IQE_SUM_Q_REG, times 64) a window's power about its mean: the
- * receiver's DC is larger than its noise and drifts after a retune.
- */
-#define IQE_POW_REG 0x600a0490U
+#define DUMP_INDEX_M GENMASK(14, 0)
 
 #define WINDOW_CYC (ESP_SDR_TRIG_WINDOW_US * (ESP_SDR_CPU_HZ / 1000000U))
 /*
@@ -58,26 +47,18 @@ static uint32_t learnt;
 /* The windows' powers while learning. */
 static uint32_t learn_pw[LEARN_WINDOWS];
 
-static inline uint32_t cycles(void)
-{
-	return esp_sdr_paced_cycles();
-}
-
-static void est_restart(uint32_t ctrl1)
-{
-	sys_write32(ctrl1, IQE_CTRL1_REG);
-	sys_write32(ctrl1 | IQE_CTRL1_EN, IQE_CTRL1_REG);
-	sys_write32(ctrl1 | IQE_CTRL1_EN | IQE_CTRL1_START, IQE_CTRL1_REG);
-}
-
-/* One reading of the sums, and the cycle count just before it. */
+/*
+ * One reading of the sums, and the cycle count just before it. With the sums of I and Q (times
+ * 64) the power sums give a window's power about its mean: the receiver's DC is larger than
+ * its noise and drifts after a retune.
+ */
 struct est_sums {
 	uint32_t t, p, si, sq;
 };
 
 static inline void est_read(struct est_sums *e)
 {
-	e->t = cycles();
+	e->t = esp_sdr_paced_cycles();
 	e->si = sys_read32(IQE_SUM_I_REG);
 	e->sq = sys_read32(IQE_SUM_Q_REG);
 	e->p = sys_read32(IQE_POW_REG);
@@ -126,7 +107,7 @@ void esp_sdr_trig_reset(void)
 
 int esp_sdr_trig_wait(const struct esp_sdr_trig_cfg *cfg, struct esp_sdr_trig_snap *snap)
 {
-	uint32_t usage, saved, ctrl1, c0;
+	uint32_t usage, saved, ctrl1;
 	struct est_sums e0, e1;
 	uint32_t t_win, t_restart, t_arm, t_trig = 0;
 	uint32_t trig_idx = 0, stop_idx = 0, power = 0, thr_base = 0, run = 0, loud = 0;
@@ -146,26 +127,19 @@ int esp_sdr_trig_wait(const struct esp_sdr_trig_cfg *cfg, struct esp_sdr_trig_sn
 	}
 	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
 	(void)esp_sdr_rx_gain_refresh();
-	/* The machine performance counter (mpccr) counts CPU cycles. */
-	__asm__ volatile("csrw 0x7e0, %0" ::"r"(1));
-	__asm__ volatile("csrw 0x7e1, %0" ::"r"(1));
-
-	c0 = sys_read32(IQE_CTRL0_REG);
-	sys_write32((c0 & ~IQE_CTRL0_MODE) | FIELD_PREP(IQE_CTRL0_MODE, 1), IQE_CTRL0_REG);
-	ctrl1 = (sys_read32(IQE_CTRL1_REG) &
-		 ~(IQE_CTRL1_SRC | IQE_CTRL1_COUNT | IQE_CTRL1_START | IQE_CTRL1_EN)) |
-		FIELD_PREP(IQE_CTRL1_SRC, 2) | FIELD_PREP(IQE_CTRL1_COUNT, IQE_COUNT_MAX - 1U);
+	esp_sdr_paced_cycles_enable();
+	ctrl1 = iqe_window_mode();
 
 	key = irq_lock();
 	saved = esp_sdr_dump_arm(usage);
 	sys_write32(DUMP_CTRL_CIRCULAR, DUMP_CTRL_REG);
 	sys_write32(DUMP_CTRL_CIRCULAR | DUMP_CTRL_RUN, DUMP_CTRL_REG);
-	est_restart(ctrl1);
-	t_arm = t_win = t_restart = cycles();
+	iqe_restart(ctrl1);
+	t_arm = t_win = t_restart = esp_sdr_paced_cycles();
 	est_read(&e0);
 
 	for (;;) {
-		uint32_t now = cycles(), dt, pw;
+		uint32_t now = esp_sdr_paced_cycles(), dt, pw;
 
 		if (now - t_win < WINDOW_CYC) {
 			continue;
@@ -179,7 +153,7 @@ int esp_sdr_trig_wait(const struct esp_sdr_trig_cfg *cfg, struct esp_sdr_trig_sn
 			pw = (uint32_t)((uint64_t)pw * WINDOW_CYC / dt);
 		}
 		if (now - t_restart >= RESTART_CYC) {
-			est_restart(ctrl1);
+			iqe_restart(ctrl1);
 			t_restart = now;
 			est_read(&e1);
 		}
@@ -287,14 +261,13 @@ void esp_sdr_trig_pack_iq8(const struct esp_sdr_trig_snap *snap, uint32_t from, 
 		for (; run >= 4U; run -= 4U, w += 4, o += 4) {
 			uint32_t a = w[0], b = w[1], c = w[2], d = w[3];
 
-			/* I (bits 19:12) in the low byte, Q (bits 9:2) in the high one. */
-			o[0] = (uint16_t)(((a >> 12) & 0xffU) | ((a << 6) & 0xff00U));
-			o[1] = (uint16_t)(((b >> 12) & 0xffU) | ((b << 6) & 0xff00U));
-			o[2] = (uint16_t)(((c >> 12) & 0xffU) | ((c << 6) & 0xff00U));
-			o[3] = (uint16_t)(((d >> 12) & 0xffU) | ((d << 6) & 0xff00U));
+			o[0] = (uint16_t)esp_sdr_rx_iq8(a);
+			o[1] = (uint16_t)esp_sdr_rx_iq8(b);
+			o[2] = (uint16_t)esp_sdr_rx_iq8(c);
+			o[3] = (uint16_t)esp_sdr_rx_iq8(d);
 		}
 		for (; run > 0U; run--, w++, o++) {
-			o[0] = (uint16_t)(((w[0] >> 12) & 0xffU) | ((w[0] << 6) & 0xff00U));
+			o[0] = (uint16_t)esp_sdr_rx_iq8(w[0]);
 		}
 	}
 }

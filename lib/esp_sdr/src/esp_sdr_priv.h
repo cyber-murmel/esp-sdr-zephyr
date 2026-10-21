@@ -14,6 +14,7 @@
 #include <stdint.h>
 
 #include <zephyr/kernel.h>
+#include <zephyr/sys/sys_io.h>
 #include <zephyr/sys/util.h>
 
 #include <esp_sdr/esp_sdr.h>
@@ -283,6 +284,46 @@
 
 #ifndef DUMP_USAGE_ALLOC
 #define DUMP_USAGE_ALLOC 0U
+#endif
+
+#if defined(CONFIG_SOC_SERIES_ESP32S3) || defined(CONFIG_SOC_SERIES_ESP32C6)
+/*
+ * DUMP_CTRL_REG circular mode (upstream's ring): bit 17, with the count field's 16384
+ * (bit 14). The ring stays 16384 words whatever the count.
+ */
+#define DUMP_CTRL_CIRCULAR (BIT(17) | BIT(14))
+#endif
+
+#if defined(CONFIG_SOC_SERIES_ESP32C6)
+/*
+ * The estimator's sums over its inputs since its start (wrap at 2^32): I^2 + Q^2 over 8 here,
+ * I^2, Q^2 and I*Q over 4 in the three after it.
+ */
+#define IQE_POW_REG 0x600a0490U
+#endif
+
+#if defined(IQE_CTRL1_REG)
+/*
+ * The estimator summing source 2 over its longest count; returns its IQE_CTRL1_REG value with
+ * START and EN clear, for iqe_restart().
+ */
+static inline uint32_t iqe_window_mode(void)
+{
+	uint32_t c0 = sys_read32(IQE_CTRL0_REG);
+
+	sys_write32((c0 & ~IQE_CTRL0_MODE) | FIELD_PREP(IQE_CTRL0_MODE, 1), IQE_CTRL0_REG);
+	return (sys_read32(IQE_CTRL1_REG) &
+		~(IQE_CTRL1_SRC | IQE_CTRL1_COUNT | IQE_CTRL1_START | IQE_CTRL1_EN)) |
+	       FIELD_PREP(IQE_CTRL1_SRC, 2) | FIELD_PREP(IQE_CTRL1_COUNT, IQE_COUNT_MAX - 1U);
+}
+
+/* The sums from zero again: stop, enable, start, back to back. */
+static ALWAYS_INLINE void iqe_restart(uint32_t ctrl1)
+{
+	sys_write32(ctrl1, IQE_CTRL1_REG);
+	sys_write32(ctrl1 | IQE_CTRL1_EN, IQE_CTRL1_REG);
+	sys_write32(ctrl1 | IQE_CTRL1_EN | IQE_CTRL1_START, IQE_CTRL1_REG);
+}
 #endif
 
 #if defined(CONFIG_SOC_SERIES_ESP32)

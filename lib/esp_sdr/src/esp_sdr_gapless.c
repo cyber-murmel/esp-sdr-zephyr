@@ -48,12 +48,9 @@ BUILD_ASSERT(START_GUARD + THRESHOLD <= ESP_SDR_GAPLESS_RING, "start window over
 BUILD_ASSERT(END_GUARD + THRESHOLD <= ESP_SDR_GAPLESS_RING, "end window overlaps unit start");
 BUILD_ASSERT(2U * LATE_LIMIT + 64U < END_GUARD && LATE_LIMIT + 64U < START_GUARD, "guards");
 
-/* DUMP_CTRL_REG circular mode: bit 17 with the count field's 16384 (bit 14). */
-#define DUMP_CTRL_CIRCULAR (BIT(17) | BIT(14))
 /* Block usage: one-hot in bits 11:8 (block 1 = bit 9) and bit 16, as upstream clears them. */
 #define USAGE_CLEAR        0x10f00U
 #define USAGE_BLOCK1       9U
-#define IQE_POW_REG        0x600a0490U
 
 #define CPP         (ESP_SDR_CPU_HZ / ESP_SDR_GAPLESS_RATE_HZ)
 #define SETTLE_CYC  (16U * CPP)
@@ -176,7 +173,7 @@ struct staged {
 	int16_t dbfs;
 };
 
-static uint32_t stage[STAGE_WORDS] __aligned(16) __attribute__((section(".esp_sdr_high")));
+static uint32_t stage[STAGE_WORDS] __aligned(16) ESP_SDR_HIGH_RAM;
 
 /* Run state, in one place so that the hot loop reaches it with one base register. */
 static struct {
@@ -242,11 +239,6 @@ static uint32_t baseline_q8;
 static uint32_t learnt;
 static uint32_t loud_run;
 static uint32_t learn_pw[LEARN_WINDOWS];
-
-static ALWAYS_INLINE uint32_t cycles(void)
-{
-	return esp_sdr_paced_cycles();
-}
 
 static ALWAYS_INLINE uint32_t *bank_ptr(unsigned int b)
 {
@@ -354,13 +346,6 @@ struct est {
 	uint64_t abs;
 	uint32_t p, si, sq;
 };
-
-static ESP_SDR_GAPLESS_HOT void est_restart(uint32_t ctrl1)
-{
-	sys_write32(ctrl1, IQE_CTRL1_REG);
-	sys_write32(ctrl1 | IQE_CTRL1_EN, IQE_CTRL1_REG);
-	sys_write32(ctrl1 | IQE_CTRL1_EN | IQE_CTRL1_START, IQE_CTRL1_REG);
-}
 
 /* The sums and where the ring is: @p ref is a ring index whose absolute index is @p ref_abs. */
 static ALWAYS_INLINE void est_read(struct est *e, uint32_t ref, uint64_t ref_abs)
@@ -472,12 +457,6 @@ static ESP_SDR_GAPLESS_HOT int16_t dbfs_x10(uint32_t power)
 
 /* ---- packing ---- */
 
-/* Shift 2 keeps a sample's top 8 bits, which always fit: I from bits 19:12, Q from 9:2. */
-static ALWAYS_INLINE uint32_t pack_top8(uint32_t v)
-{
-	return ((v >> 12) & 0xffU) | ((v << 6) & 0xff00U);
-}
-
 /* Shifts 0 and 1 through tables of the saturated value of each 10-bit code, built once. */
 static uint8_t sat_lut[2][1024];
 
@@ -506,22 +485,22 @@ pack_run(const uint32_t *w, uint32_t n, uint16_t *o, unsigned int shift)
 	uint32_t *o32;
 
 	if (shift >= 2U) {
-		/* Two samples per 32-bit store where the output is aligned for it. */
+		/* A sample's top 8 bits always fit. Two samples per 32-bit store where aligned. */
 		if (((uintptr_t)o & 2U) != 0U && n > 0U) {
-			*o++ = (uint16_t)pack_top8(*w++);
+			*o++ = (uint16_t)esp_sdr_rx_iq8(*w++);
 			n--;
 		}
 		o32 = (uint32_t *)o;
 		for (; n >= 4U; n -= 4U, w += 4) {
 			uint32_t a = w[0], b = w[1], c = w[2], d = w[3];
 
-			o32[0] = pack_top8(a) | (pack_top8(b) << 16);
-			o32[1] = pack_top8(c) | (pack_top8(d) << 16);
+			o32[0] = esp_sdr_rx_iq8(a) | (esp_sdr_rx_iq8(b) << 16);
+			o32[1] = esp_sdr_rx_iq8(c) | (esp_sdr_rx_iq8(d) << 16);
 			o32 += 2;
 		}
 		o = (uint16_t *)o32;
 		for (; n > 0U; n--) {
-			*o++ = (uint16_t)pack_top8(*w++);
+			*o++ = (uint16_t)esp_sdr_rx_iq8(*w++);
 		}
 		return;
 	}
@@ -679,9 +658,9 @@ static ESP_SDR_GAPLESS_HOT bool gain_step(uint32_t room)
 	if (g == rs.gain) {
 		return false;
 	}
-	dt = cycles();
+	dt = esp_sdr_paced_cycles();
 	(void)esp_sdr_rx_gain_force_locked(g);
-	dt = cycles() - dt;
+	dt = esp_sdr_paced_cycles() - dt;
 	rs.gain_cyc = MAX(rs.gain_cyc, dt + dt / 4U);
 	rs.st.gain_cycles_max = MAX(rs.st.gain_cycles_max, dt);
 	/* The baseline follows the step (about 1 dB a step in power: 323 / 256 per step up). */
@@ -905,14 +884,14 @@ static ESP_SDR_GAPLESS_HOT enum slice_result copy_slice(uint32_t budget, uint64_
 		return SLICE_FULL;
 	}
 	at = (u->first + (uint32_t)(j->s - u->abs)) & RING_MASK;
-	t0 = cycles();
+	t0 = esp_sdr_paced_cycles();
 	/* Up to the ring's end, then from its start. */
 	run = MIN(n, ESP_SDR_GAPLESS_RING - at);
 	copy_words(&stage[rs.st_head], bank_ptr((unsigned int)(u - rs.u)) + at, run);
 	if (run < n) {
 		copy_words(&stage[rs.st_head + run], bank_ptr((unsigned int)(u - rs.u)), n - run);
 	}
-	dt = cycles() - t0;
+	dt = esp_sdr_paced_cycles() - t0;
 	if (n >= 64U) {
 		uint32_t c = dt * 16U / n;
 
@@ -960,7 +939,7 @@ static ESP_SDR_GAPLESS_HOT enum slice_result pack_slice(uint32_t budget)
 	if (budget <= rs.pack_ovh + (8U * *cpp >> 4)) {
 		return SLICE_IDLE;
 	}
-	t_all = cycles();
+	t_all = esp_sdr_paced_cycles();
 	/* An eighth of what is left is margin: the estimate is an average. */
 	seg = (struct esp_sdr_gapless_seg){
 		.index = e->index,
@@ -977,12 +956,12 @@ static ESP_SDR_GAPLESS_HOT enum slice_result pack_slice(uint32_t budget)
 		return SLICE_FULL;
 	}
 	n = MIN(n, seg.pairs);
-	t0 = cycles();
+	t0 = esp_sdr_paced_cycles();
 	pack_run(&stage[e->at], n, (uint16_t *)dst, e->shift);
-	dt = cycles() - t0;
+	dt = esp_sdr_paced_cycles() - t0;
 	rs.sink->commit(n, rs.sink->user);
 	/* The fixed cost rises at once, falls slowly. */
-	ovh = (cycles() - t_all) - dt;
+	ovh = (esp_sdr_paced_cycles() - t_all) - dt;
 	rs.pack_ovh = ovh > rs.pack_ovh ? ovh : rs.pack_ovh - (rs.pack_ovh - ovh) / 16U;
 	rs.st.kept_pairs += n;
 	rs.st.pack_cycles_max = MAX(rs.st.pack_cycles_max, dt);
@@ -1072,7 +1051,7 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 					    struct esp_sdr_gapless_stats *stats)
 {
 	uint32_t start_probe[2], end_probe[2];
-	uint32_t usage, saved, c0, ctrl1, lo, hi;
+	uint32_t usage, saved, ctrl1, lo, hi;
 	uint32_t epoch, w0, expected, wi = 0, written = 0, t_win, t_restart, t_unit, t_service;
 	uint64_t base;
 	unsigned int b = 0, key;
@@ -1098,17 +1077,11 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
 	(void)esp_sdr_rx_gain_refresh();
 	run_init(cfg, sink, lo, hi);
-	/* The machine performance counter (mpccr) counts CPU cycles. */
-	__asm__ volatile("csrw 0x7e0, %0" ::"r"(1));
-	__asm__ volatile("csrw 0x7e1, %0" ::"r"(1));
+	esp_sdr_paced_cycles_enable();
 	fill_marks(0, 0, ESP_SDR_GAPLESS_RING);
 	fill_marks(1, 0, ESP_SDR_GAPLESS_RING);
 
-	c0 = sys_read32(IQE_CTRL0_REG);
-	sys_write32((c0 & ~IQE_CTRL0_MODE) | FIELD_PREP(IQE_CTRL0_MODE, 1), IQE_CTRL0_REG);
-	ctrl1 = (sys_read32(IQE_CTRL1_REG) &
-		 ~(IQE_CTRL1_SRC | IQE_CTRL1_COUNT | IQE_CTRL1_START | IQE_CTRL1_EN)) |
-		FIELD_PREP(IQE_CTRL1_SRC, 2) | FIELD_PREP(IQE_CTRL1_COUNT, IQE_COUNT_MAX - 1U);
+	ctrl1 = iqe_window_mode();
 
 	key = irq_lock();
 	saved = esp_sdr_dump_arm(usage);
@@ -1117,13 +1090,13 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 	sys_write32(DUMP_CTRL_CIRCULAR, DUMP_CTRL_REG);
 	select_blocks(saved, BIT(0));
 	sys_write32(DUMP_CTRL_CIRCULAR | DUMP_CTRL_RUN, DUMP_CTRL_REG);
-	epoch = t_unit = t_service = cycles();
+	epoch = t_unit = t_service = esp_sdr_paced_cycles();
 	w0 = write_index();
 	/* Unit 0 starts near w0, found exactly after the first switch; index 0 is w0 - 256. */
 	expected = (w0 - 256U) & RING_MASK;
 	base = 0;
-	est_restart(ctrl1);
-	t_win = t_restart = cycles();
+	iqe_restart(ctrl1);
+	t_win = t_restart = esp_sdr_paced_cycles();
 	est_read(&e0, expected, base);
 
 	for (uint32_t unit = 0;; unit++) {
@@ -1137,7 +1110,7 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 
 			wi = write_index();
 			written = (wi - expected) & RING_MASK;
-			now = cycles();
+			now = esp_sdr_paced_cycles();
 			rs.st.polls++;
 			if (unlikely(written >= THRESHOLD + LATE_LIMIT / 2U) &&
 			    rs.st.overrun_activity == 0U) {
@@ -1168,13 +1141,13 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 			/* The next deadline: the switch, or else the preparation before it. */
 			limit = prepared ? THRESHOLD : THRESHOLD - PREP_PAIRS - LATE_LIMIT;
 			if (!prepared && (written >= limit || unit_done(&rs.u[next]))) {
-				t = cycles();
+				t = esp_sdr_paced_cycles();
 				rs.last_activity = ESP_SDR_GAPLESS_PREP;
 				rs.last_t = t;
 				rs.last_room = 0U;
 				prepare(next, expected, start_probe, end_probe);
 				prepared = true;
-				t = cycles() - t;
+				t = esp_sdr_paced_cycles() - t;
 				busy += t;
 				rs.ucyc[ESP_SDR_GAPLESS_PREP] += t;
 				continue;
@@ -1184,7 +1157,7 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 			}
 			room = (limit - written - 64U) * CPP;
 			if (now - t_win >= WINDOW_CYC && room > rs.window_cyc_max + WINDOW_GUARD_CYC / 2U) {
-				t = cycles();
+				t = esp_sdr_paced_cycles();
 				rs.last_activity = ESP_SDR_GAPLESS_WINDOWS;
 				rs.last_t = t;
 				rs.last_room = room;
@@ -1192,12 +1165,12 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 				t_win = now;
 				window_done(&e0, &e1);
 				if (now - t_restart >= RESTART_CYC) {
-					est_restart(ctrl1);
+					iqe_restart(ctrl1);
 					t_restart = now;
 					est_read(&e1, expected, base);
 				}
 				e0 = e1;
-				t = cycles() - t;
+				t = esp_sdr_paced_cycles() - t;
 				busy += t;
 				rs.ucyc[ESP_SDR_GAPLESS_WINDOWS] += t;
 				rs.window_cyc_max = MAX(rs.window_cyc_max, t);
@@ -1210,12 +1183,12 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 			if (budget < SLICE_CYC_MIN) {
 				continue;
 			}
-			t = cycles();
+			t = esp_sdr_paced_cycles();
 			rs.last_t = t;
 			rs.last_room = room;
 			rs.last_activity = ESP_SDR_GAPLESS_SWITCH;
 			if (rs.gain_due != 0 && rs.cfg->gain_servo && gain_step(room)) {
-				t = cycles() - t;
+				t = esp_sdr_paced_cycles() - t;
 				busy += t;
 				rs.ucyc[ESP_SDR_GAPLESS_SWITCH] += t;
 				continue;
@@ -1227,7 +1200,7 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 			rs.last_activity = ESP_SDR_GAPLESS_COPY;
 			r = copy_slice(budget, base);
 			if (r == SLICE_DONE) {
-				t = cycles() - t;
+				t = esp_sdr_paced_cycles() - t;
 				busy += t;
 				rs.ucyc[ESP_SDR_GAPLESS_COPY] += t;
 				continue;
@@ -1236,7 +1209,7 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 				rs.last_activity = ESP_SDR_GAPLESS_PACK;
 				r = pack_slice(budget);
 				if (r == SLICE_DONE) {
-					t = cycles() - t;
+					t = esp_sdr_paced_cycles() - t;
 					busy += t;
 					rs.ucyc[ESP_SDR_GAPLESS_PACK] += t;
 					continue;
@@ -1250,11 +1223,11 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 				continue;
 			}
 			t_service = now;
-			t = cycles();
+			t = esp_sdr_paced_cycles();
 			rs.last_activity = ESP_SDR_GAPLESS_SERVICE;
 			bool did = sink->service(MIN(room - rs.service_cyc, budget), sink->user);
 
-			t = cycles() - t;
+			t = esp_sdr_paced_cycles() - t;
 			rs.service_cyc = MAX(rs.service_cyc, t + t / 4U);
 			if (did) {
 				busy += t;
@@ -1264,7 +1237,7 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 		}
 
 		uint32_t late = written - THRESHOLD;
-		uint32_t t_sw = cycles();
+		uint32_t t_sw = esp_sdr_paced_cycles();
 
 		rs.st.late_max = MAX(rs.st.late_max, late);
 		if (late > LATE_LIMIT) {
@@ -1277,11 +1250,11 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 			select_blocks(saved, 0U);
 		} else {
 			select_blocks(saved, BIT(next));
-			epoch = cycles();
+			epoch = esp_sdr_paced_cycles();
 		}
-		uint32_t t = cycles(), first, end, count;
+		uint32_t t = esp_sdr_paced_cycles(), first, end, count;
 
-		while (cycles() - t < SETTLE_CYC) {
+		while (esp_sdr_paced_cycles() - t < SETTLE_CYC) {
 		}
 		if (unit == 0U) {
 			first = find_first(b, (w0 - 1024U) & RING_MASK, UNIT0_GUARD);
@@ -1321,7 +1294,7 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 			gain_servo();
 		}
 		/* What this unit lost or left over sets the cap. */
-		t = cycles();
+		t = esp_sdr_paced_cycles();
 		uint32_t idle = (t - t_unit) - MIN(busy, t - t_unit);
 
 		rs.st.idle_cycles_min = MIN(rs.st.idle_cycles_min, idle);
@@ -1335,7 +1308,7 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 		rs.cur_abs = base;
 		rs.unit_capped = false;
 		rs.unit_lost = false;
-		rs.ucyc[ESP_SDR_GAPLESS_SWITCH] += cycles() - t_sw;
+		rs.ucyc[ESP_SDR_GAPLESS_SWITCH] += esp_sdr_paced_cycles() - t_sw;
 		for (int k = 0; k < ESP_SDR_GAPLESS_ACTIVITIES; k++) {
 			rs.st.cycles[k] += rs.ucyc[k];
 		}
