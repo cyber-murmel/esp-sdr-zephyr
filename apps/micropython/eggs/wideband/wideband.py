@@ -7,7 +7,7 @@
 # GNU Radio Python Flow Graph
 # Title: Wideband
 # Author: esp-sdr
-# Description: A waterfall of 40 MHz from bursts at 40 MS/s; the knob tunes from 1.8 to 2.8 GHz and sets the level (the top of the colour scale).
+# Description: A waterfall of 80 MHz without a gap where the radio streams it (the WHY2025 badge: the windows that stand out, as many as the link holds), else from bursts at 80 MS/s; the knob tunes from 1.8 to 2.8 GHz and sets the level (the top of the colour scale).
 # GNU Radio version: 3.10.12.0
 
 from PyQt5 import Qt
@@ -64,7 +64,7 @@ class wideband(gr.top_block, Qt.QWidget):
         ##################################################
         # Variables
         ##################################################
-        self.samp_rate = samp_rate = 40e6
+        self.samp_rate = samp_rate = 80e6
         self.level = level = -35
         self.freq = freq = 2.44e9
 
@@ -97,7 +97,7 @@ class wideband(gr.top_block, Qt.QWidget):
             window.WIN_BLACKMAN_hARRIS, #wintype
             freq, #fc
             samp_rate, #bw
-            "40 MS/s", #name
+            "80 MS/s", #name
             1, #number of inputs
             None # parent
         )

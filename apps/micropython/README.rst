@@ -208,10 +208,12 @@ export changes.
 The menu lists:
 
 - the apps bundled with the firmware, ``eggs/``: Spectrum, Waterfall (250 kS/s, gapless),
-  Wideband (40 MS/s bursts), Constellation, Receiver (tabs, radio buttons, a check box), Tone
-  (transmits), Data link (two-way messages, `Data link`_) and, on the WHY2025 badge,
-  Channelizer (80 MHz in 64 channels from triggered snapshots, ``esdr.trig_get()`` and
-  ``esdr.channelize()``; not a GRC export: the snapshots are no stream). They are frozen;
+  Wideband (80 MS/s: the gapless stream where the radio has it, else bursts), Constellation,
+  Receiver (tabs, radio buttons, a check box), Tone (transmits), Data link (two-way messages,
+  `Data link`_) and, on the WHY2025 badge, Channelizer (80 MHz in 64 channels from triggered
+  snapshots, ``esdr.trig_get()`` and ``esdr.channelize()``; not a GRC export: the snapshots are
+  no stream) and Bursts (the gapless stream in 40 channels with a burst detector each,
+  ``esdr.chan_power()`` and ``esdr.chan_bursts()``). They are frozen;
   ``tools/eggs_index.py`` turns their ``metadata.json`` files into the index the menu reads;
 - the folders in ``apps/`` on the FLASH and SD drives: copy an app's folder there over USB.
 

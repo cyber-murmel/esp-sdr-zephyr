@@ -1,7 +1,7 @@
 {
   "name": "Wideband",
-  "description": "A waterfall of 40 MHz from bursts at 40 MS/s; the knob tunes from 1.8 to 2.8 GHz and sets the level (the top of the colour scale).",
+  "description": "A waterfall of 80 MHz without a gap where the radio streams it (the WHY2025 badge: the windows that stand out, as many as the link holds), else from bursts at 80 MS/s; the knob tunes from 1.8 to 2.8 GHz and sets the level (the top of the colour scale).",
   "category": "receive",
   "author": "esp-sdr",
-  "revision": 3
+  "revision": 4
 }

@@ -1,0 +1,11 @@
+{
+  "name": "Bursts",
+  "description": "80 MHz around the knob's frequency without a gap (the WHY2025 badge's C6 keeps the 10 us windows that stand out), channelized on the P4 into 40 channels of 2 MHz with a burst detector per channel: each channel's power over its floor, occupancy over time, and the bursts that ended with their frequency, length and level.",
+  "category": "receive",
+  "author": "esp-sdr",
+  "revision": 1,
+  "needs": [
+    "gapless_start",
+    "chan_power"
+  ]
+}
