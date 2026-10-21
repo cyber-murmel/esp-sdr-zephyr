@@ -14,15 +14,13 @@ import importlib
 import math
 import os
 import random
-import shutil
-import subprocess
 import sys
 import time
 import types
 
 import pytest
 
-from conftest import REPO, load
+from conftest import FSK_EMIT, REPO, load
 
 MODULES = REPO / "apps/micropython/modules"
 EGG = REPO / "apps/micropython/eggs/datalink"
@@ -255,24 +253,6 @@ class FakeRadio(types.ModuleType):
 
     # -- the C modem, as esdr's bindings --
     def _c(self, lib):
-        frame_t = _cframe()
-        emit_t = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.POINTER(frame_t))
-        lib.esdr_fsk_rx_size.restype = ctypes.c_size_t
-        lib.esdr_fsk_rx_size.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
-        lib.esdr_fsk_rx_init.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32,
-                                         ctypes.c_uint64, ctypes.c_uint32, ctypes.c_uint32,
-                                         ctypes.c_uint32]
-        lib.esdr_fsk_rx_process.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t,
-                                            emit_t, ctypes.c_void_p]
-        lib.esdr_fsk_rx_state.restype = ctypes.c_uint32
-        lib.esdr_fsk_rx_state.argtypes = [ctypes.c_void_p]
-        lib.esdr_fsk_rx_reset.argtypes = [ctypes.c_void_p]
-        lib.esdr_fsk_mod.restype = ctypes.c_size_t
-        lib.esdr_fsk_mod.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.c_uint32,
-                                     ctypes.c_void_p, ctypes.c_size_t, ctypes.c_float,
-                                     ctypes.c_float, ctypes.c_void_p, ctypes.c_size_t,
-                                     ctypes.POINTER(ctypes.c_float)]
-
         def fsk_rx_init(sps, code, code_len, threshold, max_len):
             size = lib.esdr_fsk_rx_size(sps, code_len)
             st = ctypes.create_string_buffer(size)
@@ -288,7 +268,7 @@ class FakeRadio(types.ModuleType):
                 out.append((bytes(f.data[:f.len]), f.errors, f.end, f.phase, f.dc, f.amp,
                             f.var, f.power, f.floor))
 
-            cb = emit_t(emit)
+            cb = FSK_EMIT(emit)
             view = (ctypes.c_int16 * (2 * n)).from_buffer(buf, 4 * start)
             lib.esdr_fsk_rx_process(st, view, n, cb, None)
             return out
@@ -325,38 +305,17 @@ def shift(iq, hz):
     return out
 
 
-def _cframe():
-    class CFrame(ctypes.Structure):
-        _fields_ = [("len", ctypes.c_uint32), ("errors", ctypes.c_uint32),
-                    ("end", ctypes.c_uint32), ("phase", ctypes.c_uint32),
-                    ("dc", ctypes.c_double), ("amp", ctypes.c_double), ("var", ctypes.c_double),
-                    ("power", ctypes.c_double), ("floor", ctypes.c_uint32),
-                    ("data", ctypes.c_uint8 * 255)]
-    return CFrame
-
-
-@pytest.fixture(scope="module")
-def clib(tmp_path_factory):
-    cc = shutil.which("cc") or shutil.which("gcc")
-    if cc is None:
-        return None
-    out = tmp_path_factory.mktemp("fsk") / "libesdr_fsk.so"
-    subprocess.run([cc, "-O2", "-shared", "-fPIC", "-o", str(out),
-                    str(REPO / "apps/micropython/cmod/esdr_fsk.c"), "-lm"], check=True)
-    return ctypes.CDLL(str(out))
-
-
 OWN = ("gnuradio", "pmt", "PyQt5", "sip", "packaging", "esdr", "framebuf", "datalink",
        "datalink_epy_block_0")
 
 
 @pytest.fixture(params=["c", "python", "engine", "headless"])
-def sim(request, monkeypatch, clib):
+def sim(request, monkeypatch, fsk_clib):
     mode = request.param
-    if mode != "python" and clib is None:
+    if mode != "python" and fsk_clib is None:
         pytest.skip("no host C compiler")
     clock = Clock()
-    radio = FakeRadio(clock, clib if mode != "python" else None, engine=mode == "engine")
+    radio = FakeRadio(clock, fsk_clib if mode != "python" else None, engine=mode == "engine")
     saved = {k: v for k, v in sys.modules.items() if k.split(".")[0] in OWN}
     for k in saved:
         del sys.modules[k]

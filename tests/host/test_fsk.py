@@ -8,12 +8,10 @@ import array
 import ctypes
 import math
 import random
-import shutil
-import subprocess
 
 import pytest
 
-from conftest import REPO, load
+from conftest import FSK_EMIT, load
 
 fsk = load("apps/micropython/modules/gnuradio/digital/_fsk.py", "gnuradio_digital_fsk")
 
@@ -186,41 +184,11 @@ def test_receiver_settings():
 # ---- the C modem against the reference ----
 
 
-class CFrame(ctypes.Structure):
-    _fields_ = [("len", ctypes.c_uint32), ("errors", ctypes.c_uint32), ("end", ctypes.c_uint32),
-                ("phase", ctypes.c_uint32), ("dc", ctypes.c_double), ("amp", ctypes.c_double),
-                ("var", ctypes.c_double), ("power", ctypes.c_double), ("floor", ctypes.c_uint32),
-                ("data", ctypes.c_uint8 * 255)]
-
-
-EMIT = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.POINTER(CFrame))
-
-
-@pytest.fixture(scope="module")
-def clib(tmp_path_factory):
-    cc = shutil.which("cc") or shutil.which("gcc")
-    if cc is None:
+@pytest.fixture
+def clib(fsk_clib):
+    if fsk_clib is None:
         pytest.skip("no host C compiler")
-    out = tmp_path_factory.mktemp("fsk") / "libesdr_fsk.so"
-    src = REPO / "apps/micropython/cmod/esdr_fsk.c"
-    subprocess.run([cc, "-O2", "-Wall", "-Werror", "-shared", "-fPIC", "-o", str(out), str(src),
-                    "-lm"], check=True)
-    lib = ctypes.CDLL(str(out))
-    lib.esdr_fsk_rx_size.restype = ctypes.c_size_t
-    lib.esdr_fsk_rx_size.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
-    lib.esdr_fsk_rx_init.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint32,
-                                     ctypes.c_uint64, ctypes.c_uint32, ctypes.c_uint32,
-                                     ctypes.c_uint32]
-    lib.esdr_fsk_rx_process.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, EMIT,
-                                        ctypes.c_void_p]
-    lib.esdr_fsk_angle.argtypes = [ctypes.c_int32, ctypes.c_int32]
-    lib.esdr_fsk_angle.restype = ctypes.c_int32
-    lib.esdr_fsk_mod.restype = ctypes.c_size_t
-    lib.esdr_fsk_mod.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.c_uint32,
-                                 ctypes.POINTER(ctypes.c_float), ctypes.c_size_t, ctypes.c_float,
-                                 ctypes.c_float, ctypes.c_void_p, ctypes.c_size_t,
-                                 ctypes.POINTER(ctypes.c_float)]
-    return lib
+    return fsk_clib
 
 
 class CReceiver:
@@ -230,7 +198,7 @@ class CReceiver:
         self.mem = ctypes.create_string_buffer(size)
         assert lib.esdr_fsk_rx_init(self.mem, size, sps, code, code_len, threshold, max_len) == 0
         self.frames = []
-        self.cb = EMIT(self._emit)
+        self.cb = FSK_EMIT(self._emit)
 
     def _emit(self, user, f):
         f = f.contents
