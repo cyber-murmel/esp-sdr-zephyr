@@ -36,8 +36,18 @@ repos:
         name: host tests of the Python tools (pytest)
         entry: scripts/run-host-tests.sh
         language: system
-        files: >-
-          ^(apps/multiapp/[^/]+\.py$|apps/micropython/(tools|eggs)/|scripts/|doc/registers/|tests/host/|apps/micropython/modules/gnuradio/eng_notation\.py$)
+        files: |
+          (?x)^(
+            apps/multiapp/[^/]+\.py$|
+            apps/micropython/(tools|eggs|modules|modules_c5)/|
+            apps/micropython/cmod/esdr_fsk\.[ch]$|
+            apps/chancap/tools/ble_pcap\.py$|
+            apps/ubertooth/tools/le_ref\.py$|
+            tests/unit/ubertooth_le/src/le_vectors\.h$|
+            scripts/|
+            doc/registers/|
+            tests/host/
+          )
         pass_filenames: false
 
       # build.yml "SoapySDR module"

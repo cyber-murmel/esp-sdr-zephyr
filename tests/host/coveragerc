@@ -1,16 +1,21 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Coverage of the host tests (scripts/run-host-tests.sh): the Python tools that run in builds
-# and CI. Files no test imports count too, at 0 %. The bench tools under apps/*/tools talk to
-# boards and stay out.
+# and CI, and the MicroPython modules and app tools the tests load. Files no test imports count
+# too, at 0 %. The other bench tools under apps/*/tools talk to boards and stay out.
 [run]
 branch = True
 source =
     apps/multiapp
     apps/micropython/tools
+    apps/micropython/modules
+    apps/micropython/modules_c5
+    apps/chancap/tools
+    apps/ubertooth/tools
     scripts
     doc/registers
 omit =
     apps/multiapp/pytest/*
+    apps/chancap/tools/chancap_bridge.py
 
 [report]
 skip_empty = True
