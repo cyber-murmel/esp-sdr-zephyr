@@ -17,10 +17,9 @@ import sys
 
 import numpy as np
 
-BLOCK = 4096
-BLOCK_HDR = struct.Struct("<IHHQ")          # magic, flags, samples, index
+from esdr_serial import BLK, BLOCK_BYTES, BLOCK_MAGIC  # block header: magic, flags, samples, index
+
 SEG_HDR = struct.Struct("<IHBBhbbB3x")      # delta, pairs, shift, flags, power, dc_i, dc_q, gain
-BLOCK_MAGIC = 0x4B4C4245
 BLK_SEG = 0x0080
 SEG_DROPPED, SEG_RESTART, SEG_LOUD = 0x01, 0x02, 0x04
 FS = 80e6
@@ -32,13 +31,13 @@ MIN_CARRIER = 8.0
 def segments(path):
     """Yield (index, shift, flags, power_db, dc_i, dc_q, gain, iq complex64)."""
     data = np.fromfile(path, dtype=np.uint8)
-    for off in range(0, len(data) - BLOCK + 1, BLOCK):
-        b = data[off:off + BLOCK].tobytes()
-        magic, flags, samples, index = BLOCK_HDR.unpack_from(b, 0)
+    for off in range(0, len(data) - BLOCK_BYTES + 1, BLOCK_BYTES):
+        b = data[off:off + BLOCK_BYTES].tobytes()
+        magic, flags, samples, index = BLK.unpack_from(b, 0)
         if magic != BLOCK_MAGIC or not flags & BLK_SEG:
             raise ValueError(f"block at {off}: not a gapless block")
-        pos = BLOCK_HDR.size
-        while pos + SEG_HDR.size <= BLOCK:
+        pos = BLK.size
+        while pos + SEG_HDR.size <= BLOCK_BYTES:
             delta, pairs, shift, sflags, power, dci, dcq, gain = SEG_HDR.unpack_from(b, pos)
             if pairs == 0:
                 break
