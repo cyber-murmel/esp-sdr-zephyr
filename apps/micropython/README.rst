@@ -428,6 +428,18 @@ that restarted by itself. The P4 runs one CPU here: the USB threads are preempti
 MicroPython's (main, priority 10) and below the system work queue, which feeds the liveness
 watchdog; a cooperative USB thread held it off through a DFU download until the board reset.
 
+With the C6 built with ``gapless.conf`` (``apps/osmosdr_serial``), ``esdr.gapless_start()``
+streams the whole 80 MHz without a gap: the C6 keeps the 10 us windows that stand out, as many
+as the budget it is given (2 MB/s by default) holds, and their samples go to the monitor (full
+scale 16384, as bursts), so the spectrum and waterfall sinks show them; ``soapy.source`` at
+80 MS/s takes this for displays. With ``channels`` the P4 also runs the fixed-point polyphase
+filterbank and burst detector of ``apps/common`` (``esdr_pfbq.h``) on its PIE SIMD in a thread
+of its own (``cmod/esdr_gl.c``, some 80 to 100 cycles a sample, its memory in PSRAM): per
+channel the power, floor, peak and share of time open (``esdr.chan_power()``), and the bursts
+that ended (``esdr.chan_bursts()``: frequency, start, length from the opening block to the last
+loud one, level). A hole in the stream longer than 0.5 ms ends a burst; the radio's budget can
+cut a long burst short or into pieces. The Bursts app shows them.
+
 The MCH2022 badge
 *****************
 

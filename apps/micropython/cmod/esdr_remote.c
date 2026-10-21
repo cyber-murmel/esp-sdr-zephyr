@@ -9,8 +9,9 @@
  *
  * Receive: the UART's interrupt or the SDIO reader thread fills a byte ring, a parser thread
  * splits it into reply frames (struct esdr_ser_hdr) and sample blocks (struct
- * esdr_block_hdr). Samples go to the capture buffer and the monitor (esdr_rx_latest()). Transmit: requests and transmit frames
- * go out one frame at a time; a feeder thread streams a buffer.
+ * esdr_block_hdr). Samples go to the capture buffer and the monitor (esdr_rx_latest()), the
+ * gapless stream's segments to the monitor and a hook (esdr_gl.c). Transmit: requests and
+ * transmit frames go out one frame at a time; a feeder thread streams a buffer.
  */
 
 #include <errno.h>
@@ -29,6 +30,7 @@
 
 #include "esdr_remote.h"
 #include "esdr_rx.h"
+#include "esdr_seg.h"
 
 #define LINK_SDIO DT_CHOSEN(esdr_link_sdio)
 #define LINK_UART DT_CHOSEN(esdr_link_uart)
@@ -436,6 +438,15 @@ static struct {
 	struct esdr_remote_trig_stats st;
 } trg = {.done = -1};
 
+/* The gapless stream (ESDR_MODE_GAPLESS, below). */
+static struct {
+	volatile bool active;
+	bool monitor;
+	void (*volatile hook)(const uint8_t *blk);
+	struct esdr_seg_track track;
+	struct esdr_remote_gl_stats st;
+} gl;
+
 static void on_trig_block(const struct esdr_block_hdr *h, const uint8_t *p, uint32_t n)
 {
 	int64_t index = (int64_t)h->index;
@@ -505,6 +516,7 @@ void esdr_remote_reset(void)
 	esdr_remote_rx_stop();
 	esdr_remote_tx_stop();
 	trg.active = false;
+	gl.active = false;
 	k_mutex_lock(&trg_lock, K_FOREVER);
 	trg.got = 0;
 	trg.done = -1;
@@ -543,6 +555,119 @@ void esdr_remote_trig_stats(struct esdr_remote_trig_stats *st)
 	k_mutex_unlock(&trg_lock);
 }
 
+/* ---- gapless receive (ESDR_MODE_GAPLESS) ---- */
+
+/*
+ * A segment's pairs into the monitor (its newest ESDR_MON_SAMPLES), as 32 times the raw units:
+ * (item << shift) + (2^shift - 1) / 2 - dc (esdr_seg_hdr), full scale 16384 as bursts.
+ */
+static int gl_seg_cb(const struct esdr_seg *seg, void *user)
+{
+	const unsigned int sh = MIN(seg->shift, 9U) + 5U;
+	const int32_t half = 16 * (int32_t)((1U << seg->shift) - 1U);
+	const int32_t oi = half - 32 * (int32_t)seg->dc_i, oq = half - 32 * (int32_t)seg->dc_q;
+	const uint32_t n = seg->pairs, skip = n > ESDR_MON_SAMPLES ? n - ESDR_MON_SAMPLES : 0U;
+	uint64_t gap = esdr_seg_track_gap(&gl.track, seg);
+
+	ARG_UNUSED(user);
+	gl.st.segments++;
+	gl.st.pairs += n;
+	if (gap != 0U && gap != ESDR_SEG_GAP_START) {
+		gl.st.gaps++;
+	}
+	if (!gl.monitor) {
+		return 0;
+	}
+	for (uint32_t k = skip; k < n; k++) {
+		int32_t i = CLAMP(((int32_t)seg->iq[2U * k] << sh) + oi, INT16_MIN, INT16_MAX);
+		int32_t q = CLAMP(((int32_t)seg->iq[2U * k + 1U] << sh) + oq, INT16_MIN, INT16_MAX);
+
+		mon[(mon_total + k) % ESDR_MON_SAMPLES] = (uint16_t)i | ((uint32_t)(uint16_t)q << 16);
+	}
+	mon_total += n;
+	return 0;
+}
+
+static void on_seg_block(const uint8_t *blk)
+{
+	void (*hook)(const uint8_t *blk) = gl.hook;
+
+	if (!gl.active) {
+		return;
+	}
+	gl.st.blocks++;
+	if (esdr_seg_parse(blk, ESDR_BLOCK_BYTES, gl_seg_cb, NULL) < 0) {
+		gl.st.bad++;
+		return;
+	}
+	if (hook != NULL) {
+		hook(blk);
+	}
+}
+
+int esdr_remote_gl_start(const struct esdr_gapless_cfg *cfg, bool monitor)
+{
+	int ret;
+
+	esdr_remote_rx_stop();
+	trg.active = false;
+	/* A radio without the mode refuses its settings. */
+	ret = esdr_remote_request(ESDR_REQ_SET_GAPLESS, 0, cfg, sizeof(*cfg), NULL, 0);
+	if (ret < 0) {
+		return ret;
+	}
+	k_mutex_lock(&rx_lock, K_FOREVER);
+	memset(&gl.st, 0, sizeof(gl.st));
+	esdr_seg_track_reset(&gl.track);
+	gl.monitor = monitor;
+	gl.active = true;
+	k_mutex_unlock(&rx_lock);
+	ret = esdr_remote_request(ESDR_REQ_SET_MODE, ESDR_MODE_GAPLESS, NULL, 0, NULL, 0);
+	if (ret < 0) {
+		gl.active = false;
+	}
+	return ret < 0 ? ret : 0;
+}
+
+void esdr_remote_gl_stop(void)
+{
+	if (!gl.active) {
+		return;
+	}
+	gl.active = false;
+	(void)esdr_remote_request(ESDR_REQ_SET_MODE, ESDR_MODE_OFF, NULL, 0, NULL, 0);
+}
+
+bool esdr_remote_gl_busy(void)
+{
+	return gl.active;
+}
+
+void esdr_remote_gl_stats(struct esdr_remote_gl_stats *st)
+{
+	k_mutex_lock(&rx_lock, K_FOREVER);
+	*st = gl.st;
+	k_mutex_unlock(&rx_lock);
+}
+
+int esdr_remote_gl_radio_stats(struct esdr_gapless_stats *st)
+{
+	int ret;
+
+	/* An older radio sends fewer fields: the rest read 0. */
+	memset(st, 0, sizeof(*st));
+	ret = esdr_remote_request(ESDR_REQ_GET_GAPLESS_STATS, 0, NULL, 0, st, sizeof(*st));
+	if (ret < 0) {
+		return ret;
+	}
+	return ret > 0 ? 0 : -EPROTO;
+}
+
+void esdr_remote_gl_hook(void (*hook)(const uint8_t *blk))
+{
+	gl.hook = hook;
+}
+
 static void on_block(const uint8_t *blk)
 {
 	struct esdr_block_hdr h;
@@ -552,6 +677,10 @@ static void on_block(const uint8_t *blk)
 	memcpy(&h, blk, sizeof(h));
 	n = sys_le16_to_cpu(h.samples);
 	h.index = sys_le64_to_cpu(h.index);
+	if ((sys_le16_to_cpu(h.flags) & ESDR_BLK_SEG) != 0U) {
+		on_seg_block(blk);
+		return;
+	}
 	if ((sys_le16_to_cpu(h.flags) & ESDR_BLK_TRIGGER) != 0U) {
 		on_trig_block(&h, blk + sizeof(h), n);
 		return;
@@ -611,7 +740,8 @@ uint64_t esdr_rx_latest(int16_t *dst, size_t n)
 
 /* ---- the parser ---- */
 
-static uint8_t frame[ESDR_BLOCK_BYTES];
+/* Word aligned: a block's hook copies it by words (esdr_gl.c). */
+static uint8_t frame[ESDR_BLOCK_BYTES] __aligned(4);
 static uint32_t have;
 
 static void on_frame(void)

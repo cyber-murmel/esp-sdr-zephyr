@@ -3,8 +3,11 @@
 (apps/osmosdr/soapy): one RF gain index (any gain name sets it, clamped), the continuous rates
 16 MS/s / 64 .. 1024 with offset tuning, and the native rates 80, 40 and 16 MS/s in bursts
 (esdr.BURST_RATES: contiguous within 16380 samples, enough for displays and short captures).
-Any driver string is accepted: the board has one radio. Settings change between captures;
-while only displays take the stream (qtgui sinks), a change restarts it at once."""
+Where the radio streams the whole 80 MHz without a gap (esdr.gapless_start(): the WHY2025
+badge's C6 built with gapless.conf), displays at 80 MS/s take that instead: the 10 us windows
+that stand out, as many as the link budget holds. Any driver string is accepted: the board has
+one radio. Settings change between captures; while only displays take the stream (qtgui sinks),
+a change restarts it at once."""
 
 import esdr
 from gnuradio import gr
@@ -24,12 +27,25 @@ def _snap_rate(rate):
     best = min(rates, key=lambda r: abs(r - rate))
     if abs(best - rate) > 0.5:
         print("soapy: sample rate {} -> {} (rates: {})".format(rate, best, rates))
-    if best in esdr.BURST_RATES:
+    if _gapless(best):
+        print("soapy: {} S/s gapless, the windows that stand out".format(best))
+    elif best in esdr.BURST_RATES:
         print("soapy: {} S/s in bursts of {} samples".format(best, _BURST))
     return best
 
 
 _BURST = 16380
+
+# Gapless displays: the radio may send this many bytes a second (some 1 M samples), its
+# threshold no lower than this over the quiet power (its servo raises it until the loudest
+# windows fit the budget); False once the radio refused the mode (a C6 without gapless.conf).
+_GAPLESS_BUDGET = 2000000
+_GAPLESS_RATIO = 1.25
+_gapless_ok = [hasattr(esdr, "gapless_start")]
+
+
+def _gapless(rate):
+    return _gapless_ok[0] and rate == getattr(esdr, "GAPLESS_RATE", 0)
 
 
 class source(gr.basic_block):
@@ -55,9 +71,17 @@ class source(gr.basic_block):
         self._live = False
         self._monitor = False
         self._link = None
+        self._gapless = False
         # A packet flowgraph's receive tuning correction (Hz, gnuradio/_link.py's AFC).
         self._afc = 0.0
         esdr.init()
+
+    def _halt(self):
+        if self._gapless:
+            esdr.gapless_stop()
+            self._gapless = False
+        else:
+            esdr.rx_stop()
 
     def _changed(self):
         # Only a display-only stream restarts at once; a capture keeps its settings; a packet
@@ -65,7 +89,7 @@ class source(gr.basic_block):
         if self._link is not None:
             self._link.retune()
         elif self._live:
-            esdr.rx_stop()
+            self._halt()
             self._run(0)
 
     # -- settings --
@@ -120,7 +144,24 @@ class source(gr.basic_block):
             print("soapy: frequency correction not supported on the board")
 
     # -- runtime, called by gr.top_block --
+    def _run_gapless(self):
+        """The whole 80 MHz without a gap into the monitor; False if the radio has no such mode."""
+        esdr.channel_bw(2)
+        self._centre = esdr.tune(self._freq, offset=False)
+        esdr.rx_gain(-1 if self._auto else self._gain)
+        try:
+            esdr.gapless_start(ratio=_GAPLESS_RATIO, budget=_GAPLESS_BUDGET,
+                               gain_servo=self._auto)
+        except OSError:
+            print("soapy: the radio streams no gapless 80 MHz: bursts")
+            _gapless_ok[0] = False
+            return False
+        self._gapless = True
+        return True
+
     def _run(self, count):
+        if _gapless(self._rate) and self._buf is None and not count and self._run_gapless():
+            return
         burst = self._rate in esdr.BURST_RATES
         # 40 MHz mode: the analog filters pass +-18 MHz, for wide bursts or a wide bandwidth.
         esdr.channel_bw(2 if (burst and self._rate >= 40e6) or self._bw > 20e6 else 0)
@@ -161,7 +202,7 @@ class source(gr.basic_block):
 
     def _stop(self, tb):
         self._live = False
-        esdr.rx_stop()
+        self._halt()
 
     def _wait(self, tb):
         esdr.rx_wait()
@@ -173,7 +214,7 @@ class source(gr.basic_block):
         return buf, self._n
 
     def stats(self):
-        return esdr.rx_stats()
+        return esdr.gapless_stats() if self._gapless else esdr.rx_stats()
 
 
 def _alloc(count):

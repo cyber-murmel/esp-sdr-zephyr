@@ -36,6 +36,23 @@
  *                              the newest snapshot (int8 I, Q, 2 * TRIG_SAMPLES bytes) unless
  *                              its seq is after; trig: samples before the trigger
  *   trig_stats()               snapshots, broken (a block lost)
+ *   gapless_start(ratio=8, level=0, pre=1, post=1, budget=2000000, gain_servo=False,
+ *                 monitor=True, channels=0, open_db=6)
+ *                              P4: the whole 80 MHz without a gap (the C6 built with
+ *                              gapless.conf), the 10 us windows ratio times the quiet power
+ *                              (or past a fixed level) and pre / post of them around, at most
+ *                              budget bytes a second; monitor: their samples to rx_latest()
+ *                              (full scale 16384); channels (16, 32, 40, 64, 80): the
+ *                              channelizer and burst detector (esdr_gl.c), opening open_db
+ *                              over a channel's floor. OSError from a C6 without the mode
+ *   gapless_stop(), gapless_stats() -> dict
+ *   chan_power(power, floor=None, peak=None, open=None) -> blocks
+ *                              per channel (float32 arrays, the lowest frequency first) since
+ *                              the last call: mean, floor, peak power (dB of a full-scale
+ *                              carrier), share of blocks open; the blocks that took
+ *   chan_bursts() -> [(offset_hz, start_s, length_s, peak_db)]   bursts ended since the last
+ *                              call
+ *   GAPLESS_RATE               80 MS/s
  *   channelize(snap, nfft, mean=None, peak=None, image=None, lo=-100, hi=-20) -> frames
  *                              (esdr_chan.c)
  *   fb_image(fb, stride, x, y, w, h, image, cols, palette)   draws channelize()'s image
@@ -88,6 +105,11 @@
 /* The radio behind a link: transmit and triggered snapshots too. */
 #define RADIO_LINKED 1
 #include "esdr_usb.h"
+#if defined(CONFIG_SOC_SERIES_ESP32P4)
+/* The gapless stream and its channelizer (the badge's C6 over SDIO, esdr_gl.c). */
+#define HAVE_GAPLESS 1
+#include "esdr_gl.h"
+#endif
 
 /* 8-bit samples from the C6, carried as int16. */
 #define FULL_SCALE 128
@@ -422,6 +444,176 @@ static mp_obj_t esdr_trig_stats_fn(void)
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(esdr_trig_stats_obj, esdr_trig_stats_fn);
 
+#if defined(HAVE_GAPLESS)
+/* ---- gapless receive and its channelizer ---- */
+
+/*
+ * gapless_start(ratio=8, level=0, pre=1, post=1, budget=2000000, gain_servo=False,
+ *               monitor=True, channels=0, open_db=6)
+ */
+static mp_obj_t esdr_gapless_start_fn(size_t n_args, const mp_obj_t *pos, mp_map_t *kw)
+{
+	enum {
+		ARG_ratio, ARG_level, ARG_pre, ARG_post, ARG_budget, ARG_gain_servo, ARG_monitor,
+		ARG_channels, ARG_open_db
+	};
+	static const mp_arg_t allowed[] = {
+		{MP_QSTR_ratio, MP_ARG_OBJ, {.u_obj = MP_OBJ_NULL}},
+		{MP_QSTR_level, MP_ARG_INT, {.u_int = 0}},
+		{MP_QSTR_pre, MP_ARG_INT, {.u_int = 1}},
+		{MP_QSTR_post, MP_ARG_INT, {.u_int = 1}},
+		{MP_QSTR_budget, MP_ARG_INT, {.u_int = 2000000}},
+		{MP_QSTR_gain_servo, MP_ARG_BOOL, {.u_bool = false}},
+		{MP_QSTR_monitor, MP_ARG_BOOL, {.u_bool = true}},
+		{MP_QSTR_channels, MP_ARG_INT, {.u_int = 0}},
+		{MP_QSTR_open_db, MP_ARG_OBJ, {.u_obj = MP_OBJ_NULL}},
+	};
+	mp_arg_val_t args[MP_ARRAY_SIZE(allowed)];
+	struct esdr_gapless_cfg cfg;
+	float ratio = 8.0f, open_db = 6.0f;
+	mp_int_t level, pre, post, budget, channels;
+	int ret;
+
+	mp_arg_parse_all(n_args, pos, kw, MP_ARRAY_SIZE(allowed), allowed, args);
+	if (args[ARG_ratio].u_obj != MP_OBJ_NULL) {
+		ratio = (float)mp_obj_get_float(args[ARG_ratio].u_obj);
+	}
+	if (args[ARG_open_db].u_obj != MP_OBJ_NULL) {
+		open_db = (float)mp_obj_get_float(args[ARG_open_db].u_obj);
+	}
+	level = args[ARG_level].u_int;
+	pre = args[ARG_pre].u_int;
+	post = args[ARG_post].u_int;
+	budget = args[ARG_budget].u_int;
+	channels = args[ARG_channels].u_int;
+	if (!(ratio > 1.0625f) || ratio > 4000.0f || level < 0 || pre < 0 || pre > 4 || post < 0 ||
+	    post > 4 || budget < 0 || !(open_db > 0.0f)) {
+		mp_raise_ValueError(MP_ERROR_TEXT(
+			"gapless_start: ratio above 1, level >= 0, pre and post 0 to 4, budget >= 0"));
+	}
+	need_radio();
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.ratio_x16 = sys_cpu_to_le16((uint16_t)(ratio * 16.0f + 0.5f));
+	cfg.pre = (uint8_t)pre;
+	cfg.post = (uint8_t)post;
+	cfg.level = sys_cpu_to_le32((uint32_t)level);
+	cfg.budget_bps = sys_cpu_to_le32((uint32_t)budget);
+	cfg.flags = sys_cpu_to_le16((args[ARG_gain_servo].u_bool ? ESDR_GAPLESS_F_GAIN_SERVO : 0U) |
+				    (level != 0 ? ESDR_GAPLESS_F_FIXED_THR : 0U));
+	if (channels != 0) {
+		check(esdr_gl_start((unsigned int)channels, open_db));
+	} else {
+		esdr_gl_stop();
+	}
+	ret = esdr_remote_gl_start(&cfg, args[ARG_monitor].u_bool);
+	if (ret < 0) {
+		esdr_gl_stop();
+		check(ret);
+	}
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(esdr_gapless_start_obj, 0, esdr_gapless_start_fn);
+
+static mp_obj_t esdr_gapless_stop_fn(void)
+{
+	esdr_remote_gl_stop();
+	esdr_gl_stop();
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(esdr_gapless_stop_obj, esdr_gapless_stop_fn);
+
+static mp_obj_t esdr_gapless_stats_fn(void)
+{
+	struct esdr_remote_gl_stats st;
+	struct esdr_gapless_stats rs;
+	struct esdr_gl_stats cs;
+	mp_obj_t d = mp_obj_new_dict(20);
+
+	esdr_remote_gl_stats(&st);
+	esdr_gl_stats(&cs);
+#define PUT(name, val) mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_##name), (val))
+	PUT(blocks, mp_obj_new_int_from_uint(st.blocks));
+	PUT(segments, mp_obj_new_int_from_uint(st.segments));
+	PUT(bad, mp_obj_new_int_from_uint(st.bad));
+	PUT(gaps, mp_obj_new_int_from_uint(st.gaps));
+	PUT(pairs, mp_obj_new_int_from_ull(st.pairs));
+	PUT(chan_blocks, mp_obj_new_int_from_uint(cs.blocks));
+	PUT(chan_dropped, mp_obj_new_int_from_uint(cs.dropped));
+	PUT(chan_pairs, mp_obj_new_int_from_ull(cs.pairs));
+	PUT(chan_cycles, mp_obj_new_int_from_ull(cs.cycles));
+	PUT(bursts, mp_obj_new_int_from_uint(cs.bursts));
+	PUT(bursts_lost, mp_obj_new_int_from_uint(cs.bursts_lost));
+	/* The radio's own counters (the request restarts its run). */
+	int ret = esdr_remote_gl_busy() ? esdr_remote_gl_radio_stats(&rs) : -ENODEV;
+
+	if (ret != 0) {
+		PUT(radio_error, MP_OBJ_NEW_SMALL_INT(-ret));
+	} else {
+		PUT(radio_pairs, mp_obj_new_int_from_ull(sys_le64_to_cpu(rs.pairs)));
+		PUT(kept_pairs, mp_obj_new_int_from_ull(sys_le64_to_cpu(rs.kept_pairs)));
+		PUT(dropped_pairs, mp_obj_new_int_from_ull(sys_le64_to_cpu(rs.dropped_pairs)));
+		PUT(ring_errors, mp_obj_new_int_from_uint(sys_le32_to_cpu(rs.ring_errors)));
+		PUT(ratio, mp_obj_new_float(sys_le32_to_cpu(rs.ratio_x16) / 16.0f));
+		PUT(gain, mp_obj_new_int_from_uint(sys_le32_to_cpu(rs.gain)));
+		PUT(blocks_sent, mp_obj_new_int_from_uint(sys_le32_to_cpu(rs.blocks_sent)));
+	}
+#undef PUT
+	return d;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(esdr_gapless_stats_obj, esdr_gapless_stats_fn);
+
+/* A float32 buffer for the channels, or NULL for None. */
+static float *chan_buf(mp_obj_t o)
+{
+	mp_buffer_info_t bi;
+
+	if (o == mp_const_none) {
+		return NULL;
+	}
+	mp_get_buffer_raise(o, &bi, MP_BUFFER_WRITE);
+	if (bi.len < 4U * esdr_gl_channels() || ((uintptr_t)bi.buf & 3U) != 0U) {
+		mp_raise_ValueError(MP_ERROR_TEXT("chan_power: float32 arrays of the channels"));
+	}
+	return bi.buf;
+}
+
+/* chan_power(power, floor=None, peak=None, open=None) -> blocks */
+static mp_obj_t esdr_chan_power_fn(size_t n_args, const mp_obj_t *args)
+{
+	float *v[4] = {NULL, NULL, NULL, NULL};
+
+	if (esdr_gl_channels() == 0U) {
+		mp_raise_ValueError(MP_ERROR_TEXT("chan_power: no channelizer (gapless_start)"));
+	}
+	for (size_t i = 0; i < n_args; i++) {
+		v[i] = chan_buf(args[i]);
+	}
+	return mp_obj_new_int_from_uint(esdr_gl_power(v[0], v[1], v[2], v[3]));
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_chan_power_obj, 1, 4, esdr_chan_power_fn);
+
+/* chan_bursts() -> [(offset_hz, start_s, length_s, peak_db), ...] */
+static mp_obj_t esdr_chan_bursts_fn(void)
+{
+	struct esdr_gl_burst b[16];
+	mp_obj_t list = mp_obj_new_list(0, NULL);
+	unsigned int n;
+
+	while ((n = esdr_gl_bursts(b, ARRAY_SIZE(b))) > 0U) {
+		for (unsigned int i = 0; i < n; i++) {
+			mp_obj_t t[4] = {
+				mp_obj_new_float(b[i].offset_hz), mp_obj_new_float(b[i].start_s),
+				mp_obj_new_float(b[i].length_s), mp_obj_new_float(b[i].peak_db),
+			};
+
+			mp_obj_list_append(list, mp_obj_new_tuple(4, t));
+		}
+	}
+	return list;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(esdr_chan_bursts_obj, esdr_chan_bursts_fn);
+#endif
+
 /* ---- transmit ---- */
 
 static void tx_gen_from(struct esdr_remote_gen *g, mp_obj_t t)
@@ -595,6 +787,9 @@ void esdr_port_deinit(void)
 	 * the radio as esdr.init() found it, so the next starts afresh.
 	 */
 	if (radio != NULL) {
+#if defined(HAVE_GAPLESS)
+		esdr_gl_stop();
+#endif
 		esdr_remote_reset();
 	}
 	MP_STATE_PORT(esdr_rx_buf) = MP_OBJ_NULL;
@@ -730,6 +925,14 @@ static const mp_rom_map_elem_t esdr_globals_table[] = {
 	{MP_ROM_QSTR(MP_QSTR_trig_stats), MP_ROM_PTR(&esdr_trig_stats_obj)},
 	{MP_ROM_QSTR(MP_QSTR_TRIG_SAMPLES), MP_ROM_INT(ESDR_TRIG_SAMPLES)},
 	{MP_ROM_QSTR(MP_QSTR_TRIG_RATE), MP_ROM_INT(ESDR_TRIG_RATE_HZ)},
+#if defined(HAVE_GAPLESS)
+	{MP_ROM_QSTR(MP_QSTR_gapless_start), MP_ROM_PTR(&esdr_gapless_start_obj)},
+	{MP_ROM_QSTR(MP_QSTR_gapless_stop), MP_ROM_PTR(&esdr_gapless_stop_obj)},
+	{MP_ROM_QSTR(MP_QSTR_gapless_stats), MP_ROM_PTR(&esdr_gapless_stats_obj)},
+	{MP_ROM_QSTR(MP_QSTR_chan_power), MP_ROM_PTR(&esdr_chan_power_obj)},
+	{MP_ROM_QSTR(MP_QSTR_chan_bursts), MP_ROM_PTR(&esdr_chan_bursts_obj)},
+	{MP_ROM_QSTR(MP_QSTR_GAPLESS_RATE), MP_ROM_INT(ESDR_GAPLESS_RATE_HZ)},
+#endif
 	{MP_ROM_QSTR(MP_QSTR_iq_cols), MP_ROM_PTR(&esdr_iq_cols_obj)},
 	{MP_ROM_QSTR(MP_QSTR_fb_trace), MP_ROM_PTR(&esdr_fb_trace_obj)},
 	{MP_ROM_QSTR(MP_QSTR_fb_wf_row), MP_ROM_PTR(&esdr_fb_wf_row_obj)},

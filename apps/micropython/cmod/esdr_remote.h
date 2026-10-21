@@ -108,6 +108,31 @@ void esdr_remote_trig_stop(void);
 bool esdr_remote_trig_get(int8_t *dst, uint32_t after, uint32_t *seq, uint32_t *trig);
 void esdr_remote_trig_stats(struct esdr_remote_trig_stats *st);
 
+/*
+ * Gapless receive (a radio with ESDR_MODE_GAPLESS: the badge's C6 built with gapless.conf): the
+ * radio keeps the windows @p cfg selects of the whole 80 MHz and sends them as segment blocks
+ * (esdr_seg.h). With @p monitor their samples go to the monitor (esdr_rx_latest()) at 32 times
+ * their raw units, full scale 16384 as bursts; every block goes to the hook too. -ENOTSUP (or
+ * the radio's error) from a radio without the mode.
+ */
+struct esdr_remote_gl_stats {
+	/* Segment blocks and segments taken, blocks that did not parse, holes on the axis. */
+	uint32_t blocks, segments, bad, gaps;
+	uint64_t pairs;
+};
+
+int esdr_remote_gl_start(const struct esdr_gapless_cfg *cfg, bool monitor);
+void esdr_remote_gl_stop(void);
+bool esdr_remote_gl_busy(void);
+void esdr_remote_gl_stats(struct esdr_remote_gl_stats *st);
+/* The radio's own counters (ESDR_REQ_GET_GAPLESS_STATS): 0 or a negative errno. */
+int esdr_remote_gl_radio_stats(struct esdr_gapless_stats *st);
+/*
+ * Every segment block also to @p hook (NULL: none), in the parser's thread: it must copy what
+ * it keeps and return soon.
+ */
+void esdr_remote_gl_hook(void (*hook)(const uint8_t *blk));
+
 /* Every stream stopped (receive, transmit, snapshots), the radio's settings as it started. */
 void esdr_remote_reset(void);
 
