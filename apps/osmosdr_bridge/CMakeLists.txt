@@ -13,7 +13,6 @@ target_sources(app PRIVATE src/main.c ../osmosdr/src/usb_sdr.c)
 # The radio over SDIO, shared with the MicroPython app.
 include(${CMAKE_CURRENT_LIST_DIR}/../common/esdr_sdio_host.cmake)
 # The gapless stream's channelizer (ESDR_REQ_SET_CHANNELIZER), and the CPU clock.
-include(${CMAKE_CURRENT_LIST_DIR}/../common/esdr_pfb.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/../common/esdr_pfbq.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/../common/app_clock.cmake)
 # Cycle counts of the channelizer's kernels (esdr_pfbq_prof[]) for ESDR_REQ_SET_CHANNELIZER's

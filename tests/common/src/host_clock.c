@@ -1,9 +1,10 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * Host side of the benchmark, built into the native simulator's runner with the host's libc: its
- * monotonic clock, and this process's core cycles in user mode where perf events are allowed,
- * summed over the core types of a hybrid CPU (a generic cycle event counts on one type only).
+ * Host side of the unit tests' benchmarks (tests/unit/esdr_pfb, esdr_pfbq), built into the native
+ * simulator's runner with the host's libc: its monotonic clock, and this process's core cycles in
+ * user mode where perf events are allowed, summed over the core types of a hybrid CPU (a generic
+ * cycle event counts on one type only).
  */
 
 #define _GNU_SOURCE
@@ -52,7 +53,7 @@ static void open_cycles(uint64_t config)
 	}
 }
 
-uint64_t esdr_pfb_test_ns(void)
+uint64_t test_host_ns(void)
 {
 	struct timespec t;
 
@@ -61,7 +62,7 @@ uint64_t esdr_pfb_test_ns(void)
 }
 
 /* Core cycles so far, 0 where they cannot be counted. */
-uint64_t esdr_pfb_test_cycles(void)
+uint64_t test_host_cycles(void)
 {
 	static const char *const pmus[] = {"cpu_core", "cpu_atom"};
 	uint64_t sum = 0;

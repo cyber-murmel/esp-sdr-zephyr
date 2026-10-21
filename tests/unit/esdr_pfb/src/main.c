@@ -1,11 +1,11 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * Unit test of apps/common/src/esdr_pfb.c: the channelizer against numpy's direct evaluation of
- * its definition (pfb_ref.h, tools/gen_ref.py) and against a direct double model here, over
- * gapped streams of every M with a shift and DC per segment; the DC removed exactly, and without
- * bias from items quantized as the C6 does; the prototype's response; tone gain and phase across
- * gaps; the detector on synthetic bursts; and a benchmark, printed only.
+ * Unit test of tests/common/src/esdr_pfb_ref.c: the float channelizer against numpy's direct
+ * evaluation of its definition (pfb_ref.h, tools/gen_ref.py) and against a direct double model
+ * here, over gapped streams of every M with a shift and DC per segment; the DC removed exactly,
+ * and without bias from items quantized as the C6 does; the prototype's response; tone gain and
+ * phase across gaps; the detector on synthetic bursts; and a benchmark, printed only.
  */
 #include <math.h>
 #include <stdlib.h>
@@ -15,13 +15,13 @@
 
 #include <esp_sdr/esp_sdr_dsp.h>
 
-#include "esdr_pfb.h"
+#include "esdr_pfb_ref.h"
 #include "pfb_ref.h"
 #include "test_rng.h"
 
-/* Host side (host_clock.c). */
-uint64_t esdr_pfb_test_ns(void);
-uint64_t esdr_pfb_test_cycles(void);
+/* Host side (tests/common/src/host_clock.c). */
+uint64_t test_host_ns(void);
+uint64_t test_host_cycles(void);
 
 static const uint16_t channels[] = {16, 32, 40, 64, 80};
 
@@ -994,16 +994,16 @@ ZTEST(esdr_pfb, test_bench)
 			uint64_t idx = 1000000, t0, c0;
 
 			setup(channels[i], 8, ESDR_DET_FRAMES(16), 0, 0.0f);
-			t0 = esdr_pfb_test_ns();
-			c0 = esdr_pfb_test_cycles();
+			t0 = test_host_ns();
+			c0 = test_host_cycles();
 			/* Gapless-like: segments of 2000 pairs, every fifth after a gap. */
 			for (unsigned int s = 0; s < segs; s++) {
 				esdr_pfb_push(&pfb, idx, seg, 2000, 1, 5, -3, bench_frame,
 					      w ? &det : NULL);
 				idx += 2000U + (s % 5U == 4U ? 5000U : 0U);
 			}
-			ns[w] = (double)(esdr_pfb_test_ns() - t0) / (2000.0 * segs);
-			cyc[w] = (double)(esdr_pfb_test_cycles() - c0) / (2000.0 * segs);
+			ns[w] = (double)(test_host_ns() - t0) / (2000.0 * segs);
+			cyc[w] = (double)(test_host_cycles() - c0) / (2000.0 * segs);
 		}
 		printk("bench M %2u T 8: %.1f ns/pair (%.1f host cycles), with the detector %.1f "
 		       "ns/pair (%.1f cycles)\n", channels[i], ns[0], cyc[0], ns[1], cyc[1]);

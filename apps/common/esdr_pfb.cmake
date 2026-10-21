@@ -1,8 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# The polyphase channelizer and burst detector (esdr_pfb.h) for an app on the ESP32-P4: the
-# bridge and MicroPython. It is the hot loop of the gapless stream, so it builds at -O2 with
-# multiply-adds fused (-std=c17 alone keeps them apart) whatever the app's optimization.
+# The channelizer's definition (esdr_pfb.h) and its prototype design, for esdr_pfbq.cmake and
+# the tests' float reference. The design builds with the same flags everywhere (-O2, multiply-adds
+# fused, which -std=c17 alone keeps apart), so that every app and test of a target gets the same
+# taps bit for bit.
+
+include_guard(DIRECTORY)
 
 target_include_directories(app PRIVATE ${CMAKE_CURRENT_LIST_DIR}/include
   ${CMAKE_CURRENT_LIST_DIR}/../../include)

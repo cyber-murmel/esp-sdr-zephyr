@@ -39,12 +39,13 @@ The filterbank runs in fixed point four frames at a time on the P4's PIE SIMD
 (``../common/src/esdr_pfbq_pie.S``), assembled by Espressif's assembler: the dev shell of
 ``default.nix`` has it (``riscv32-esp-elf-as``). A build without it (CMake warns) runs the same
 arithmetic in the C reference kernels, some 40 times slower on the P4 and far too slow for the
-stream. Against the float bank (``esdr_pfb.h``) the error stays within
-0.4 sqrt(M) output units rms (``tests/unit/esdr_pfbq``, which also checks PIE against C bit for
-bit on the badge). At 360 MHz the bridge takes 77 to 83 cycles a pair with 40 channels on busy
-2.4 GHz air (filterbank 39, detector 15, channel blocks 10 to 15): the C6's whole link, 3.9 M
-pairs/s kept at a fixed low threshold, went through with 12 to 27 % of the CPU to spare and
-nothing dropped. The float bank had managed some 1 M pairs/s.
+stream. Against the float bank of the tests (``tests/common/src/esdr_pfb_ref.c``, the definition
+of ``esdr_pfb.h`` evaluated directly) the error stays within 0.4 sqrt(M) output units rms
+(``tests/unit/esdr_pfbq``, which also checks PIE against C bit for bit on the badge). At
+360 MHz the bridge takes 77 to 83 cycles a pair with 40 channels on busy 2.4 GHz air
+(filterbank 39, detector 15, channel blocks 10 to 15): the C6's whole link, 3.9 M pairs/s kept
+at a fixed low threshold, went through with 12 to 27 % of the CPU to spare and nothing dropped.
+The float bank had managed some 1 M pairs/s.
 
 Building and flashing
 *********************

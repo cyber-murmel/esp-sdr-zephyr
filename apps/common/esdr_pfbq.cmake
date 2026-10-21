@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# The fixed-point channelizer and detector (esdr_pfbq.h) for an app; needs esdr_pfb.cmake (the
-# prototype). On the ESP32-P4 its kernels are PIE SIMD in esdr_pfbq_pie.S, which only
+# The fixed-point channelizer and detector (esdr_pfbq.h) for an app, with the prototype design
+# (esdr_pfb.cmake). On the ESP32-P4 its kernels are PIE SIMD in esdr_pfbq_pie.S, which only
 # Espressif's assembler takes (the Zephyr SDK's knows no xesppie): with riscv32-esp-elf-as on the
 # PATH (default.nix's dev shell has it) they are assembled and linked, else the C kernels run.
 
+include(${CMAKE_CURRENT_LIST_DIR}/esdr_pfb.cmake)
 target_sources(app PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src/esdr_pfbq.c)
 set_source_files_properties(${CMAKE_CURRENT_LIST_DIR}/src/esdr_pfbq.c PROPERTIES
   COMPILE_OPTIONS "-O2")

@@ -3,9 +3,10 @@
  *
  * Fixed-point polyphase channelizer and burst detector on quads (esdr_pfbq.h).
  *
- * The bank is esdr_pfb.c's (see there for the split into branch sums and a DFT), computed for
- * the four frames of a quad at once: a vector of 8 int16 holds one complex value of each frame,
- * so that every step of the FFT is the scalar algorithm on vectors.
+ * The bank is esdr_pfb.h's, as the tests' float reference tests/common/src/esdr_pfb_ref.c
+ * computes it (see there for the split into branch sums and a DFT), here for the four frames of
+ * a quad at once: a vector of 8 int16 holds one complex value of each frame, so that every step
+ * of the FFT is the scalar algorithm on vectors.
  *
  * Branch sums: for the frame with newest pair N and the branches r = 4 g .. 4 g + 3, tap p
  * reads the pairs N - 4 g - 3 - p M .. N - 4 g - p M, four consecutive pairs of the history: one
@@ -29,6 +30,7 @@
 
 #include <esp_sdr/esp_sdr_dsp.h>
 
+#include "esdr_pfb_impl.h"
 #include "esdr_pfbq.h"
 
 #define ALIGN16(x) (((x) + 15U) & ~(size_t)15U)
@@ -36,16 +38,8 @@
 /* int16 in a vector: 4 frames, I and Q. */
 #define VEC 8U
 
-/*
- * Detector: floor follower over quiet blocks; a quiet block this many times below the floor
- * replaces it (10 dB: noise of a right floor does not get there, even in a block of B / 2
- * frames); blocks loud in a row before a channel relearns.
- */
-#define DET_FOLLOW  64.0f
-#define DET_SNAP    10.0f
 /* thr[] of a channel open or learning: below any power, the channel takes the slow path. */
-#define THR_SLOW    -1.0f
-#define DET_RELEARN 2048U
+#define THR_SLOW -1.0f
 
 /* The power kernel's sums are shifted down by this much to fit 32 bits (4 quads). */
 #define POWER_SHIFT 6U
@@ -258,9 +252,9 @@ static inline int16_t r5_lane(const struct consts *c, int16_t a0, int16_t b1, in
 }
 
 /*
- * Radix 5 (esdr_pfb.c's bfly5): with b1, d1 = a1 +/- a4, b2, d2 = a2 +/- a3 and j1, j2 = -j d1,
- * -j d2: X1, X4 = a0 + C1 b1 + C2 b2 +/- (S1 j1 + S2 j2), X2, X3 = a0 + C2 b1 + C1 b2 +/-
- * (S2 j1 - S1 j2).
+ * Radix 5 (esdr_pfb_ref.c's bfly5): with b1, d1 = a1 +/- a4, b2, d2 = a2 +/- a3 and j1, j2 =
+ * -j d1, -j d2: X1, X4 = a0 + C1 b1 + C2 b2 +/- (S1 j1 + S2 j2), X2, X3 = a0 + C2 b1 + C1 b2
+ * +/- (S2 j1 - S1 j2).
  */
 static void r5_c(int16_t *dst, const int16_t *src, uint32_t n, const struct consts *c)
 {
@@ -404,54 +398,6 @@ int esdr_pfbq_kernels(struct esdr_pfbq *p, bool pie)
 
 /* ---- set-up ---- */
 
-/* Radices in stage order, the largest first (esdr_pfb.c's plan). */
-static unsigned int plan(unsigned int m, uint8_t radix[4])
-{
-	static const uint8_t tab[][5] = {
-		{16, 4, 4, 0, 0}, {32, 4, 4, 2, 0}, {40, 5, 4, 2, 0},
-		{64, 4, 4, 4, 0}, {80, 5, 4, 4, 0},
-	};
-
-	for (size_t i = 0; i < sizeof(tab) / sizeof(tab[0]); i++) {
-		if (tab[i][0] == m) {
-			unsigned int s = 0;
-
-			for (; s < 4U && tab[i][s + 1U] != 0U; s++) {
-				radix[s] = tab[i][s + 1U];
-			}
-			return s;
-		}
-	}
-	return 0;
-}
-
-/* Twiddle vectors of stage @p s: (span - 1) (radix - 1). */
-static size_t tw_count(const uint8_t *radix, unsigned int s)
-{
-	size_t span = 1;
-
-	for (unsigned int i = 0; i < s; i++) {
-		span *= radix[i];
-	}
-	return (span - 1U) * (radix[s] - 1U);
-}
-
-/* Where natural input i sits for the stages: the last stage's digit is the most significant. */
-static unsigned int digit_rev(const struct esdr_pfbq *p, unsigned int i)
-{
-	unsigned int span[4], pos = 0;
-
-	span[0] = 1;
-	for (unsigned int s = 1; s < p->stages; s++) {
-		span[s] = span[s - 1U] * p->radix[s - 1U];
-	}
-	for (unsigned int s = p->stages; s-- > 0U;) {
-		pos += (i % p->radix[s]) * span[s];
-		i /= p->radix[s];
-	}
-	return pos;
-}
-
 struct layout {
 	size_t taps, hist, work, ring, tw, off, rnd, total;
 	uint32_t cap;
@@ -461,7 +407,7 @@ static bool check_cfg(const struct esdr_pfbq_cfg *cfg, unsigned int *t, uint8_t 
 		      unsigned int *stages)
 {
 	*t = cfg->taps != 0U ? cfg->taps : ESDR_PFB_T_DEFAULT;
-	*stages = plan(cfg->channels, radix);
+	*stages = esdr_pfb_plan(cfg->channels, radix);
 	return *stages != 0U && *t % 4U == 0U && *t <= ESDR_PFBQ_T_MAX && cfg->stop_db >= 0.0f &&
 	       cfg->gain >= 0.0f && (cfg->chunk == 0U || cfg->chunk >= 4U * cfg->channels) &&
 	       cfg->chunk <= (1U << 24);
@@ -482,7 +428,7 @@ static bool get_layout(const struct esdr_pfbq_cfg *cfg, struct layout *lo)
 	chunk = cfg->chunk != 0U ? cfg->chunk : 2U * l;
 	quads = cfg->quads != 0U ? cfg->quads : 1U;
 	for (unsigned int s = 0; s < stages; s++) {
-		tw += tw_count(radix, s);
+		tw += esdr_pfb_tw_count(radix, s);
 	}
 	/* A run's first quad reaches 4 D before its start; 3 pairs of alignment. */
 	lo->cap = (uint32_t)(l - 1U + 4U * d + 3U + chunk);
@@ -597,9 +543,10 @@ int esdr_pfbq_init(struct esdr_pfbq *p, const struct esdr_pfbq_cfg *cfg, void *m
 	for (unsigned int g = 0; g < p->m / 4U; g++) {
 		for (unsigned int j = 0; j < 4U; j++) {
 			unsigned int r = 4U * g + 3U - j;
+			unsigned int pos =
+				esdr_pfb_digit_rev(p->radix, p->stages, (p->m - r) % p->m);
 
-			p->off[4U * g + j] =
-				(uint16_t)(digit_rev(p, (p->m - r) % p->m) * VEC * sizeof(int16_t));
+			p->off[4U * g + j] = (uint16_t)(pos * VEC * sizeof(int16_t));
 		}
 	}
 #if defined(ESDR_PFBQ_PIE)
@@ -1003,21 +950,6 @@ static inline uint16_t det_wrap(const struct esdr_detq *d, uint32_t s)
 	return (uint16_t)(s >= d->nslot ? s - d->nslot : s);
 }
 
-/* The lower quartile of a channel's learning blocks (sorts them). */
-static float lower_quartile(float *v)
-{
-	for (unsigned int i = 1; i < ESDR_DET_LEARN; i++) {
-		float x = v[i];
-		unsigned int j = i;
-
-		for (; j > 0U && v[j - 1U] > x; j--) {
-			v[j] = v[j - 1U];
-		}
-		v[j] = x;
-	}
-	return v[ESDR_DET_LEARN / 4U];
-}
-
 /*
  * Mean power per channel over the complete frames of the current block (@p n of them), quads
  * four at a time by the kernel (the zero quad fills a short group); a quad with frames that are
@@ -1199,7 +1131,8 @@ static void finish(struct esdr_detq *d, esdr_detq_cb cb, void *user)
 			if (d->learnt[k] < ESDR_DET_LEARN) {
 				d->learn[k * ESDR_DET_LEARN + d->learnt[k]++] = pw;
 				if (d->learnt[k] == ESDR_DET_LEARN) {
-					d->floor[k] = lower_quartile(&d->learn[k * ESDR_DET_LEARN]);
+					d->floor[k] = esdr_det_lower_quartile(
+						&d->learn[k * ESDR_DET_LEARN]);
 					d->thr[k] = d->floor[k] * d->ratio;
 				}
 				continue;

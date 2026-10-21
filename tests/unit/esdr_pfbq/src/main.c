@@ -1,11 +1,11 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * Unit test of apps/common/src/esdr_pfbq.c: the fixed-point bank against the float one
- * (esdr_pfb.c) over gapped streams of every M with a shift and DC per segment (the same frames,
- * the same completeness, values within a few output units); tone gain; flushes; the detector on
- * quads against the float detector on synthetic bursts; where the build has the PIE kernels,
- * those against the C kernels bit for bit; and a benchmark, printed only.
+ * Unit test of apps/common/src/esdr_pfbq.c: the fixed-point bank against the float reference
+ * (tests/common/src/esdr_pfb_ref.c) over gapped streams of every M with a shift and DC per
+ * segment (the same frames, the same completeness, values within a few output units); tone gain;
+ * flushes; the detector on quads against the float detector on synthetic bursts; where the build
+ * has the PIE kernels, those against the C kernels bit for bit; and a benchmark, printed only.
  */
 #include <math.h>
 #include <stdlib.h>
@@ -15,6 +15,7 @@
 
 #include <esp_sdr/esp_sdr_dsp.h>
 
+#include "esdr_pfb_ref.h"
 #include "esdr_pfbq.h"
 #include "test_rng.h"
 
@@ -36,9 +37,9 @@ static struct esdr_detq detq;
 static uint64_t cycles(void)
 {
 #if defined(CONFIG_ARCH_POSIX)
-	uint64_t esdr_pfb_test_cycles(void);
+	uint64_t test_host_cycles(void);
 
-	return esdr_pfb_test_cycles();
+	return test_host_cycles();
 #else
 	uint32_t v;
 

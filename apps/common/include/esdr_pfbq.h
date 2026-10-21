@@ -105,10 +105,11 @@ int esdr_pfbq_init(struct esdr_pfbq *p, const struct esdr_pfbq_cfg *cfg, void *m
 void esdr_pfbq_reset(struct esdr_pfbq *p);
 
 /*
- * One segment, as esdr_pfb_push(): @p pairs pairs from absolute index @p index, int8 I then Q, a
- * sample (item << @p shift) + ((1 << @p shift) - 1) / 2 - dc. Calls @p cb for every quad it
- * completes, in order, before it returns. Returns the quads produced, -ERANGE if @p index lies
- * before the end of the last segment, -EINVAL for a shift above ESDR_PFBQ_SHIFT_MAX.
+ * One segment: @p pairs pairs from absolute index @p index, int8 I then Q, a sample
+ * (item << @p shift) + ((1 << @p shift) - 1) / 2 - dc (esdr_pfb.h's raw units). Calls @p cb for
+ * every quad it completes, in order, before it returns. Returns the quads produced, -ERANGE if
+ * @p index lies before the end of the last segment, -EINVAL for a shift above
+ * ESDR_PFBQ_SHIFT_MAX.
  */
 int esdr_pfbq_push(struct esdr_pfbq *p, uint64_t index, const int8_t *iq, size_t pairs,
 		   unsigned int shift, int32_t dc_i, int32_t dc_q, esdr_pfbq_quad_cb cb, void *user);
