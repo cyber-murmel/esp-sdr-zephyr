@@ -402,6 +402,31 @@ XIAO ESP32-C6 on the other end of a 30 dB coax attenuator.
 - **RS(255,223) decoding cost.** About 49 us for a clean codeword, 220 us
   with 2 errors and 400 us with 10. With many corrections, RS decoding
   dominates a receiver.
+- **The ESP32-P4's PIE SIMD** (128-bit vectors q0 .. q7, the 40-bit lane
+  accumulators QACC, the scalar XACC) needs Espressif's assembler
+  (`-march=..._xesppie`); the Zephyr SDK's knows no PIE. Rules found on the
+  WHY2025 badge's P4 (v1.0), all applied in `apps/common/src/esdr_pfbq_pie.S`:
+  - PIE and the hardware loops are off until their state CSRs are set
+    (0x7f2 and 0x7f1 to 1: illegal instruction otherwise); unaligned vector
+    access needs bit 1 of `esp.movx.w.cfg`, and costs 3 to 4 cycles.
+  - PIE instructions take x8 .. x15 and x24 .. x31 only, `esp.movx.w.sar`
+    included (`t0` is "illegal operands").
+  - `esp.lp.setup` with a label needs a relocation only Espressif's linker
+    knows (Zephyr's links it as another type, even with `-mno-relax`): write
+    it as a word, `0x402b | id << 7 | rs1 << 15 | ((end - .) >> 1) << 20`.
+  - `esp.srcmb.s16.qacc` shifts with floor and saturates only with select 1
+    (0 wraps); `esp.cmul.s16` modes 0 and 1 write the low and the high two
+    complex lanes (so it works in place), exact sums floored by SAR;
+    `vadd`/`vsub`/`vmul` saturate. Loading QACC (`esp.ldqa`, `esp.mov.s16.qacc`)
+    gives a rounding addend for free.
+  - Nearly every PIE instruction issues in one cycle, a multiply-add with a
+    fused load too (the core issues one instruction a cycle, so fusing halves
+    the cost); a vector used by the next instruction stalls one.
+  - The vector state is in no thread context: one thread per core may use it.
+- **The ESP32-P4's memcpy, memmove and memset are ROM routines** (the
+  `esp32p4.rom.libc*.ld` scripts) at some 5.5 cycles a byte. Moving the
+  channelizer's 1.5 kB history cost 13 cycles a sample until a PIE copy took
+  over; copy hot data with words or vectors.
 
 ## Building and flashing
 
