@@ -20,11 +20,11 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/atomic.h>
 
-#include <esp_attr.h>
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_dsp.h>
 #include <esp_sdr/esp_sdr_tx.h>
 
+#include "esdr_defs.h"
 #include "esdr_rx.h"
 #include "esdr_tx.h"
 
@@ -41,7 +41,7 @@
 #error "esdr_tx needs CONFIG_ESP_SDR_TX"
 #endif
 
-static EXT_RAM_BSS_ATTR int16_t sine_tab[SINE_N + 1U];
+static ESDR_PSRAM int16_t sine_tab[SINE_N + 1U];
 static struct esp_sdr_iq16 chunk[CHUNK] ESP_SDR_HIGH_RAM;
 
 static struct {

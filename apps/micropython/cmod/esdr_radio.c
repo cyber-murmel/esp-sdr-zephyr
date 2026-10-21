@@ -95,6 +95,7 @@
 #include "py/runtime.h"
 
 #include "esdr_board.h"
+#include "esdr_defs.h"
 #include "esdr_remote.h"
 #include "esdr_rx.h"
 
@@ -138,10 +139,7 @@
 MP_REGISTER_ROOT_POINTER(mp_obj_t esdr_rx_buf);
 MP_REGISTER_ROOT_POINTER(mp_obj_t esdr_tx_buf);
 
-/* PSRAM (the linker scripts place .ext_ram.bss there; esp_attr.h's EXT_RAM_BSS_ATTR is
- * empty on the P4). */
-static uint8_t psram_heap[CONFIG_APP_MP_PSRAM_HEAP_KB * 1024]
-	__attribute__((section(".ext_ram.bss"))) __aligned(16);
+static uint8_t psram_heap[CONFIG_APP_MP_PSRAM_HEAP_KB * 1024] ESDR_PSRAM __aligned(16);
 
 static const struct esdr_info *radio;
 

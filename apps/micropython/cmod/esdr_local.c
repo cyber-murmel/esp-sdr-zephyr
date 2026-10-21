@@ -27,6 +27,7 @@
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_rx.h>
 
+#include "esdr_defs.h"
 #include "esdr_remote.h"
 #include "esdr_rx.h"
 
@@ -88,13 +89,13 @@ static struct {
 } rx;
 
 /* The monitor: the newest ESDR_MON_SAMPLES pairs, and how many came in all. */
-static uint32_t mon[ESDR_MON_SAMPLES] __attribute__((section(".ext_ram.bss")));
+static uint32_t mon[ESDR_MON_SAMPLES] ESDR_PSRAM;
 static volatile uint64_t mon_total;
 /* A display-only run captures again once the monitor has been read. */
 static volatile bool mon_read;
 
 /* A burst's samples, converted. */
-static struct esp_sdr_iq16 burst[ESP_SDR_SAMPLES_MAX] __attribute__((section(".ext_ram.bss")));
+static struct esp_sdr_iq16 burst[ESP_SDR_SAMPLES_MAX] ESDR_PSRAM;
 
 static K_SEM_DEFINE(rx_go, 0, 1);
 static volatile bool worker_busy;
@@ -115,7 +116,7 @@ static struct {
 	struct esdr_remote_trig_stats st;
 } trg;
 
-static int8_t trg_snap[2U * ESDR_TRIG_SAMPLES] __attribute__((section(".ext_ram.bss")));
+static int8_t trg_snap[2U * ESDR_TRIG_SAMPLES] ESDR_PSRAM;
 static K_MUTEX_DEFINE(trg_lock);
 
 static int cmp_u32(const void *a, const void *b)

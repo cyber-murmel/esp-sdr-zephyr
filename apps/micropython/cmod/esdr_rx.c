@@ -18,8 +18,7 @@
 #include <esp_sdr/esp_sdr_ring.h>
 #include <esp_sdr/esp_sdr_rx.h>
 
-#include <esp_attr.h>
-
+#include "esdr_defs.h"
 #include "esdr_rx.h"
 
 #define RX_CPU 1
@@ -39,7 +38,7 @@ static struct {
 
 /* A burst converted for the sink, a chunk at a time (CPU 1 is not time critical in bursts). */
 #define BURST_CHUNK 256U
-static EXT_RAM_BSS_ATTR int16_t burst_i[BURST_CHUNK], burst_q[BURST_CHUNK];
+static ESDR_PSRAM int16_t burst_i[BURST_CHUNK], burst_q[BURST_CHUNK];
 
 /* Sink state, touched only by the ring loop while it runs; stored also read by the REPL's CPU. */
 static struct {
@@ -57,7 +56,7 @@ static struct {
  * snap_pub (samples << 1 | buffer, -1 none) and returns to 0. Only the REPL's CPU arms, while
  * idle.
  */
-static EXT_RAM_BSS_ATTR uint32_t mon[2][ESDR_MON_SAMPLES];
+static ESDR_PSRAM uint32_t mon[2][ESDR_MON_SAMPLES];
 static atomic_t mon_w;
 static atomic_t snap_state, snap_pub;
 static uint32_t snap_fill, snap_want, snap_got, snap_want_max;

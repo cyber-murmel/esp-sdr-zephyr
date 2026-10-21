@@ -24,6 +24,9 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/util.h>
 
+#include <esp_sdr/esp_sdr_dsp.h>
+
+#include "esdr_defs.h"
 #include "esdr_gl.h"
 #include "esdr_pfbq.h"
 #include "esdr_proto.h"
@@ -63,11 +66,9 @@
 #define GL_BIN_DB (-7.27f)
 /* The fill's noise: up to this many dB either side of the floor. */
 #define GL_FILL_DB 1.5f
-#define GL_TAU     6.28318531f
 
-#define PSRAM __attribute__((section(".ext_ram.bss")))
 
-static uint8_t pool[GL_POOL][ESDR_BLOCK_BYTES] __aligned(16) PSRAM;
+static uint8_t pool[GL_POOL][ESDR_BLOCK_BYTES] __aligned(16) ESDR_PSRAM;
 K_MSGQ_DEFINE(gl_free, sizeof(uint8_t), GL_POOL, 1);
 K_MSGQ_DEFINE(gl_full, sizeof(uint8_t), GL_POOL, 1);
 
@@ -75,7 +76,7 @@ K_MSGQ_DEFINE(gl_full, sizeof(uint8_t), GL_POOL, 1);
  * The bank and the detector, for up to 80 channels: in PSRAM, as the pool (the SRAM is LVGL's);
  * their working set of some 40 KiB stays in the cache.
  */
-static uint8_t mem[48U * 1024U] __aligned(16) PSRAM;
+static uint8_t mem[48U * 1024U] __aligned(16) ESDR_PSRAM;
 
 /* Held by the thread while it works on a block, by start and stop while they change things. */
 static K_MUTEX_DEFINE(gl_lock);
@@ -117,7 +118,7 @@ static struct {
 	/* A reader took a row lately (k_uptime_get_32() of the last one); the fill's noise. */
 	bool live, want;
 	uint32_t seen, seed;
-} spec PSRAM;
+} spec ESDR_PSRAM;
 
 /* What MicroPython takes, under acc_lock: running sums since its last look, the bursts. */
 static struct k_spinlock acc_lock;
@@ -173,12 +174,12 @@ static void spec_init(void)
 	float sw = 0.0f;
 
 	for (unsigned int t = 0; t < GL_BLOCK; t++) {
-		spec.win[t] = 0.5f - 0.5f * cosf(GL_TAU * ((float)t + 0.5f) / GL_BLOCK);
+		spec.win[t] = 0.5f - 0.5f * cosf(ESP_SDR_TAU_F * ((float)t + 0.5f) / GL_BLOCK);
 		sw += spec.win[t];
 	}
 	for (unsigned int e = 0; e < ARRAY_SIZE(spec.cos); e++) {
-		spec.cos[e] = cosf(GL_TAU * (float)e / GL_BLOCK);
-		spec.sin[e] = sinf(GL_TAU * (float)e / GL_BLOCK);
+		spec.cos[e] = cosf(ESP_SDR_TAU_F * (float)e / GL_BLOCK);
+		spec.sin[e] = sinf(ESP_SDR_TAU_F * (float)e / GL_BLOCK);
 	}
 	/* A carrier of amplitude a at a bin's centre reads a^2. */
 	spec.norm = 1.0f / (sw * sw);

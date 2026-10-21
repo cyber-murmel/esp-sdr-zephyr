@@ -61,7 +61,6 @@
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/reboot.h>
 
-#include <esp_attr.h>
 #include <esp_system.h>
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_ring.h>
@@ -81,6 +80,7 @@
 
 #include "app_crash.h"
 #include "esdr_board.h"
+#include "esdr_defs.h"
 #include "usb_disks.h"
 #include "esdr_rx.h"
 #include "esdr_tx.h"
@@ -103,7 +103,7 @@ MP_REGISTER_ROOT_POINTER(mp_obj_t esdr_tx_buf);
 #define FAST_HEAP_SIZE 3072
 
 ESP_SDR_HIGH_BUF_DEFINE(uint8_t, fast_heap, [FAST_HEAP_SIZE], 16);
-static EXT_RAM_BSS_ATTR uint8_t psram_heap[CONFIG_APP_MP_PSRAM_HEAP_KB * 1024] __aligned(16);
+static ESDR_PSRAM uint8_t psram_heap[CONFIG_APP_MP_PSRAM_HEAP_KB * 1024] __aligned(16);
 
 void esdr_port_init(void)
 {

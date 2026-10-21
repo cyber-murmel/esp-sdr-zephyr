@@ -31,6 +31,7 @@
 #include <esp_assert.h>
 #include <hal/uart_ll.h>
 
+#include "esdr_defs.h"
 #include "esdr_link_host.h"
 #include "esdr_remote.h"
 #include "esdr_rx.h"
@@ -66,8 +67,8 @@ static bool opened;
 
 /* ---- receive: the byte ring ---- */
 
-/* In PSRAM (.ext_ram.bss), as the monitor: internal RAM is the kernel's and the drivers'. */
-static uint8_t ring[RING_BYTES] __attribute__((section(".ext_ram.bss")));
+/* In PSRAM, as the monitor: internal RAM is the kernel's and the drivers'. */
+static uint8_t ring[RING_BYTES] ESDR_PSRAM;
 static volatile uint32_t ring_head, ring_tail;
 static K_SEM_DEFINE(ring_sem, 0, 1);
 
@@ -276,7 +277,7 @@ static struct {
 } rx;
 
 /* The monitor: the newest ESDR_MON_SAMPLES pairs, and how many came in all. */
-static uint32_t mon[ESDR_MON_SAMPLES] __attribute__((section(".ext_ram.bss")));
+static uint32_t mon[ESDR_MON_SAMPLES] ESDR_PSRAM;
 static volatile uint64_t mon_total;
 
 static void rx_done_work_fn(struct k_work *work)
@@ -408,7 +409,7 @@ static void on_burst_block(const struct esdr_block_hdr *h, const uint8_t *p, uin
 /* ---- triggered snapshots (ESDR_MODE_TRIGGER) ---- */
 
 /* Two snapshot buffers: one being filled, the newest complete one for esdr_remote_trig_get(). */
-static int8_t trg_buf[2][2U * ESDR_TRIG_SAMPLES] __attribute__((section(".ext_ram.bss")));
+static int8_t trg_buf[2][2U * ESDR_TRIG_SAMPLES] ESDR_PSRAM;
 static K_MUTEX_DEFINE(trg_lock);
 static struct {
 	volatile bool active;

@@ -20,14 +20,14 @@
 #include "py/obj.h"
 #include "py/runtime.h"
 
+#include "esdr_defs.h"
+
 #define NFFT_MAX 1024U
 
-#define CHAN_PSRAM __attribute__((section(".ext_ram.bss")))
-
-static CHAN_PSRAM float re[NFFT_MAX], im[NFFT_MAX];
-static CHAN_PSRAM float tw_cos[NFFT_MAX / 2], tw_sin[NFFT_MAX / 2], win[NFFT_MAX];
+static ESDR_PSRAM float re[NFFT_MAX], im[NFFT_MAX];
+static ESDR_PSRAM float tw_cos[NFFT_MAX / 2], tw_sin[NFFT_MAX / 2], win[NFFT_MAX];
 /* Per channel: the sum and the largest over the snapshot, the largest over the image row. */
-static CHAN_PSRAM float sum[NFFT_MAX], big[NFFT_MAX], rowbig[NFFT_MAX];
+static ESDR_PSRAM float sum[NFFT_MAX], big[NFFT_MAX], rowbig[NFFT_MAX];
 static uint32_t tab_n;
 static float win_sum;
 
