@@ -86,6 +86,8 @@ let
       jsonschema
       # Markdown pages in the Sphinx docs (doc/).
       myst-parser
+      # nanopb's generator (Zephyr's esp-hosted-mcu driver, apps/c6_bootstrap).
+      protobuf
     ];
   };
 
@@ -148,6 +150,7 @@ let
     pkgs.cmake
     pkgs.esptool
     pkgs.ninja
+    pkgs.protobuf
     python
     riscv32-esp-binutils
     zephyr-sdk

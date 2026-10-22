@@ -27,11 +27,13 @@ manifest:
     # that make the USB stack and DWC2 threads preemptible (apps/chancap) and
     # the Hackaday Communicator, WHY2025 and MCH2022 badges with their NV3007,
     # ST7703, TCA8418 and RP2040 coprocessor drivers, an SX126x without BUSY
-    # and DIO1 lines and the ESP32 SPI timing fixes (branches
-    # communicator-badge, why2025-badge, mch2022-badge).
+    # and DIO1 lines and the ESP32 SPI timing fixes, and the
+    # ESP32-P4-Function-EV-Board's C6 and V1.0B (ESP-IDF bootloader mode,
+    # esp-hosted OTA, P4 rev v0.0) (branches communicator-badge,
+    # why2025-badge, mch2022-badge, p4-function-ev-board).
     - name: zephyr
       remote: cyber-murmel
-      revision: 243ebb1f92f9e326fb42026772313fe0c09722f6 # mch2022-badge
+      revision: 9e90a821cf42644259b2d71925fdfe835469710c # p4-function-ev-board
       path: modules/zephyr
       import:
         name-allowlist:
@@ -39,13 +41,15 @@ manifest:
           - loramac-node
           - mcuboot
           - mbedtls
+          - nanopb
           - tf-psa-crypto
     # The HAL companion of the SMP port, with the ESP32-P4 flash erase fix
-    # (the line levels kept when SPI1's control register is cleared); listed
-    # here so it overrides the revision Zephyr's own manifest pins.
+    # (the line levels kept when SPI1's control register is cleared) and the
+    # P4 rev v0.0 clock (from the ROM's CPLL); listed here so it overrides
+    # the revision Zephyr's own manifest pins.
     - name: hal_espressif
       remote: cyber-murmel
-      revision: 35acb08e843f46d5fa9541f286aa56edb1b21eac # esp-sdr branch
+      revision: 1721d85be6b6794bd6a1f54f849ffa9202f581eb # esp-sdr branch
       path: modules/hal/espressif
       groups:
         - hal
@@ -67,8 +71,8 @@ manifest:
     # MicroPython, with its Zephyr port as the application's main program
     # (apps/micropython). v1.29.0.
     - name: micropython
-      remote: micropython
-      revision: 0fd6c573ea815774668bbb16b8e197c8822368b2
+      remote: cyber-murmel
+      revision: 31471185d318a85a9db5b17e8b9ded792b8c7015
       path: modules/micropython
     # The frozen modules' library (argparse, upysh, ...), where the port expects it.
     - name: micropython-lib
