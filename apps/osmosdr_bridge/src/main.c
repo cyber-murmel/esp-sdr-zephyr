@@ -426,6 +426,17 @@ static void reader_fn(void *a, void *b, void *c)
 	for (;;) {
 		int n = esdr_sdio_read(chunk, SDIO_CHUNK);
 
+		if (n < 0) {
+			/* A new session (esdr_sdio_host.h): the radio's stream starts again, the
+			 * frame or block in hand never ends; its pool slot comes back. */
+			uint8_t *b = esdr_link_abort(&link);
+
+			if (b != NULL) {
+				uint8_t i = (uint8_t)((b - pool[0]) / ESDR_BLOCK_BYTES);
+
+				(void)k_msgq_put(&pool_free, &i, K_NO_WAIT);
+			}
+		}
 		if (n <= 0) {
 			k_sleep(K_TICKS(1));
 			continue;
