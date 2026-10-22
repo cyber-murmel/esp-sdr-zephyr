@@ -7,7 +7,7 @@
 # GNU Radio Python Flow Graph
 # Title: Waterfall
 # Author: esp-sdr
-# Description: A gapless waterfall of 250 kHz to 2 MHz (a chooser, up to the board's top rate: 2 MS/s on the WHY2025 badge, 500 kS/s on the S3), or of 80 MHz: without a gap where the radio streams it (the WHY2025 badge: the bursts its channelizer finds, each at its channel, over quiet noise), else from bursts at 80 MS/s; the knob tunes from 1.8 to 2.8 GHz and sets the level (the top of the colour scale).
+# Description: A gapless waterfall of 250 kHz to 2 MHz (a chooser, up to the board's top rate: 2 MS/s on the WHY2025 badge, 500 kS/s on the S3), or of 80 MHz: without a gap where the radio streams it (the WHY2025 badge: the bursts its channelizer finds, each at its channel, over quiet noise), else from bursts at 80 MS/s; the knob tunes from 1.8 to 2.8 GHz and sets the level (the top of the colour scale, 22 dB higher at 80 MHz).
 # GNU Radio version: 3.10.12.0
 
 from PyQt5 import Qt
@@ -89,7 +89,7 @@ class waterfall(gr.top_block, Qt.QWidget):
             lambda i: self.set_samp_rate(self._samp_rate_options[i]))
         # Create the radio buttons
         self.top_layout.addWidget(self._samp_rate_tool_bar)
-        self._level_range = qtgui.Range(-100, 0, 1, -57, 200)
+        self._level_range = qtgui.Range(-100, -20, 1, -57, 200)
         self._level_win = qtgui.RangeWidget(self._level_range, self.set_level, "Level dB", "counter_slider", float, QtCore.Qt.Horizontal)
         self.top_layout.addWidget(self._level_win)
         self._freq_range = qtgui.Range(1.8e9, 2.8e9, 1e6, 2.44e9, 200)
@@ -110,7 +110,7 @@ class waterfall(gr.top_block, Qt.QWidget):
         self.soapy_hackrf_source_0.set_gain(0, 'LNA', min(max(16, 0.0), 40.0))
         self.soapy_hackrf_source_0.set_gain(0, 'VGA', min(max(16, 0.0), 62.0))
         self.qtgui_waterfall_sink_x_0 = qtgui.waterfall_sink_c(
-            1024, #size
+            256, #size
             window.WIN_BLACKMAN_hARRIS, #wintype
             freq, #fc
             samp_rate, #bw
@@ -139,7 +139,7 @@ class waterfall(gr.top_block, Qt.QWidget):
             self.qtgui_waterfall_sink_x_0.set_color_map(i, colors[i])
             self.qtgui_waterfall_sink_x_0.set_line_alpha(i, alphas[i])
 
-        self.qtgui_waterfall_sink_x_0.set_intensity_range(level - (45 if samp_rate > 10e6 else 20), level)
+        self.qtgui_waterfall_sink_x_0.set_intensity_range(level - (23 if samp_rate > 10e6 else 20), level + (22 if samp_rate > 10e6 else 0))
 
         self._qtgui_waterfall_sink_x_0_win = sip.wrapinstance(self.qtgui_waterfall_sink_x_0.qwidget(), Qt.QWidget)
 
@@ -167,7 +167,7 @@ class waterfall(gr.top_block, Qt.QWidget):
         self.samp_rate = samp_rate
         self._samp_rate_callback(self.samp_rate)
         self.qtgui_waterfall_sink_x_0.set_frequency_range(self.freq, self.samp_rate)
-        self.qtgui_waterfall_sink_x_0.set_intensity_range(self.level - (45 if self.samp_rate > 10e6 else 20), self.level)
+        self.qtgui_waterfall_sink_x_0.set_intensity_range(self.level - (23 if self.samp_rate > 10e6 else 20), self.level + (22 if self.samp_rate > 10e6 else 0))
         self.soapy_hackrf_source_0.set_sample_rate(0, self.samp_rate)
 
     def get_level(self):
@@ -175,7 +175,7 @@ class waterfall(gr.top_block, Qt.QWidget):
 
     def set_level(self, level):
         self.level = level
-        self.qtgui_waterfall_sink_x_0.set_intensity_range(self.level - (45 if self.samp_rate > 10e6 else 20), self.level)
+        self.qtgui_waterfall_sink_x_0.set_intensity_range(self.level - (23 if self.samp_rate > 10e6 else 20), self.level + (22 if self.samp_rate > 10e6 else 0))
 
     def get_freq(self):
         return self.freq
