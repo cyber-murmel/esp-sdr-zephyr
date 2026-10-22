@@ -110,6 +110,13 @@ shows the apps and ``multiapp run <name>`` starts one, for example
 Each app also builds on its own. Releases carry the multiapp image and
 the SoapySDR module for gqrx and GNU Radio.
 
+What an app needs on every board with a given chip is in its
+``socs/<soc>_<cpu cluster>.conf`` and ``.overlay`` (for example
+``socs/esp32s3_procpu.conf`` for the XIAO ESP32S3 and the Communicator),
+what one board adds in ``boards/<board>.conf`` and ``.overlay``; Zephyr
+applies both. The ESP32-S3 apps put their shell on a USB CDC-ACM port with
+``apps/common/boards/s3_cdc_shell.dtsi``.
+
 The library
 -----------
 

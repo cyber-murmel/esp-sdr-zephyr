@@ -1,7 +1,8 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * USB-Serial-JTAG carries the ZNP protocol, so the console moves to UART0 (D6 TX, D7 RX).
+ * USB-Serial-JTAG carries the ZNP protocol, so the console moves to UART0 (on the XIAO D6 TX,
+ * D7 RX).
  */
 
 / {

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Only needed for the S3 variant (USB shell and DFU, see sysbuild.conf and
-# boards/xiao_esp32s3_procpu.overlay): the chip currently runs an app that
+# socs/esp32s3_procpu.overlay): the chip currently runs an app that
 # owns the USB OTG port for CDC-ACM, so esptool can no longer reset it into
 # the ROM bootloader over that port; this test is deployed with `west dfu`
 # like every other S3 app in this repo instead. The C6 variant does not

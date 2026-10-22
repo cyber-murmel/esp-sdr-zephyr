@@ -65,7 +65,14 @@ function(multiapp_extension name)
     set(app_config ${ext_dir}/${name}_config.h)
     set(app_confs ${EXT_APP}/Kconfig ${EXT_APP}/prj.conf)
     set(conf_args --conf ${EXT_APP}/prj.conf)
-    # The app's board fragment, named with or without the SoC like Zephyr's own lookup.
+    # The app's SoC fragment, then its board fragment (named with or without the SoC), as
+    # Zephyr's own lookup applies them.
+    string(REGEX REPLACE "^/" "" soc_conf "${BOARD_QUALIFIERS}")
+    string(REPLACE "/" "_" soc_conf "${soc_conf}")
+    if(EXISTS ${EXT_APP}/socs/${soc_conf}.conf)
+      list(APPEND app_confs ${EXT_APP}/socs/${soc_conf}.conf)
+      list(APPEND conf_args --conf ${EXT_APP}/socs/${soc_conf}.conf)
+    endif()
     string(REGEX REPLACE "^/[^/]+/" "" cpu_cluster "${BOARD_QUALIFIERS}")
     foreach(board_conf ${NORMALIZED_BOARD_TARGET} ${BOARD}_${cpu_cluster})
       if(EXISTS ${EXT_APP}/boards/${board_conf}.conf)

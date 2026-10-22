@@ -1,0 +1,6 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+#define APP_SHELL_LABEL "ESP-SDR RX API test"
+#include "../../../../apps/common/boards/s3_cdc_shell.dtsi"
