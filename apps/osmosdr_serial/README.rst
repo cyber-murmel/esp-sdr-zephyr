@@ -34,7 +34,8 @@ Other links
 
 - **UART** (chosen ``esdr,link-uart``): the WHY2025 badge's C6 to its P4 at 5 Mbaud, RTS for
   flow control; the same rates as USB-Serial-JTAG. The badge's fallback link, built with
-  ``-DCONFIG_APP_LINK_SDIO=n -DCONFIG_ESP_SDR_GAPLESS=n`` (the gapless receiver needs SDIO).
+  ``-DEXTRA_CONF_FILE=uart.conf``: the image as before the gapless receiver, which needs SDIO
+  (the Wi-Fi driver brings the radio up).
 - **SDIO** (``CONFIG_APP_LINK_SDIO``, the WHY2025 badge's default): the C6's SDIO slave,
   function 1, 4 bit, as esp-hosted uses it (``src/link_sdio.c``, on the HAL's LL layer). The
   host's writes land in 16 buffers of 512 bytes counted by tokens; the receive blocks go out

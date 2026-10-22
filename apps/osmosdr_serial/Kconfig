@@ -25,4 +25,8 @@ config APP_LINK_SDIO
 	  (src/link_sdio.c), instead of a UART or USB-Serial-JTAG. It carries receive rates up
 	  to 2 MS/s, 8-bit items above 250 kS/s.
 
+# Block 3 holds the staging ring and the stream's blocks (40 KiB with the bounce buffers).
+configdefault ESP_SDR_GAPLESS_STAGE_KB
+	default 64
+
 source "Kconfig.zephyr"

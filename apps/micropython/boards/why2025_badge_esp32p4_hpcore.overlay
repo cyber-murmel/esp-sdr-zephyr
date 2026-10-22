@@ -17,7 +17,7 @@
 		/*
 		 * The radio: the C6's osmosdr_serial (cmod/esdr_remote.c) over SDIO (its default on
 		 * this board). For the UART link instead (a C6 image built with
-		 * CONFIG_APP_LINK_SDIO=n): esdr,link-uart = &uart1.
+		 * -DEXTRA_CONF_FILE=uart.conf): esdr,link-uart = &uart1.
 		 */
 		esdr,link-sdio = &sdhc1;
 	};
