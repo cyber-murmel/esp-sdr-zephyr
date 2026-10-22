@@ -70,8 +70,12 @@
  *   shift()                    (esdr_board.c)
  *   claim(mnt), release(mnt)   no-ops: the volumes are not USB drives here
  *   shell(cmd) -> str          a Zephyr shell command (mcuboot confirm, ...)
- *   usb_to_c6(seconds=60)      P4: USB-C port J8 to the ESP32-C6's USB-Serial-JTAG (esptool)
- *                              for that long, then back to this chip's REPL and DFU (esdr_usb.c)
+ *   usb_to_c6(seconds=60)      WHY2025 P4: USB-C port J8 to the ESP32-C6's USB-Serial-JTAG
+ *                              (esptool) for that long, then back to this chip's REPL and DFU
+ *                              (esdr_usb.c)
+ *   request(req, value=0, data=None, n_in=0) -> bytes or None
+ *                              P4: one protocol request to the radio (esdr_proto.h); n_in > 0
+ *                              asks for that many bytes back; a negative status raises OSError
  *
  * Memory: the Python heap is CONFIG_APP_MP_PSRAM_HEAP_KB of PSRAM, added at every start; LVGL
  * allocates from it too (CONFIG_LV_Z_MEM_POOL_MICROPYTHON).
@@ -840,7 +844,7 @@ static const mp_rom_obj_tuple_t esdr_burst_rates_obj = {
 };
 #endif
 
-#if RADIO_LINKED
+#if RADIO_LINKED && ESDR_USB_TO_C6
 /* usb_to_c6(seconds=60): J8 to the C6 for a while (esdr_usb.c). */
 static mp_obj_t esdr_usb_to_c6_fn(size_t n_args, const mp_obj_t *args)
 {
@@ -857,6 +861,41 @@ static mp_obj_t esdr_usb_to_c6_fn(size_t n_args, const mp_obj_t *args)
 	return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_usb_to_c6_obj, 0, 1, esdr_usb_to_c6_fn);
+#endif
+
+#if RADIO_LINKED
+static mp_obj_t esdr_request_fn(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args)
+{
+	enum { ARG_req, ARG_value, ARG_data, ARG_n_in };
+	static const mp_arg_t allowed[] = {
+		{MP_QSTR_req, MP_ARG_REQUIRED | MP_ARG_INT},
+		{MP_QSTR_value, MP_ARG_INT, {.u_int = 0}},
+		{MP_QSTR_data, MP_ARG_OBJ, {.u_obj = mp_const_none}},
+		{MP_QSTR_n_in, MP_ARG_INT, {.u_int = 0}},
+	};
+	mp_arg_val_t a[MP_ARRAY_SIZE(allowed)];
+	mp_buffer_info_t bi = {.buf = NULL, .len = 0};
+	uint8_t in[ESDR_SER_MAX_DATA];
+	int ret;
+
+	mp_arg_parse_all(n_args, pos_args, kw_args, MP_ARRAY_SIZE(allowed), allowed, a);
+	need_radio();
+	if (a[ARG_data].u_obj != mp_const_none) {
+		mp_get_buffer_raise(a[ARG_data].u_obj, &bi, MP_BUFFER_READ);
+	}
+	if (bi.len > ESDR_SER_MAX_DATA || a[ARG_n_in].u_int < 0 ||
+	    a[ARG_n_in].u_int > (mp_int_t)sizeof(in) || (a[ARG_n_in].u_int > 0 && bi.len > 0)) {
+		mp_raise_ValueError(MP_ERROR_TEXT("data or n_in, up to 512 bytes"));
+	}
+	ret = esdr_remote_request((uint8_t)a[ARG_req].u_int, (uint16_t)a[ARG_value].u_int, bi.buf,
+				  (uint16_t)bi.len, a[ARG_n_in].u_int > 0 ? in : NULL,
+				  (uint16_t)a[ARG_n_in].u_int);
+	if (ret < 0) {
+		mp_raise_OSError(-ret);
+	}
+	return a[ARG_n_in].u_int > 0 ? mp_obj_new_bytes(in, ret) : mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(esdr_request_obj, 1, esdr_request_fn);
 #endif
 
 static const mp_rom_map_elem_t esdr_globals_table[] = {
@@ -893,8 +932,11 @@ static const mp_rom_map_elem_t esdr_globals_table[] = {
 #if defined(CONFIG_SHELL_BACKEND_DUMMY)
 	{MP_ROM_QSTR(MP_QSTR_shell), MP_ROM_PTR(&esdr_shell_obj)},
 #endif
-#if RADIO_LINKED
+#if RADIO_LINKED && ESDR_USB_TO_C6
 	{MP_ROM_QSTR(MP_QSTR_usb_to_c6), MP_ROM_PTR(&esdr_usb_to_c6_obj)},
+#endif
+#if RADIO_LINKED
+	{MP_ROM_QSTR(MP_QSTR_request), MP_ROM_PTR(&esdr_request_obj)},
 #endif
 	{MP_ROM_QSTR(MP_QSTR_next_app), MP_ROM_PTR(&esdr_next_app_obj)},
 	{MP_ROM_QSTR(MP_QSTR_home), MP_ROM_PTR(&esdr_home_obj)},

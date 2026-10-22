@@ -1,0 +1,14 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * MCUboot on an ESP32-P4 (sysbuild.cmake picks this file there): the application's flash
+ * layout, the boot partition its code partition.
+ */
+
+#include "../boards/partitions_p4.dtsi"
+
+/ {
+	chosen {
+		zephyr,code-partition = &boot_partition;
+	};
+};

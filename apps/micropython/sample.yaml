@@ -24,8 +24,10 @@ tests:
   sample.esp_sdr.micropython.p4:
     platform_allow:
       - why2025_badge/esp32p4/hpcore
+      - esp32p4_function_ev_board/esp32p4/hpcore
     integration_platforms:
       - why2025_badge/esp32p4/hpcore
+      - esp32p4_function_ev_board/esp32p4/hpcore
   sample.esp_sdr.micropython.mch2022:
     platform_allow:
       - mch2022/esp32/procpu

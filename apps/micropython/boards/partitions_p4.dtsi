@@ -1,9 +1,10 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * The WHY2025 badge's ESP32-P4 flash: MCUboot at 0x2000 and the application in the lower 8 MB
- * (Espressif's 8 MB table: two 3840 KiB slots), the upper 8 MB the FAT volume. The application
- * and MCUboot (sysbuild/mcuboot_why2025_p4.overlay) share it.
+ * The 16 MB flash of an ESP32-P4 board (the WHY2025 badge, the ESP32-P4-Function-EV-Board):
+ * MCUboot at 0x2000 and the application in the lower 8 MB (Espressif's 8 MB table: two 3840 KiB
+ * slots), the upper 8 MB the FAT volume. The application and MCUboot
+ * (sysbuild/mcuboot_p4.overlay) share it.
  */
 
 &flash0 {

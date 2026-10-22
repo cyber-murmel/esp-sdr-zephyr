@@ -22,6 +22,11 @@
 		esdr,link-sdio = &sdhc1;
 	};
 
+	/* GPIO2 hands USB-C port J8 to the ESP32-C6 (cmod/esdr_usb.c). */
+	zephyr,user {
+		usb-mux-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
+	};
+
 	/* The FAT volume "FLASH", mounted at /FLASH:, and the SD card at /SD:. */
 	fat_disk: fat_disk {
 		compatible = "zephyr,flash-disk";
@@ -82,7 +87,7 @@ zephyr_udc0: &usb_otg {
 	};
 };
 
-#include "partitions_why2025_p4.dtsi"
+#include "partitions_p4.dtsi"
 
 /*
  * The link to the C6 (its UART0) at 5 Mbaud, 40 MHz / 8 on both chips. CTS on GPIO14, the C6's
