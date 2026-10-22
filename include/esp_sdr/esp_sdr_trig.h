@@ -33,6 +33,11 @@
 extern "C" {
 #endif
 
+/**
+ * @addtogroup esp_sdr_trig
+ * @{
+ */
+
 /** Samples in the ring: 205 us at 80 MS/s. */
 #define ESP_SDR_TRIG_RING 16384U
 /** Sample rate of a snapshot. */
@@ -101,6 +106,8 @@ void esp_sdr_trig_reset(void);
  */
 void esp_sdr_trig_pack_iq8(const struct esp_sdr_trig_snap *snap, uint32_t from, uint32_t n,
 			   int8_t *out);
+
+/** @} */
 
 #ifdef __cplusplus
 }

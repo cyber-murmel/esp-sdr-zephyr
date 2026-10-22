@@ -48,6 +48,11 @@ extern "C" {
 #endif
 
 /**
+ * @addtogroup esp_sdr_gapless
+ * @{
+ */
+
+/**
  * Code on the run's path (upstream's RING_HOT): in IRAM, since with interrupts off a flash
  * cache miss costs hundreds of cycles against the ring's deadlines, and optimized as hot.
  * The sink's callbacks need it too.
@@ -246,6 +251,8 @@ unsigned int esp_sdr_gapless_shift(uint32_t power, int32_t dc_i, int32_t dc_q);
 
 /** @brief @p power per sample (raw units squared) in dB below full scale, times 10. */
 int16_t esp_sdr_gapless_dbfs_x10(uint32_t power);
+
+/** @} */
 
 #ifdef __cplusplus
 }

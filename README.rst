@@ -46,16 +46,23 @@ Contents
      - - ``esp_sdr``: the library (``CONFIG_ESP_SDR``)
        - ``ieee802154``: software O-QPSK PHY and Zephyr radio driver
          (`doc/ieee802154.md <doc/ieee802154.md>`__)
+       - ``zigbee``: Zigbee coordinator stack (MAC, NWK, APS, security) behind the Z-Stack
+         ZNP protocol, portable C (``CONFIG_ZIGBEE_ZNP``)
    * - ``include/``
-     - ``esp_sdr/``: the API, ``esp_sdr.h``, ``esp_sdr_rx.h``,
-       ``esp_sdr_tx.h``, ``esp_sdr_ring.h``, ``esp_sdr_chancap.h``,
-       ``esp_sdr_paced.h``, ``esp_sdr_diag.h``, ``esp_sdr_replay.h``,
-       ``esp_sdr_dsp.h``, ``ieee154_phy.h``, ``ieee154_esp_sdr.h``
+     - - ``esp_sdr/``: the API, ``esp_sdr.h``, ``esp_sdr_rx.h``,
+         ``esp_sdr_tx.h``, ``esp_sdr_ring.h``, ``esp_sdr_chancap.h``,
+         ``esp_sdr_paced.h``, ``esp_sdr_trig.h``, ``esp_sdr_gapless.h``,
+         ``esp_sdr_diag.h``, ``esp_sdr_replay.h``, ``esp_sdr_dsp.h``,
+         ``ieee154_phy.h``, ``ieee154_esp_sdr.h``
+       - ``zigbee/``: the Zigbee stack's headers
    * - ``apps/``
      - - ``capture``: capture survey on the console
        - ``stream``: VITA 49.2 RX and TX over USB (CDC-NCM)
        - ``osmosdr``: HackRF-style USB SDR for GNU Radio and gqrx
-       - ``osmosdr_serial``: the same over USB-Serial-JTAG (C6, C5)
+       - ``osmosdr_serial``: the same over USB-Serial-JTAG, UART or SDIO (C6, C5,
+         ESP32); on the WHY2025 badge's C6 gapless 80 MS/s receive
+       - ``osmosdr_bridge``: the WHY2025 badge's P4 as a USB high-speed osmosdr device, its
+         C6 running ``osmosdr_serial`` behind it
        - ``link``: QAM or OFDM packet link
        - ``wpan``: 802.15.4 test shell
        - ``zstack``: Zigbee coordinator with the Z-Stack ZNP serial protocol
@@ -68,8 +75,8 @@ Contents
          VITA 49.2 over USB (`doc/chancap.md <doc/chancap.md>`__)
        - ``common``: USB with DFU, watchdogs, crash records
    * - ``tests/``
-     - ``unit`` (host), ``integration`` (one board), ``regression`` (two
-       boards); see `doc/testing.md <doc/testing.md>`__
+     - ``unit`` (host), ``host`` (the Python tools, pytest), ``integration`` (one
+       board), ``regression`` (two boards); see `doc/testing.md <doc/testing.md>`__
    * - ``doc/``
      - Guides, register pages, the Doxygen and Sphinx build
    * - ``scripts/``
@@ -109,12 +116,18 @@ The library
 - **Chips:** ESP32-S3 (XIAO ESP32S3, Hackaday Communicator badge), SMP or
   single core. ESP32-C6 (XIAO ESP32C6, the WHY2025 badge's radio
   co-processor) and ESP32-C5 (C5-Zero): burst captures, and continuous
-  CPU-paced receive and transmit up to 250 kS/s (``esp_sdr_paced.h``);
-  the C5 also has a gapless 40 MS/s ring through the modem diagnostic
+  CPU-paced receive and transmit up to 250 kS/s (``esp_sdr_paced.h``).
+  The C6 also keeps triggered 80 MS/s snapshots from before a burst
+  (``esp_sdr_trig.h``, ``CONFIG_ESP_SDR_TRIG``) and receives the whole
+  80 MS/s gapless, pruned to the windows above the noise
+  (``esp_sdr_gapless.h``, ``CONFIG_ESP_SDR_GAPLESS``, without the Wi-Fi
+  driver); the WHY2025 badge's C6 builds ``osmosdr_serial`` that way by
+  default. The C5 has a gapless 40 MS/s ring through the modem diagnostic
   bus (``esp_sdr_diag.h``, ``CONFIG_ESP_SDR_DIAG``) and loops waveforms
   through its DAC engine at 80 or 40 MS/s (``esp_sdr_replay.h``,
-  ``CONFIG_ESP_SDR_REPLAY``). ``capture``,
-  ``rfprobe``, ``wpan`` (C6) and ``osmosdr_serial`` run on them.
+  ``CONFIG_ESP_SDR_REPLAY``). ``capture``, ``rfprobe``, ``wpan`` (C6),
+  ``zstack`` (C6) and ``osmosdr_serial`` run on them; the classic ESP32
+  (MCH2022 badge) takes bursts.
 - **Tuning:** 100 to 6000 MHz in the API, but the PLL locks over a
   chip-specific range (about 1.8 to 2.8 GHz on the S3); below 2210 MHz
   through the 5/6 divider. ``-ERANGE`` when the VCO is out of range.
@@ -124,9 +137,10 @@ The library
   ``CONFIG_ESP_SDR_CHANCAP``): a grid of channels, one capture per packet.
 - **Gain:** AGC or a fixed index; the fixed gain and TX power steps use
   ``librftest.a`` (``west blobs fetch esp-sdr-zephyr``, or
-  ``CONFIG_ESP_SDR_RFTEST=n``).
+  ``CONFIG_ESP_SDR_RFTEST=n``, which leaves transmit out).
 - **Transmit:** sample playback at 40 or 80 MS/s, gapless streaming at
-  40 MS/s / n (``CONFIG_ESP_SDR_TX_DAC``, needs PSRAM), 18 power steps.
+  40 MS/s / n (``CONFIG_ESP_SDR_TX``, needs ``librftest.a`` and PSRAM),
+  18 power steps.
 
 Chip details and quirks: `doc/hardware-quirks.md <doc/hardware-quirks.md>`__.
 Enable it with:
@@ -170,17 +184,22 @@ Dependencies
 
 ``west.yml`` pins:
 
-- `Zephyr esp-sdr-multiapp <https://github.com/cyber-murmel/zephyr/tree/esp-sdr-multiapp>`__:
+- `Zephyr mch2022-badge <https://github.com/cyber-murmel/zephyr/tree/mch2022-badge>`__:
   ESP32-S3 SMP (zephyrproject-rtos/zephyr#120082), CDC-NCM aggregation,
-  llext and Xtensa changes for multiapp
+  llext and Xtensa changes for multiapp, the Communicator, WHY2025 and
+  MCH2022 badges with their drivers
 - `hal_espressif esp-sdr <https://github.com/cyber-murmel/hal_espressif/tree/esp-sdr>`__:
-  the HAL side of the SMP port
+  the HAL side of the SMP port, the ESP32-P4 flash erase fix
 - `libvrt esp-sdr <https://github.com/cyber-murmel/libvrt/tree/esp-sdr>`__:
   VITA 49.2
 - `esp-sdr <https://github.com/ESPARGOS/esp-sdr>`__ (upstream,
   unmodified): receiver helper headers
 - `esp-dsp <https://github.com/espressif/esp-dsp>`__: the FFT for
   ``apps/link`` OFDM
+- `MicroPython <https://github.com/micropython/micropython>`__ v1.29.0 and
+  micropython-lib, LVGL with
+  `lv_binding_micropython <https://github.com/cyber-murmel/lv_binding_micropython>`__
+  and pycparser: ``apps/micropython``
 
 License
 -------
