@@ -134,14 +134,6 @@ K_THREAD_STACK_DEFINE(gl_stack, GL_STACK);
 static struct k_thread gl_thread;
 static bool started;
 
-static inline uint32_t mcycle(void)
-{
-	uint32_t v;
-
-	__asm__ volatile("csrr %0, mcycle" : "=r"(v));
-	return v;
-}
-
 static inline float db(float p)
 {
 	return 10.0f * log10f(p + 1e-12f) - GL_FS_DB;
@@ -445,13 +437,13 @@ static void gl_fn(void *a, void *b, void *c)
 		}
 		k_mutex_lock(&gl_lock, K_FOREVER);
 		if (gl.run) {
-			uint32_t t0 = mcycle();
+			uint64_t t0 = esdr_pfbq_cycles();
 
 			spec.live = spec.want && k_uptime_get_32() - spec.seen < GL_SPEC_IDLE_MS;
 
 			(void)esdr_seg_parse(pool[i], ESDR_BLOCK_BYTES, seg_cb, NULL);
 			acc.st.blocks++;
-			acc.st.cycles += mcycle() - t0;
+			acc.st.cycles += esdr_pfbq_cycles() - t0;
 		}
 		k_mutex_unlock(&gl_lock);
 		(void)k_msgq_put(&gl_free, &i, K_NO_WAIT);
