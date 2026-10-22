@@ -10,6 +10,8 @@ spectrum sinks draw at their channels over quiet noise (qtgui.py). Any driver st
 accepted: the board has one radio. Settings change between captures; while only displays take the stream (qtgui sinks),
 a change restarts it at once."""
 
+import errno
+
 import esdr
 from gnuradio import gr
 
@@ -155,7 +157,9 @@ class source(gr.basic_block):
         try:
             esdr.gapless_start(ratio=_GAPLESS_RATIO, budget=_GAPLESS_BUDGET,
                                gain_servo=self._auto, channels=_GAPLESS_CHANNELS)
-        except OSError:
+        except OSError as e:
+            if e.errno != errno.EOPNOTSUPP:
+                raise
             print("soapy: the radio streams no gapless 80 MHz: bursts")
             _gapless_ok[0] = False
             return False

@@ -2,8 +2,10 @@
 """apps/micropython/eggs/bursts: the hand-written Bursts app with the board's gnuradio stand-ins
 on a fake esdr module, its GUI loop replaced by a script: the gapless stream first where the
 radio has it, the triggered snapshots on a radio that refuses it (a C6 not built for it) or
-lacks it (the MCH2022 badge's ESP32), and the chooser between the two where both work."""
+lacks it (the MCH2022 badge's ESP32), and the chooser between the two where both work; another
+error leaves the gapless source alone."""
 
+import errno
 import importlib
 import sys
 import time
@@ -24,11 +26,13 @@ class FakeRadio(types.ModuleType):
     TRIG_SAMPLES = 16320
     TRIG_RATE = 80000000
 
-    def __init__(self, gapless=True, refuse=False):
+    def __init__(self, gapless=True, refuse=False, fail=None):
         super().__init__("esdr")
         self.running = None
         self.calls = []
         self.refuse = refuse
+        # The errno of gapless_start's next failure, not a refusal (a request that timed out).
+        self.fail = fail
         if gapless:
             self.gapless_start = self._gapless_start
         self.snap = 0
@@ -47,7 +51,10 @@ class FakeRadio(types.ModuleType):
 
     def _gapless_start(self, **kw):
         if self.refuse:
-            raise OSError(95)
+            raise OSError(errno.EOPNOTSUPP, "no gapless mode")
+        if self.fail is not None:
+            e, self.fail = self.fail, None
+            raise OSError(e, "failed")
         self.running = "gapless"
         self.calls.append(("gapless", kw))
 
@@ -178,6 +185,15 @@ def test_snapshots_without_gapless(app, monkeypatch, kw):
     a.mod.main()
     assert seen == [("trig", None, [True, True, True], "#3 (3 shown)")]
     assert a.radio.running is None
+
+
+def test_other_errors_keep_gapless(app, monkeypatch):
+    a = app(fail=errno.ETIMEDOUT)
+    monkeypatch.setattr(a.gui, "run", lambda: pytest.fail("a GUI after the error"))
+    with pytest.raises(OSError) as e:
+        a.mod.main()
+    assert e.value.errno == errno.ETIMEDOUT
+    assert all(c[0] != "trig" for c in a.radio.calls)
 
 
 def test_threshold_slider_restarts_the_source(app, monkeypatch):

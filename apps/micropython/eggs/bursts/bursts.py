@@ -24,6 +24,7 @@ Gapless where the radio has it, else snapshots; with both, a chooser switches be
 knob tunes and sets the top of the colour scale."""
 
 import array
+import errno
 import time
 
 import esdr
@@ -285,7 +286,8 @@ def main():
     esdr.init()
     esdr.channel_bw(2)
     esdr.rx_gain(30)
-    # Gapless first; a radio without the stream (a C6 not built for it) refuses it at the start.
+    # Gapless first; a radio without the stream (a C6 not built for it) refuses it at the start
+    # (EOPNOTSUPP). Any other error (a request that timed out) ends the app as in the others.
     kinds = ([_Gapless] if hasattr(esdr, "gapless_start") else []) + [_Snapshots]
     srcs = [k() for k in kinds]
     at = [0]
@@ -299,8 +301,8 @@ def main():
         src = srcs[at[0]]
         try:
             _restart(src)
-        except OSError:
-            if not isinstance(src, _Gapless):
+        except OSError as e:
+            if not isinstance(src, _Gapless) or e.errno != errno.EOPNOTSUPP:
                 raise
             print("Bursts: the radio streams no gapless 80 MHz: snapshots")
             del srcs[at[0]]

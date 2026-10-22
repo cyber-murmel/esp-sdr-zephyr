@@ -39,12 +39,13 @@
  *   gapless_start(ratio=8, level=0, pre=1, post=1, budget=2000000, gain_servo=False,
  *                 monitor=True, channels=0, open_db=6)
  *                              P4: the whole 80 MHz without a gap (the C6's gapless
- *                              stream, its default build), the 10 us windows ratio times the quiet power
- *                              (or past a fixed level) and pre / post of them around, at most
- *                              budget bytes a second; monitor: their samples to rx_latest()
- *                              (full scale 16384); channels (16, 32, 40, 64, 80): the
- *                              channelizer and burst detector (esdr_gl.c), opening open_db
- *                              over a channel's floor. OSError from a C6 without the mode
+ *                              stream, its default build), the 10 us windows ratio times the
+ *                              quiet power (or past a fixed level) and pre / post of them
+ *                              around, at most budget bytes a second; monitor: their samples to
+ *                              rx_latest() (full scale 16384); channels (16, 32, 40, 64, 80):
+ *                              the channelizer and burst detector (esdr_gl.c), opening open_db
+ *                              over a channel's floor. OSError EOPNOTSUPP from a C6 without the
+ *                              mode
  *   gapless_stop(), gapless_stats() -> dict
  *   chan_power(power, floor=None, peak=None, open=None) -> blocks
  *                              per channel (float32 arrays, the lowest frequency first) since
@@ -88,6 +89,7 @@
 #endif
 
 #include "py/gc.h"
+#include "py/mperrno.h"
 #include "py/mphal.h"
 #include "py/obj.h"
 #include "py/runtime.h"
@@ -502,7 +504,9 @@ static mp_obj_t esdr_gapless_start_fn(size_t n_args, const mp_obj_t *pos, mp_map
 	ret = esdr_remote_gl_start(&cfg, args[ARG_monitor].u_bool);
 	if (ret < 0) {
 		esdr_gl_stop();
-		esdr_check(ret);
+		/* A radio without the mode: as errno.EOPNOTSUPP, which MicroPython names (it has no
+		 * ENOTSUP), apart from a transient error. */
+		esdr_check(ret == -ENOTSUP ? -MP_EOPNOTSUPP : ret);
 	}
 	return mp_const_none;
 }
