@@ -17,6 +17,7 @@
 #include "ubt_mode.h"
 #include "ubt_pie.h"
 #include "ubt_radio.h"
+#include "ubt_rssi.h"
 #include "ubt_specan.h"
 #include "ubt_usb.h"
 
@@ -32,10 +33,10 @@ LOG_MODULE_DECLARE(ubt_mode);
 #define SPECAN_BW_MHZ 69
 
 /*
- * dBm of a full scale tone at the antenna with SPECAN_GAIN, times 256. Not calibrated: from the noise
- * floor measured in doc/ubertooth.md and a 7 dB noise figure. "ubt specan cal" sets it from a source.
+ * dBm of a full scale tone at the antenna with SPECAN_GAIN, times 256: the receiver's placeholder
+ * calibration (ubt_rssi.h). "ubt specan cal" sets it from a source.
  */
-static int32_t fs_dbm_q8 = -66 * 256;
+static int32_t fs_dbm_q8 = UBT_RSSI_K_DEFAULT * 128;
 
 struct specan_ctx {
 	struct ubt_specan sp;

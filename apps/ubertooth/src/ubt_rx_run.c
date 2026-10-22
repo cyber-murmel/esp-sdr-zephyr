@@ -18,6 +18,7 @@
 #include "ubt_le.h"
 #include "ubt_mode.h"
 #include "ubt_radio.h"
+#include "ubt_rssi.h"
 #include "ubt_usb.h"
 
 LOG_MODULE_DECLARE(ubt_mode);
@@ -27,9 +28,6 @@ LOG_MODULE_DECLARE(ubt_mode);
 
 /* Receive gain index of the sniffer (fixed: the AGC would move the levels between packets). */
 #define RX_GAIN 60
-
-/* dBm of a full scale tone at that gain: a guess from the noise floor, see ubt_specan_run.c. */
-#define FS_DBM (-66)
 
 /* The squelch opens this far above the noise floor (0.5 dB units) and closes 3 dB under that. */
 #define SQUELCH_MARGIN 14U
@@ -71,15 +69,6 @@ static uint32_t clk_of_sample(void *ctx, uint32_t sample_index)
 
 	ubt_clock_split(ubt_clock_t100(&d->clock, ubt_radio_rx_cycles(sample_index)), &high, &clk);
 	return clk;
-}
-
-/* Symbol power (0.5 dB steps from -100 dBFS) to the CC2400 style RSSI byte, dBm + 54. */
-static int8_t rssi_of_pwr(uint8_t pwr)
-{
-	int dbm = (int)pwr / 2 - 100 + FS_DBM;
-	int raw = dbm + UBT_RSSI_OFFSET;
-
-	return (int8_t)(raw < -128 ? -128 : (raw > 127 ? 127 : raw));
 }
 
 /* Run n samples of the stream; returns false if the stream is gone. */
@@ -139,7 +128,7 @@ void ubt_btle_run(struct ubt_dev *d)
 		return;
 	}
 	gfsk_demod_init(&h->dm, GFSK_BLE);
-	ubt_le_init(&h->le, emit_pkt, clk_of_sample, rssi_of_pwr, d);
+	ubt_le_init(&h->le, emit_pkt, clk_of_sample, ubt_rssi_raw, d);
 	/* Upstream resets the connection state when a sniffing mode starts: advertising access address. */
 	ubt_le_set_channel(&h->le, channel);
 	ubt_le_set_crc_verify(&h->le, d->le.crc_verify);

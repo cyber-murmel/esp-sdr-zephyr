@@ -33,7 +33,8 @@ Written and tested on the host; the lines below say what has also run on a board
      - runs on a board: 79 channels per sweep in ascending order, about 84 sweeps/s; levels not
        calibrated yet
    * - BLE sniffing (``ubertooth-btle``)
-     - planned
+     - advertisements on a fixed channel (``ubertooth-btle -n -A38``) decode on a board; RSSI
+       not calibrated yet, connection following not wired
    * - Transmit (BLE advertising, TX test, generic packet)
      - BLE advertising (``ubertooth-btle -s``) runs on a board and is seen by a PC Bluetooth adapter
        (address, flags and CRC intact); TX test starts and stops; generic packet not tried

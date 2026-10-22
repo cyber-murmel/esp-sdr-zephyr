@@ -22,6 +22,7 @@ target_sources(app PRIVATE
   src/ubt_queue.c
   src/ubt_radio.c
   src/ubt_regs.c
+  src/ubt_rssi.c
   src/ubt_rx_run.c
   src/ubt_specan.c
   src/ubt_specan_run.c

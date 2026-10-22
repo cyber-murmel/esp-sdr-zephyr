@@ -46,10 +46,11 @@
 /* Raw byte of a channel with no history: -100 dBm. */
 #define UBT_RSSI_NOISE_RAW (-46)
 /*
- * Placeholder calibration, half dB: 0 dBFS at -30 dBm. Unmeasured; replace per gain index with
- * ubt_rssi_set_cal() once the noise floor and a known source are measured.
+ * Placeholder calibration, half dB: 0 dBFS at -66 dBm at the receive gain of the sniffer and the
+ * spectrum analyser (index 60), from the noise floor measured in doc/ubertooth.md and a 7 dB
+ * noise figure. Replace per gain index with ubt_rssi_set_cal() once a known source is measured.
  */
-#define UBT_RSSI_K_DEFAULT (-60)
+#define UBT_RSSI_K_DEFAULT (-132)
 
 /**
  * The calibration of the single receiver, applied by ubt_rssi_raw() and friends: dBm in half

@@ -87,17 +87,19 @@ the receive ring, the numbers above and the spectrum analyser.
 
 BLE sniffing (MODE_BT_FOLLOW_LE on a fixed channel, `src/ubt_rx_run.c`): `ubertooth-btle -n -A38`
 for 20 s decoded 974 advertisements from 98 addresses, 22 of them also seen by the PC's adapter.
-CRC rate, RSSI calibration (it prints -98 to -99 dBm, a placeholder constant), timing and missed
-packets are not measured yet.
+CRC rate, RSSI calibration (it prints -98 to -99 dBm, from the placeholder constant
+`UBT_RSSI_K_DEFAULT` of `src/ubt_rssi.h`), timing and missed packets are not measured yet.
 
 The GFSK demodulator (`src/gfsk_demod.c`) against `tools/gfsk_sim.c` (BLE, -24 dBFS, the S3's
 receive front end modelled): bit error rate 1e-3 at 18.3 dB SNR (carrier over noise in 1 MHz), no
 errors from 25 dB up, power reading exact (pwr 152 for -24 dBFS). A floating point discriminator
 with ideal timing at 16 MS/s gets 6e-5 at 15 dB: about 5 dB are left on the table.
 
-Written and compiled but not wired into a mode, and without unit tests: `src/ubt_rssi.c` (carrier
-sense, squelch and per channel RSSI average of upstream's ubertooth_cs.c and ubertooth_rssi.c, with
-fixes), `src/ubt_br.c` (the RX_SYMBOLS block builder for BR). `src/le_conn.c` (connection
+`src/ubt_rssi.c` holds the receiver's RSSI calibration, which the BLE sniffer and the spectrum
+analyser's default use; its carrier sense, squelch and per channel RSSI average (upstream's
+ubertooth_cs.c and ubertooth_rssi.c, with fixes) are not wired into a mode yet, and it has no unit
+tests. Written but not built or wired into a mode, and without unit tests: `src/ubt_br.c` (the
+RX_SYMBOLS block builder for BR). `src/le_conn.c` (connection
 following) is covered by `tests/unit/ubertooth_le` but not used by a mode either.
 
 Next steps: RX_SYMBOLS on top of `ubt_br` and `ubt_rssi`, with a `tests/unit/ubertooth_demod`
