@@ -50,7 +50,16 @@ int esdr_link_request(struct esdr_link *l, uint8_t req, uint16_t value, const vo
 	k_spin_unlock(&l->pend_lock, key);
 	ret = l->send(&h, sizeof(h), data, reply == NULL ? len : 0U);
 	if (ret == 0) {
-		if (k_sem_take(&l->reply_sem, K_MSEC(ESDR_LINK_TIMEOUT_MS)) != 0) {
+		k_timepoint_t end = sys_timepoint_calc(K_MSEC(ESDR_LINK_TIMEOUT_MS));
+		bool waiting = true;
+
+		/* A give without the reply is an earlier request's, late: wait on. */
+		while (waiting && k_sem_take(&l->reply_sem, sys_timepoint_timeout(end)) == 0) {
+			key = k_spin_lock(&l->pend_lock);
+			waiting = l->pend.waiting;
+			k_spin_unlock(&l->pend_lock, key);
+		}
+		if (waiting) {
 			ret = -ETIMEDOUT;
 		} else {
 			ret = l->pend.status < 0 ? l->pend.status : (int)l->pend.len;
@@ -80,19 +89,24 @@ static void reply_done(struct esdr_link *l)
 {
 	struct esdr_ser_hdr h;
 	k_spinlock_key_t key;
+	bool done;
 
 	memcpy(&h, l->hdr, sizeof(h));
 	key = k_spin_lock(&l->pend_lock);
-	if (l->pend.waiting && h.req == l->pend.req) {
+	done = l->pend.waiting && h.req == l->pend.req;
+	if (done) {
 		l->pend.status = (int16_t)sys_le16_to_cpu((uint16_t)h.status);
 		l->pend.len = MIN(sys_le16_to_cpu(h.len), l->pend.max);
 		if (l->pend.buf != NULL) {
 			memcpy(l->pend.buf, l->hdr + sizeof(h), l->pend.len);
 		}
 		l->pend.waiting = false;
-		k_sem_give(&l->reply_sem);
 	}
 	k_spin_unlock(&l->pend_lock, key);
+	/* Outside the lock (it masks interrupts); the request checks that its reply came. */
+	if (done) {
+		k_sem_give(&l->reply_sem);
+	}
 }
 
 /*

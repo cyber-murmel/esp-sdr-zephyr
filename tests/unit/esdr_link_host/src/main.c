@@ -5,8 +5,8 @@
  * splitter takes a byte stream apart into blocks (zero padding and garbage before a magic, a
  * block split across feeds at every chunk size, a block with no buffer, a block cut short) and
  * replies (data longer than the request takes, a negative status, a length no reply has, a
- * reply nobody waits for, a reply byte by byte); requests and transmit frames go out with the
- * header the radio expects. The fake transport answers a request from inside send(), as the
+ * reply nobody waits for, a wake-up without a reply, a reply byte by byte); requests and
+ * transmit frames go out with the header the radio expects. The fake transport answers a request from inside send(), as the
  * radio's reply would come in on the reader's thread.
  */
 #include <errno.h>
@@ -34,6 +34,8 @@ static uint8_t sent[HDR + 2U * BLK];
 static size_t nsent;
 static uint8_t answer[HDR + 2U * BLK];
 static size_t nanswer, answer_chunk;
+/* send() also gives the reply semaphore: an earlier reply's give, late. */
+static bool stale_give;
 
 static uint8_t *get_block(void *user)
 {
@@ -69,6 +71,9 @@ static int fake_send(const void *a, size_t na, const void *b, size_t nb)
 		memcpy(sent + na, b, nb);
 	}
 	nsent = na + nb;
+	if (stale_give) {
+		k_sem_give(&link.reply_sem);
+	}
 	feed_chunks(answer, nanswer, answer_chunk);
 	return 0;
 }
@@ -114,6 +119,7 @@ static void before(void *f)
 	nsent = 0;
 	nanswer = 0;
 	answer_chunk = 0;
+	stale_give = false;
 }
 
 ZTEST_SUITE(esdr_link_host, NULL, NULL, before, NULL, NULL);
@@ -249,6 +255,20 @@ ZTEST(esdr_link_host, test_request_late_reply)
 		zassert_equal(reply[k], 0x55);
 	}
 	zassert_false(esdr_link_busy(&link));
+}
+
+/* A give without a reply (one an earlier request's reply made after its timeout) answers
+ * nothing. */
+ZTEST(esdr_link_host, test_request_stale_give)
+{
+	uint8_t reply[8];
+
+	stale_give = true;
+	zassert_equal(esdr_link_request(&link, ESDR_REQ_GET_STATE, 0, NULL, 0, reply,
+					sizeof(reply)), -ETIMEDOUT);
+	nanswer = make_reply(answer, ESDR_REQ_GET_STATE, 0, 8, 1);
+	zassert_equal(esdr_link_request(&link, ESDR_REQ_GET_STATE, 0, NULL, 0, reply,
+					sizeof(reply)), 8);
 }
 
 /* A length no reply has: the header is no frame, the block after it comes through. */
