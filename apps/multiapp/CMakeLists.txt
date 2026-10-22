@@ -136,23 +136,12 @@ target_sources(app PRIVATE src/osmosdr.c ${osmosdr}/usb_sdr.c)
 set_source_files_properties(src/osmosdr.c ${osmosdr}/usb_sdr.c PROPERTIES
   INCLUDE_DIRECTORIES ${osmosdr})
 
-# link, with the flags of its own build (apps/link/CMakeLists.txt).
-set(link ${apps_dir}/link/src)
-set(esp_dsp ${WEST_TOPDIR}/modules/lib/esp-dsp)
-set(esp_dsp_fft ${esp_dsp}/modules/fft/float/dsps_fft2r_fc32_aes3_.S
-                ${esp_dsp}/modules/fft/fixed/dsps_fft2r_sc16_aes3.S)
+# link, with the sources and flags of its own build (apps/link/sources.cmake) and esp-dsp's FFT.
+include(${apps_dir}/link/sources.cmake)
+link_esp_dsp_fft(esp_dsp_fft)
 multiapp_extension(link APP ${apps_dir}/link STACK 2048
-  SOURCES ${link}/main.c ${link}/mac.c ${link}/perf.c ${link}/qam.c ${link}/rs.c
-          ${link}/bch.c ${link}/hamming.c ${link}/ofdm.c ${link}/ofdm_frame.c
-          ${link}/ofdm_test.c ${esp_dsp_fft})
+  SOURCES ${LINK_SOURCES} ${esp_dsp_fft})
 llext_compile_definitions(link_ext QAM_SPS=CONFIG_APP_SPS)
-set_source_files_properties(${link}/qam.c ${link}/ofdm.c PROPERTIES
-  COMPILE_OPTIONS "-O3;-ffp-contract=fast")
-set_source_files_properties(${link}/rs.c ${link}/bch.c ${link}/hamming.c PROPERTIES
-  COMPILE_OPTIONS -O3)
-set_source_files_properties(${esp_dsp_fft} PROPERTIES
-  COMPILE_DEFINITIONS CONFIG_IDF_TARGET_ESP32S3=1
-  INCLUDE_DIRECTORIES ${esp_dsp}/modules/fft/include)
 
 # Buffers of the apps that never run the receive ring, in its bank 0.
 zephyr_linker_sources(DATA_SECTIONS multiapp_bank0.ld)
