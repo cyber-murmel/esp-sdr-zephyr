@@ -64,6 +64,9 @@
 #if defined(CONFIG_APP_LINK_SDIO)
 #include "link_sdio.h"
 #endif
+#if defined(CONFIG_APP_FW_UPDATE)
+#include "fw_update.h"
+#endif
 
 /* The paced receiver one sample at a time, either item width: what a UART or USB-Serial-JTAG
  * carries. */
@@ -933,6 +936,14 @@ static int handle_out(uint8_t r, uint16_t value, const uint8_t *data, size_t len
 #endif
 	case ESDR_REQ_CAPTURE_BURST:
 		return capture_burst(value, data, len);
+#if defined(CONFIG_APP_FW_UPDATE)
+	case ESDR_REQ_FW_BEGIN:
+		return len == 4U ? fw_update_begin(sys_get_le32(data)) : -EINVAL;
+	case ESDR_REQ_FW_WRITE:
+		return len > 4U ? fw_update_write(sys_get_le32(data), data + 4, len - 4U) : -EINVAL;
+	case ESDR_REQ_FW_END:
+		return len == 4U ? fw_update_end(sys_get_le32(data)) : -EINVAL;
+#endif
 	case ESDR_REQ_RESET:
 		/* radio_apply() then tunes and sets the gain and filter (and resets the trigger's
 		 * baseline) before the next stream.

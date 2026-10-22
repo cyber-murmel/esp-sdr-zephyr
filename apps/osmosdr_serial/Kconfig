@@ -57,4 +57,17 @@ configdefault NET_RX_STACK_SIZE
 configdefault ESP_SDR_GAPLESS_STAGE_KB
 	default 64
 
+config APP_FW_UPDATE
+	bool "Firmware update over the link"
+	default y if ESP_IDF_BOOTLOADER
+	depends on ESP_IDF_BOOTLOADER
+	select FLASH
+	select CRC
+	select REBOOT
+	help
+	  ESDR_REQ_FW_BEGIN, _WRITE and _END: the host writes a new image to the OTA
+	  partition the ESP-IDF bootloader does not run, which then selects it
+	  (src/fw_update.c). The way the ESP32-P4-Function-EV-Board's ESP32-C6 gets
+	  updates once its esp-hosted-mcu firmware installed this app.
+
 source "Kconfig.zephyr"

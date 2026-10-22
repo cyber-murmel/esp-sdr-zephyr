@@ -103,9 +103,29 @@ enum esdr_req {
 	 * USB-Serial-JTAG, for esptool) for that long, then takes it back.
 	 */
 	ESDR_REQ_USB_TO_C6 = 0x14,
+	/*
+	 * Serial transport, a device the ESP-IDF bootloader starts (the
+	 * ESP32-P4-Function-EV-Board's ESP32-C6): firmware update. OUT 4 bytes:
+	 * image size (uint32_t). The image goes to the OTA partition the device
+	 * does not run from.
+	 */
+	ESDR_REQ_FW_BEGIN = 0x15,
+	/*
+	 * OUT: offset (uint32_t), then the image bytes from there (a multiple of
+	 * 4, up to ESDR_FW_CHUNK), in order.
+	 */
+	ESDR_REQ_FW_WRITE = 0x16,
+	/*
+	 * OUT 4 bytes: CRC-32 (IEEE, as zlib's) of the whole image. The device
+	 * checks it, selects the image and restarts after the reply.
+	 */
+	ESDR_REQ_FW_END = 0x17,
 };
 
 #define ESDR_BURST_MAX 16380U
+
+/* Image bytes per ESDR_REQ_FW_WRITE: a frame's data less the offset. */
+#define ESDR_FW_CHUNK 508U
 
 enum esdr_mode {
 	ESDR_MODE_OFF = 0,

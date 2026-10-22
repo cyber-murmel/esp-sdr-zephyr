@@ -28,6 +28,8 @@
  *
  *   esdr_usb [-s serial] c6 [-t seconds]
  *
+ *   esdr_usb [-s serial] fw -i image
+ *
  * rx writes interleaved I/Q (cs8 or cs16, little endian; 4-bit items as cs8) with the samples a
  * gap lost replaced by zeros, so the file keeps the real time axis.
  *
@@ -49,6 +51,10 @@
  *
  * c6 (apps/osmosdr_bridge) hands USB-C port J8 to the badge's C6 for -t seconds (default 30),
  * for esptool.
+ *
+ * fw (a radio the ESP-IDF bootloader starts: the ESP32-P4-Function-EV-Board's C6, through
+ * apps/osmosdr_bridge) writes image (the radio build's zephyr/zephyr.bin) to the radio's other
+ * OTA partition; the radio restarts into it.
  */
 
 #include <errno.h>
@@ -230,6 +236,75 @@ static void print_state(void)
 		       s.tx_sessions, s.tx_samples, s.tx_dropped, s.tx_underruns, s.tx_restarts,
 		       s.tx_queued_max);
 	}
+}
+
+/* CRC-32/IEEE, as zlib's crc32(). */
+static uint32_t crc32_ieee(uint32_t crc, const uint8_t *p, size_t n)
+{
+	crc = ~crc;
+	while (n-- > 0) {
+		crc ^= *p++;
+		for (int k = 0; k < 8; k++) {
+			crc = (crc >> 1) ^ (0xedb88320U & -(crc & 1U));
+		}
+	}
+	return ~crc;
+}
+
+static int cmd_fw(const char *path)
+{
+	uint8_t chunk[4 + ESDR_FW_CHUNK];
+	uint8_t *img;
+	long size;
+	uint32_t crc;
+	FILE *f = fopen(path, "rb");
+
+	if (f == NULL) {
+		perror(path);
+		return 1;
+	}
+	fseek(f, 0, SEEK_END);
+	size = ftell(f);
+	rewind(f);
+	/* Written in multiples of 4 bytes; the image is, too. */
+	img = calloc(1, (size_t)size + 4);
+	if (img == NULL || size <= 0 || size % 4 != 0 ||
+	    fread(img, 1, (size_t)size, f) != (size_t)size) {
+		fprintf(stderr, "%s: not an image\n", path);
+		fclose(f);
+		free(img);
+		return 1;
+	}
+	fclose(f);
+	crc = crc32_ieee(0, img, (size_t)size);
+
+	ctrl_out(ESDR_REQ_SET_MODE, ESDR_MODE_OFF, NULL, 0);
+	if (set_u32(ESDR_REQ_FW_BEGIN, (uint32_t)size) < 0) {
+		free(img);
+		return 1;
+	}
+	for (long off = 0; off < size; off += ESDR_FW_CHUNK) {
+		uint16_t n = (uint16_t)(size - off < ESDR_FW_CHUNK ? size - off : ESDR_FW_CHUNK);
+
+		for (int i = 0; i < 4; i++) {
+			chunk[i] = (uint8_t)((uint32_t)off >> (8 * i));
+		}
+		memcpy(&chunk[4], &img[off], n);
+		if (ctrl_out(ESDR_REQ_FW_WRITE, 0, chunk, (uint16_t)(4 + n)) < 0) {
+			free(img);
+			return 1;
+		}
+		if ((off / ESDR_FW_CHUNK) % 128 == 0) {
+			fprintf(stderr, "\r%ld/%ld", off + n, size);
+		}
+	}
+	free(img);
+	fprintf(stderr, "\r%ld/%ld\n", size, size);
+	if (set_u32(ESDR_REQ_FW_END, crc) < 0) {
+		return 1;
+	}
+	printf("installed, the radio restarts\n");
+	return 0;
 }
 
 static int cmd_info(void)
@@ -733,7 +808,7 @@ static int run_stream(struct stream *s, bool in, double seconds, double rate)
 static void usage(void)
 {
 	fprintf(stderr, "usage: esdr_usb [-s serial] info | test-in | test-out | rx | tx | trig |"
-			" gapless | chan | c6\n"
+			" gapless | chan | c6 | fw\n"
 			"  [-t seconds] [-f Hz] [-r S/s] [-g gain|auto] [-d digital dB] [-b 4|8|16] [-B bw Hz]\n"
 			"  [-p ppb] [-n (no offset tuning)] [-o file] [-x Hz (retune half way)]\n"
 			"  tx: [-G step] (-i file | -T tone Hz [-a amplitude])\n"
@@ -741,7 +816,8 @@ static void usage(void)
 			"  gapless: [-R ratio, the threshold's floor | -L fixed level, raw units^2 a pair]"
 			" [-o file of blocks]\n"
 			"  chan: [-C channels] [-O open dB] [-R ratio | -L level] [-o file of blocks]\n"
-			"  c6: [-t seconds J8 goes to the C6]\n");
+			"  c6: [-t seconds J8 goes to the C6]\n"
+			"  fw: -i image\n");
 }
 
 int main(int argc, char **argv)
@@ -843,6 +919,13 @@ int main(int argc, char **argv)
 
 	if (strcmp(cmd, "info") == 0) {
 		ret = cmd_info();
+	} else if (strcmp(cmd, "fw") == 0) {
+		if (infile == NULL) {
+			usage();
+			ret = 2;
+		} else {
+			ret = cmd_fw(infile);
+		}
 	} else if (strcmp(cmd, "test-in") == 0 || strcmp(cmd, "test-out") == 0) {
 		bool in = cmd[5] == 'i';
 
