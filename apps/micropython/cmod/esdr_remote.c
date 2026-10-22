@@ -713,10 +713,12 @@ static void parser_fn(void *a, void *b, void *c)
 			 * frame or block in one go). Drop it, or it swallows the next replies. */
 			(void)esdr_link_abort(&link);
 		}
-		/* What the ring holds, up to its wrap at a time. */
+		/* What the ring holds, a block's worth at a time (up to its wrap): the room goes
+		 * back to the reader as it is parsed. */
 		while (ring_tail != ring_head) {
 			uint32_t at = ring_tail % RING_BYTES;
-			uint32_t k = MIN(ring_head - ring_tail, RING_BYTES - at);
+			uint32_t k = MIN(MIN(ring_head - ring_tail, RING_BYTES - at),
+					 (uint32_t)ESDR_BLOCK_BYTES);
 
 			esdr_link_feed(&link, &ring[at], k);
 			ring_tail += k;
