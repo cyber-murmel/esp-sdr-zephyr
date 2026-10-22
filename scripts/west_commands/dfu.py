@@ -132,9 +132,12 @@ class Dfu(WestCommand):
                             "volume) with esptool over the USB-Serial-JTAG, which the "
                             "running app hands over (its usj command): no button, no DFU")
         p.add_argument("--c6", action="store_true",
-                       help="update the WHY2025 badge's ESP32-C6 with the build directory's "
-                            "image: the P4 (apps/micropython) hands USB-C J8 to the C6's "
-                            "USB-Serial-JTAG for --c6-time seconds, west flash writes it")
+                       help="update a P4 board's ESP32-C6 with the build directory's image "
+                            "through the P4's REPL (apps/micropython): on the WHY2025 badge "
+                            "the P4 hands USB-C J8 to the C6's USB-Serial-JTAG for --c6-time "
+                            "seconds and west flash writes it; on the "
+                            "ESP32-P4-Function-EV-Board the image goes over SDIO "
+                            "(esdr.request, ESDR_REQ_FW_*)")
         p.add_argument("--c6-time", type=int, default=30,
                        help="seconds the P4 leaves J8 to the C6 (default 30)")
         p.add_argument("--dfu-board", action="store_true",
@@ -241,14 +244,75 @@ class Dfu(WestCommand):
         self.inf(f"{sn}: written with esptool{'' if args.no_confirm else ' and confirmed'}\n"
                  f"{out.strip()}")
 
+    def c6_link_flash(self, args, sn, sh):
+        """A C6 that the ESP-IDF bootloader starts (the EV board's): the image over SDIO.
+
+        The REPL runs in raw mode: each chunk goes as one line of base64 to a helper that hands
+        it to esdr.request(ESDR_REQ_FW_WRITE); the C6 writes its other OTA partition, checks the
+        CRC and restarts into it.
+        """
+        import base64
+        import binascii
+
+        image = Path(args.build_dir) / "zephyr" / "zephyr.bin"
+        if not image.is_file():
+            sh.close()
+            self.die(f"{image}: no such image (a build for the C6, not sysbuild)")
+        data = image.read_bytes()
+        data += b"\xff" * (-len(data) % 4)
+        chunk = 508
+
+        def raw(code, wait=5.0):
+            # In slices: the port's console ring (512 bytes) drops what a whole high-speed
+            # packet brings while it still holds input.
+            text = code.encode() + b"\x04"
+            for i in range(0, len(text), 256):
+                sh.s.write(text[i:i + 256])
+                sh.s.flush()
+                time.sleep(0.002)
+            end, out = time.time() + wait, b""
+            while time.time() < end and out.count(b"\x04") < 2:
+                out += sh.s.read(4096)
+            ok, _, rest = out.partition(b"OK")
+            res, _, err = rest.partition(b"\x04")
+            if b"\x04" not in rest or err.strip(b"\x04>"):
+                sh.close()
+                self.die(f"{sn}: {code.splitlines()[0][:40]}: {(err or out).decode(errors='replace')}")
+            return res.decode(errors="replace")
+
+        sh.s.write(b"\r\x01")
+        time.sleep(0.3)
+        sh.s.read(65536)
+        raw("import esdr, struct, binascii\n"
+            "def w(o, d):\n"
+            " esdr.request(0x16, data=struct.pack('<I', o) + binascii.a2b_base64(d))\n")
+        raw(f"esdr.request(0x15, data=struct.pack('<I', {len(data)}))")
+        start = time.time()
+        for off in range(0, len(data), chunk):
+            raw(f"w({off},'{base64.b64encode(data[off:off + chunk]).decode()}')")
+            if off // chunk % 200 == 0:
+                self.inf(f"{sn}: {off + chunk}/{len(data)}")
+        raw(f"esdr.request(0x17, data=struct.pack('<I', {binascii.crc32(data)}))")
+        sh.s.write(b"\x02")
+        sh.close()
+        self.inf(f"{sn}: C6 written in {time.time() - start:.0f} s ({len(data)} bytes), "
+                 "it restarts into the new image")
+
     def c6_flash(self, args):
-        """The WHY2025 badge's C6 through the P4: J8 to the C6, west flash, J8 back."""
+        """A P4 board's C6 through the P4: over SDIO where the REPL can, else (the WHY2025
+        badge) J8 to the C6, west flash, J8 back."""
         sn, _ = self.find_board(args)
         before = set(glob.glob("/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*"))
         sh = Shell(shell_tty(sn))
         if not sh.repl:
             sh.close()
             self.die(f"{sn}: no MicroPython REPL (--c6 needs apps/micropython on the P4)")
+        # The answer spelled so that the echoed line does not contain it.
+        sh.s.write(b"import esdr; print('SD' + 'IO' if hasattr(esdr, 'request') and "
+                   b"not hasattr(esdr, 'usb_to_c6') else 'J' + '8')\r\n")
+        if "SDIO" in sh.read(1.0):
+            self.c6_link_flash(args, sn, sh)
+            return
         # The P4 leaves USB as it hands J8 over: no answer to wait for.
         sh.s.write(f"import esdr; esdr.usb_to_c6({args.c6_time})\r\n".encode())
         time.sleep(0.5)
