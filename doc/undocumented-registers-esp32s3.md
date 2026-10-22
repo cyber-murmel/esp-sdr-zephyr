@@ -70,8 +70,8 @@ stubs at 0x40005cd0 and 0x40005cdc.
 |---|---|
 | The `host` argument is ignored. The I2C master is picked from the block id: 0x62, 0x63, 0x64, 0x67 and 0x6b go to master 1, every other block to master 0 (bit mask 0x227 over `block - 0x62`). | *decompile*: S3 ROM `rom_chip_i2c_writeReg` overwrites the host register with the block, `rom_chip_i2c_readReg` never reads it; S3 `phy_i2c.o` |
 | The ROM's own `get_i2c_hostid()` (0x400354bc) sends only 0x62 to 0x64 to master 1. libphy replaces it at PHY init (`g_phyFuns + 0x15c`, `ram_get_i2c_hostid()`), which adds 0x67 and 0x6b. | *decompile*: S3 `phy_init.o` |
-| Host values in code are therefore cosmetic and inconsistent: the library passes 0 for BBTOP and 1 for the RF PLL and the LO selector; upstream's docs say host 1 for BBTOP on every chip while its S3 code passes 0; the HAL headers give hosts that do not match the routing (`I2C_BBPLL_HOSTID 1` for a master 0 block). | `lib/esp_sdr/src/esp_sdr_priv.h:61`; `modules/lib/esp-sdr/docs/rx-controls.md:43`; `modules/lib/esp-sdr/main/targets/esp32s3/receiver.c:76`; `modules/hal/espressif/components/soc/esp32s3/include/soc/regi2c_bbpll.h:18-19` |
-| The ROM functions take no lock (`rom_enter_critical_phy` and `rom_exit_critical_phy`, 0x40055bb8 and 0x40055bc0, are empty). libphy's `ram_chip_i2c_*` call `phy_i2c_enter_critical()`, which the HAL maps to `regi2c_enter_critical()`. The Wi-Fi PHY may run a sequence on the other core at any time, so the library takes `regi2c_enter_critical()` around every `rom_chip_i2c_*` sequence. | *decompile*: S3 `phy_i2c.o`; `modules/hal/espressif/components/esp_phy/src/phy_override.c:50-58`; *working*: `lib/esp_sdr/src/esp_sdr_priv.h:175-180`, hardware-quirks.md |
+| Host values in code are therefore cosmetic and inconsistent: the library passes 0 for BBTOP and 1 for the RF PLL and the LO selector; upstream's docs say host 1 for BBTOP on every chip while its S3 code passes 0; the HAL headers give hosts that do not match the routing (`I2C_BBPLL_HOSTID 1` for a master 0 block). | `lib/esp_sdr/src/esp_sdr_priv.h:62`; `modules/lib/esp-sdr/docs/rx-controls.md:43`; `modules/lib/esp-sdr/main/targets/esp32s3/receiver.c:76`; `modules/hal/espressif/components/soc/esp32s3/include/soc/regi2c_bbpll.h:18-19` |
+| The ROM functions take no lock (`rom_enter_critical_phy` and `rom_exit_critical_phy`, 0x40055bb8 and 0x40055bc0, are empty). libphy's `ram_chip_i2c_*` call `phy_i2c_enter_critical()`, which the HAL maps to `regi2c_enter_critical()`. The Wi-Fi PHY may run a sequence on the other core at any time, so the library takes `regi2c_enter_critical()` around every `rom_chip_i2c_*` sequence. | *decompile*: S3 `phy_i2c.o`; `modules/hal/espressif/components/esp_phy/src/phy_override.c:50-58`; *working*: `lib/esp_sdr/src/esp_sdr_priv.h:176-181`, hardware-quirks.md |
 | An access costs tens of microseconds, so the library writes filter codes at front-end setup, not around every capture. | *measured*: `lib/esp_sdr/src/esp_sdr_rx.c:110-114` |
 
 The I2C masters themselves are memory-mapped (I2C_ANA_MST below).
@@ -187,7 +187,7 @@ librftest's `dactrig()`.
 **Wi-Fi MAC interrupt.** CPU interrupt line 0 (`ETS_WMAC_INUM`,
 `modules/hal/espressif/components/soc/esp32s3/include/soc/soc.h:212`);
 `esp_sdr_ring_run()` disables it on its CPU (hardware-quirks.md, "Capture and
-DAC engine"; `lib/esp_sdr/src/esp_sdr_ring.c:462-491`).
+DAC engine"; `lib/esp_sdr/src/esp_sdr_ring.c:508-538`).
 
 #### Register DUMP_CTRL_REG (0x60033d5c)
 
@@ -230,10 +230,10 @@ Evidence:
 - DUMP_SRC: *decompile* S3 `mac_common.o`; *upstream* `modules/lib/esp-sdr/main/targets/esp32s3/receiver.c:164`
 - DUMP_TRIGGER: *working* `lib/esp_sdr/src/esp_sdr_rx.c:308-310`
 - DUMP_DONE: *working* `lib/esp_sdr/src/esp_sdr_rx.c:311-314`
-- DUMP_CIRCULAR: *working* `lib/esp_sdr/src/esp_sdr_priv.h:290-294`, `lib/esp_sdr/src/esp_sdr_ring.c:1349`; *decompile* S3 `mac_common.o`
+- DUMP_CIRCULAR: *working* `lib/esp_sdr/src/esp_sdr_priv.h:290-294`, `lib/esp_sdr/src/esp_sdr_ring.c:1287`; *decompile* S3 `mac_common.o`
 - DUMP_RATE_16M: *measured* `apps/capture/README.rst:56`; *upstream* (USRP B210) `modules/lib/esp-sdr/main/targets/esp32s3/receiver.c:161-163`; *decompile* S3 `mac_common.o`
 - DUMP_RATE_40M: *measured* `apps/capture/README.rst:53`, hardware-quirks.md, "Receiving at 40 MS/s"
-- DUMP_COUNT: *working* `lib/esp_sdr/src/esp_sdr_priv.h:33`; *decompile* S3 `mac_common.o`
+- DUMP_COUNT: *working* `lib/esp_sdr/src/esp_sdr_priv.h:34`; *decompile* S3 `mac_common.o`
 
 #### Register DUMP_WRITE_INDEX_REG (0x60033d60)
 
@@ -250,9 +250,9 @@ CCOUNT.
 
 Evidence:
 
-- *measured* `lib/esp_sdr/src/esp_sdr_priv.h:236-244` (no DAC read pointer)
+- *measured* `lib/esp_sdr/src/esp_sdr_priv.h:237-245` (no DAC read pointer)
 - DUMP_WRITE_INDEX: *decompile* S3 `mac_common.o` (words written)
-- DUMP_WRITE_INDEX: *working* `lib/esp_sdr/src/esp_sdr_ring.c:40, 116-119`; *upstream* `modules/lib/esp-sdr/main/common/ring_capture.c:112` (circular mode)
+- DUMP_WRITE_INDEX: *working* `lib/esp_sdr/src/esp_sdr_ring.c:43, 139-142`; *upstream* `modules/lib/esp-sdr/main/common/ring_capture.c:112` (circular mode)
 
 #### Register DUMP_DAC_TRIG_REG (0x60033d64)
 
@@ -294,15 +294,15 @@ Transmit side: run, trigger and count of a playback
 
 Evidence:
 
-- *measured* `lib/esp_sdr/src/esp_sdr_priv.h:236-244` (loop mode)
+- *measured* `lib/esp_sdr/src/esp_sdr_priv.h:237-245` (loop mode)
 - *decompile* S3 `mac_common.o` (`dactrig()`)
 - `lib/esp_sdr/src/esp_sdr_tx.c:272-273` (the library skips the ramp, clears DUMP_CTRL_REG)
 - DUMP_DAC_RUN: *working* `lib/esp_sdr/src/esp_sdr_tx.c:158-166`
-- DUMP_B27_20: *measured* `lib/esp_sdr/src/esp_sdr_priv.h:46-48`; *decompile* S3 `mac_common.o`
-- DUMP_DAC_TRIGGER: *measured* `lib/esp_sdr/src/esp_sdr_tx.c:163-166, 253-263`, `lib/esp_sdr/src/esp_sdr_priv.h:236-244`
+- DUMP_B27_20: *measured* `lib/esp_sdr/src/esp_sdr_priv.h:47-49`; *decompile* S3 `mac_common.o`
+- DUMP_DAC_TRIGGER: *measured* `lib/esp_sdr/src/esp_sdr_tx.c:163-166, 253-263`, `lib/esp_sdr/src/esp_sdr_priv.h:237-245`
 - DUMP_DAC_DONE: *working* `lib/esp_sdr/src/esp_sdr_tx.c:167-169`
-- DUMP_B16: *measured* `lib/esp_sdr/src/esp_sdr_priv.h:46-48`
-- DUMP_DAC_RATE_80M: *measured* `lib/esp_sdr/src/esp_sdr_priv.h:46-49`, hardware-quirks.md
+- DUMP_B16: *measured* `lib/esp_sdr/src/esp_sdr_priv.h:47-49`
+- DUMP_DAC_RATE_80M: *measured* `lib/esp_sdr/src/esp_sdr_priv.h:47-50`, hardware-quirks.md
 - DUMP_DAC_COUNT: *working* `lib/esp_sdr/src/esp_sdr_tx.c:158-159`
 
 #### Register DUMP_CONFIG_REG (0x60033d90)
@@ -333,7 +333,7 @@ lead, not tried.
 
 Evidence:
 
-- *working* `lib/esp_sdr/src/esp_sdr_priv.h:34-36`; *upstream* `modules/lib/esp-sdr/main/targets/esp32s3/receiver.c:159` (lane selectors)
+- *working* `lib/esp_sdr/src/esp_sdr_priv.h:35-37`; *upstream* `modules/lib/esp-sdr/main/targets/esp32s3/receiver.c:159` (lane selectors)
 - *decompile* S3 `mac_common.o` (`mac_init()`)
 - *decompile* S3 `libphy.a` (lead)
 - DUMP_RX_AGC: *upstream* `modules/lib/esp-sdr/main/targets/esp32s3/receiver.c:159`
@@ -378,7 +378,7 @@ Evidence:
 - `lib/esp_sdr/src/esp_sdr_rx.c:246-278`, `lib/esp_sdr/src/esp_sdr.c:123-133` (save and restore)
 - `lib/esp_sdr/esp_sdr_bank_s3.ld:4-34` (reserved banks)
 - *measured* `lib/esp_sdr/src/esp_sdr_tx.c:346-349` (CPU stores and the DAC)
-- *measured* hardware-quirks.md, "Capture and DAC engine"; `lib/esp_sdr/src/esp_sdr_priv.h:236-244` (a change while running)
+- *measured* hardware-quirks.md, "Capture and DAC engine"; `lib/esp_sdr/src/esp_sdr_priv.h:237-245` (a change while running)
 - *measured* bench 2026-10-05, `lib/esp_sdr/esp_sdr_bank_s3.ld:43-47`; *upstream* `modules/lib/esp-sdr/main/common/ring_capture.h:26` (bank 3)
 - SENSITIVE_INTERNAL_SRAM_MAC_DUMP_USAGE: `modules/hal/espressif/components/soc/esp32s3/register/soc/sensitive_reg.h:101-107`
 
@@ -472,7 +472,7 @@ while FE_BASE_INDEX reads 0; the code does not check it.
 
 Evidence:
 
-- `lib/esp_sdr/src/esp_sdr_priv.h:164-169` (slot 0)
+- `lib/esp_sdr/src/esp_sdr_priv.h:165-170` (slot 0)
 - FE_BASE_INDEX: *decompile*
 - FE_TX_GAIN_INDEX: *decompile* S3 `phy_test.o`, `phy_feature.o`
 - FE_FORCE_TXON: *measured* bench 2026-10-05; *working* `lib/esp_sdr/src/esp_sdr_tx.c:84-87`, `lib/esp_sdr/src/esp_sdr_rx.c:84-86`; *decompile* S3 `phy_test.o`, `phy_feature.o`
@@ -1138,7 +1138,7 @@ esp_sdr writes the receive and transmit filter codes here.
 - Writing the other pairs (0x06/0x07 up to 0x1e/0x1f) disturbed reception until a
   reboot (*measured* bench 2026-10-06). `esp_sdr_bbtop_read()` and
   `esp_sdr_bbtop_write()` give unchecked access
-  (`lib/esp_sdr/src/esp_sdr_rx.c:648-667`).
+  (`lib/esp_sdr/src/esp_sdr_rx.c:689-708`).
 - The PHY's channel bandwidth mode changes these filters too (hardware-quirks.md,
   "40 MHz mode widens the analog filters").
 
@@ -1248,7 +1248,7 @@ Transmit low-pass pair B (0x0e, 0x0f)
 
 Evidence:
 
-- BBTOP_TX_LPF_B: *decompile* S3 `rf_test.o`; *working* `lib/esp_sdr/src/esp_sdr_rx.c:578-637`
+- BBTOP_TX_LPF_B: *decompile* S3 `rf_test.o`; *working* `lib/esp_sdr/src/esp_sdr_rx.c:621-678`
 
 #### Register BBTOP_R20, BBTOP_R21, BBTOP_R22, BBTOP_R23 (0x67:20, 0x67:21, 0x67:22, 0x67:23)
 
@@ -1357,7 +1357,7 @@ Evidence:
 | Word | Bits 9:0 | Bits 19:10 | Bits 31:20 | Evidence |
 |---|---|---|---|---|
 | receive, in the dump bank | Q | I | unused here; upstream reads 27:20 as gain metadata (unverified) | *measured* `include/esp_sdr/esp_sdr_rx.h:209-225`, bench 2026-10-05; *upstream* `modules/lib/esp-sdr/main/common/ring_capture.c:290, 857` |
-| transmit, played by the DAC | I | Q | 0 | *measured* `include/esp_sdr/esp_sdr_tx.h:84-88` |
+| transmit, played by the DAC | I | Q | 0 | *measured* `include/esp_sdr/esp_sdr_tx.h:83-87` |
 
 - Each field is 10-bit two's complement, -512 to 511.
 - The receive orientation was found by detuning only the receive LO against a
@@ -1368,19 +1368,19 @@ Evidence:
   out spectrally inverted so hosts conjugate
   (`modules/lib/esp-sdr/docs/iq-stream.md:32-35`): the same finding from the
   other side. The ring keeps upstream's kernels, filters `j conj(z)` and swaps
-  the outputs (`lib/esp_sdr/src/esp_sdr_ring.c:222-224`).
-- Packed forms: IQ8 is bits 19:12 then 9:2 (I then Q); IQ10 packs bits 19:0 of
-  two words into 5 bytes (`lib/esp_sdr/src/esp_sdr_rx.c:548-576`).
+  the outputs (`lib/esp_sdr/src/esp_sdr_ring.c:214-216`).
+- Packed form: IQ8 is bits 19:12 then 9:2 (I then Q;
+  `include/esp_sdr/esp_sdr_rx.h:231-238`).
 
 ## Vendor library functions as used
 
 | Function | Library | Called as | What it does | Evidence |
 |---|---|---|---|---|
 | `set_chanfreq(mhz, cbw)` | libphy | `(channel ? mhz : 2412, cbw)`, cbw 0 or 2 | MHz to channel (`rom_mhz2ieee`), then `chip_v7_set_chan(chan, cbw)`: tunes the PLL (hop table or full calibration), passes cbw to `rom_bb_bss_cbw40`, which selects the analog filters. No 80 MHz mode; mode 2 widens the filters (hardware-quirks.md). | *working* `lib/esp_sdr/src/esp_sdr.c:109-113, 232-244`; *decompile* S3 `phy_rfpll.o` |
-| `set_rf_freq_offset(xtal, mhz, khz)` | libphy | `(0, PLL MHz, kHz + offset)` | The first argument is the crystal selector (1: 26, 2: 32, other: 40 MHz); 0 selects 40 MHz, right for the XIAO. Clears `0x62:11[6]`, writes block 0x63, restarts and waits for the calibration, then runs `rfpll_cap_init_cal()`. | *working* `lib/esp_sdr/src/esp_sdr.c:112`, `lib/esp_sdr/src/esp_sdr_priv.h:138`; *decompile* S3 `phy_rfpll.o`; *measured*: the bench SDM values fit 40 MHz |
+| `set_rf_freq_offset(xtal, mhz, khz)` | libphy | `(0, PLL MHz, kHz + offset)` | The first argument is the crystal selector (1: 26, 2: 32, other: 40 MHz); 0 selects 40 MHz, right for the XIAO. Clears `0x62:11[6]`, writes block 0x63, restarts and waits for the calibration, then runs `rfpll_cap_init_cal()`. | *working* `lib/esp_sdr/src/esp_sdr.c:112`, `lib/esp_sdr/src/esp_sdr_priv.h:139`; *decompile* S3 `phy_rfpll.o`; *measured*: the bench SDM values fit 40 MHz |
 | `stop_tx_tone`, `rom_pbus_workmode`, `rom_pbus_xpd_tx_off`, `rom_pbus_xpd_rx_on`, `rom_set_rxclk_en`, `rom_pbus_xpd_tx_on` | libphy, ROM | RX: `stop_tx_tone(1)`, `workmode()`, `xpd_tx_off()`, `xpd_rx_on(1)`, `set_rxclk_en(1)`. TX: `workmode()`, `xpd_rx_on(0)`, `xpd_tx_on(1)`. | Forces the analog chain and the receive clock on with the MAC idle, so the engine sees live ADC data (sequence from upstream `prepare_rx()`). Settle 3 ms after a retune; 50 us without one is enough for packet links. | *working* `lib/esp_sdr/src/esp_sdr_rx.c:78-98`, `lib/esp_sdr/src/esp_sdr_tx.c:68-89`; *upstream* `modules/lib/esp-sdr/main/targets/esp32s3/receiver.c:92-106`; *measured* hardware-quirks.md |
 | `force_rx_gain(force, index, bt)` | librftest | `(manual, index, 0)`; index 40 while the AGC is in charge | See AGC_FORCE_REG. | `lib/esp_sdr/src/esp_sdr_rx.c:41-54` |
-| `force_tx_gain(gain, bb, dig)` | librftest | ladder step, dig 0 | Turns TX power tracking off, writes TX gain memory slot 0 (`rom_set_tx_gain_mem(0, 1, ...)`) and the digital gain. bb is 0, 0x20, 0x80, 0xa0 or 0x100. The 18-step ladder is the vendor's table in `phy_tx_gain.o` `.rodata` (gain at 0x04, bb at 0x16, power at 0x3a in quarter dB): 46.3 dB range, monotonic, 4.24 units per dB. | *working* `lib/esp_sdr/src/esp_sdr_tx.c:30-66`; *decompile* S3 `wifi.o`, `phy_tx_gain.o`; *working* `include/esp_sdr/esp_sdr_tx.h:61`; *measured* bench 2026-10-05 |
+| `force_tx_gain(gain, bb, dig)` | librftest | ladder step, dig 0 | Turns TX power tracking off, writes TX gain memory slot 0 (`rom_set_tx_gain_mem(0, 1, ...)`) and the digital gain. bb is 0, 0x20, 0x80, 0xa0 or 0x100. The 18-step ladder is the vendor's table in `phy_tx_gain.o` `.rodata` (gain at 0x04, bb at 0x16, power at 0x3a in quarter dB): 46.3 dB range, monotonic, 4.24 units per dB. | *working* `lib/esp_sdr/src/esp_sdr_tx.c:30-66`; *decompile* S3 `wifi.o`, `phy_tx_gain.o`; *working* `include/esp_sdr/esp_sdr_tx.h:60`; *measured* bench 2026-10-05 |
 | `force_txon_mode(en, mode, ofs)` | librftest | `(1, 0, 0)` for TX, `(0, 0, 0)` for RX | See FE_TX_CTRL_REG and FE_R110_REG; ends with `rom_force_txon`. | *working* `lib/esp_sdr/src/esp_sdr_tx.c:84-87`; *decompile* S3 `phy_test.o` |
 | `adctrig()`, `dactrig()` | librftest | not called | Reference for the dump engine (DUMP registers). | *decompile* S3 `mac_common.o` |
 | `esp_wifi_set_ps()`, `esp_wifi_set_promiscuous()`, `esp_wifi_set_channel()` | Wi-Fi driver | `WIFI_PS_NONE`; `true`; `(1, WIFI_SECOND_CHAN_NONE)` | The engine and the PHY calls need the Wi-Fi driver up. NULL mode accepts a channel only in promiscuous mode. | *working* `lib/esp_sdr/src/esp_sdr.c:153-166` |
