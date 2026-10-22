@@ -25,6 +25,34 @@ config APP_LINK_SDIO
 	  (src/link_sdio.c), instead of a UART or USB-Serial-JTAG. It carries receive rates up
 	  to 2 MS/s, 8-bit items above 250 kS/s.
 
+# Where the Wi-Fi driver brings the radio up (prj.conf): no power save, and no IP traffic, the
+# network stack only carries the driver, minimal. Defaults rather than prj.conf lines, which
+# would warn in an image without them (the gapless one).
+choice ESP32_WIFI_STA_POWER_SAVE_MODE
+	default ESP32_WIFI_STA_POWER_SAVE_NONE
+endchoice
+
+configdefault NET_IPV6
+	default n
+
+configdefault NET_IPV4
+	default y
+
+configdefault NET_PKT_RX_COUNT
+	default 4
+
+configdefault NET_PKT_TX_COUNT
+	default 4
+
+configdefault NET_BUF_RX_COUNT
+	default 8
+
+configdefault NET_BUF_TX_COUNT
+	default 8
+
+configdefault NET_RX_STACK_SIZE
+	default 1024
+
 # Block 3 holds the staging ring and the stream's blocks (40 KiB with the bounce buffers).
 configdefault ESP_SDR_GAPLESS_STAGE_KB
 	default 64
