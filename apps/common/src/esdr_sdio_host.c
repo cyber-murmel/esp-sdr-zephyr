@@ -41,6 +41,8 @@ static struct sdio_func f1;
 static K_MUTEX_DEFINE(bus_lock);
 static K_MUTEX_DEFINE(send_lock);
 static uint32_t rx_got, tx_bufs;
+/* The card is up (esdr_sdio_open()). */
+static bool opened;
 static int64_t next_recover;
 /* A frame being written: DMA from internal RAM. */
 static uint8_t wbuf[ROUND_UP(sizeof(struct esdr_ser_hdr) + ESDR_BLOCK_BYTES, 4)] __aligned(64);
@@ -148,6 +150,7 @@ int esdr_sdio_open(const struct device *dev, uint32_t ready_ms)
 		k_msleep(10);
 	}
 	ret = session_start();
+	opened = ret == 0;
 out:
 	k_mutex_unlock(&bus_lock);
 	return ret;
@@ -184,6 +187,9 @@ int esdr_sdio_send(const void *a, size_t na, const void *b, size_t nb, uint32_t 
 
 	if (padded > sizeof(wbuf)) {
 		return -EMSGSIZE;
+	}
+	if (!opened) {
+		return -ENODEV;
 	}
 	k_mutex_lock(&send_lock, K_FOREVER);
 	memcpy(wbuf, a, na);
