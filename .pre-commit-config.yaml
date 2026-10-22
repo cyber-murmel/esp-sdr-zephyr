@@ -85,6 +85,7 @@ repos:
           -p xiao_esp32c6/esp32c6/hpcore -p why2025_badge/esp32c6/hpcore
           -p why2025_badge/esp32p4/hpcore
           -p waveshare_esp32c5_zero/esp32c5/hpcore
+          -p mch2022/esp32/procpu
         language: system
         pass_filenames: false
         always_run: true
