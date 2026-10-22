@@ -7,9 +7,7 @@
  * The LO sits LO_OFFSET_MHZ below the channel, so its leakage and the
  * receiver's DC offset stay out of the band.
  * RX: the 16 MS/s ring, mixed down by fs/4 and decimated by 4 to the PHY's
- * 4 MS/s (CONFIG_ESP_SDR_IEEE802154_RING, gapless), or back-to-back bank
- * captures of about 1 ms each, where a frame is only received if it lies
- * inside one capture.
+ * 4 MS/s, gapless.
  * TX: the frame is synthesized at the 40 MS/s DAC rate from half-sine
  * templates and played gapless by the DAC backend.
  *
@@ -35,9 +33,7 @@
 #include <esp_attr.h>
 
 #include <esp_sdr/esp_sdr.h>
-#if defined(CONFIG_ESP_SDR_IEEE802154_RING)
 #include <esp_sdr/esp_sdr_ring.h>
-#endif
 #include <esp_sdr/ieee154_esp_sdr.h>
 #include <esp_sdr/ieee154_phy.h>
 
@@ -54,15 +50,15 @@ LOG_MODULE_REGISTER(esp_sdr_154, CONFIG_ESP_SDR_IEEE802154_LOG_LEVEL);
  */
 static int32_t rx_qsign = 1;
 
-/* One bank capture: burst receive, and the ACK window after a transmission. */
+/* One bank capture: the ACK window after a transmission, measure and dump. */
 #define RX_RATE  ESP_SDR_RATE_16MSPS
 #define RX_WORDS ESP_SDR_SAMPLES_MAX
 #define RX_OUT   IEEE154_DSP_DECIM_OUT(RX_WORDS)
 
 /*
- * Interleaved I/Q at 4 MS/s for the PHY. With the ring it doubles as the
- * sample ring: captures only run while the ring is stopped, and both go
- * through the PHY lock. Internal RAM: the ring's sink runs at 4 MS/s with
+ * Interleaved I/Q at 4 MS/s for the PHY. It doubles as the sample ring:
+ * captures only run while the ring is stopped, and both go through the PHY
+ * lock. Internal RAM: the ring's sink runs at 4 MS/s with
  * interrupts masked, and PSRAM stores cost it about 20 cycles per sample.
  */
 #define RX_IQ_SAMPLES MAX(RX_OUT, 4096U)
@@ -78,9 +74,7 @@ struct sdr154_high {
 	int16_t rx_iq[2 * RX_IQ_SAMPLES];
 	ieee154_dsp_tmpl_t tmpl;
 	struct ieee154_dsp_tx tx;
-#if defined(CONFIG_ESP_SDR_IEEE802154_RING)
 	K_KERNEL_STACK_MEMBER(ring_stack, RING_STACK_SIZE);
-#endif
 	K_KERNEL_STACK_MEMBER(rx_stack, RX_STACK_SIZE);
 };
 
@@ -202,21 +196,16 @@ size_t ieee154_esp_sdr_get_trail(uint32_t *out, size_t max)
 }
 
 /*
- * Take the radio. With the ring it is held by the ring thread for a whole
- * run, and a run clears stop requests made before it started: ask until it
- * lets go.
+ * Take the radio. The ring thread holds it for a whole run, and a run
+ * clears stop requests made before it started: ask until it lets go.
  */
 static void radio_take(struct sdr154_data *d)
 {
 	crumb(IEEE154_ESP_SDR_EV_TAKE, (uint32_t)atomic_get(&d->waiters));
-#if defined(CONFIG_ESP_SDR_IEEE802154_RING)
 	atomic_inc(&d->waiters);
 	while (k_mutex_lock(&d->radio_lock, K_MSEC(1)) != 0) {
 		esp_sdr_ring_stop();
 	}
-#else
-	k_mutex_lock(&d->radio_lock, K_FOREVER);
-#endif
 }
 
 /*
@@ -227,29 +216,21 @@ static void radio_take(struct sdr154_data *d)
 static bool radio_try_take(struct sdr154_data *d, uint32_t ms)
 {
 	crumb(IEEE154_ESP_SDR_EV_TAKE, (uint32_t)atomic_get(&d->waiters));
-#if defined(CONFIG_ESP_SDR_IEEE802154_RING)
 	atomic_inc(&d->waiters);
-#endif
 	for (uint32_t t = 0; t < ms; t++) {
 		if (k_mutex_lock(&d->radio_lock, K_MSEC(1)) == 0) {
 			return true;
 		}
-#if defined(CONFIG_ESP_SDR_IEEE802154_RING)
 		esp_sdr_ring_stop();
-#endif
 	}
-#if defined(CONFIG_ESP_SDR_IEEE802154_RING)
 	atomic_dec(&d->waiters);
-#endif
 	return false;
 }
 
 static void radio_give(struct sdr154_data *d)
 {
 	crumb(IEEE154_ESP_SDR_EV_GIVE, 0);
-#if defined(CONFIG_ESP_SDR_IEEE802154_RING)
 	atomic_dec(&d->waiters);
-#endif
 	k_mutex_unlock(&d->radio_lock);
 }
 
@@ -280,9 +261,7 @@ static int tune(struct sdr154_data *d)
 					      : channel_mhz(d->channel) - LO_OFFSET_MHZ);
 }
 
-#if defined(CONFIG_ESP_SDR_IEEE802154_RING)
 static void verdict_latency(struct sdr154_data *d);
-#endif
 #if defined(CONFIG_ESP_SDR_IEEE802154_AUTO_ACK)
 static void ack_verdict(struct sdr154_data *d);
 #endif
@@ -295,9 +274,7 @@ static void on_frame(const uint8_t *psdu, uint8_t len, int lqi, void *user)
 #if defined(CONFIG_ESP_SDR_IEEE802154_AUTO_ACK)
 	ack_verdict(d);
 #endif
-#if defined(CONFIG_ESP_SDR_IEEE802154_RING)
 	verdict_latency(d);
-#endif
 	/* Imm-ACK: frame type 2, 5 bytes with the FCS. */
 	if (len == 5U && (psdu[0] & 0x7U) == 2U) {
 		if (ack_seq >= 0 && psdu[2] == (uint8_t)ack_seq) {
@@ -342,7 +319,6 @@ drop:
 	net_pkt_unref(pkt);
 }
 
-#if defined(CONFIG_ESP_SDR_IEEE802154_RING)
 /*
  * Gapless receive: the ring (CPU 1, interrupts masked) mixes and decimates
  * to 4 MS/s into the sample ring (rx_iq, internal RAM); the PHY thread
@@ -900,68 +876,6 @@ static void rx_thread_fn(void *p1, void *p2, void *p3)
 }
 
 static struct k_thread sdr154_ring_thread;
-#else
-/* Stalls are watched by the ring only. */
-size_t ieee154_esp_sdr_get_stall(uint32_t *pc, uint32_t *ls, size_t max)
-{
-	ARG_UNUSED(pc);
-	ARG_UNUSED(ls);
-	ARG_UNUSED(max);
-	return 0;
-}
-
-static void rx_thread_fn(void *p1, void *p2, void *p3)
-{
-	struct sdr154_data *d = p1;
-
-	ARG_UNUSED(p2);
-	ARG_UNUSED(p3);
-	ieee154_phy_set_rx_cb(on_frame, d);
-
-	for (;;) {
-		struct esp_sdr_rx_burst b;
-		uint32_t t0, t1;
-		int ret;
-
-		if (!atomic_get(&d->running)) {
-			k_sem_take(&d->run_sem, K_FOREVER);
-			continue;
-		}
-		/* Lock order: radio, then PHY (rx_iq is the PHY's too, see ack_wait()). */
-		k_mutex_lock(&d->radio_lock, K_FOREVER);
-		k_mutex_lock(&phy_lock, K_FOREVER);
-		crumb(IEEE154_ESP_SDR_EV_CAPTURE, 0);
-		ret = esp_sdr_rx_capture(RX_RATE, RX_WORDS, &b);
-		t0 = k_cycle_get_32();
-		if (ret == 0) {
-			/* Under the radio lock: a transmission reuses the bank. */
-			mix_decimate(b.words, high->rx_iq);
-		}
-		k_mutex_unlock(&d->radio_lock);
-		if (ret != 0) {
-			k_mutex_unlock(&phy_lock);
-			STATS_UPDATE(d->stats.capture_errors++);
-			k_sleep(K_MSEC(1));
-			continue;
-		}
-		t1 = k_cycle_get_32();
-		ieee154_phy_rx_reset();
-		ieee154_phy_rx_block(high->rx_iq, RX_OUT);
-		k_mutex_unlock(&phy_lock);
-		STATS_UPDATE(d->stats.captures++);
-		STATS_UPDATE(d->stats.filter_us = k_cyc_to_us_floor32(t1 - t0));
-		STATS_UPDATE(d->stats.phy_us = k_cyc_to_us_floor32(k_cycle_get_32() - t1));
-	}
-}
-#endif
-
-#if !defined(CONFIG_ESP_SDR_IEEE802154_RING)
-/* Burst receive has no sample ring to invalidate. */
-static inline void sring_new_gen(void)
-{
-}
-#endif
-
 static struct k_thread sdr154_rx_thread;
 
 static enum ieee802154_hw_caps sdr154_caps(const struct device *dev)
@@ -1412,25 +1326,18 @@ static int sdr154_init(const struct device *dev)
 	k_mutex_init(&d->radio_lock);
 	d->channel = 11U;
 	/*
-	 * With the ring the PHY thread runs whenever samples wait: below the
-	 * system threads, so a PHY slower than real time drops samples
-	 * (counted) instead of starving USB and the shell.
+	 * The PHY thread runs whenever samples wait: below the system
+	 * threads, so a PHY slower than real time drops samples (counted)
+	 * instead of starving USB and the shell.
 	 */
 	k_thread_create(&sdr154_rx_thread, high->rx_stack, K_KERNEL_STACK_SIZEOF(high->rx_stack),
-			rx_thread_fn, d, NULL, NULL,
-			IS_ENABLED(CONFIG_ESP_SDR_IEEE802154_RING)
-				? CONFIG_ESP_SDR_IEEE802154_PHY_PRIORITY
-				: CONFIG_ESP_SDR_IEEE802154_RX_PRIORITY,
-			0, K_FOREVER);
+			rx_thread_fn, d, NULL, NULL, CONFIG_ESP_SDR_IEEE802154_PHY_PRIORITY, 0,
+			K_FOREVER);
 	k_thread_name_set(&sdr154_rx_thread, "sdr154_rx");
 #if defined(CONFIG_SCHED_CPU_MASK)
-	if (arch_num_cpus() > 1) {
-		(void)k_thread_cpu_pin(&sdr154_rx_thread,
-				       IS_ENABLED(CONFIG_ESP_SDR_IEEE802154_RING) ? 0 : 1);
-	}
+	(void)k_thread_cpu_pin(&sdr154_rx_thread, 0);
 #endif
 	k_thread_start(&sdr154_rx_thread);
-#if defined(CONFIG_ESP_SDR_IEEE802154_RING)
 	/* The ring takes CPU 1 whole (interrupts masked); the PHY runs on CPU 0. */
 	/* Cooperative: interrupts between the ring's polls must not preempt it. */
 	k_thread_create(&sdr154_ring_thread, high->ring_stack,
@@ -1441,7 +1348,6 @@ static int sdr154_init(const struct device *dev)
 	(void)k_thread_cpu_pin(&sdr154_ring_thread, 1);
 #endif
 	k_thread_start(&sdr154_ring_thread);
-#endif
 	return 0;
 }
 

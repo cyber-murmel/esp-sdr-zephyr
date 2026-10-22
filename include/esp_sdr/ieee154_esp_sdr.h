@@ -35,8 +35,8 @@ struct ieee154_esp_sdr_stats {
 	uint32_t acks, no_acks;
 	/** Error of the last failed transmission. */
 	int32_t tx_last_err;
-	/** Last capture's mix/decimate time; PHY time in us (ring: total). */
-	uint32_t filter_us, phy_us;
+	/** PHY time in us, total. */
+	uint32_t phy_us;
 	/**
 	 * Ring receive: last run's status; units and pairs lost, summed over all runs; samples
 	 * the PHY skipped and read.
@@ -153,7 +153,7 @@ enum ieee154_esp_sdr_event {
 	IEEE154_ESP_SDR_EV_RING_END, /* ring run ended, argument: status */
 	IEEE154_ESP_SDR_EV_TX,       /* transmission starts, argument: PSDU length */
 	IEEE154_ESP_SDR_EV_TX_END,   /* transmission ended, argument: -error */
-	IEEE154_ESP_SDR_EV_CAPTURE,  /* bank capture (ACK window, measure, dump, burst receive) */
+	IEEE154_ESP_SDR_EV_CAPTURE,  /* bank capture (ACK window, measure, dump) */
 	IEEE154_ESP_SDR_EV_BOOT,     /* driver init */
 };
 
@@ -167,8 +167,7 @@ size_t ieee154_esp_sdr_get_trail(uint32_t *out, size_t max);
 /**
  * Diagnostic: CPU 0 PCs (and last load/store addresses) sampled by the
  * receive ring when the PHY thread made no progress for about a second,
- * kept across resets. Returns the count (0 if no stall was seen, and always 0
- * without CONFIG_ESP_SDR_IEEE802154_RING).
+ * kept across resets. Returns the count (0 if no stall was seen).
  */
 size_t ieee154_esp_sdr_get_stall(uint32_t *pc, uint32_t *ls, size_t max);
 
