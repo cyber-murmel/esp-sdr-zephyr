@@ -66,7 +66,8 @@ function(multiapp_extension name)
     set(app_confs ${EXT_APP}/Kconfig ${EXT_APP}/prj.conf)
     set(conf_args --conf ${EXT_APP}/prj.conf)
     # The app's SoC fragment, then its board fragment (named with or without the SoC), as
-    # Zephyr's own lookup applies them.
+    # Zephyr's own lookup applies them. No APP extension has a socs/ .conf yet; the lookup
+    # is there for one that gets it.
     string(REGEX REPLACE "^/" "" soc_conf "${BOARD_QUALIFIERS}")
     string(REPLACE "/" "_" soc_conf "${soc_conf}")
     if(EXISTS ${EXT_APP}/socs/${soc_conf}.conf)

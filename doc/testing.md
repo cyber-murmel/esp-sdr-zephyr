@@ -235,7 +235,7 @@ S3 app with a CDC-ACM shell therefore sets `CONFIG_USBD_CDC_ACM_LOG_LEVEL_OFF=y`
 
 `tests/regression/ieee802154_link` builds `apps/wpan` from its own directory: `src/main.c` by
 path, and `APPLICATION_CONFIG_DIR` and `KCONFIG_ROOT` point Zephyr's config lookup there, so
-`prj.conf`, `boards/` and `Kconfig` are the app's own and cannot drift. Only `sysbuild.conf` is a
+`prj.conf`, `socs/`, `boards/` and `Kconfig` are the app's own and cannot drift. Only `sysbuild.conf` is a
 copy, because sysbuild looks it up before the image's `CMakeLists.txt` runs.
 
 What passes: on channels 11, 15, 20 and 25, in both directions, 100 test frames of 100 bytes at 5 ms
