@@ -59,7 +59,7 @@ config APP_MP_STACK_SIZE
 	default 16384
 	help
 	  In the SRAM above the ring banks (ESP_SDR_HIGH_RAM, about 38 KiB,
-	  shared with the ring, the transmit backend and their threads).
+	  shared with the ring, the DAC stream and their threads).
 	  Bounds the recursion depth, about 300 bytes per Python call. A
 	  GUI export with LVGL peaked at 11.9 KiB.
 

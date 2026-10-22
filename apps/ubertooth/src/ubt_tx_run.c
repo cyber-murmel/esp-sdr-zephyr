@@ -3,7 +3,7 @@
  *
  * The transmit modes on the DAC: BTLE_SLAVE (an ADV_IND every 100 ms), TX_TEST (a looped pattern or
  * carrier) and TX_GENERIC (one CC2400 style packet). The waveform comes from gfsk_mod, a pure function
- * of the sample index that the DAC backend's filler calls for its blocks; the tables and the bits stay in
+ * of the sample index that the DAC stream's filler calls for its blocks; the tables and the bits stay in
  * internal RAM (the sample ring's, the receive stream being stopped) until the playback returns.
  */
 

@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * The transmit engine behind esdr.tx_*(): a feeder thread on CPU 1 keeps the DAC backend's input
+ * The transmit engine behind esdr.tx_*(): a feeder thread on CPU 1 keeps the DAC stream's input
  * ring (esp_sdr_tx_write()) about 50 ms ahead from a signal generator or a buffer of
  * interleaved int16 I/Q, until it is stopped or the samples are done.
  */
@@ -34,17 +34,17 @@ struct esdr_tx_stats {
 	uint64_t fed, played, dropped;
 	uint32_t underruns, restarts, queued, runs;
 	int last_error;
-	/* The DAC backend's timing: us, see struct esp_sdr_tx_dac_stats. */
+	/* The DAC stream's timing: us, see struct esp_sdr_tx_dac_stats. */
 	uint32_t errors, switches, fill_us_max, wake_late_us_max, idle_us_max, switch_us_max;
 	int32_t slack_us_min, start_margin_us;
 	bool simd;
 };
 
 /*
- * Starts transmitting at @p mhz + @p khz with the DAC backend: @p rate_hz input samples per
+ * Starts transmitting at @p mhz + @p khz with the DAC stream: @p rate_hz input samples per
  * second, gain index @p gain. @p buf (@p len samples) is played, once or @p repeat, else the
  * generator @p gen; @p scale multiplies a buffer. @p count ends it after that many samples
- * (0: no limit). Returns once the backend is up.
+ * (0: no limit). Returns once the stream is up.
  */
 int esdr_tx_start(uint32_t mhz, int32_t khz, uint32_t rate_hz, int gain, const int16_t *buf,
 		  size_t len, bool repeat, const struct esdr_tx_gen *gen, float scale,

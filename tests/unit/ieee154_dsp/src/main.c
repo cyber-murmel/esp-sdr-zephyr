@@ -116,7 +116,7 @@ static double run(int dec, double snr_db, double cfo_hz, int frames)
 		memcpy(expect, psdu, expect_len);
 		ieee154_dsp_tx_build(&tx, psdu, expect_len);
 		n40 = ieee154_dsp_tx_samples(&tx);
-		/* In two calls, as the DAC backend fills block by block. */
+		/* In two calls, as the DAC stream fills block by block. */
 		ieee154_dsp_tx_gen(&tx, dac, 0, 777);
 		ieee154_dsp_tx_gen(&tx, dac + 777, 777, (uint32_t)n40 - 777);
 

@@ -174,7 +174,11 @@ int esp_sdr_reset_settings(void);
 
 /** Radio housekeeping counters, for diagnosis. */
 struct esp_sdr_stats {
-	/** Transmit sessions; forced RX gain re-applied at captures, and the last one's time. */
+	/**
+	 * Transmit sessions (a stream, a loop playback, or one one-shot burst call such as
+	 * esp_sdr_tx_play_for() or esp_sdr_tx_sweep()); forced RX gain re-applied at captures,
+	 * and the last one's time.
+	 */
 	uint32_t dac_sessions, gain_refreshed, gain_apply_us;
 };
 

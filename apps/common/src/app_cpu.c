@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * Measured with the DAC streaming backend: sysworkq, net_mgmt and the like
+ * Measured with the DAC stream: sysworkq, net_mgmt and the like
  * on the radio CPU caused 2 to 9 ms stalls. Lower priority threads (shell,
  * logging) stay free, so a busy CPU cannot starve them.
  */

@@ -133,7 +133,7 @@ static struct {
 	uint8_t carry[4];
 	uint32_t carry_len;
 } txs;
-/* Converted samples on their way to the backend. */
+/* Converted samples on their way to the DAC stream. */
 static struct esp_sdr_iq16 tx_conv[256] ESP_SDR_HIGH_RAM;
 
 static void snapshot(struct sdr_settings *s, uint32_t *gen)
@@ -419,7 +419,7 @@ static inline int16_t tx_item(const uint8_t *p)
 	return txs.bits16 ? (int16_t)sys_get_le16(p) : (int16_t)((int8_t)p[0] * 256);
 }
 
-/* Host samples to the backend, rotated by the fine tuning residual. */
+/* Host samples to the DAC stream, rotated by the fine tuning residual. */
 static void tx_convert(const uint8_t *p, size_t len)
 {
 	const size_t item = txs.bits16 ? 4U : 2U;
@@ -778,7 +778,7 @@ static void tx_session(const struct sdr_settings *s, uint32_t gen)
 	txs.ps = 0.0f;
 	txs.renorm = 0;
 	txs.carry_len = 0;
-	/* 50 ms ahead, beyond the backend's 20 ms start buffer. */
+	/* 50 ms ahead, beyond the DAC stream's 20 ms start buffer. */
 	tx_limit = s->rate_hz / 20U + ESDR_BLOCK_BYTES;
 
 	ret = esp_sdr_set_freq_offset(khz);
@@ -793,7 +793,7 @@ static void tx_session(const struct sdr_settings *s, uint32_t gen)
 	}
 	cur_lo_mhz = 0;
 	cur_center_hz = s->freq_hz;
-	if (!IS_ENABLED(CONFIG_ESP_SDR_TX) || ret != 0) {
+	if (ret != 0) {
 		LOG_ERR("tx start %u MHz %+d kHz at %u S/s: %d", mhz, khz, s->rate_hz, ret);
 		while (current_gen() == gen) {
 			(void)k_sem_take(&rx_wake, K_MSEC(100));

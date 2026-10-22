@@ -29,8 +29,8 @@ What runs:
      - the board's transmitter. A periodic signal (a ``sig_source_c`` tone that fits a loop
        within 1 Hz, a repeating vector or file of up to 16380 samples at the DAC rate) loops
        at the DAC's own 40 MS/s (80 MS/s for a rate of 80 MS/s) with the analog filters at
-       +-18 MHz: any tone in the band, no CPU, changes applied at once. Anything else streams
-       through the interpolating DAC backend, gapless up to 500 kS/s (a generated signal
+       +-18 MHz: any tone in the band, no CPU, changes applied at once. Anything else goes
+       through the interpolating DAC stream, gapless up to 500 kS/s (a generated signal
        streams at up to 500 kS/s whatever the flowgraph's rate). Rates divide 40 MS/s or are
        80 MS/s (others are rounded); one transmit gain step from 0 (weakest, the default) to
        17, which any gain name sets (clamped, as with ``driver=esdr``); a centre within 500 Hz

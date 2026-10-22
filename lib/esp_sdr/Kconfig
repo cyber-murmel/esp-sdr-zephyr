@@ -270,7 +270,7 @@ config ESP_SDR_TX_DAC_SIMD
 	  threads may use them, with the scheduler locked meanwhile.
 
 config ESP_SDR_TX_DAC_HIGH_RAM
-	bool "Backend buffers and thread stacks above the capture bank"
+	bool "DAC stream buffers and thread stacks above the capture bank"
 	help
 	  Puts the input staging buffer and the player and filler stacks
 	  (about 7 KiB) in ESP_SDR_HIGH_RAM instead of the DRAM image, for

@@ -10,7 +10,7 @@ config ESP_SDR_IEEE802154
 	  (device "esp_sdr_154"): receive gapless through the 16 MS/s ring
 	  decimated by 4 (ESP_SDR_RING_DECIM_BOX4) on CPU 1, the PHY on CPU 0
 	  through a sample ring in internal RAM; transmit through the DAC
-	  backend. With CONFIG_NET_L2_IEEE802154 it is a network interface;
+	  stream. With CONFIG_NET_L2_IEEE802154 it is a network interface;
 	  without, a plain device whose frames go to
 	  ieee154_esp_sdr_set_rx_cb() (raw 802.15.4 mode would compile out
 	  the interface layer the Wi-Fi driver needs). Waits for ACKs, sends

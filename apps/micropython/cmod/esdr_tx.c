@@ -1,8 +1,8 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * The transmit engine: a cooperative thread pinned to CPU 0 (the fillers of the DAC backend run on
- * CPU 1, MicroPython shares CPU 0) generates or copies samples into the backend's ring whenever
+ * The transmit engine: a cooperative thread pinned to CPU 0 (the fillers of the DAC stream run on
+ * CPU 1, MicroPython shares CPU 0) generates or copies samples into the stream's ring whenever
  * less than about 50 ms are queued. The generator's parameters live in internal RAM, written by
  * the REPL's CPU and read here; a chunk may mix two settings, which is harmless.
  *
@@ -29,7 +29,7 @@
 #include "esdr_tx.h"
 
 /*
- * Not CPU 1: the leading filler of the DAC backend (CONFIG_ESP_SDR_TX_DAC_LEADER_CPU) runs there with
+ * Not CPU 1: the leading filler of the DAC stream (CONFIG_ESP_SDR_TX_DAC_LEADER_CPU) runs there with
  * the scheduler and interrupts locked in turns, and a feeder below it starves. Cooperative, to
  * run ahead of the MicroPython thread that shares CPU 0; it sleeps between short bursts.
  */
@@ -356,7 +356,7 @@ bool esdr_tx_wait(int32_t timeout_ms)
 void esdr_tx_get_stats(struct esdr_tx_stats *out)
 {
 	*out = stats;
-	/* A loop does not go through the streaming backend: its counters are another session's. */
+	/* A loop does not go through the DAC stream: its counters are another session's. */
 	if (atomic_get(&busy) && !loop_on) {
 		struct esp_sdr_tx_dac_stats ds;
 

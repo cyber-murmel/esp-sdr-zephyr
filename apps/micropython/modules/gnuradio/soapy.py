@@ -283,7 +283,7 @@ class sink(gr.basic_block):
     A periodic signal (an analog.sig_source_c tone, a repeating vector_source_c or file_source
     short enough for one DAC bank) loops at the DAC's own rate, 40 MS/s (80 MS/s for a sample
     rate of 80 MS/s), with the analog filters in their 40 MHz mode (+-18 MHz): any tone within
-    the band, no CPU. Other signals stream through the interpolating DAC backend, gapless up to
+    the band, no CPU. Other signals go through the interpolating DAC stream, gapless up to
     500 kS/s."""
 
     _kind = "txsink"
