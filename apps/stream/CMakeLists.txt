@@ -11,8 +11,8 @@ target_sources(app PRIVATE
   src/main.c
   src/vrt_rx.c
   src/iq_pack.c
-  src/transport_udp.c)
+  src/transport_udp.c
+  src/vrt_tx.c)
 target_sources_ifdef(CONFIG_SHELL app PRIVATE src/shell.c)
-target_sources_ifdef(CONFIG_APP_TX app PRIVATE src/vrt_tx.c)
 # Per-sample loops on the stream's critical path.
 set_source_files_properties(src/iq_pack.c PROPERTIES COMPILE_OPTIONS -O3)

@@ -78,14 +78,14 @@ config APP_TX
 	default y
 	depends on ESP_SDR_TX
 	help
-	  Signal data and command packets on UDP; samples go to the
-	  esp_sdr_tx stream, which plays them through the DAC
-	  (CONFIG_ESP_SDR_TX: PSRAM and the RF test library).
+	  Signal data and the transmitter's command packets on UDP; samples
+	  go to the esp_sdr_tx stream, which plays them through the DAC
+	  (CONFIG_ESP_SDR_TX: PSRAM and the RF test library). The receiver's
+	  command packets are served without it.
 
 config APP_TX_UDP_PORT
-	int "UDP port for transmit and command packets"
+	int "UDP port for command and transmit packets"
 	default 4992
-	depends on APP_TX
 
 config APP_TX_RATE
 	int "Transmit sample rate until a command sets one"

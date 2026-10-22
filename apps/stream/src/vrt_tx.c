@@ -3,7 +3,8 @@
  *
  * VITA 49.2 from the host over UDP: signal data placed by timestamp into the
  * esp_sdr_tx stream, and command packets that set the transmitter
- * or (by stream ID) the receiver, answered with acknowledges.
+ * or (by stream ID) the receiver, answered with acknowledges. Without
+ * CONFIG_APP_TX only the receiver's commands are served.
  */
 
 #include <errno.h>
@@ -50,7 +51,11 @@ static struct vrt_command cmd, ack_cmd;
 
 static int sock = -1;
 static uint64_t tx_freq_hz = (uint64_t)CONFIG_APP_FREQ_MHZ * 1000000U;
+#if defined(CONFIG_APP_TX)
 static uint32_t tx_rate_hz = CONFIG_APP_TX_RATE;
+#else
+static uint32_t tx_rate_hz;
+#endif
 static uint8_t next_count;
 static bool counted;
 /* Next expected sample index from the packet timestamps, once one arrived. */
@@ -136,6 +141,11 @@ static void handle_data(void)
 	counted = true;
 	stats.data++;
 	last_data_ms = k_uptime_get();
+	if (!IS_ENABLED(CONFIG_APP_TX)) {
+		/* No transmitter: the samples have nowhere to go. */
+		stats.errors++;
+		return;
+	}
 
 	if (!esp_sdr_tx_active()) {
 		if (esp_sdr_tx_start(tx_freq_hz, tx_rate_hz) != 0) {
@@ -332,7 +342,7 @@ static void handle_rx_command(const struct sockaddr *from, socklen_t from_len)
 	}
 }
 
-static void handle_command(const struct sockaddr *from, socklen_t from_len)
+static void handle_tx_command(const struct sockaddr *from, socklen_t from_len)
 {
 	struct vrt_ack_responses errors = {0};
 	const struct vrt_if_context *c = &pkt.if_context;
@@ -341,15 +351,6 @@ static void handle_command(const struct sockaddr *from, socklen_t from_len)
 	int gain = esp_sdr_tx_get_gain();
 	int bits = 0;
 	bool any_error = false, executed = false;
-
-	stats.commands++;
-	if (pkt.header.acknowledge || pkt.header.cancellation) {
-		return;
-	}
-	if (pkt.fields.stream_id == CONFIG_APP_RX_STREAM_ID) {
-		handle_rx_command(from, from_len);
-		return;
-	}
 
 	if (c->has.rf_reference_frequency) {
 		double f = c->rf_reference_frequency;
@@ -387,7 +388,7 @@ static void handle_command(const struct sockaddr *from, socklen_t from_len)
 	if (c->has.sample_rate) {
 		double r = c->sample_rate;
 
-		/* The DAC backend interpolates by an integer factor of at least 2. */
+		/* The DAC stream interpolates by an integer factor of at least 2. */
 		if (r < 1.0 || r > TX_RATE_MAX_HZ || fmod(TX_DAC_HZ, r) != 0.0) {
 			errors.has.sample_rate = true;
 			errors.sample_rate = VRT_WEF_PARAMETER_OUT_OF_RANGE;
@@ -424,6 +425,22 @@ static void handle_command(const struct sockaddr *from, socklen_t from_len)
 	}
 }
 
+static void handle_command(const struct sockaddr *from, socklen_t from_len)
+{
+	stats.commands++;
+	if (pkt.header.acknowledge || pkt.header.cancellation) {
+		return;
+	}
+	if (pkt.fields.stream_id == CONFIG_APP_RX_STREAM_ID) {
+		handle_rx_command(from, from_len);
+	} else if (IS_ENABLED(CONFIG_APP_TX)) {
+		handle_tx_command(from, from_len);
+	} else {
+		/* No transmitter: its commands go unanswered. */
+		stats.errors++;
+	}
+}
+
 static void tx_loop(void *p1, void *p2, void *p3)
 {
 	struct sockaddr_in6 from;
@@ -440,7 +457,8 @@ static void tx_loop(void *p1, void *p2, void *p3)
 
 		if (len < 0) {
 			/* Receive timeout: stop after a pause in the sample stream. */
-			if (esp_sdr_tx_active() && k_uptime_get() - last_data_ms > IDLE_STOP_MS) {
+			if (IS_ENABLED(CONFIG_APP_TX) && esp_sdr_tx_active() &&
+			    k_uptime_get() - last_data_ms > IDLE_STOP_MS) {
 				restart();
 			}
 			continue;
