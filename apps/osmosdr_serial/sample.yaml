@@ -1,13 +1,15 @@
 sample:
   name: ESP-SDR osmosdr over a serial link
   description: >-
-    The osmosdr protocol over USB-Serial-JTAG: continuous CPU-paced receive and
-    transmit on the ESP32-C6, for the SoapySDR plugin's serial backend
+    The osmosdr protocol over a serial link (USB-Serial-JTAG, a UART, SDIO):
+    continuous CPU-paced receive and transmit on the ESP32-C6, for the SoapySDR
+    plugin's serial backend or a P4 host
 common:
   tags: esp-sdr
   platform_allow:
     - xiao_esp32c6/esp32c6/hpcore
     - why2025_badge/esp32c6/hpcore
+    - esp32p4_function_ev_board/esp32c6/hpcore
     - waveshare_esp32c5_zero/esp32c5/hpcore
     - mch2022/esp32/procpu
   integration_platforms:

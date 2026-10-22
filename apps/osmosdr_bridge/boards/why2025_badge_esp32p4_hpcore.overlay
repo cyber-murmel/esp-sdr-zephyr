@@ -9,6 +9,12 @@
 	chosen {
 		esdr,link-sdio = &sdhc1;
 	};
+
+	/* GPIO2 hands USB-C port J8 to the ESP32-C6; GPIO12 is its enable. */
+	zephyr,user {
+		usb-mux-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
+		c6-enable-gpios = <&gpio0 12 GPIO_ACTIVE_HIGH>;
+	};
 };
 
 &esp_hosted_mcu {

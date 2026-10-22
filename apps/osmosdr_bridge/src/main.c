@@ -58,9 +58,8 @@ LOG_MODULE_REGISTER(bridge, LOG_LEVEL_INF);
 #define READER_STACK 2048
 #define READER_PRIO  2
 
-/* GPIO2: USB-C port J8 to the ESP32-C6 (high) or this chip (low). GPIO12: the C6's enable. */
-#define USB_MUX_PIN 2
-#define C6_EN_PIN   12
+/* zephyr,user: the C6's enable and, on the WHY2025 badge, USB-C port J8's multiplexer. */
+#define USER_NODE DT_PATH(zephyr_user)
 
 static const struct device *const sdhc = DEVICE_DT_GET(LINK_SDIO);
 
@@ -449,12 +448,21 @@ static struct k_thread reader_thread;
 
 /* ---- USB ---- */
 
-/* ESDR_REQ_USB_TO_C6: J8 to the C6 once the reply is out, back to this chip later. */
+/*
+ * ESDR_REQ_USB_TO_C6: J8 to the C6 once the reply is out, back to this chip later (a board
+ * with zephyr,user usb-mux-gpios: the WHY2025 badge).
+ */
 static uint32_t usb_to_c6_s;
 
 static void usb_mux(bool c6)
 {
-	(void)gpio_pin_set(DEVICE_DT_GET(DT_NODELABEL(gpio0)), USB_MUX_PIN, c6 ? 1 : 0);
+#if DT_NODE_HAS_PROP(USER_NODE, usb_mux_gpios)
+	const struct gpio_dt_spec mux = GPIO_DT_SPEC_GET(USER_NODE, usb_mux_gpios);
+
+	(void)gpio_pin_set_dt(&mux, c6 ? 1 : 0);
+#else
+	ARG_UNUSED(c6);
+#endif
 }
 
 static void usb_back_fn(struct k_work *work)
@@ -479,6 +487,9 @@ int usb_sdr_control_out(uint8_t req, uint16_t value, const uint8_t *data, size_t
 	int ret;
 
 	if (req == ESDR_REQ_USB_TO_C6) {
+		if (!DT_NODE_HAS_PROP(USER_NODE, usb_mux_gpios)) {
+			return -ENOTSUP;
+		}
 		usb_to_c6_s = value != 0U ? value : 30U;
 		(void)k_work_reschedule(&usb_to_c6_work, K_MSEC(50));
 		return 0;
@@ -566,15 +577,25 @@ static void msg_cb(struct usbd_context *const ctx, const struct usbd_msg *const 
 
 int main(void)
 {
-	const struct device *gpio = DEVICE_DT_GET(DT_NODELABEL(gpio0));
 	struct usbd_context *ctx;
 	struct esdr_info info;
 	int ret;
 
 	LOG_INF("CPU %d MHz", app_clock_cpu_max());
-	/* J8 to this chip's OTG HS port; the C6 out of reset. */
-	(void)gpio_pin_configure(gpio, USB_MUX_PIN, GPIO_OUTPUT_LOW);
-	(void)gpio_pin_configure(gpio, C6_EN_PIN, GPIO_OUTPUT_HIGH);
+	/* The port to this chip's OTG HS controller; the C6 out of reset. */
+#if DT_NODE_HAS_PROP(USER_NODE, usb_mux_gpios)
+	const struct gpio_dt_spec mux = GPIO_DT_SPEC_GET(USER_NODE, usb_mux_gpios);
+
+	(void)gpio_pin_configure_dt(&mux, GPIO_OUTPUT_INACTIVE);
+#endif
+#if DT_NODE_HAS_PROP(USER_NODE, c6_enable_gpios)
+	/* A reset, so that the C6 runs its image whatever state it was left in. */
+	const struct gpio_dt_spec c6_en = GPIO_DT_SPEC_GET(USER_NODE, c6_enable_gpios);
+
+	(void)gpio_pin_configure_dt(&c6_en, GPIO_OUTPUT_INACTIVE);
+	k_msleep(10);
+	(void)gpio_pin_set_dt(&c6_en, 1);
+#endif
 
 	for (uint8_t i = 0; i < POOL; i++) {
 		(void)k_msgq_put(&pool_free, &i, K_NO_WAIT);

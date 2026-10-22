@@ -1,14 +1,16 @@
 sample:
   name: ESP-SDR osmosdr bridge
   description: >-
-    The WHY2025 badge's ESP32-P4 as a USB high-speed osmosdr device, its
-    ESP32-C6 radio (apps/osmosdr_serial over SDIO) behind it
+    An ESP32-P4 (WHY2025 badge, ESP32-P4-Function-EV-Board) as a USB high-speed
+    osmosdr device, its ESP32-C6 radio (apps/osmosdr_serial over SDIO) behind it
 common:
   tags: esp-sdr
   platform_allow:
     - why2025_badge/esp32p4/hpcore
+    - esp32p4_function_ev_board/esp32p4/hpcore
   integration_platforms:
     - why2025_badge/esp32p4/hpcore
+    - esp32p4_function_ev_board/esp32p4/hpcore
 tests:
   esp_sdr.osmosdr_bridge:
     build_only: true
