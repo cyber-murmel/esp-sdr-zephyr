@@ -30,7 +30,6 @@ elseif(CONFIG_SOC_SERIES_ESP32P4)
   # Its SDIO side, shared with the bridge app.
   include(${CMAKE_CURRENT_LIST_DIR}/../common/esdr_sdio_host.cmake)
   # The gapless stream's channelizer (cmod/esdr_gl.c): the fixed-point bank on PIE.
-  include(${CMAKE_CURRENT_LIST_DIR}/../common/esdr_pfb.cmake)
   include(${CMAKE_CURRENT_LIST_DIR}/../common/esdr_pfbq.cmake)
 elseif(CONFIG_SOC_SERIES_ESP32)
   # The classic ESP32 (MCH2022 badge): the REPL on the console UART (the badge's RP2040 bridges
