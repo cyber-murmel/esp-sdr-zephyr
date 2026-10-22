@@ -485,6 +485,7 @@ How it is built
 - ``src/setjmp.S`` replaces the ROM's ``setjmp``, whose window spill traps into Zephyr on every
   ``try`` and garbage collection.
 - USB is the shared device of ``apps/common``: CDC-ACM console, mass storage, DFU.
-- ``prj.conf`` has what both boards share, ``boards/<board>.conf`` the rest; the C5 builds
+- ``prj.conf`` has what all boards share, ``socs/esp32s3_procpu.conf`` what both S3 boards
+  share, ``boards/<board>.conf`` the rest; the C5 builds
   ``cmod/esdr_c5.c`` instead of the S3's engines and helpers, freezes ``manifest_c5.py`` and
   runs MicroPython from the port's own ``main()``.
