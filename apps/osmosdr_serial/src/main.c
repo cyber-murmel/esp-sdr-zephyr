@@ -883,6 +883,14 @@ static void run_gapless(void)
 	gl_stats.blocks_sent += gl.done;
 	stats.rx_blocks += gl.done;
 	stats.usb_in_bytes += gl.done * ESDR_BLOCK_BYTES;
+	/*
+	 * The link counted the run's blocks too: the stream's counters (sdio_out()) go on from
+	 * its count, with the blocks the host has yet to read still out. Behind, out.sent would
+	 * pass out.committed and the stream would find no free block again.
+	 */
+	out.sent = sdio_link_blocks_done();
+	out.committed = out.sent + (gl.queued - gl.done);
+	out_queued = out.committed;
 	/* The other modes' filters come back with the next radio_apply(). */
 	(void)esp_sdr_set_channel_bw(0);
 	radio_dirty = true;
