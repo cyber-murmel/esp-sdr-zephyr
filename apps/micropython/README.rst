@@ -198,12 +198,11 @@ as in the `badge.team hatchery <https://badge.team/docs/hatchery/>`__: a folder 
    }
 
 ``category`` is the menu's section (``receive`` and ``transmit`` come first), ``"hidden": true``
-keeps an app out of the menu, and so does ``"needs"`` naming an ``esdr`` function the board's
-module lacks (Bursts needs ``trig_start``). ``tools/mkegg.py flowgraph.grc --category receive``
-makes the folder of a GRC flowgraph: the flowgraph, its export (``grcc``, unmodified), an
-``__init__.py`` that runs the export's ``main()``, and the metadata from the flowgraph's options
-(title, description, author). Run it again after changing the flowgraph; the revision goes up when the
-export changes.
+keeps an app out of the menu, and so does ``"needs"`` naming an ``esdr`` function the board's module
+lacks (Bursts needs ``trig_start``). ``tools/mkegg.py flowgraph.grc --category receive`` makes the
+folder of a GRC flowgraph: the flowgraph, its export (``grcc``, unmodified), an ``__init__.py`` that
+runs the export's ``main()``, and the metadata from the flowgraph's options (title, description,
+author). Run it again after changing the flowgraph; the revision goes up when the export changes.
 
 The menu lists:
 
@@ -437,24 +436,22 @@ MicroPython's (main, priority 10) and below the system work queue, which feeds t
 watchdog; a cooperative USB thread held it off through a DFU download until the board reset.
 
 With the C6's gapless stream (``apps/osmosdr_serial``: the badge's C6 builds it by default),
-``esdr.gapless_start()`` streams the whole 80 MHz without a gap: the C6 keeps the 10 us windows
-that stand out, as many as the budget it is given (2 MB/s by default) holds, and their samples
-go to the monitor (full
-scale 16384, as bursts), so the spectrum and waterfall sinks show them; ``soapy.source`` at
-80 MS/s takes this for displays. With ``channels`` the P4 also runs the fixed-point polyphase
-filterbank and burst detector of ``apps/common`` (``esdr_pfbq.h``) on its PIE SIMD in a thread
-of its own (``cmod/esdr_gl.c``, some 80 to 130 cycles a sample with more on the air, its memory
-in PSRAM): per
-channel the power, floor, peak and share of time open (``esdr.chan_power()``), and the bursts
-that ended (``esdr.chan_bursts()``: frequency, start, length from the opening block to the last
-loud one, level). A hole in the stream longer than 0.5 ms ends a burst; the radio's budget can
-cut a long burst short or into pieces. The Bursts app shows them. ``esdr.chan_spectrum()`` makes
-spectrum rows of the bursts alone: a loud block of a channel in a burst is transformed over its
-16 frames, the passband's 8 bins averaged over the burst and placed at the channel's frequency
-(peak hold over the row), and the rest of the row reads the channels' floors with a little
-noise, so the time the radio kept nothing and the quiet channels look quiet. ``soapy.source``
-runs the channelizer on 80 channels for displays (125 kHz bins), and the spectrum and waterfall
-sinks draw these rows (some 10 to 20 cycles a sample more).
+``esdr.gapless_start()`` streams the whole 80 MHz without a gap: the C6 keeps the 10 us windows that
+stand out, as many as the budget it is given (2 MB/s by default) holds, and their samples go to the
+monitor (full scale 16384, as bursts), so the spectrum and waterfall sinks show them;
+``soapy.source`` at 80 MS/s takes this for displays. With ``channels`` the P4 also runs the
+fixed-point polyphase filterbank and burst detector of ``apps/common`` (``esdr_pfbq.h``) on its PIE
+SIMD in a thread of its own (``cmod/esdr_gl.c``, some 80 to 130 cycles a sample with more on the
+air, its memory in PSRAM): per channel the power, floor, peak and share of time open
+(``esdr.chan_power()``), and the bursts that ended (``esdr.chan_bursts()``: frequency, start, length
+from the opening block to the last loud one, level). A hole in the stream longer than 0.5 ms ends a
+burst; the radio's budget can cut a long burst short or into pieces. The Bursts app shows them.
+``esdr.chan_spectrum()`` makes spectrum rows of the bursts alone: a loud block of a channel in a
+burst is transformed over its 16 frames, the passband's 8 bins averaged over the burst and placed at
+the channel's frequency (peak hold over the row), and the rest of the row reads the channels' floors
+with a little noise, so the time the radio kept nothing and the quiet channels look quiet.
+``soapy.source`` runs the channelizer on 80 channels for displays (125 kHz bins), and the spectrum
+and waterfall sinks draw these rows (some 10 to 20 cycles a sample more).
 
 The MCH2022 badge
 *****************

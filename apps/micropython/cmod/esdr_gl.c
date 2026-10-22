@@ -67,7 +67,6 @@
 /* The fill's noise: up to this many dB either side of the floor. */
 #define GL_FILL_DB 1.5f
 
-
 static uint8_t pool[GL_POOL][ESDR_BLOCK_BYTES] __aligned(16) ESDR_PSRAM;
 K_MSGQ_DEFINE(gl_free, sizeof(uint8_t), GL_POOL, 1);
 K_MSGQ_DEFINE(gl_full, sizeof(uint8_t), GL_POOL, 1);
