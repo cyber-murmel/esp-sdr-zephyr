@@ -391,7 +391,7 @@ struct esdr_chan_stats {
 	uint32_t cpu_mhz;
 	/* Of the cycles: the detector's, and the channel blocks' (taking, packing, sending). */
 	uint64_t det_cycles, send_cycles;
-	/* The filterbank's branch sums and FFTs, when built with ESDR_PFB_PROFILE (else 0). */
+	/* The filterbank's branch sums and FFTs, when built with ESDR_PFBQ_PROFILE (else 0). */
 	uint64_t branch_cycles, fft_cycles;
 } __attribute__((packed));
 
