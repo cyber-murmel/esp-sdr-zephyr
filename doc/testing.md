@@ -288,12 +288,13 @@ pytest's `CHIPS` and the gains, and another set of ids in `testcase.yaml`.
 
 ### lo_tuning
 
-`tests/regression/lo_tuning` is a small firmware of its own for both boards, with a `lo` shell
-command: `lo f` tunes and prints `esp_sdr_set_freq()`'s return code, `lo tone on`/`off` loops a
-tone on the S3 (loop playback, no gaps), and `lo rx` captures 8192 samples at 80 MS/s on the C6
-and prints the strongest tone and the level at an expected offset. The C6 does the analysis
-itself: a Welch average of eight 1024-point FFTs, each bin compared with the median of the bins
-within 1 MHz, so the C6's uneven noise floor does not count as a tone. Every filter is open
+`tests/regression/lo_tuning` builds `apps/rfprobe` from its own directory for both boards, as
+`ieee802154_link` does `apps/wpan`, and drives its `probe` shell: `probe f` tunes and prints
+`esp_sdr_set_freq()`'s return code, `probe tone on`/`off` loops a tone on the S3 (loop playback,
+no gaps), and `probe rx 8192 0` dumps 8192 samples at 80 MS/s from the C6 as base64. The pytest
+does the analysis: a Welch average of eight 1024-point FFTs, each bin compared with the median of
+the bins within 1 MHz, so the C6's uneven noise floor does not count as a tone, and reports the
+strongest tone and the level at the expected offset. Every filter is open
 (receive and transmit low-pass code 0). The C6 receives at fixed gain index 40 on its U.FL port
 and the S3 transmits at its weakest step: on this desk the tones arrive 35 to 51 dB above the
 floor without clipping. Another RF path (an attenuator, antennas) may need other `RX_GAIN` and

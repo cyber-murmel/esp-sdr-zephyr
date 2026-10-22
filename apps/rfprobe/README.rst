@@ -19,7 +19,7 @@ the C6's stale modem state (``doc/undocumented-registers-esp32s3.md``,
 
 Every filter is open at boot (receive and, on the S3, transmit low-pass code 0).
 Two-board measurements need the boards' RF ports joined, as for
-``tests/regression/lo_tuning`` (``doc/testing.md``).
+``tests/regression/lo_tuning`` (``doc/testing.md``), which runs this app.
 
 Building and flashing
 *********************

@@ -15,15 +15,19 @@ What it guards:
 - esp_sdr_set_freq()'s -ERANGE: reported far outside the tuning range, and never
   missing where the PLL does not lock (checked at the S3's window edges).
 
-Needs two connected boards and a hardware map with required_devices (see
-doc/testing.md); twister flashes and resets both. The levels depend on the RF path
+Both boards run apps/rfprobe: its `probe` shell tunes, loops the tone on the S3 and
+dumps a raw capture from the C6, which is analysed here (analyse()). Needs two
+connected boards and a hardware map with required_devices (see doc/testing.md);
+twister flashes and resets both. The levels depend on the RF path
 between the boards (the C6 image listens on its U.FL port): RX_GAIN and TX_STEP are
 set for this desk, and the radios fixture checks the link at 2412 MHz first, so a weak
 link fails as such instead of as misplaced tones.
 """
+import base64
 import logging
 import re
 
+import numpy as np
 import pytest
 from twister_harness import Shell
 
@@ -43,11 +47,18 @@ ABSENT_DB = 12.0
 MATCH_HZ = 150_000
 ERANGE = -34
 
+# The capture: 8192 samples at 80 MS/s (rate 0 of `probe rx`), a Welch average of eight
+# Hann-windowed 1024-point FFTs.
+RX_SAMPLES = 8192
+RX_FS_HZ = 80_000_000
+NFFT = 1024
+# The receiver's own DC and LO leakage.
+DC_SKIP_HZ = 150_000
+# Local noise floor: median of the bins within +-1 MHz (27 bins).
+FLOOR_HALF = 13
+
 F_RE = re.compile(r"^f (-?\d+) ret (-?\d+)", re.M)
-RX_RE = re.compile(
-    r"rx lo (\d+) peak (-?\d+) Hz (-?\d+) ddB expect (-?\d+) Hz (-?\d+) ddB at (-?\d+) Hz "
-    r"rms (\d+) clip (\d+)"
-)
+RX_RE = re.compile(r"^rx n (\d+) f (\d+) fs (\d+)", re.M)
 TONE_ON_RE = re.compile(r"^tone on ", re.M)
 TONE_OFF_RE = re.compile(r"^tone off", re.M)
 
@@ -60,6 +71,46 @@ def run(shell: Shell, command: str, pattern: re.Pattern) -> re.Match:
     return m
 
 
+def capture(shell: Shell) -> tuple[np.ndarray, int]:
+    """One `probe rx` capture: the raw words as complex I/Q (-512 to 511), and the LO."""
+    lines = shell.exec_command(f"probe rx {RX_SAMPLES} 0")
+    m = RX_RE.search("\n".join(lines))
+    if not m or int(m.group(1)) != RX_SAMPLES or int(m.group(3)) != RX_FS_HZ:
+        pytest.fail(f"probe rx: no capture of {RX_SAMPLES} samples at 80 MS/s in: "
+                    f"{lines[:3]} ... {lines[-3:]}")
+    data = b"".join(base64.b64decode(line[2:].strip()) for line in lines
+                    if line.startswith("d "))
+    w = np.frombuffer(data, dtype="<u4")
+    if len(w) != RX_SAMPLES:
+        pytest.fail(f"probe rx: {len(w)} of {RX_SAMPLES} samples decoded")
+    i = ((w >> 10) & 0x3FF).astype(np.int32)
+    q = (w & 0x3FF).astype(np.int32)
+    i[i >= 512] -= 1024
+    q[q >= 512] -= 1024
+    return i + 1j * q, int(m.group(2))
+
+
+def analyse(x: np.ndarray, expect_hz: int) -> dict:
+    """The strongest tone outside DC and the level at expect_hz, each against the median of
+    the bins within 1 MHz, so the C6's uneven noise floor does not count as a tone. Levels
+    in dB over that floor, rms in raw units after the DC is taken off."""
+    clip = int(np.sum((np.abs(x.real) >= 511) | (np.abs(x.imag) >= 511)))
+    x = x - x.mean()
+    rms = float(np.sqrt(np.mean(np.abs(x) ** 2)))
+    segs = x.reshape(-1, NFFT) * np.hanning(NFFT + 1)[:NFFT]
+    psd = np.sum(np.abs(np.fft.fft(segs, axis=1)) ** 2, axis=0)
+    floor = np.median([np.roll(psd, d) for d in range(-FLOOR_HALF, FLOOR_HALF + 1)], axis=0)
+    db = 10 * np.log10(np.maximum(psd / np.maximum(floor, 1e-20), 1e-6))
+    f = np.fft.fftfreq(NFFT, 1 / RX_FS_HZ)
+    peak = int(np.argmax(np.where(np.abs(f) > DC_SKIP_HZ, db, -np.inf)))
+    near = np.abs(f - expect_hz) <= MATCH_HZ
+    if not near.any():
+        pytest.fail(f"{expect_hz} Hz is outside the capture")
+    match = int(np.argmax(np.where(near, db, -np.inf)))
+    return {"peak_hz": float(f[peak]), "peak_db": float(db[peak]), "expect_hz": expect_hz,
+            "expect_db": float(db[match]), "rms": rms, "clip": clip}
+
+
 class Radios:
     def __init__(self, c6: Shell, s3: Shell):
         self.c6 = c6
@@ -67,7 +118,7 @@ class Radios:
 
     @staticmethod
     def tune(shell: Shell, mhz: int) -> int:
-        return int(run(shell, f"lo f {mhz}", F_RE).group(2))
+        return int(run(shell, f"probe f {mhz}", F_RE).group(2))
 
     def measure(self, tx_mhz: int, rx_mhz: int, expect_hz: int | None = None,
                 tone: bool = True) -> dict:
@@ -78,18 +129,14 @@ class Radios:
         tx_ret = self.tune(self.s3, tx_mhz)
         rx_ret = self.tune(self.c6, rx_mhz)
         if tone:
-            run(self.s3, f"lo tone on {TONE_HZ}", TONE_ON_RE)
+            run(self.s3, f"probe tone on {TONE_HZ}", TONE_ON_RE)
         try:
-            m = run(self.c6, f"lo rx {expect_hz}", RX_RE)
+            x, _ = capture(self.c6)
         finally:
             if tone:
-                run(self.s3, "lo tone off", TONE_OFF_RE)
-        return {
-            "tx": tx_mhz, "rx": rx_mhz, "tx_ret": tx_ret, "rx_ret": rx_ret, "tone": tone,
-            "peak_hz": int(m.group(2)), "peak_db": int(m.group(3)) / 10,
-            "expect_hz": int(m.group(4)), "expect_db": int(m.group(5)) / 10,
-            "rms": int(m.group(7)) / 10, "clip": int(m.group(8)),
-        }
+                run(self.s3, "probe tone off", TONE_OFF_RE)
+        return {"tx": tx_mhz, "rx": rx_mhz, "tx_ret": tx_ret, "rx_ret": rx_ret, "tone": tone,
+                **analyse(x, expect_hz)}
 
 
 def arrives(m: dict) -> bool:
@@ -120,9 +167,9 @@ def radios(shells: list[Shell]) -> Radios:
     # shells[0] is the scenario's own board, the C6; shells[1] the S3, the only one
     # with a transmitter.
     c6, s3 = shells[0], shells[1]
-    run(s3, "lo tone off", TONE_OFF_RE)
-    run(c6, f"lo gain {RX_GAIN}", re.compile(rf"^rxgain {RX_GAIN} ret 0", re.M))
-    run(s3, f"lo gain -1 {TX_STEP}", re.compile(rf"^txgain {TX_STEP} ret 0", re.M))
+    run(s3, "probe tone off", TONE_OFF_RE)
+    run(c6, f"probe gain {RX_GAIN}", re.compile(rf"^rxgain {RX_GAIN} ret 0", re.M))
+    run(s3, f"probe gain -1 {TX_STEP}", re.compile(rf"^txgain {TX_STEP} ret 0", re.M))
     radios = Radios(c6, s3)
     # 2412 MHz is a Wi-Fi channel, tuned the vendor's way: nothing under test here.
     m = radios.measure(2412, 2412)
@@ -186,7 +233,7 @@ def window_edge(shell: Shell, start: int, stop: int, step: int) -> int:
         if ret == ERANGE:
             assert last is not None, f"{start} MHz already reports -ERANGE"
             return last
-        assert ret == 0, f"lo f {mhz}: {ret}"
+        assert ret == 0, f"probe f {mhz}: {ret}"
         last = mhz
     pytest.fail(f"no -ERANGE from {start} to {stop} MHz")
 
@@ -209,7 +256,7 @@ def edge_pairs(radios: Radios, edge: int, inward: int) -> tuple[list, list]:
             ret = Radios.tune(radios.c6, b)
             if ret == 0:
                 break
-            assert ret == ERANGE, f"C6 lo f {b}: {ret}"
+            assert ret == ERANGE, f"C6 probe f {b}: {ret}"
         else:
             pytest.fail(f"the C6 reports -ERANGE at every inset from {a} MHz")
         m = radios.measure(a, b)

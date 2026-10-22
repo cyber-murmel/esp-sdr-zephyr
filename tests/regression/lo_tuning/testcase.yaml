@@ -1,6 +1,7 @@
 tests:
   # Two-board regression test of the LO tuning (pytest/test_lo_tuning.py): a real
-  # S3 transmits tones, a real C6 captures them, at overlapping LO pairs. Needs
+  # S3 transmits tones, a real C6 captures them, at overlapping LO pairs; both run
+  # apps/rfprobe, built from here (CMakeLists.txt). Needs
   # both boards in a hardware map: scripts/run-regression-tests.sh runs it with
   # tests/regression/hardware-map.yaml (see doc/testing.md). Twister flashes and
   # resets both, so the two per-board ids below exist only to be built
