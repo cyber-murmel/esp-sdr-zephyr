@@ -51,6 +51,7 @@ The API reference of the library is generated with Doxygen:
    multiapp
    zigbit-reference
    ubertooth
+   lte-calibration
 
 Indices
 =======
