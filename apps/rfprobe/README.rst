@@ -64,6 +64,15 @@ Shell
                                little-endian words, then "end" (S3: 0, 1, 6; C6: 0 only,
                                80 MS/s; C5: 0 to 5, 80 to 4 MS/s)
    probe dump <block> [regs]   analog I2C registers 0..regs-1 of one block (read only)
+   probe cal lte [start MHz] [stop MHz] [gain|-1]
+                               measure the crystal's error against an LTE cell (default band
+                               1 downlink, 2110 to 2170 MHz), apply and store it with the die
+                               temperature (doc/lte-calibration.md); minutes
+   probe cal show              correction in force, temperature, the stored record, its
+                               temperature points and what the model gives now
+   probe cal set <ppb>         apply and store a constant correction (drops the points)
+   probe cal clear             correction 0, nothing stored
+   probe temp                  the die temperature
 
    C5 only:
    probe diag level            the nibble window (lsb) the signal needs

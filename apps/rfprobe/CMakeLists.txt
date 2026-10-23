@@ -2,6 +2,12 @@
 
 cmake_minimum_required(VERSION 3.20.0)
 
+# The crystal calibration ("probe cal") kept in settings on the storage partition, with the
+# die temperature ("probe temp").
+list(APPEND EXTRA_CONF_FILE ${CMAKE_CURRENT_LIST_DIR}/../common/calstore.conf)
+list(APPEND EXTRA_DTC_OVERLAY_FILE ${CMAKE_CURRENT_LIST_DIR}/../common/calstore.overlay)
+list(APPEND EXTRA_DTC_OVERLAY_FILE ${CMAKE_CURRENT_LIST_DIR}/../common/dietemp.overlay)
+
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(esp_sdr_rfprobe)
 

@@ -23,6 +23,7 @@
 #include <esp_rom_sys.h>
 
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_cal.h>
 #include <esp_sdr/esp_sdr_dsp.h>
 #include <esp_sdr/esp_sdr_rx.h>
 #include <esp_sdr/esp_sdr_tx.h>
@@ -1202,6 +1203,131 @@ SHELL_STATIC_SUBCMD_SET_CREATE(tx_cmds,
 	SHELL_SUBCMD_SET_END);
 #endif
 
+/* A temperature in 0.1 degC as text, "?" when unknown. */
+static const char *temp_str(char *buf, size_t len, int dc)
+{
+	if (dc == ESP_SDR_CAL_TEMP_UNKNOWN) {
+		return "?";
+	}
+	snprintf(buf, len, "%s%d.%d", dc < 0 ? "-" : "", abs(dc) / 10, abs(dc) % 10);
+	return buf;
+}
+
+/* temp: the die temperature. */
+static int cmd_temp(const struct shell *sh, size_t argc, char **argv)
+{
+	char t[16];
+	int16_t dc;
+	int ret = esp_sdr_get_temp_dc(&dc);
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	if (ret != 0) {
+		dc = ESP_SDR_CAL_TEMP_UNKNOWN;
+	}
+	shell_print(sh, "temp %s C ret %d", temp_str(t, sizeof(t), dc), ret);
+	return 0;
+}
+
+#if defined(CONFIG_ESP_SDR_LTE_CAL)
+/* cal lte [start MHz] [stop MHz] [gain]: measure the crystal's error against an LTE cell. */
+static int cmd_cal_lte(const struct shell *sh, size_t argc, char **argv)
+{
+	struct esp_sdr_lte_scan scan = ESP_SDR_LTE_SCAN_DEFAULT;
+	struct esp_sdr_lte_result res;
+	int64_t t0 = k_uptime_get();
+	char t[16];
+	int ret;
+
+	if (busy(sh)) {
+		return -EBUSY;
+	}
+	scan.start_mhz = (uint32_t)arg(argv, argc, 1, scan.start_mhz);
+	scan.stop_mhz = (uint32_t)arg(argv, argc, 2, scan.stop_mhz);
+	scan.gain = (int8_t)arg(argv, argc, 3, scan.gain);
+	shell_print(sh, "cal lte %u..%u MHz gain %d: scanning", scan.start_mhz, scan.stop_mhz,
+		    scan.gain);
+	ret = esp_sdr_lte_calibrate(&scan, &res);
+	shell_print(sh,
+		    "cal ret %d ppb %d delta %d spread %d cell %d carrier %u kHz estimates %d "
+		    "captures %d decoded %d in %lld ms",
+		    ret, res.ppb, res.delta_ppb, res.spread_ppb, res.cell_id, res.carrier_khz,
+		    res.estimates, res.captures, res.decoded, k_uptime_get() - t0);
+	char d[16];
+
+	shell_print(sh, "cal temp %s C drift %s C points %d", temp_str(t, sizeof(t), res.temp_dc),
+		    temp_str(d, sizeof(d), res.temp_drift_dc), res.points);
+	return 0;
+}
+#endif
+
+/* cal show: the correction in force, the temperature, the stored record and its points. */
+static int cmd_cal_show(const struct shell *sh, size_t argc, char **argv)
+{
+	struct esp_sdr_cal_record rec;
+	int ret = esp_sdr_cal_load(&rec);
+	char t[16];
+	int16_t dc;
+	int32_t model;
+	bool have_t = esp_sdr_get_temp_dc(&dc) == 0;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	shell_print(sh, "cal ppb %d temp %s C", esp_sdr_get_freq_corr_ppb(),
+		    temp_str(t, sizeof(t), have_t ? dc : ESP_SDR_CAL_TEMP_UNKNOWN));
+	if (ret != 0) {
+		shell_print(sh, "stored none (%d)", ret);
+		return 0;
+	}
+	shell_print(sh, "stored ppb %d spread %d cell %d carrier %u kHz estimates %u temp %s C",
+		    rec.ppb, rec.spread_ppb, rec.cell_id, rec.carrier_khz, rec.estimates,
+		    temp_str(t, sizeof(t), rec.temp_dc));
+	for (uint8_t i = 0; i < rec.points && i < ESP_SDR_CAL_POINTS; i++) {
+		shell_print(sh, "point %u: %s C %d ppb", i,
+			    temp_str(t, sizeof(t), rec.point[i].temp_dc), rec.point[i].ppb);
+	}
+	if (have_t && esp_sdr_cal_eval(&rec, dc, &model) == 0) {
+		shell_print(sh, "model at %s C: %d ppb", temp_str(t, sizeof(t), dc), model);
+	}
+	return 0;
+}
+
+/* cal set <ppb>: apply and store a correction by hand (a constant: no temperature points). */
+static int cmd_cal_set(const struct shell *sh, size_t argc, char **argv)
+{
+	struct esp_sdr_cal_record rec = {
+		.ppb = (int32_t)arg(argv, argc, 1, 0),
+		.cell_id = -1,
+		.temp_dc = ESP_SDR_CAL_TEMP_UNKNOWN,
+	};
+	int ret = esp_sdr_set_freq_corr_ppb(rec.ppb);
+	int st = esp_sdr_cal_save(&rec);
+
+	shell_print(sh, "cal set %d ret %d store %d", rec.ppb, ret, st);
+	return 0;
+}
+
+/* cal clear: correction 0, nothing stored. */
+static int cmd_cal_clear(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	shell_print(sh, "cal clear ret %d store %d", esp_sdr_set_freq_corr_ppb(0),
+		    esp_sdr_cal_clear());
+	return 0;
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(cal_cmds,
+#if defined(CONFIG_ESP_SDR_LTE_CAL)
+	SHELL_CMD_ARG(lte, NULL, "[start MHz] [stop MHz] [gain|-1]: measure against an LTE cell",
+		      cmd_cal_lte, 1, 3),
+#endif
+	SHELL_CMD(show, NULL, "correction in force and stored", cmd_cal_show),
+	SHELL_CMD_ARG(set, NULL, "<ppb>: apply and store a constant (drops the points)",
+		      cmd_cal_set, 2, 0),
+	SHELL_CMD(clear, NULL, "correction 0, nothing stored", cmd_cal_clear),
+	SHELL_SUBCMD_SET_END);
+
 SHELL_STATIC_SUBCMD_SET_CREATE(probe_cmds,
 	SHELL_CMD_ARG(f, NULL, "<MHz>: tune through the library's plan", cmd_f, 2, 0),
 	SHELL_CMD_ARG(raw, NULL, "<PLL MHz> [kHz]: program the PLL directly", cmd_raw, 2, 1),
@@ -1221,6 +1347,8 @@ SHELL_STATIC_SUBCMD_SET_CREATE(probe_cmds,
 	SHELL_CMD(tx, &tx_cmds, "DAC engine replay (C5)", NULL),
 #endif
 	SHELL_CMD_ARG(dump, NULL, "<block> [regs]: analog I2C registers", cmd_dump, 2, 1),
+	SHELL_CMD(cal, &cal_cmds, "crystal calibration", NULL),
+	SHELL_CMD(temp, NULL, "die temperature", cmd_temp),
 #if defined(CONFIG_POWEROFF)
 	SHELL_CMD_ARG(sleep, NULL, "<ms>: deep sleep, timer wakeup", cmd_sleep, 2, 0),
 #endif
