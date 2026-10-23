@@ -15,6 +15,7 @@
 #include <zephyr/sys/util.h>
 
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_cal.h>
 #include <esp_sdr/esp_sdr_rx.h>
 
 #if defined(CONFIG_ESP_SDR_PHY_ONLY)
@@ -61,6 +62,7 @@ struct esp_sdr_stats esp_sdr_counters;
 bool esp_sdr_ready;
 uint32_t esp_sdr_freq_mhz = CAL_CHANNEL_MHZ;
 int32_t esp_sdr_fofs_khz;
+int32_t esp_sdr_corr_ppb;
 uint32_t esp_sdr_turn_settle_us = SDR_RETUNE_SETTLE_US;
 /* Channel bandwidth flag for the vendor tuning call, 0 = 20 MHz. */
 static unsigned int sdr_cbw;
@@ -117,13 +119,76 @@ static bool pll_in_window(void)
 #endif
 }
 
+/*
+ * The crystal correction: a constant (esp_sdr_set_freq_corr_ppb()) or a model of
+ * the error over the die temperature (esp_sdr_set_freq_corr_model()), evaluated at
+ * every full retune (esp_sdr_rx_prepare(), esp_sdr_tx_prepare(), the paced
+ * transmit start), not in the turnarounds, which must stay short; guarded by
+ * esp_sdr_lock. A calibration run freezes it, so that all its estimates are
+ * against one correction.
+ */
+static int32_t corr_const_ppb;
+static struct esp_sdr_cal_record corr_model;
+bool esp_sdr_corr_frozen;
+
+void esp_sdr_corr_refresh(void)
+{
+	int16_t dc;
+	int32_t ppb;
+
+	if (esp_sdr_corr_frozen) {
+		return;
+	}
+	if (corr_model.points > 0U && esp_sdr_get_temp_dc(&dc) == 0 &&
+	    esp_sdr_cal_eval(&corr_model, dc, &ppb) == 0) {
+		esp_sdr_corr_ppb = CLAMP(ppb, -ESP_SDR_FREQ_CORR_MAX_PPB, ESP_SDR_FREQ_CORR_MAX_PPB);
+	} else if (corr_model.points == 0U) {
+		esp_sdr_corr_ppb = corr_const_ppb;
+	}
+	/* A model without a temperature now keeps the last value it gave. */
+}
+
+void esp_sdr_corr_model_get(struct esp_sdr_cal_record *rec)
+{
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+	*rec = corr_model;
+	if (rec->points == 0U) {
+		*rec = (struct esp_sdr_cal_record){.ppb = corr_const_ppb, .cell_id = -1,
+						   .temp_dc = ESP_SDR_CAL_TEMP_UNKNOWN};
+	}
+	k_mutex_unlock(&esp_sdr_lock);
+}
+
+#if !defined(CONFIG_ESP_SDR_TEMP)
+int esp_sdr_get_temp_dc(int16_t *dc)
+{
+	ARG_UNUSED(dc);
+	return -ENOTSUP;
+}
+#endif
+
+/*
+ * The PLL runs off the crystal, so its error scales every frequency: asking for
+ * f / (1 + ppb) gives f. Whole kHz, as the vendor calls take them.
+ */
+int32_t esp_sdr_corr_khz(uint32_t pll_khz)
+{
+	int64_t num = -(int64_t)pll_khz * esp_sdr_corr_ppb;
+	int64_t den = 1000000000LL + esp_sdr_corr_ppb;
+
+	return (int32_t)((num + (num < 0 ? -den / 2 : den / 2)) / den);
+}
+
 #if defined(CONFIG_SOC_SERIES_ESP32C5)
 void esp_sdr_tune(void)
 {
+	int32_t khz = esp_sdr_fofs_khz;
+
+	khz += esp_sdr_corr_khz(esp_sdr_freq_mhz * 1000U + (uint32_t)khz);
 	/* A full channel setup at any MHz: the PHY takes values above 14 as MHz. */
 	phy_set_chanfreq(esp_sdr_freq_mhz, sdr_cbw);
-	if (esp_sdr_fofs_khz != 0) {
-		phy_set_rf_freq_offset(phy_param[PHY_PARAM_XTAL], esp_sdr_freq_mhz, esp_sdr_fofs_khz);
+	if (khz != 0) {
+		phy_set_rf_freq_offset(phy_param[PHY_PARAM_XTAL], esp_sdr_freq_mhz, khz);
 	}
 }
 #else
@@ -131,8 +196,10 @@ void esp_sdr_tune(void)
 {
 	bool divided = esp_sdr_lo_divided();
 	uint32_t pll_khz = esp_sdr_freq_mhz * (divided ? 1200U : 1000U);
-	rx_lo_plan_t plan = {pll_khz / 1000U, (int)(pll_khz % 1000U), divided};
-	bool channel = esp_sdr_fofs_khz == 0 && is_channel(esp_sdr_freq_mhz);
+	int32_t corr = esp_sdr_corr_khz(pll_khz + (uint32_t)esp_sdr_fofs_khz);
+
+	rx_lo_plan_t plan = {pll_khz / 1000U, (int)(pll_khz % 1000U) + corr, divided};
+	bool channel = esp_sdr_fofs_khz == 0 && corr == 0 && is_channel(esp_sdr_freq_mhz);
 
 	regi2c_enter_critical();
 	rx_lo_select(false);
@@ -243,6 +310,9 @@ int esp_sdr_init(void)
 	if (ret != 0) {
 		goto out;
 	}
+#if defined(CONFIG_ESP_SDR_CALSTORE)
+	esp_sdr_cal_apply_stored();
+#endif
 	esp_sdr_rx_prepare();
 	esp_sdr_ready = true;
 	LOG_INF("receiver ready, bank %p", (void *)__esp_sdr_bank_start);
@@ -294,6 +364,48 @@ int esp_sdr_set_freq_offset(int32_t khz)
 	}
 	k_mutex_unlock(&esp_sdr_lock);
 	return ret;
+}
+
+int esp_sdr_set_freq_corr_ppb(int32_t ppb)
+{
+	int ret;
+
+	if (ppb < -ESP_SDR_FREQ_CORR_MAX_PPB || ppb > ESP_SDR_FREQ_CORR_MAX_PPB) {
+		return -EINVAL;
+	}
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+	corr_const_ppb = ppb;
+	corr_model.points = 0U;
+	esp_sdr_corr_ppb = ppb;
+	ret = esp_sdr_ready ? esp_sdr_retune() : 0;
+	if (ret == 0 && esp_sdr_ready && !pll_in_window()) {
+		ret = -ERANGE;
+	}
+	k_mutex_unlock(&esp_sdr_lock);
+	return ret;
+}
+
+int esp_sdr_set_freq_corr_model(const struct esp_sdr_cal_record *rec)
+{
+	int ret;
+
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+	corr_model = *rec;
+	corr_model.points = MIN(corr_model.points, (uint8_t)ESP_SDR_CAL_POINTS);
+	corr_const_ppb = CLAMP(rec->ppb, -ESP_SDR_FREQ_CORR_MAX_PPB, ESP_SDR_FREQ_CORR_MAX_PPB);
+	esp_sdr_corr_ppb = corr_const_ppb;
+	esp_sdr_corr_refresh();
+	ret = esp_sdr_ready ? esp_sdr_retune() : 0;
+	if (ret == 0 && esp_sdr_ready && !pll_in_window()) {
+		ret = -ERANGE;
+	}
+	k_mutex_unlock(&esp_sdr_lock);
+	return ret;
+}
+
+int32_t esp_sdr_get_freq_corr_ppb(void)
+{
+	return esp_sdr_corr_ppb;
 }
 
 int esp_sdr_set_turnaround(uint32_t settle_us, bool retune)

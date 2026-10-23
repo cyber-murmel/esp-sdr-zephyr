@@ -2,12 +2,14 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * esp_sdr_lte.h on synthetic synchronization symbols: a PSS and the SSS in front of it every 5 ms
- * at a known carrier offset, in noise, sampled at 2 MS/s like the WHY2025 badge's stream.
+ * at a known carrier offset, in noise, sampled at 2 MS/s like the WHY2025 badge's stream. And
+ * the temperature model of esp_sdr_cal.h: its points and its fit.
  */
 #include <math.h>
 
 #include <zephyr/ztest.h>
 
+#include <esp_sdr/esp_sdr_cal.h>
 #include <esp_sdr/esp_sdr_lte.h>
 #include <test_rng.h>
 
@@ -196,3 +198,67 @@ ZTEST(lte, test_ppb)
 	zassert_within(raster, 2140.0e6, 1.0);
 }
 
+ZTEST(lte, test_cal_points)
+{
+	struct esp_sdr_cal_record rec = {0};
+
+	/* Within 2 degC of a point: replaced, and the newest. */
+	esp_sdr_cal_add_point(&rec, 250, -4000);
+	esp_sdr_cal_add_point(&rec, 400, -3000);
+	esp_sdr_cal_add_point(&rec, 262, -4100);
+	zassert_equal(rec.points, 2);
+	zassert_equal(rec.point[0].temp_dc, 400);
+	zassert_equal(rec.point[1].temp_dc, 262);
+	zassert_equal(rec.point[1].ppb, -4100);
+	/* Full: the oldest goes. */
+	for (int i = 0; i < ESP_SDR_CAL_POINTS; i++) {
+		esp_sdr_cal_add_point(&rec, (int16_t)(500 + 50 * i), i);
+	}
+	zassert_equal(rec.points, ESP_SDR_CAL_POINTS);
+	zassert_equal(rec.point[0].temp_dc, 500);
+	zassert_equal(rec.point[ESP_SDR_CAL_POINTS - 1].temp_dc, 500 + 50 * (ESP_SDR_CAL_POINTS - 1));
+}
+
+ZTEST(lte, test_cal_eval)
+{
+	struct esp_sdr_cal_record rec = {0};
+	int32_t ppb;
+
+	zassert_equal(esp_sdr_cal_eval(&rec, 250, &ppb), -ENOENT);
+	/* One point: a constant. */
+	esp_sdr_cal_add_point(&rec, 250, -4386);
+	zassert_ok(esp_sdr_cal_eval(&rec, 600, &ppb));
+	zassert_equal(ppb, -4386);
+	/* Two: the line, clamped 10 degC beyond the points. */
+	esp_sdr_cal_add_point(&rec, 450, -2386);
+	zassert_ok(esp_sdr_cal_eval(&rec, 350, &ppb));
+	zassert_equal(ppb, -3386);
+	zassert_ok(esp_sdr_cal_eval(&rec, 550, &ppb));
+	zassert_equal(ppb, -1386);
+	zassert_ok(esp_sdr_cal_eval(&rec, 900, &ppb));
+	zassert_equal(ppb, -1386, "clamped at 55 degC: %d", ppb);
+	zassert_ok(esp_sdr_cal_eval(&rec, -200, &ppb));
+	zassert_equal(ppb, -5386, "clamped at 15 degC: %d", ppb);
+
+	/* Three or more over 10 degC: a quadratic, recovered exactly from exact points. */
+	struct esp_sdr_cal_record q = {0};
+
+	for (int t = 100; t <= 600; t += 100) {
+		double x = (t - 300) / 100.0;
+
+		esp_sdr_cal_add_point(&q, (int16_t)t, (int32_t)lround(-3000.0 + 250.0 * x - 40.0 * x * x));
+	}
+	zassert_ok(esp_sdr_cal_eval(&q, 450, &ppb));
+	zassert_within(ppb, (int32_t)lround(-3000.0 + 250.0 * 1.5 - 40.0 * 2.25), 1);
+	zassert_ok(esp_sdr_cal_eval(&q, 150, &ppb));
+	zassert_within(ppb, (int32_t)lround(-3000.0 - 250.0 * 1.5 - 40.0 * 2.25), 1);
+
+	/* Three within 10 degC: a least-squares line, not a quadratic. */
+	struct esp_sdr_cal_record l = {0};
+
+	esp_sdr_cal_add_point(&l, 250, -4000);
+	esp_sdr_cal_add_point(&l, 280, -3700);
+	esp_sdr_cal_add_point(&l, 320, -3300);
+	zassert_ok(esp_sdr_cal_eval(&l, 300, &ppb));
+	zassert_within(ppb, -3500, 15);
+}

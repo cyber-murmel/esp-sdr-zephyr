@@ -330,13 +330,17 @@ int esp_sdr_tx_chain_on(unsigned int power)
 	txp.power = power;
 	esp_phy_wifi_tx_tone(1, txp.mhz, (TX_POWER_MAX - power) * TX_BACKOFF_STEP);
 	phy_stop_tx_tone(1);
+	esp_sdr_corr_refresh();
 #if defined(CONFIG_SOC_SERIES_ESP32C5)
 	/* The tone path tuned the exact MHz; the kHz offset as esp_sdr_tune() applies it. */
-	if (esp_sdr_fofs_khz != 0) {
-		phy_set_rf_freq_offset(phy_param[PHY_PARAM_XTAL], txp.mhz, esp_sdr_fofs_khz);
+	int32_t khz = esp_sdr_fofs_khz + esp_sdr_corr_khz(txp.mhz * 1000U + (uint32_t)esp_sdr_fofs_khz);
+
+	if (khz != 0) {
+		phy_set_rf_freq_offset(phy_param[PHY_PARAM_XTAL], txp.mhz, khz);
 	}
 #else
-	phy_set_freq(txp.mhz, esp_sdr_fofs_khz);
+	phy_set_freq(txp.mhz, esp_sdr_fofs_khz +
+				      esp_sdr_corr_khz(txp.mhz * 1000U + (uint32_t)esp_sdr_fofs_khz));
 #endif
 	return 0;
 }

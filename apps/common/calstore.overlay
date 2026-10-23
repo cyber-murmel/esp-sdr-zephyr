@@ -1,0 +1,26 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * The FAT volume "FLASH" on the storage partition, mounted at /FLASH: at boot, for the settings
+ * file of calstore.conf; for apps without a /FLASH: volume of their own.
+ */
+
+/ {
+	fat_disk: fat_disk {
+		compatible = "zephyr,flash-disk";
+		partition = <&storage_partition>;
+		disk-name = "FLASH";
+		cache-size = <4096>;
+	};
+
+	fstab {
+		compatible = "zephyr,fstab";
+
+		flash_fs: flash_fs {
+			compatible = "zephyr,fstab,fatfs";
+			mount-point = "/FLASH:";
+			disk-access;
+			automount;
+		};
+	};
+};

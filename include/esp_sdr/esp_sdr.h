@@ -146,6 +146,43 @@ uint32_t esp_sdr_get_freq(void);
  */
 int esp_sdr_set_freq_offset(int32_t khz);
 
+/** Largest crystal correction esp_sdr_set_freq_corr_ppb() takes, 50 ppm. */
+#define ESP_SDR_FREQ_CORR_MAX_PPB 50000
+
+/**
+ * @brief Correct every tuning for the crystal's error and retune.
+ *
+ * The LO and the sample clock come from one crystal; the correction scales
+ * what the PLL is asked for by 1 / (1 + ppb * 1e-9), in the whole kHz the
+ * vendor calls take (some 0.2 to 0.4 ppm of rounding left at 2.4 GHz). A
+ * correction other than 0 forces direct PLL tuning. esp_sdr_reset_settings()
+ * keeps it. With CONFIG_ESP_SDR_CALSTORE, esp_sdr_init() loads the stored one.
+ * A constant: it drops a temperature model (esp_sdr_set_freq_corr_model()).
+ *
+ * @param ppb The crystal's error in ppb, positive when the LO runs high, as
+ *        esp_sdr_lte_calibrate() measures it.
+ * @retval 0 on success, also before esp_sdr_init() (applied by it).
+ * @retval -EINVAL beyond ESP_SDR_FREQ_CORR_MAX_PPB.
+ * @retval -ERANGE as for esp_sdr_set_freq().
+ */
+int esp_sdr_set_freq_corr_ppb(int32_t ppb);
+
+/** @return The crystal correction in force in ppb (the model's at the last retune, if any). */
+int32_t esp_sdr_get_freq_corr_ppb(void);
+
+/**
+ * @brief Read the chip's die temperature (devicetree alias die-temp0).
+ *
+ * A reading is kept for a second, so frequent callers (every retune) cost nothing.
+ *
+ * @param dc Set to the temperature in 0.1 degC.
+ * @retval 0 on success.
+ * @retval -ENOTSUP without CONFIG_ESP_SDR_TEMP.
+ * @retval -ENODEV if the sensor is not ready.
+ * @retval other negative errno from the sensor.
+ */
+int esp_sdr_get_temp_dc(int16_t *dc);
+
 /**
  * @brief Set the channel bandwidth flag of the vendor tuning call (experimental).
  *

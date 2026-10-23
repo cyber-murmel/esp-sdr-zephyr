@@ -122,6 +122,8 @@ static void rx_front_end(bool retune, uint32_t settle_us)
 
 void esp_sdr_rx_prepare(void)
 {
+	/* Outside any regi2c critical section: the temperature sensor uses the bus too. */
+	esp_sdr_corr_refresh();
 	rx_front_end(true, SDR_RETUNE_SETTLE_US);
 }
 

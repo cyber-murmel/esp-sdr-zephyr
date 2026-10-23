@@ -447,7 +447,21 @@ extern struct k_mutex esp_sdr_lock;
 extern bool esp_sdr_ready;
 extern uint32_t esp_sdr_freq_mhz;
 extern int32_t esp_sdr_fofs_khz;
+/* Crystal correction (esp_sdr_set_freq_corr_ppb()). */
+extern int32_t esp_sdr_corr_ppb;
 
+/* The kHz to add to a PLL frequency of pll_khz for the crystal correction. */
+int32_t esp_sdr_corr_khz(uint32_t pll_khz);
+/* Set esp_sdr_corr_ppb from the temperature model, if any: full retunes only (it may read
+ * the sensor), lock held, outside regi2c critical sections. */
+void esp_sdr_corr_refresh(void);
+/* A calibration run holds esp_sdr_corr_ppb where it is (esp_sdr_lte.c). */
+extern bool esp_sdr_corr_frozen;
+struct esp_sdr_cal_record;
+/* The temperature model in force (no points: a constant, the record's ppb). */
+void esp_sdr_corr_model_get(struct esp_sdr_cal_record *rec);
+/* Load the stored correction into esp_sdr_corr_ppb (esp_sdr_calstore.c). */
+void esp_sdr_cal_apply_stored(void);
 /* Tune the LO to esp_sdr_freq_mhz (plus offset). */
 void esp_sdr_tune(void);
 /* The LO plan puts esp_sdr_freq_mhz behind the 5/6 divider (below 2210 MHz). */

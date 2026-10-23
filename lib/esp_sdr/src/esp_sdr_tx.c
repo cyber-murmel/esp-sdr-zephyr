@@ -68,6 +68,7 @@ static void tx_gain_apply(int step)
 
 void esp_sdr_tx_prepare(void)
 {
+	esp_sdr_corr_refresh();
 	esp_sdr_tx_front_end();
 	k_busy_wait(esp_sdr_turn_settle_us);
 }

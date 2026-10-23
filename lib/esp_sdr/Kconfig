@@ -308,6 +308,60 @@ config ESP_SDR_TX_DAC_LEADER_CPU
 
 endif # ESP_SDR_TX
 
+config ESP_SDR_TEMP
+	bool "Die temperature for the crystal calibration"
+	default y if ESP32_TEMP
+	depends on SENSOR && $(dt_alias_enabled,die-temp0)
+	help
+	  esp_sdr_get_temp_dc() reads the chip's temperature sensor (the
+	  devicetree alias die-temp0: apps/common/dietemp.overlay enables
+	  it). The calibration records the temperature with each
+	  measurement, and a correction fitted over several temperatures
+	  follows it whenever the radio tunes.
+
+config ESP_SDR_CALSTORE
+	bool "Crystal calibration in Zephyr settings"
+	depends on SETTINGS
+	help
+	  esp_sdr_cal_load(), esp_sdr_cal_save() and esp_sdr_cal_clear() keep
+	  the crystal correction under the settings key "esp_sdr/cal", and
+	  esp_sdr_init() applies the stored one before it first tunes. The
+	  app chooses the settings backend: apps/common/calstore.conf and
+	  calstore.overlay set up the file backend on a FAT volume in
+	  the storage partition.
+
+config ESP_SDR_LTE_CAL
+	bool "Crystal calibration against an LTE cell"
+	depends on ESP_SDR_RX_DECIM
+	help
+	  esp_sdr_lte_calibrate(): finds an LTE downlink, decodes its cell
+	  from the synchronization signals and measures the crystal's error
+	  from the carrier (include/esp_sdr/esp_sdr_lte.h). Takes heap for
+	  its work memory while it runs (ESP_SDR_LTE_CAL_FFT); on the C6,
+	  whose captures are 0.2 ms, 34 KiB of the SRAM above the capture
+	  bank, statically, and a few KiB of heap.
+
+if ESP_SDR_LTE_CAL
+
+config ESP_SDR_LTE_CAL_FFT
+	int "Largest transform of the estimator"
+	default 2048
+	range 1024 4096
+	help
+	  Points of the correlation transform, a power of two: a capture at
+	  2 MS/s may be this long less a symbol (2048: 0.95 ms, holding one
+	  synchronization signal pair). The work memory is 36 bytes a point
+	  (2048: 72 KiB); 4096 doubles the capture where the chip captures
+	  that long (S3 1 ms at most, C5 up to 4 ms).
+
+config HEAP_MEM_POOL_ADD_SIZE_ESP_SDR_LTE_CAL
+	int
+	default 4096 if SOC_SERIES_ESP32C6
+	default 81920 if ESP_SDR_LTE_CAL_FFT <= 2048
+	default 155648
+
+endif # ESP_SDR_LTE_CAL
+
 module = ESP_SDR
 module-str = esp_sdr
 source "subsys/logging/Kconfig.template.log_config"
