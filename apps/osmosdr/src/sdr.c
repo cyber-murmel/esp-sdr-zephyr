@@ -312,6 +312,19 @@ int usb_sdr_control_in(uint8_t req, uint16_t value, uint8_t *buf, size_t max)
 	case ESDR_REQ_GET_STATS:
 		memcpy(buf, &stats, MIN(max, sizeof(stats)));
 		return MIN(max, sizeof(stats));
+	case ESDR_REQ_GET_TEMP: {
+		int16_t dc;
+		int ret = esp_sdr_get_temp_dc(&dc);
+
+		if (ret != 0) {
+			return ret;
+		}
+		if (max < 2U) {
+			return -EINVAL;
+		}
+		sys_put_le16((uint16_t)dc, buf);
+		return 2;
+	}
 	default:
 		return -ENOTSUP;
 	}

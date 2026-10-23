@@ -95,6 +95,8 @@ little endian:
      - bit 0: offset tuning (default on)
    * - ``SET_DIGITAL_GAIN`` (0x0d)
      - dB in steps of 6 up to 42, or 0xffff: 24 dB at 8 bit, 0 at 16
+   * - ``GET_TEMP`` (0x18, in)
+     - die temperature in 0.1 degC, 2 bytes signed (-ENOTSUP without the sensor)
 
 Receive data comes in 4096-byte blocks on bulk IN: a 16-byte header
 (magic ``EBLK``, flags, sample count, index of the first sample on the
@@ -200,6 +202,6 @@ Limitations
 - Transmit interpolates linearly: images at multiples of the sample rate
   are only attenuated by the interpolator's sinc squared response.
 - Gains are uncalibrated PHY indices; the crystal error (several ppm) needs
-  ``SET_FREQ_CORR``.
+  ``SET_FREQ_CORR`` (``doc/lte-calibration.md`` measures it against an LTE cell).
 - No flash writes while streaming: the ring CPU runs with interrupts
   masked. DFU stops the stream first.

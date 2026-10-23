@@ -808,7 +808,7 @@ static int run_stream(struct stream *s, bool in, double seconds, double rate)
 static void usage(void)
 {
 	fprintf(stderr, "usage: esdr_usb [-s serial] info | test-in | test-out | rx | tx | trig |"
-			" gapless | chan | c6 | fw\n"
+			" gapless | chan | temp | c6 | fw\n"
 			"  [-t seconds] [-f Hz] [-r S/s] [-g gain|auto] [-d digital dB] [-b 4|8|16] [-B bw Hz]\n"
 			"  [-p ppb] [-n (no offset tuning)] [-o file] [-x Hz (retune half way)]\n"
 			"  tx: [-G step] (-i file | -T tone Hz [-a amplitude])\n"
@@ -1102,6 +1102,16 @@ int main(int argc, char **argv)
 		print_state();
 		if (s.out != NULL) {
 			fclose(s.out);
+		}
+	} else if (strcmp(cmd, "temp") == 0) {
+		uint8_t b[2];
+		int n = ctrl_in(ESDR_REQ_GET_TEMP, b, sizeof(b));
+
+		ret = n != (int)sizeof(b);
+		if (ret == 0) {
+			printf("temp %.1f C\n", (int16_t)(b[0] | b[1] << 8) / 10.0);
+		} else {
+			fprintf(stderr, "temp: %d\n", n);
 		}
 	} else if (strcmp(cmd, "c6") == 0) {
 		uint16_t secs = argc > 0 && seconds != 10 ? (uint16_t)seconds : 30;

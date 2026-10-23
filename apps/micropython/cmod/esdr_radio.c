@@ -15,6 +15,9 @@
  *   radio_state() -> dict      the radio's settings as it reports them (mode, freq, centre,
  *                              rx_gain, tx_gain, rate, bits, bandwidth); after an app ends
  *                              they are the radio's start settings again
+ *   temp() -> float            the radio chip's die temperature in degC (OSError without a
+ *                              sensor); over the link it briefly stops a running stream, read
+ *                              it between runs
  *   RATES, BURST_RATES (P4: 80, 40 MS/s, bursts of up to 16380 samples at 80 MS/s; ESP32:
  *                              80, 40, 16 MS/s; contiguous within a burst only, full scale
  *                              16384 as on the S3), FULL_SCALE (P4 streams: 128, ESP32: 16384),
@@ -203,6 +206,19 @@ static mp_obj_t esdr_radio_state_fn(void)
 	return d;
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(esdr_radio_state_obj, esdr_radio_state_fn);
+
+/* temp() -> float: the radio chip's die temperature in degC. */
+static mp_obj_t esdr_temp_fn(void)
+{
+	uint8_t b[2];
+	int ret;
+
+	need_radio();
+	ret = esdr_remote_request(ESDR_REQ_GET_TEMP, 0, NULL, 0, b, sizeof(b));
+	esdr_check(ret < 0 ? ret : ret == (int)sizeof(b) ? 0 : -EPROTO);
+	return mp_obj_new_float((mp_float_t)(int16_t)sys_get_le16(b) / 10);
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(esdr_temp_obj, esdr_temp_fn);
 
 static mp_obj_t esdr_rx_gain(size_t n_args, const mp_obj_t *args)
 {
@@ -913,6 +929,7 @@ static const mp_rom_map_elem_t esdr_globals_table[] = {
 	{MP_ROM_QSTR(MP_QSTR_rx_count), MP_ROM_PTR(&esdr_rx_count_obj)},
 	{MP_ROM_QSTR(MP_QSTR_rx_stats), MP_ROM_PTR(&esdr_rx_stats_obj)},
 	{MP_ROM_QSTR(MP_QSTR_radio_state), MP_ROM_PTR(&esdr_radio_state_obj)},
+	{MP_ROM_QSTR(MP_QSTR_temp), MP_ROM_PTR(&esdr_temp_obj)},
 	{MP_ROM_QSTR(MP_QSTR_tx_start), MP_ROM_PTR(&esdr_tx_start_obj)},
 	{MP_ROM_QSTR(MP_QSTR_tx_gen), MP_ROM_PTR(&esdr_tx_gen_obj)},
 	{MP_ROM_QSTR(MP_QSTR_tx_scale), MP_ROM_PTR(&esdr_tx_scale_obj)},

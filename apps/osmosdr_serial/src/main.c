@@ -1062,6 +1062,19 @@ static int handle_in(uint8_t r, uint8_t *buf, size_t max)
 	case ESDR_REQ_GET_STATS:
 		memcpy(buf, &stats, MIN(max, sizeof(stats)));
 		return (int)MIN(max, sizeof(stats));
+	case ESDR_REQ_GET_TEMP: {
+		int16_t dc;
+		int ret = esp_sdr_get_temp_dc(&dc);
+
+		if (ret != 0) {
+			return ret;
+		}
+		if (max < 2U) {
+			return -EINVAL;
+		}
+		sys_put_le16((uint16_t)dc, buf);
+		return 2;
+	}
 #if defined(CONFIG_ESP_SDR_GAPLESS)
 	case ESDR_REQ_GET_GAPLESS_STATS:
 		memcpy(buf, &gl_stats, MIN(max, sizeof(gl_stats)));

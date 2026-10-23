@@ -251,6 +251,19 @@ int esdr_remote_request(uint8_t req, uint16_t value, const void *data, uint16_t 
 		};
 		memcpy(reply, &st, MIN(reply_max, sizeof(st)));
 		return MIN(reply_max, sizeof(st));
+	case ESDR_REQ_GET_TEMP: {
+		int16_t dc;
+		int ret = esp_sdr_get_temp_dc(&dc);
+
+		if (ret != 0) {
+			return ret;
+		}
+		if (reply_max < 2U) {
+			return -EINVAL;
+		}
+		sys_put_le16((uint16_t)dc, reply);
+		return 2;
+	}
 	default:
 		return -ENOTSUP;
 	}

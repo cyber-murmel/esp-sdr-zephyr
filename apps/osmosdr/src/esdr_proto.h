@@ -120,6 +120,13 @@ enum esdr_req {
 	 * checks it, selects the image and restarts after the reply.
 	 */
 	ESDR_REQ_FW_END = 0x17,
+	/*
+	 * IN 2 bytes: the radio chip's die temperature in 0.1 degC (int16_t),
+	 * -ENOTSUP without a sensor. On the serial link, like any request, it
+	 * stops a running stream for a moment (one GAP block): read it between
+	 * runs.
+	 */
+	ESDR_REQ_GET_TEMP = 0x18,
 };
 
 #define ESDR_BURST_MAX 16380U
