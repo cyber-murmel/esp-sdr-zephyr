@@ -2,50 +2,9 @@
 
 mainmenu "ESP-SDR MicroPython"
 
-# The symbols of modules/micropython/ports/zephyr/Kconfig that mpy_port.cmake and
-# the port's sources use (USB and the file systems of MicroPython itself left out).
-menu "MicroPython Options"
-
-config MICROPY_CONFIGFILE
-	string "Configuration file"
-	default "mpconfigport_esdr.h"
-
-config MICROPY_HEAP_SIZE
-	int "Heap size"
-	default 131072
-
-config MICROPY_FROZEN_MODULES
-	bool "Enable Frozen Modules"
-	default y
-
-config MICROPY_FROZEN_MANIFEST
-	string "Path to Frozen Modules manifest.py"
-	depends on MICROPY_FROZEN_MODULES
-	default "manifest.py"
-
-choice MICROPY_CONFIG_ROM_LEVEL
-	prompt  "MicroPython Features level"
-	default MICROPY_CONFIG_ROM_LEVEL_EXTRA_FEATURES
-
-	config MICROPY_CONFIG_ROM_LEVEL_MINIMUM
-		bool "Disable all optional features"
-
-	config MICROPY_CONFIG_ROM_LEVEL_CORE_FEATURES
-		bool "Only enable core features"
-
-	config MICROPY_CONFIG_ROM_LEVEL_BASIC_FEATURES
-		bool "Enable most common features"
-
-	config MICROPY_CONFIG_ROM_LEVEL_EXTRA_FEATURES
-		bool "Enable convenience features"
-
-	config MICROPY_CONFIG_ROM_LEVEL_FULL_FEATURES
-		bool "Enable all common features"
-
-	config MICROPY_CONFIG_ROM_LEVEL_EVERYTHING
-		bool "Enable everything"
-
-endchoice
+# The MicroPython symbols (CONFIG_MICROPYTHON, CONFIG_MICROPY_*) are the module's
+# (modules/micropython/zephyr/Kconfig); these are the app's.
+menu "ESP-SDR MicroPython"
 
 config APP_EGGS
 	string "Bundled apps"
@@ -79,7 +38,7 @@ config APP_MP_PSRAM_HEAP_KB
 	  buffered here; the rest of the 8 MiB PSRAM is the Wi-Fi heap and the
 	  transmit ring.
 
-endmenu # MicroPython Options
+endmenu # ESP-SDR MicroPython
 
 rsource "../common/Kconfig"
 

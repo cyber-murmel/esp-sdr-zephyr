@@ -2,10 +2,11 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * Boot glue for MicroPython as the main program. The shared USB device (CDC-ACM console the
- * REPL talks to, DFU, watchdog) starts from here. The port's real_main() runs in its own
- * thread on CPU 0 with its stack in the SRAM above the ring banks: internal RAM, which flash
- * access needs (doc/hardware-quirks.md, Memory), but outside the DRAM image, which must end
- * below the ring banks. esdr_port_init() points MicroPython's stack check at that stack.
+ * REPL talks to, DFU, watchdog) starts from here. The port's main(), compiled as real_main()
+ * (CMakeLists.txt), runs in its own thread on CPU 0 with its stack in the SRAM above the ring
+ * banks: internal RAM, which flash access needs (doc/hardware-quirks.md, Memory), but outside
+ * the DRAM image, which must end below the ring banks. esdr_port_init() points MicroPython's
+ * stack check at that stack.
  */
 
 #include <zephyr/init.h>
@@ -19,9 +20,8 @@
 
 LOG_MODULE_REGISTER(boot, LOG_LEVEL_INF);
 
-/* The port's (main.c, src/zephyr_getchar.c). */
+/* The port's main() (main.c), which also hooks the REPL's input into the console driver. */
 int real_main(void);
-void zephyr_getchar_init(void);
 
 /* The port's real_main() calls this at every soft reset; app_usb.h has started USB once. */
 int mp_usbd_init(void)
@@ -63,8 +63,6 @@ SYS_INIT(boot, APPLICATION, 99);
 
 int main(void)
 {
-	/* REPL input: the console driver's receive hook. */
-	zephyr_getchar_init();
 	k_thread_create(&mp_thread, mp_stack, K_KERNEL_STACK_SIZEOF(mp_stack), mp_entry, NULL,
 			NULL, NULL, CONFIG_MAIN_THREAD_PRIORITY, K_FP_REGS, K_FOREVER);
 	k_thread_name_set(&mp_thread, "micropython");

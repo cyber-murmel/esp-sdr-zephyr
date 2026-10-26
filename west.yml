@@ -68,11 +68,12 @@ manifest:
       remote: espressif
       revision: 3c8ac0fdfec83740b783e200862c8d0c056de0ad
       path: modules/lib/esp-dsp
-    # MicroPython, with its Zephyr port as the application's main program
-    # (apps/micropython). v1.29.0.
+    # MicroPython as a Zephyr module: CONFIG_MICROPYTHON builds its Zephyr port as the
+    # micropython library, which provides main() (apps/micropython). The mp-lvgl branch, as
+    # cyber-murmel/mp-lvgl-example pins it (1.30.0-preview).
     - name: micropython
       remote: cyber-murmel
-      revision: 31471185d318a85a9db5b17e8b9ded792b8c7015
+      revision: e4eb8522af3a1580273125641ec53a538d4e9491 # mp-lvgl branch
       path: modules/micropython
     # The frozen modules' library (argparse, upysh, ...), where the port expects it.
     - name: micropython-lib

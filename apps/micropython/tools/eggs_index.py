@@ -3,7 +3,7 @@
 """Writes the index of the bundled apps: the metadata.json of every eggs/<app>/ as a Python
 module, eggs/__init__.py with INDEX = {app: metadata}. It is frozen with the apps, whose
 files cannot carry the JSON, so that the launcher lists them without importing them (an app
-runs when imported). mpy_port.cmake runs this at configure time; the file is rewritten only
+runs when imported). mpy_module.cmake runs this at configure time; the file is rewritten only
 when the index changes.
 
 usage: eggs_index.py [--only APP[,APP...]] EGGS_DIR OUT_FILE

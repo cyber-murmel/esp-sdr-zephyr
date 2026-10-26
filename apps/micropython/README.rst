@@ -6,10 +6,10 @@ micropython
 Overview
 ********
 
-MicroPython (upstream v1.29.0, its Zephyr port) as the main program of the XIAO ESP32S3, with a
-``gnuradio`` stand-in that runs flowgraphs exported from GNU Radio Companion unmodified: copy the
-``.py`` file GRC writes to the board and run it, or start it from the launcher's menu as an app
-(`Launcher and apps`_). The same app builds headless for the ESP32-C5-Zero, the bench's
+MicroPython (its Zephyr port, built by MicroPython's Zephyr module) as the main program of the
+XIAO ESP32S3, with a ``gnuradio`` stand-in that runs flowgraphs exported from GNU Radio Companion
+unmodified: copy the ``.py`` file GRC writes to the board and run it, or start it from the
+launcher's menu as an app (`Launcher and apps`_). The same app builds headless for the ESP32-C5-Zero, the bench's
 coordinator, which also drives the bench's RF switch (`The ESP32-C5 image`_).
 
 What runs:
@@ -480,10 +480,16 @@ leaves is the libc heap, and the radio only listens.
 How it is built
 ***************
 
-- The port is built into this app: ``mpy_port.cmake`` is derived from the port's
-  ``CMakeLists.txt``, which cannot be ``include()``\ d, and builds a corrected copy of the
-  port's ``zephyr_filesystem.c`` (two fstab entries; a volume stays mounted across soft resets
-  instead of being powered off and on). ``modules/micropython`` is unmodified upstream.
+- MicroPython is a Zephyr module, as in `mp-lvgl-example
+  <https://github.com/cyber-murmel/mp-lvgl-example>`__: ``CONFIG_MICROPYTHON`` builds its
+  Zephyr port as the ``micropython`` library, which provides ``main()``, with this app's
+  configuration header, manifest and C modules (``cmod/``). ``modules/micropython`` is the
+  ``mp-lvgl`` branch of cyber-murmel's fork, which the example pins. ``mpy_module.cmake``
+  changes the module's build where this app needs it: the bundled apps' index for the
+  manifest, the USB device left to the app, a copy of the port's ``zephyr_filesystem.c`` (a
+  volume stays mounted across soft resets instead of being powered off and on) and LVGL's
+  allocator replaced by ``src/lv_mem_mp.c``; on the S3s the port's ``main()`` is compiled as
+  ``real_main()`` for ``src/boot.c``.
 - MicroPython runs in its own thread with its stack in the SRAM above the receive ring's banks;
   the ring needs the DRAM image to end below them. Most of the Python heap (5 MiB) is PSRAM.
 - ``src/setjmp.S`` replaces the ROM's ``setjmp``, whose window spill traps into Zephyr on every
@@ -492,4 +498,4 @@ How it is built
 - ``prj.conf`` has what all boards share, ``socs/esp32s3_procpu.conf`` what both S3 boards
   share, ``boards/<board>.conf`` the rest; the C5 builds
   ``cmod/esdr_c5.c`` instead of the S3's engines and helpers, freezes ``manifest_c5.py`` and
-  runs MicroPython from the port's own ``main()``.
+  runs MicroPython from the port's own ``main()``, as the P4 and the classic ESP32 do.

@@ -34,7 +34,14 @@
 #define MICROPY_GC_SPLIT_HEAP               (1)
 void esdr_port_init(void);
 void esdr_port_deinit(void);
-#define MICROPY_PORT_INIT_FUNC              esdr_port_init()
+/* The port's main() sets a collection threshold of an eighth of its static heap, a few bytes
+ * to a few KiB here, where most of the heap is what esdr_port_init() adds: none, as gc_init()
+ * leaves it (gc.threshold() still sets one). */
+#define MICROPY_PORT_INIT_FUNC \
+	do { \
+		esdr_port_init(); \
+		MP_STATE_MEM(gc_alloc_threshold) = (size_t)-1; \
+	} while (0)
 #define MICROPY_PORT_DEINIT_FUNC            esdr_port_deinit()
 
 /* The network stack is only there for the Wi-Fi driver, which brings the radio up (the port

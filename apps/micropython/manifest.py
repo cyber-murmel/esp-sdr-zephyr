@@ -4,7 +4,7 @@
 # script support (signal, threading), from micropython-lib what GRC scripts import, and LVGL's
 # event loop helper.
 freeze("modules")
-# The bundled apps (eggs/<app>/, run from .frozen/eggs) and their index (mpy_port.cmake).
+# The bundled apps (eggs/<app>/, run from .frozen/eggs) and their index (mpy_module.cmake).
 freeze(".", "eggs")
 module("eggs/__init__.py", base_path="$(EGGS_INDEX_DIR)")
 require("argparse")

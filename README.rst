@@ -203,8 +203,8 @@ Dependencies
   unmodified): receiver helper headers
 - `esp-dsp <https://github.com/espressif/esp-dsp>`__: the FFT for
   ``apps/link`` OFDM
-- `MicroPython <https://github.com/micropython/micropython>`__ v1.29.0 and
-  micropython-lib, LVGL with
+- `MicroPython <https://github.com/cyber-murmel/micropython/tree/mp-lvgl>`__ (the
+  ``mp-lvgl`` branch, a Zephyr module) and micropython-lib, LVGL with
   `lv_binding_micropython <https://github.com/cyber-murmel/lv_binding_micropython>`__
   and pycparser: ``apps/micropython``
 
