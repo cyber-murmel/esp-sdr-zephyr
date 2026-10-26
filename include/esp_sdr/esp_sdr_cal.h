@@ -217,6 +217,33 @@ static inline int esp_sdr_cal_eval(const struct esp_sdr_cal_record *rec, int16_t
  */
 int esp_sdr_set_freq_corr_model(const struct esp_sdr_cal_record *rec);
 
+/**
+ * @brief The calibration in force: the record esp_sdr_set_freq_corr_model() took, or for a
+ * constant correction (esp_sdr_set_freq_corr_ppb()) a record without points of that ppb.
+ *
+ * @param rec Filled with it.
+ */
+void esp_sdr_get_freq_corr_model(struct esp_sdr_cal_record *rec);
+
+/**
+ * @brief Take a measured crystal error into the correction in force, and store it.
+ *
+ * With a temperature the measurement becomes a point of the model in force
+ * (esp_sdr_cal_add_point()), without one the constant correction (the points go). The result
+ * is applied (esp_sdr_set_freq_corr_model()) and, with CONFIG_ESP_SDR_CALSTORE, stored.
+ * esp_sdr_lte_calibrate() ends with it; a host that measures the error itself (the WHY2025
+ * badge's P4 for its C6) hands its measurement over the same way.
+ *
+ * @param meas The measurement: ppb, spread_ppb, carrier_khz, cell_id, estimates and temp_dc
+ *	       (ESP_SDR_CAL_TEMP_UNKNOWN for none); its points are not used.
+ * @param out Set to the record now in force, or NULL.
+ * @retval 0 if applied and stored.
+ * @retval -ENOTSUP if applied, without CONFIG_ESP_SDR_CALSTORE.
+ * @retval -EINVAL beyond ESP_SDR_FREQ_CORR_MAX_PPB: nothing changes.
+ * @retval other negative errno if applied but not stored.
+ */
+int esp_sdr_cal_update(const struct esp_sdr_cal_record *meas, struct esp_sdr_cal_record *out);
+
 #if defined(CONFIG_ESP_SDR_CALSTORE) || defined(__DOXYGEN__)
 /**
  * @brief Read the stored calibration (settings key "esp_sdr/cal").
@@ -295,6 +322,8 @@ struct esp_sdr_lte_result {
 	int captures;
 	/** Captures in which a cell decoded. */
 	int decoded;
+	/** Scan steps the LO does not reach (the VCO's window, through the 5/6 divider below 2210 MHz). */
+	int unreachable;
 	/** Chip temperature during the estimates, 0.1 degC, or ESP_SDR_CAL_TEMP_UNKNOWN. */
 	int temp_dc;
 	/** Its change from the first estimate to the last, 0.1 degC. */
@@ -313,14 +342,17 @@ struct esp_sdr_lte_result {
 /**
  * @brief Measure the crystal's error against an LTE cell and apply it.
  *
- * Steps the LO across the scan range by 1 MHz, ranks the steps by received power, then
- * captures at the strongest ones until a cell decodes (esp_sdr_lte_detect()), and collects
- * estimates from that cell. Their median, added to the correction in force, becomes the new
- * correction (esp_sdr_set_freq_corr_ppb()); with CONFIG_ESP_SDR_CALSTORE it is also stored.
+ * Steps the LO across the scan range by 1 MHz (steps the LO does not reach are left out: the
+ * S3 reaches down to about 1865 MHz, the C6 to about 1775), ranks the steps by received
+ * power, then captures at the strongest ones until a cell decodes (esp_sdr_lte_detect()), and collects
+ * estimates from that cell, each against where the LO is (esp_sdr_get_lo_residual_hz()).
+ * Their median, added to the correction in force, goes to esp_sdr_cal_update(): a point of the
+ * temperature model, applied and, with CONFIG_ESP_SDR_CALSTORE, stored.
  * Takes the radio for seconds to minutes and gives it back with the frequency and gain it had.
  * The S3 and the C5 capture 1 to 2 ms at a time, the C6 0.2 ms (80 MS/s only), so the C6
  * needs many more captures to catch the synchronization signals (every 5 ms).
- * Needs CONFIG_ESP_SDR_LTE_CAL.
+ * Needs CONFIG_ESP_SDR_LTE_CAL, and about 9 KiB of stack in the calling thread (rfprobe's shell
+ * thread peaks at 11.6 KiB with it on the S3).
  *
  * @param scan What to search; NULL for ESP_SDR_LTE_SCAN_DEFAULT.
  * @param res Filled with the outcome.

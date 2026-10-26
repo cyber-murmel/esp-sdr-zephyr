@@ -1250,9 +1250,9 @@ static int cmd_cal_lte(const struct shell *sh, size_t argc, char **argv)
 	ret = esp_sdr_lte_calibrate(&scan, &res);
 	shell_print(sh,
 		    "cal ret %d ppb %d delta %d spread %d cell %d carrier %u kHz estimates %d "
-		    "captures %d decoded %d in %lld ms",
+		    "captures %d decoded %d unreachable %d in %lld ms",
 		    ret, res.ppb, res.delta_ppb, res.spread_ppb, res.cell_id, res.carrier_khz,
-		    res.estimates, res.captures, res.decoded, k_uptime_get() - t0);
+		    res.estimates, res.captures, res.decoded, res.unreachable, k_uptime_get() - t0);
 	char d[16];
 
 	shell_print(sh, "cal temp %s C drift %s C points %d", temp_str(t, sizeof(t), res.temp_dc),
@@ -1273,7 +1273,8 @@ static int cmd_cal_show(const struct shell *sh, size_t argc, char **argv)
 
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
-	shell_print(sh, "cal ppb %d temp %s C", esp_sdr_get_freq_corr_ppb(),
+	shell_print(sh, "cal ppb %d lo residual %d Hz temp %s C", esp_sdr_get_freq_corr_ppb(),
+		    esp_sdr_get_lo_residual_hz(),
 		    temp_str(t, sizeof(t), have_t ? dc : ESP_SDR_CAL_TEMP_UNKNOWN));
 	if (ret != 0) {
 		shell_print(sh, "stored none (%d)", ret);
@@ -1300,10 +1301,8 @@ static int cmd_cal_set(const struct shell *sh, size_t argc, char **argv)
 		.cell_id = -1,
 		.temp_dc = ESP_SDR_CAL_TEMP_UNKNOWN,
 	};
-	int ret = esp_sdr_set_freq_corr_ppb(rec.ppb);
-	int st = esp_sdr_cal_save(&rec);
 
-	shell_print(sh, "cal set %d ret %d store %d", rec.ppb, ret, st);
+	shell_print(sh, "cal set %d ret %d", rec.ppb, esp_sdr_cal_update(&rec, NULL));
 	return 0;
 }
 

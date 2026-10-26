@@ -136,9 +136,12 @@ int esp_sdr_set_freq(uint32_t mhz);
 uint32_t esp_sdr_get_freq(void);
 
 /**
- * @brief Set a PLL offset in kHz and retune.
+ * @brief Set an offset in kHz from the whole MHz (esp_sdr_set_freq()) and retune.
  *
- * A non-zero offset forces direct PLL tuning, also on Wi-Fi channel frequencies.
+ * An offset at the RF: below 2210 MHz, where the LO is the PLL through a 5/6 divider, the PLL
+ * moves 6/5 of it, to the nearest kHz together with the crystal correction
+ * (esp_sdr_get_lo_residual_hz() tells the rest). A non-zero offset forces direct PLL tuning,
+ * also on Wi-Fi channel frequencies.
  *
  * @retval 0 on success.
  * @retval -ERANGE as for esp_sdr_set_freq().
@@ -169,6 +172,19 @@ int esp_sdr_set_freq_corr_ppb(int32_t ppb);
 
 /** @return The crystal correction in force in ppb (the model's at the last retune, if any). */
 int32_t esp_sdr_get_freq_corr_ppb(void);
+
+/**
+ * @brief How far from the frequency asked for the correction leaves the LO.
+ *
+ * The vendor tuning calls take whole kHz at the PLL (the classic ESP32's ROM 1/1024 MHz after
+ * that), so a correction lands up to 500 Hz there (417 Hz at the RF below 2210 MHz, through the
+ * 5/6 divider) from where it should, even when it is right. This is that remainder for the
+ * current tuning, by the correction in force: an app can shift its samples by it, or report
+ * the centre it gives.
+ *
+ * @return The LO's offset from the frequency asked for, in Hz at the RF, positive when above.
+ */
+int32_t esp_sdr_get_lo_residual_hz(void);
 
 /**
  * @brief Read the chip's die temperature (devicetree alias die-temp0).

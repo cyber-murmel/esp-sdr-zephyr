@@ -333,14 +333,22 @@ int esp_sdr_tx_chain_on(unsigned int power)
 	esp_sdr_corr_refresh();
 #if defined(CONFIG_SOC_SERIES_ESP32C5)
 	/* The tone path tuned the exact MHz; the kHz offset as esp_sdr_tune() applies it. */
-	int32_t khz = esp_sdr_fofs_khz + esp_sdr_corr_khz(txp.mhz * 1000U + (uint32_t)esp_sdr_fofs_khz);
+	uint64_t want = (uint64_t)txp.mhz * 1000000U + (int64_t)esp_sdr_fofs_khz * 1000;
+	int64_t exact;
+	int32_t khz = esp_sdr_pll_khz(want, txp.mhz * 1000U, &exact);
 
+	esp_sdr_tuned((int64_t)txp.mhz * 1000000 + (int64_t)khz * 1000 - exact, false);
 	if (khz != 0) {
 		phy_set_rf_freq_offset(phy_param[PHY_PARAM_XTAL], txp.mhz, khz);
 	}
 #else
-	phy_set_freq(txp.mhz, esp_sdr_fofs_khz +
-				      esp_sdr_corr_khz(txp.mhz * 1000U + (uint32_t)esp_sdr_fofs_khz));
+	/* The tone path tunes the PLL to the RF itself, not through the 5/6 divider. */
+	uint64_t want = (uint64_t)txp.mhz * 1000000U + (int64_t)esp_sdr_fofs_khz * 1000;
+	int64_t exact;
+	int32_t khz = esp_sdr_pll_khz(want, txp.mhz * 1000U, &exact);
+
+	esp_sdr_tuned((int64_t)txp.mhz * 1000000 + (int64_t)khz * 1000 - exact, false);
+	phy_set_freq(txp.mhz, khz);
 #endif
 	return 0;
 }

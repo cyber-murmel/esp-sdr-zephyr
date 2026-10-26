@@ -114,31 +114,42 @@ static int cmp_i32(const void *a, const void *b)
 	return (x > y) - (x < y);
 }
 
+/* A step the LO does not reach (esp_sdr_set_freq() -ERANGE): no power measured. */
+#define PW_UNREACHABLE (-1.0f)
+
 /*
  * The order to search the LO steps in: a downlink carrier is 5 to 20 MHz wide and its
  * synchronization signals sit at its centre, so take runs of steps well above the median
- * power, strongest run first, and each run from its centre outwards.
+ * power of the reachable ones, strongest run first, and each run from its centre outwards.
  */
 static size_t search_order(const float *pw, size_t steps, uint16_t *order, size_t max)
 {
 	float *sorted = k_malloc(steps * sizeof(float));
 	float thr;
-	size_t n = 0;
+	size_t n = 0, measured = 0;
 
 	if (sorted == NULL) {
 		return 0;
 	}
-	memcpy(sorted, pw, steps * sizeof(float));
-	for (size_t i = 1; i < steps; i++) {
-		float v = sorted[i];
-		size_t j = i;
+	for (size_t i = 0; i < steps; i++) {
+		float v = pw[i];
+		size_t j = measured;
 
+		if (v < 0.0f) {
+			continue;
+		}
 		for (; j > 0 && sorted[j - 1] > v; j--) {
 			sorted[j] = sorted[j - 1];
 		}
 		sorted[j] = v;
+		measured++;
 	}
-	thr = 4.0f * sorted[steps / 2]; /* 6 dB over the median */
+	if (measured == 0U) {
+		k_free(sorted);
+		return 0;
+	}
+	/* 6 dB over the median; an unreachable step (below 0) never passes it. */
+	thr = MAX(4.0f * sorted[measured / 2], 0.0f);
 	k_free(sorted);
 
 	bool *used = k_calloc(steps, sizeof(bool));
@@ -253,10 +264,12 @@ int esp_sdr_lte_calibrate(const struct esp_sdr_lte_scan *scan, struct esp_sdr_lt
 		goto out;
 	}
 
-	/* Survey: received power at each LO step. */
+	/* Survey: received power at each LO step the chip reaches. */
 	for (size_t s = 0; s < steps; s++) {
 		ret = esp_sdr_set_freq(scan->start_mhz + s);
 		if (ret == -ERANGE) {
+			pw[s] = PW_UNREACHABLE;
+			res->unreachable++;
 			continue;
 		}
 		if (ret != 0) {
@@ -272,18 +285,22 @@ int esp_sdr_lte_calibrate(const struct esp_sdr_lte_scan *scan, struct esp_sdr_lt
 		}
 	}
 	n_order = search_order(pw, steps, order, MAX(scan->candidates, 1U));
-	LOG_INF("LTE survey %u to %u MHz: %u places to search", scan->start_mhz, scan->stop_mhz,
+	LOG_INF("LTE survey %u to %u MHz: %u steps out of the LO's reach, %u places to search",
+		scan->start_mhz, scan->stop_mhz, (unsigned int)res->unreachable,
 		(unsigned int)n_order);
 
 	/* Search: captures at each place until a cell decodes, then estimates from that cell. */
 	for (size_t o = 0; o < n_order && n_est < scan->estimates; o++) {
 		uint32_t mhz = scan->start_mhz + order[o];
 		int budget = scan->tries;
+		/* Where the LO is: the correction in force, rounded to whole kHz, leaves a rest. */
+		double lo_hz;
 
 		ret = esp_sdr_set_freq(mhz);
 		if (ret != 0) {
 			continue;
 		}
+		lo_hz = (double)mhz * 1e6 + (double)esp_sdr_get_lo_residual_hz();
 		for (int t = 0; t < budget && n_est < scan->estimates; t++) {
 			struct esp_sdr_lte_cell cell;
 			double raster;
@@ -293,13 +310,15 @@ int esp_sdr_lte_calibrate(const struct esp_sdr_lte_scan *scan, struct esp_sdr_lt
 				goto out;
 			}
 			res->captures++;
+			/* A cell decoded with margin whose reference signals cohere: an SSS alone
+			 * decodes "cells" on noise now and then. */
 			if (esp_sdr_lte_detect((const struct esp_sdr_lte_iq *)c.buf, c.n, LTE_FS,
 					       LTE_MAX_OFS, LTE_MIN_RATIO, &c.w, &cell) != 0 ||
-			    !cell.valid) {
+			    !cell.valid || cell.crs_symbols == 0) {
 				continue;
 			}
 			res->decoded++;
-			double ppb = esp_sdr_lte_ppb((double)mhz * 1e6, cell.offset_hz, &raster);
+			double ppb = esp_sdr_lte_ppb(lo_hz, cell.offset_hz, &raster);
 
 			if (found_cell < 0) {
 				found_cell = cell.cell_id;
@@ -346,28 +365,23 @@ int esp_sdr_lte_calibrate(const struct esp_sdr_lte_scan *scan, struct esp_sdr_lt
 	}
 
 	/* The model in force plus this point (without a temperature: a constant). */
-	esp_sdr_corr_model_get(&rec);
-	rec.ppb = res->ppb;
-	rec.spread_ppb = res->spread_ppb;
-	rec.carrier_khz = res->carrier_khz;
-	rec.cell_id = (int16_t)res->cell_id;
-	rec.estimates = (uint16_t)res->estimates;
-	rec.temp_dc = (int16_t)res->temp_dc;
-	if (res->temp_dc != ESP_SDR_CAL_TEMP_UNKNOWN) {
-		esp_sdr_cal_add_point(&rec, (int16_t)res->temp_dc, res->ppb);
-	} else {
-		rec.points = 0U;
-	}
-	res->points = rec.points;
+	rec = (struct esp_sdr_cal_record){
+		.ppb = res->ppb,
+		.spread_ppb = res->spread_ppb,
+		.carrier_khz = res->carrier_khz,
+		.cell_id = (int16_t)res->cell_id,
+		.estimates = (uint16_t)res->estimates,
+		.temp_dc = (int16_t)res->temp_dc,
+	};
 	esp_sdr_corr_frozen = false;
-	ret = esp_sdr_set_freq_corr_model(&rec);
-	if (ret != 0 && ret != -ERANGE) {
+	ret = esp_sdr_cal_update(&rec, &rec);
+	if (ret == -EINVAL) {
 		goto out;
 	}
-	ret = esp_sdr_cal_save(&rec);
 	if (ret != 0 && ret != -ENOTSUP) {
 		LOG_WRN("calibration not stored: %d", ret);
 	}
+	res->points = rec.points;
 	ret = 0;
 out:
 	esp_sdr_corr_frozen = false;

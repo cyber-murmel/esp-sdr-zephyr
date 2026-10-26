@@ -3,9 +3,12 @@
 cmake_minimum_required(VERSION 3.20.0)
 
 # The crystal calibration ("probe cal") kept in settings on the storage partition, with the
-# die temperature ("probe temp").
-list(APPEND EXTRA_CONF_FILE ${CMAKE_CURRENT_LIST_DIR}/../common/calstore.conf)
-list(APPEND EXTRA_DTC_OVERLAY_FILE ${CMAKE_CURRENT_LIST_DIR}/../common/calstore.overlay)
+# die temperature ("probe temp"). Not the settings volume on the ESP32-C5-Zero: its SRAM has
+# no room for it beside the calibration's work memory (its board file keeps the sensor).
+if(NOT BOARD MATCHES "^waveshare_esp32c5_zero")
+  list(APPEND EXTRA_CONF_FILE ${CMAKE_CURRENT_LIST_DIR}/../common/calstore.conf)
+  list(APPEND EXTRA_DTC_OVERLAY_FILE ${CMAKE_CURRENT_LIST_DIR}/../common/calstore.overlay)
+endif()
 list(APPEND EXTRA_DTC_OVERLAY_FILE ${CMAKE_CURRENT_LIST_DIR}/../common/dietemp.overlay)
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
