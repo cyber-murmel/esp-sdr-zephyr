@@ -216,7 +216,7 @@ class _List(_Band):
         rows = h // 10
         for r, (off, start, length, peak) in enumerate(reversed(s.bursts[-rows:])):
             fb.text("{:+6.1f} MHz {:8.1f} us {:6.1f} dB".format(off / 1e6, length * 1e6, peak),
-                    x + 2, y + 1 + 10 * r, _gui.FG if peak > level - 50 else _gui.DIM)
+                    x + 2, y + 1 + 10 * r, _gui.FG if peak > level - 50 else _gui.MUTED)
 
 
 class _Burst(_Band):

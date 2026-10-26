@@ -52,7 +52,9 @@ What runs:
        ``/SD:/tmp/rx.fc32``), readable with ``numpy.fromfile()``
    * - ``qtgui.freq_sink_c``, ``waterfall_sink_c``, ``time_sink_c``, ``const_sink_c``
      - drawn on the ST7789V display (LVGL canvases filled by C helpers), placed as the
-       export's layouts place them
+       export's layouts place them, in the board's colours (``modules/dusk.py``, derived in
+       OkLab by ``tools/dusk.py``): a waterfall uses its heat scale, dark purple through
+       orange to near white, whatever colour map the export sets
    * - QT GUI Range, Chooser (combo box and radio buttons), Check Box, Push Button, Label,
        Entry (shown, not editable)
      - LVGL widgets; the rotary encoder moves between them (turn), its switch edits or

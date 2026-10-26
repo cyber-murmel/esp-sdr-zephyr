@@ -7,6 +7,7 @@ Chooser, Check Box, Push Button, Label and Entry blocks. A QTabWidget shows one 
 a QScrollArea does not scroll (what does not fit is cut off). Styling and whatever else has no
 use here is accepted and ignored."""
 
+import dusk
 from PyQt5._nothing import Nothing
 from gnuradio import _gui, _layout
 
@@ -119,9 +120,10 @@ class QTabWidget(QWidget):
             b = lv.button(parent)
             b.set_size(x1 - x0 - 2, ROW - 2)
             b.set_pos(x + x0, y + 1)
-            if i == self._cur:
-                b.set_style_bg_color(lv.color_hex(0x2060C0), 0)
             label = lv.label(b)
+            if i == self._cur:
+                b.set_style_bg_color(lv.color_hex(dusk.ACCENT), 0)
+                label.set_style_text_color(lv.color_hex(dusk.ON_ACCENT), 0)
             label.set_text(name[: (x1 - x0) // 8])
             label.center()
             _gui.on(b, lv.EVENT.CLICKED, self._select(i))

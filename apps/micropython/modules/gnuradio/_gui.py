@@ -15,6 +15,7 @@ the display's place (gnuradio/_console.py)."""
 
 import time
 
+import dusk
 import esdr
 from gnuradio import _layout as _layout_mod
 
@@ -31,28 +32,17 @@ def rgb(r, g, b):
     return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
 
 
-BG = rgb(0, 0, 0)
-FG = rgb(220, 220, 220)
-DIM = rgb(60, 60, 60)
-TRACE = (rgb(80, 160, 255), rgb(255, 80, 80), rgb(80, 220, 80), rgb(255, 255, 255))
-
-
-def _palette():
-    # Black, blue, cyan, yellow, red, white: GNU Radio's multi-colour waterfall map.
-    stops = ((0, 0, 0), (0, 0, 200), (0, 200, 255), (255, 255, 0), (255, 0, 0), (255, 255, 255))
-    import array
-
-    pal = array.array("H", [0] * 64)
-    for k in range(64):
-        f = k * (len(stops) - 1) / 63
-        i = min(int(f), len(stops) - 2)
-        t = f - i
-        a, b = stops[i], stops[i + 1]
-        pal[k] = rgb(*(int(a[j] + (b[j] - a[j]) * t) for j in range(3)))
-    return pal
-
-
-PALETTE = _palette()
+# Dusk's colours (dusk.py): text, dimmed text, grid lines, traces, the waterfalls' heat scale.
+# The scale's gamma: a linear one spends most of the colours on the noise; at 2 the lower half
+# of the intensity range stays in the dark purples and the signals above it light up
+# (waterfall_sink_c.set_gamma() changes a sink's own).
+BG = dusk.rgb565(dusk.BG)
+FG = dusk.rgb565(dusk.TEXT)
+MUTED = dusk.rgb565(dusk.MUTED)
+DIM = dusk.rgb565(dusk.LINE)
+TRACE = tuple(dusk.rgb565(c) for c in dusk.TRACES)
+GAMMA = 2.0
+PALETTE = dusk.heat(gamma=GAMMA)
 
 _sinks = []
 _vars = []
@@ -195,14 +185,15 @@ def _up():
 
         ZDD.init()
     lv = lvgl
+    dusk.theme(lv)
     _scr = lv.screen_active()
     # What does not fit below the header (a short display) scrolls into view when the knob or
     # keyboard focuses it.
     _scr.add_flag(lv.obj.FLAG.SCROLLABLE)
     _scr.set_scroll_dir(lv.DIR.VER)
     _scr.set_scrollbar_mode(lv.SCROLLBAR_MODE.OFF)
-    _scr.set_style_bg_color(lv.color_hex(0), 0)
-    _scr.set_style_text_color(lv.color_hex(0xDCDCDC), 0)
+    _scr.set_style_bg_color(lv.color_hex(dusk.BG), 0)
+    _scr.set_style_text_color(lv.color_hex(dusk.TEXT), 0)
     _scr.set_style_pad_all(0, 0)
     _group = lv.group_create()
     _group.set_default()

@@ -10,6 +10,7 @@ import array
 import framebuf
 import time
 
+import dusk
 import esdr
 from gnuradio import _gui, gr
 from PyQt5._nothing import Nothing
@@ -219,10 +220,16 @@ class waterfall_sink_c(_spectrum):
         super().__init__("waterfall_sink_c", "c", size, wintype, fc, bw, name)
         self._imin = -140.0
         self._imax = 10.0
+        self._palette = _gui.PALETTE
 
     def set_intensity_range(self, imin, imax):
+        # An upper level at or below the lower one (two sliders crossed) leaves 1 dB.
         self._imin = float(imin)
-        self._imax = float(imax)
+        self._imax = max(float(imax), self._imin + 1.0)
+
+    def set_gamma(self, gamma):
+        """Not in GNU Radio: the heat scale's gamma for this sink (_gui.GAMMA by default)."""
+        self._palette = dusk.heat(gamma=float(gamma))
 
     def set_frequency_range(self, fc, bw):
         # A retune keeps the history: only the label changes.
@@ -236,14 +243,15 @@ class waterfall_sink_c(_spectrum):
         super()._setup()
         fb = self._fbo
         x, y, w, h = self._plot()
-        fb.fill_rect(x, y, w, h, _gui.BG)
+        # The cold end of the scale, so the first rows scroll in over the same colour.
+        fb.fill_rect(x, y, w, h, self._palette[0])
 
     def _draw(self):
         self._spectrum()
         buf = self._buf
         x, y, w, h = self._plot()
         esdr.fb_scroll(buf, self._w, x, y, w, h)
-        esdr.fb_wf_row(buf, self._w, x, y, w, 1, self._cols, self._imin, self._imax, _gui.PALETTE)
+        esdr.fb_wf_row(buf, self._w, x, y, w, 1, self._cols, self._imin, self._imax, self._palette)
 
 
 class time_sink_c(_sink):
@@ -429,6 +437,8 @@ class RangeWidget:
         sl.set_pos(x + w - max(40, w // 2 - 10) - 10, y + 9)
         sl.set_range(0, self.steps)
         sl.set_value(self.index, False)
+        for part in (lv.PART.INDICATOR, lv.PART.KNOB):
+            sl.set_style_bg_color(lv.color_hex(dusk.ACCENT), part)
         _gui.on(sl, lv.EVENT.VALUE_CHANGED, self._turned, sl.get_value, latest=True)
         _gui.add_to_group(sl)
         self._slider = sl

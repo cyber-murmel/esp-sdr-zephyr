@@ -21,6 +21,7 @@ import os
 import sys
 import time
 
+import dusk
 import esdr
 
 # Where the apps are, in menu order, and what the menu calls the place.
@@ -34,9 +35,6 @@ if not W:
     W, H = 320, 240
 HEADER = 20
 FOOTER = 54
-FG = 0xDCDCDC
-DIM = 0x8C8C8C
-FOCUS = 0x1F4E8C
 
 _group = None
 _handoff = False  # start() or home() is soft-resetting
@@ -236,11 +234,12 @@ def _up():
         import ZDD
 
         ZDD.init()
+    dusk.theme(lv)
     scr = lv.screen_active()
     scr.clean()
     scr.remove_flag(lv.obj.FLAG.SCROLLABLE)
-    scr.set_style_bg_color(lv.color_hex(0), 0)
-    scr.set_style_text_color(lv.color_hex(FG), 0)
+    scr.set_style_bg_color(lv.color_hex(dusk.BG), 0)
+    scr.set_style_text_color(lv.color_hex(dusk.TEXT), 0)
     scr.set_style_pad_all(0, 0)
     if _group is None:
         _group = lv.group_create()
@@ -275,13 +274,13 @@ def _menu(focus):
     head.set_pos(6, 2)
     count = lv.label(scr)
     count.set_text("{} app{}".format(len(found), "" if len(found) == 1 else "s"))
-    count.set_style_text_color(lv.color_hex(DIM), 0)
+    count.set_style_text_color(lv.color_hex(dusk.MUTED), 0)
     count.align(lv.ALIGN.TOP_RIGHT, -6, 2)
 
     lst = lv.list(scr)
     lst.set_pos(0, HEADER)
     lst.set_size(W, H - HEADER - FOOTER)
-    lst.set_style_bg_color(lv.color_hex(0), 0)
+    lst.set_style_bg_color(lv.color_hex(dusk.BG), 0)
     lst.set_style_border_width(0, 0)
     lst.set_style_radius(0, 0)
     lst.set_style_pad_all(0, 0)
@@ -295,7 +294,7 @@ def _menu(focus):
     about.set_long_mode(lv.label.LONG_MODE.DOTS)
     origin = lv.label(scr)
     origin.set_pos(6, H - 18)
-    origin.set_style_text_color(lv.color_hex(DIM), 0)
+    origin.set_style_text_color(lv.color_hex(dusk.MUTED), 0)
 
     def show(app):
         about.set_text(str(app["description"]))
@@ -314,17 +313,17 @@ def _menu(focus):
             section = _section(app)
             title = section or "other"
             t = lst.add_text(title[:1].upper() + title[1:])
-            t.set_style_bg_color(lv.color_hex(0x1A1A1A), 0)
-            t.set_style_text_color(lv.color_hex(DIM), 0)
+            t.set_style_bg_color(lv.color_hex(dusk.SURFACE), 0)
+            t.set_style_text_color(lv.color_hex(dusk.MUTED), 0)
         b = lst.add_button(None, str(app["name"]))
-        b.set_style_bg_color(lv.color_hex(0), 0)
-        b.set_style_text_color(lv.color_hex(FG), 0)
+        b.set_style_bg_color(lv.color_hex(dusk.BG), 0)
+        b.set_style_text_color(lv.color_hex(dusk.TEXT), 0)
         b.set_style_border_width(0, 0)
         b.set_style_radius(0, 0)
         b.set_style_pad_left(14, 0)
         for state in (lv.STATE.FOCUSED, lv.STATE.FOCUS_KEY):
-            b.set_style_bg_color(lv.color_hex(FOCUS), state)
-            b.set_style_text_color(lv.color_hex(0xFFFFFF), state)
+            b.set_style_bg_color(lv.color_hex(dusk.ACCENT), state)
+            b.set_style_text_color(lv.color_hex(dusk.ON_ACCENT), state)
             b.set_style_outline_width(0, state)
         b.add_event_cb(lambda e, a=app: show(a), lv.EVENT.FOCUSED, None)
         b.add_event_cb(lambda e, a=app: chosen.append(a), lv.EVENT.SHORT_CLICKED, None)
@@ -358,7 +357,7 @@ def _running(lv, name):
     t.align(lv.ALIGN.CENTER, 0, -12)
     hint = lv.label(scr)
     hint.set_text("Hold the knob to stop")
-    hint.set_style_text_color(lv.color_hex(DIM), 0)
+    hint.set_style_text_color(lv.color_hex(dusk.MUTED), 0)
     hint.align(lv.ALIGN.CENTER, 0, 12)
     lv.refr_now(None)
 
@@ -373,7 +372,7 @@ def _error(name, e):
         scr = lv.screen_active()
         head = lv.label(scr)
         head.set_text("{} stopped".format(name))
-        head.set_style_text_color(lv.color_hex(0xFF6060), 0)
+        head.set_style_text_color(lv.color_hex(dusk.ERROR), 0)
         head.set_pos(8, 8)
         msg = lv.label(scr)
         msg.set_pos(8, 34)
@@ -404,9 +403,9 @@ def _banner(text):
         b = lv.label(lv.screen_active())
         b.set_width(W)
         b.set_text(text)
-        b.set_style_bg_color(lv.color_hex(0x5A3A00), 0)
+        b.set_style_bg_color(lv.color_hex(dusk.WARN), 0)
         b.set_style_bg_opa(lv.OPA.COVER, 0)
-        b.set_style_text_color(lv.color_hex(0xFFFFFF), 0)
+        b.set_style_text_color(lv.color_hex(dusk.TEXT), 0)
         b.set_style_pad_all(4, 0)
         b.align(lv.ALIGN.BOTTOM_MID, 0, 0)
         lv.refr_now(None)
