@@ -9,8 +9,9 @@
  * A base station's carrier is accurate to a small fraction of a ppm and sits on the 100 kHz
  * channel raster, so where a cell's carrier shows up in a capture tells how far the receiver's
  * crystal is off. This finds the primary synchronization signal (PSS) in a capture of about
- * 2 MS/s, decodes the cell with the secondary one (SSS) and measures the carrier offset from
- * the phase between the two symbols (frequency division duplex, normal cyclic prefix).
+ * 2 MS/s, decodes the cell with the secondary one (SSS), measures the carrier offset from the
+ * phase between the two symbols, then refines it from how the phase of the cell's reference
+ * signals (CRS) turns over the capture (frequency division duplex, normal cyclic prefix).
  *
  * Header only, plain C and libm without Zephyr, like esp_sdr_dsp.h, so that the library, host
  * tools and the native_sim tests share it. The caller supplies the work memory.
@@ -57,7 +58,10 @@ struct esp_sdr_lte_iq {
 
 /** Work memory: carve it from the floats of esp_sdr_lte_work_init(). */
 struct esp_sdr_lte_work {
-	/** Transform size, a power of two of at least the capture length plus a symbol. */
+	/**
+	 * Transform size, a power of two. The PSS search looks at the first n_fft less a symbol
+	 * of the capture: more than 5 ms (16384 at 2 MS/s) always holds a PSS.
+	 */
 	uint32_t n_fft;
 	/** The capture's spectrum. */
 	float *xr, *xi;
@@ -86,6 +90,8 @@ struct esp_sdr_lte_cell {
 	int half;
 	/** Carrier offset from the receiver's centre frequency in Hz. */
 	double offset_hz;
+	/** The offset from the synchronization signals alone (PSS-to-SSS phase). */
+	double offset_sync_hz;
 	/** Start of the first PSS symbol's useful part, in samples (fractional). */
 	double timing;
 	/** Strongest PSS correlation over the mean of the capture (a detection ratio). */
@@ -100,6 +106,13 @@ struct esp_sdr_lte_cell {
 	int pairs;
 	/** Cell decoded with a clear margin. */
 	int valid;
+	/**
+	 * Reference signal symbols the fine offset came from; 0 when they did not hold together,
+	 * and offset_hz is offset_sync_hz.
+	 */
+	int crs_symbols;
+	/** Coherence of the reference signals 0.5 ms apart (1 = perfect, noise about 0.1). */
+	float crs_metric;
 };
 
 /** One PSS found by esp_sdr_lte_pss_search(). */
@@ -236,6 +249,58 @@ static inline void esp_sdr_lte_sss(int n_id1, int n_id2, int half, float *d)
 	}
 }
 
+/*
+ * Demodulate subcarriers kk[] (units of 15 kHz from the carrier) of one symbol, the capture's DC
+ * (dc_i, dc_q) taken off first. See esp_sdr_lte_demod().
+ */
+static inline int lte_demod_sc(const struct esp_sdr_lte_iq *x, size_t n, double fs, double start,
+			       double f_hz, float dc_i, float dc_q, const int *kk, int count,
+			       float *yr, float *yi)
+{
+	size_t len = esp_sdr_lte_symbol_len(fs);
+	long first = (long)ceil(start - 1e-9);
+	float zr[ESP_SDR_LTE_L_MAX], zi[ESP_SDR_LTE_L_MAX];
+
+	if (first < 0 || (size_t)first + len > n || len > ESP_SDR_LTE_L_MAX) {
+		return -ERANGE;
+	}
+	double w = -ESP_SDR_TAU * f_hz / fs;
+	float cs = cosf((float)w), sn = sinf((float)w);
+	double p0 = fmod(w * (double)first, ESP_SDR_TAU);
+	float br = cosf((float)p0), bi = sinf((float)p0);
+
+	for (size_t i = 0; i < len; i++) {
+		float xr = (float)x[first + (long)i].i - dc_i;
+		float xi = (float)x[first + (long)i].q - dc_q;
+
+		zr[i] = xr * br - xi * bi;
+		zi[i] = xr * bi + xi * br;
+		float t = br * cs - bi * sn;
+
+		bi = br * sn + bi * cs;
+		br = t;
+	}
+	for (int idx = 0; idx < count; idx++) {
+		double ws = -ESP_SDR_TAU * (double)kk[idx] * ESP_SDR_LTE_DF / fs;
+		double ph = fmod(ws * ((double)first - start), ESP_SDR_TAU);
+		float rc = cosf((float)ws), rs = sinf((float)ws);
+		float pr = cosf((float)ph), pi_ = sinf((float)ph);
+		float ar = 0.0f, ai = 0.0f;
+
+		for (size_t i = 0; i < len; i++) {
+			ar += zr[i] * pr - zi[i] * pi_;
+			ai += zr[i] * pi_ + zi[i] * pr;
+			float t = pr * rc - pi_ * rs;
+
+			pi_ = pr * rs + pi_ * rc;
+			pr = t;
+		}
+		yr[idx] = ar / (float)len;
+		yi[idx] = ai / (float)len;
+	}
+	return 0;
+}
+
 /**
  * @brief Demodulate the 62 synchronization subcarriers of one symbol.
  *
@@ -255,48 +320,12 @@ static inline void esp_sdr_lte_sss(int n_id1, int n_id2, int half, float *d)
 static inline int esp_sdr_lte_demod(const struct esp_sdr_lte_iq *x, size_t n, double fs,
 				    double start, double f_hz, float *yr, float *yi)
 {
-	size_t len = esp_sdr_lte_symbol_len(fs);
-	long first = (long)ceil(start - 1e-9);
-	float zr[ESP_SDR_LTE_L_MAX], zi[ESP_SDR_LTE_L_MAX];
+	int kk[ESP_SDR_LTE_SC];
 
-	if (first < 0 || (size_t)first + len > n || len > ESP_SDR_LTE_L_MAX) {
-		return -ERANGE;
-	}
-	double w = -ESP_SDR_TAU * f_hz / fs;
-	float cs = cosf((float)w), sn = sinf((float)w);
-	double p0 = fmod(w * (double)first, ESP_SDR_TAU);
-	float br = cosf((float)p0), bi = sinf((float)p0);
-
-	for (size_t i = 0; i < len; i++) {
-		float xr = (float)x[first + (long)i].i;
-		float xi = (float)x[first + (long)i].q;
-
-		zr[i] = xr * br - xi * bi;
-		zi[i] = xr * bi + xi * br;
-		float t = br * cs - bi * sn;
-
-		bi = br * sn + bi * cs;
-		br = t;
-	}
 	for (int idx = 0; idx < ESP_SDR_LTE_SC; idx++) {
-		double ws = -ESP_SDR_TAU * (double)esp_sdr_lte_k(idx) * ESP_SDR_LTE_DF / fs;
-		double ph = fmod(ws * ((double)first - start), ESP_SDR_TAU);
-		float rc = cosf((float)ws), rs = sinf((float)ws);
-		float pr = cosf((float)ph), pi_ = sinf((float)ph);
-		float ar = 0.0f, ai = 0.0f;
-
-		for (size_t i = 0; i < len; i++) {
-			ar += zr[i] * pr - zi[i] * pi_;
-			ai += zr[i] * pi_ + zi[i] * pr;
-			float t = pr * rc - pi_ * rs;
-
-			pi_ = pr * rs + pi_ * rc;
-			pr = t;
-		}
-		yr[idx] = ar / (float)len;
-		yi[idx] = ai / (float)len;
+		kk[idx] = esp_sdr_lte_k(idx);
 	}
-	return 0;
+	return lte_demod_sc(x, n, fs, start, f_hz, 0.0f, 0.0f, kk, ESP_SDR_LTE_SC, yr, yi);
 }
 
 /** Normalised correlation of a demodulated PSS with its sequence: 1 for a perfect match. */
@@ -406,13 +435,13 @@ static inline float lte_corr_peak(struct esp_sdr_lte_work *w, int bins, size_t n
  * the one whose demodulated subcarriers best match the sequence wins.
  *
  * @param x Capture, at least a PSS symbol long.
- * @param n Capture length; n + one symbol must fit the transform of @p w.
+ * @param n Capture length. The search looks at the first n_fft of @p w less a symbol of it.
  * @param fs Sample rate in Hz, 1.92 to 4 MS/s.
  * @param max_offset_hz Largest carrier offset to try.
  * @param w Work memory.
  * @param out Candidates, best demodulated metric first.
  * @param max_out Capacity of @p out.
- * @return The number of candidates, or -EINVAL for a capture the transform cannot hold.
+ * @return The number of candidates, or -EINVAL for a capture or transform under two symbols.
  */
 static inline int esp_sdr_lte_pss_search(const struct esp_sdr_lte_iq *x, size_t n, double fs,
 					 double max_offset_hz, struct esp_sdr_lte_work *w,
@@ -420,21 +449,24 @@ static inline int esp_sdr_lte_pss_search(const struct esp_sdr_lte_iq *x, size_t 
 {
 	size_t len = esp_sdr_lte_symbol_len(fs);
 	uint32_t nf = w->n_fft;
+	/* The part searched: what the transform holds with a symbol to spare. */
+	size_t room = nf > len ? nf - len : 0U;
+	size_t ns = n < room ? n : room;
 
-	if (n < len + 1U || n + len > nf || len > ESP_SDR_LTE_L_MAX) {
+	if (len > ESP_SDR_LTE_L_MAX || ns < len + 1U) {
 		return -EINVAL;
 	}
 	double mx = 0.0, my = 0.0;
 
-	for (size_t i = 0; i < n; i++) {
+	for (size_t i = 0; i < ns; i++) {
 		mx += x[i].i;
 		my += x[i].q;
 	}
-	mx /= (double)n;
-	my /= (double)n;
+	mx /= (double)ns;
+	my /= (double)ns;
 	for (uint32_t i = 0; i < nf; i++) {
-		w->xr[i] = i < n ? (float)((double)x[i].i - mx) : 0.0f;
-		w->xi[i] = i < n ? (float)((double)x[i].q - my) : 0.0f;
+		w->xr[i] = i < ns ? (float)((double)x[i].i - mx) : 0.0f;
+		w->xi[i] = i < ns ? (float)((double)x[i].q - my) : 0.0f;
 	}
 	/* Energy of each window of one symbol, by a running sum (kept in double). */
 	double e = 0.0;
@@ -442,9 +474,9 @@ static inline int esp_sdr_lte_pss_search(const struct esp_sdr_lte_iq *x, size_t 
 	for (size_t i = 0; i < len; i++) {
 		e += lte_pow(w->xr[i], w->xi[i]);
 	}
-	for (size_t i = 0; i + len <= n; i++) {
+	for (size_t i = 0; i + len <= ns; i++) {
 		w->en[i] = (float)e + 1e-3f;
-		if (i + len < n) {
+		if (i + len < ns) {
 			e += lte_pow(w->xr[i + len], w->xi[i + len]);
 			e -= lte_pow(w->xr[i], w->xi[i]);
 			if (e < 0.0) {
@@ -471,7 +503,7 @@ static inline int esp_sdr_lte_pss_search(const struct esp_sdr_lte_iq *x, size_t 
 		lte_template_spectrum(w, u, fs, len);
 		for (int s = -max_s; s <= max_s; s++) {
 			size_t at;
-			float rat, peak = lte_corr_peak(w, s * step, n, len, &at, &rat);
+			float rat, peak = lte_corr_peak(w, s * step, ns, len, &at, &rat);
 			int worst = 0, near = -1;
 
 			for (int k = 0; k < LTE_CANDIDATES; k++) {
@@ -512,7 +544,7 @@ static inline int esp_sdr_lte_pss_search(const struct esp_sdr_lte_iq *x, size_t 
 		lte_template_spectrum(w, cand[k].u, fs, len);
 		for (int j = -6; j <= 6; j++) {
 			size_t at;
-			float rat, peak = lte_corr_peak(w, cand[k].bins + j * fine, n, len, &at, &rat);
+			float rat, peak = lte_corr_peak(w, cand[k].bins + j * fine, ns, len, &at, &rat);
 
 			if (peak > fpeak) {
 				fpeak = peak;
@@ -696,6 +728,7 @@ static inline int lte_decode(const struct esp_sdr_lte_iq *x, size_t n, double fs
 	cell->cell_id = 3 * best_n1 + n_id2;
 	cell->half = best_half;
 	cell->offset_hz = best_f - delta;
+	cell->offset_sync_hz = cell->offset_hz;
 	cell->timing = first;
 	cell->sss_metric = best;
 	cell->sss_second = second;
@@ -703,19 +736,289 @@ static inline int lte_decode(const struct esp_sdr_lte_iq *x, size_t n, double fs
 	return 0;
 }
 
+/* Reference signal subcarriers used: port 0 in the central 6 resource blocks (every bandwidth). */
+#define LTE_CRS_J  6
+#define LTE_CRS_RE (2 * LTE_CRS_J)
+/* LTE's basic time unit Ts = 1 / 30.72 MHz; a slot is 15360 Ts. */
+#define LTE_TS_HZ   30.72e6
+#define LTE_SLOT_TS 15360.0
+/* Useful part of symbol l in its slot, in Ts (normal cyclic prefix: 160, then 144 each). */
+#define LTE_SYM_TS(l) (160.0 + 2192.0 * (double)(l))
+/* Reference symbols farther from the receiver's centre than this fraction of fs are left out. */
+#define LTE_CRS_EDGE 0.42
+/* Below this coherence 0.5 ms apart the reference signals are not used. */
+#define LTE_CRS_MIN_COHERENCE 0.5f
+
+/* Bits first to first + count - 1 of the pseudo-random sequence c(n), 3GPP TS 36.211 7.2. */
+static inline void lte_gold(uint32_t c_init, int first, int count, uint8_t *out)
+{
+	uint32_t x1 = 1U, x2 = c_init & 0x7fffffffU;
+
+	for (int i = 0; i < 1600 + first + count; i++) {
+		if (i >= 1600 + first) {
+			out[i - 1600 - first] = (uint8_t)((x1 ^ x2) & 1U);
+		}
+		uint32_t b1 = (x1 ^ (x1 >> 3)) & 1U;
+		uint32_t b2 = (x2 ^ (x2 >> 1) ^ (x2 >> 2) ^ (x2 >> 3)) & 1U;
+
+		x1 = (x1 >> 1) | (b1 << 30);
+		x2 = (x2 >> 1) | (b2 << 30);
+	}
+}
+
+/*
+ * The port 0 cell-specific reference signal of slot ns (0 to 19), symbol l (0 or 4) in the central
+ * 6 resource blocks (TS 36.211 6.10.1, normal cyclic prefix): subcarrier offsets kk[] in units of
+ * 15 kHz from the carrier (no DC subcarrier) and the values. Its index m' counts from the
+ * centre, so the carrier's bandwidth does not matter.
+ */
+static inline void lte_crs(int cell_id, int ns, int l, int *kk, float *rr, float *ri)
+{
+	uint32_t id = (uint32_t)cell_id;
+	uint32_t c_init = 1024U * (7U * (uint32_t)(ns + 1) + (uint32_t)l + 1U) * (2U * id + 1U) +
+			  2U * id + 1U;
+	int koff = ((l == 0 ? 0 : 3) + cell_id % 6) % 6;
+	uint8_t c[2 * LTE_CRS_RE];
+
+	/* m' = 110 + j for j = -LTE_CRS_J .. LTE_CRS_J - 1 (110 resource blocks at most). */
+	lte_gold(c_init, 2 * (110 - LTE_CRS_J), 2 * LTE_CRS_RE, c);
+	for (int i = 0; i < LTE_CRS_RE; i++) {
+		int j = i - LTE_CRS_J;
+
+		kk[i] = 6 * j + koff + (j >= 0 ? 1 : 0);
+		rr[i] = c[2 * i] != 0U ? -0.70710678f : 0.70710678f;
+		ri[i] = c[2 * i + 1] != 0U ? -0.70710678f : 0.70710678f;
+	}
+}
+
+/* One reference symbol's channel (H re, H im per subcarrier), window start and a valid flag. */
+#define LTE_CRS_FLOATS (2 * LTE_CRS_RE + 2)
+
+/* Sum over subcarriers of b's channel times a's conjugate, a's taken at b's subcarriers. */
+static inline void lte_crs_prod(const float *a, const int *ka, const float *b, const int *kb,
+				const uint8_t *ok, double *sr, double *si, double *mag)
+{
+	*sr = *si = *mag = 0.0;
+	for (int i = 0; i < LTE_CRS_RE; i++) {
+		float ar, ai;
+
+		if (!ok[i]) {
+			continue;
+		}
+		if (ka == kb) {
+			ar = a[i];
+			ai = a[LTE_CRS_RE + i];
+		} else {
+			/* a's subcarriers either side of kb[i], linearly interpolated. */
+			int lo = -1;
+
+			for (int k = 0; k + 1 < LTE_CRS_RE; k++) {
+				if (ka[k] < kb[i] && ka[k + 1] > kb[i]) {
+					lo = k;
+				}
+			}
+			if (lo < 0 || !ok[LTE_CRS_RE + lo] || !ok[LTE_CRS_RE + lo + 1]) {
+				continue;
+			}
+			float t = (float)(kb[i] - ka[lo]) / (float)(ka[lo + 1] - ka[lo]);
+
+			ar = a[lo] + t * (a[lo + 1] - a[lo]);
+			ai = a[LTE_CRS_RE + lo] + t * (a[LTE_CRS_RE + lo + 1] - a[LTE_CRS_RE + lo]);
+		}
+		float br = b[i], bi = b[LTE_CRS_RE + i];
+		double qr = (double)(br * ar + bi * ai), qi = (double)(bi * ar - br * ai);
+
+		*sr += qr;
+		*si += qi;
+		*mag += sqrt(qr * qr + qi * qi);
+	}
+}
+
+/*
+ * Fine carrier offset from the port 0 reference signals of a decoded cell. The channel at each
+ * reference subcarrier, symbol by symbol (symbols 0 and 4 of every slot), turns at the residual
+ * offset. The symbols 0.21 and 0.29 ms apart (on interleaved subcarriers) tell it unambiguously
+ * within +-7 kHz, like a vernier; the same subcarriers 0.5, 2 and 8 ms apart then refine it,
+ * each step well inside the range of the next.
+ */
+static inline void lte_crs_refine(const struct esp_sdr_lte_iq *x, size_t n, double fs,
+				  struct esp_sdr_lte_work *w, struct esp_sdr_lte_cell *cell)
+{
+	static const int lags[] = {1, 4, 16};
+	double ts = fs / LTE_TS_HZ;
+	double slot = LTE_SLOT_TS * ts;
+	/* Start of the slot of the first PSS (symbol 6 of slot 0 or 10). */
+	double t0 = cell->timing - LTE_SYM_TS(6) * ts;
+	long d_min = -(long)ceil(t0 / slot) - 1;
+	long d_max = (long)ceil(((double)n - t0) / slot);
+	/* Work memory after the search: everything but the twiddles. */
+	float *st = w->xr;
+	size_t max_sym = 7U * (size_t)w->n_fft / LTE_CRS_FLOATS;
+	size_t syms = (size_t)(d_max - d_min + 1) * 2U;
+	int kk[2][LTE_CRS_RE];
+	uint8_t ok[2][2 * LTE_CRS_RE];
+	double mi = 0.0, mq = 0.0;
+	int used = 0;
+
+	cell->crs_symbols = 0;
+	cell->crs_metric = 0.0f;
+	if (syms > max_sym) {
+		syms = max_sym & ~(size_t)1U;
+	}
+	for (size_t i = 0; i < n; i++) {
+		mi += x[i].i;
+		mq += x[i].q;
+	}
+	mi /= (double)n;
+	mq /= (double)n;
+
+	/* The channel of every reference symbol inside the capture. */
+	for (size_t s = 0; s < syms; s++) {
+		long d = d_min + (long)(s / 2U);
+		int l = (s & 1U) != 0U ? 4 : 0;
+		int ns = (int)(((10L * cell->half + d) % 20L + 20L) % 20L);
+		double start = t0 + (double)d * slot + LTE_SYM_TS(l) * ts;
+		float *h = st + s * LTE_CRS_FLOATS;
+		float rr[LTE_CRS_RE], ri[LTE_CRS_RE], yr[LTE_CRS_RE], yi[LTE_CRS_RE];
+		int *k = kk[l == 4];
+
+		lte_crs(cell->cell_id, ns, l, k, rr, ri);
+		h[2 * LTE_CRS_RE + 1] = 0.0f;
+		if (lte_demod_sc(x, n, fs, start, cell->offset_hz, (float)mi, (float)mq, k,
+				 LTE_CRS_RE, yr, yi) != 0) {
+			continue;
+		}
+		for (int i = 0; i < LTE_CRS_RE; i++) {
+			/* Inside the receiver's passband, and Y conj(r) (|r| = 1). */
+			double f = cell->offset_hz + (double)k[i] * ESP_SDR_LTE_DF;
+
+			ok[l == 4][i] = fabs(f) <= LTE_CRS_EDGE * fs;
+			ok[l == 4][LTE_CRS_RE + i] = ok[l == 4][i];
+			h[i] = yr[i] * rr[i] + yi[i] * ri[i];
+			h[LTE_CRS_RE + i] = yi[i] * rr[i] - yr[i] * ri[i];
+		}
+		h[2 * LTE_CRS_RE] = (float)ceil(start - 1e-9);
+		h[2 * LTE_CRS_RE + 1] = 1.0f;
+		used++;
+	}
+	if (used < 4) {
+		return;
+	}
+
+	/*
+	 * Neighbours: symbol 0 to 4 is 8768 Ts, 4 to the next slot's 0 is 6592 Ts. Their products
+	 * peak together only at the true offset within +-7 kHz (the next coincidence is 14 kHz).
+	 */
+	double a_r[2] = {0.0, 0.0}, a_i[2] = {0.0, 0.0};
+	double dt[2] = {8768.0 / LTE_TS_HZ, 6592.0 / LTE_TS_HZ};
+
+	for (size_t s = 0; s + 1U < syms; s++) {
+		const float *a = st + s * LTE_CRS_FLOATS, *b = a + LTE_CRS_FLOATS;
+		int la = (int)(s & 1U);
+		double cr, ci, cm;
+
+		if (a[2 * LTE_CRS_RE + 1] == 0.0f || b[2 * LTE_CRS_RE + 1] == 0.0f) {
+			continue;
+		}
+		/* ok[] of b's subcarriers, then of a's (for the interpolation). */
+		uint8_t okab[2 * LTE_CRS_RE];
+
+		for (int i = 0; i < LTE_CRS_RE; i++) {
+			okab[i] = ok[1 - la][i];
+			okab[LTE_CRS_RE + i] = ok[la][i];
+		}
+		lte_crs_prod(a, kk[la], b, kk[1 - la], okab, &cr, &ci, &cm);
+		a_r[la] += cr;
+		a_i[la] += ci;
+	}
+	double best = -1.0, f_a = 0.0;
+
+	for (int pass = 0; pass < 2; pass++) {
+		double f0 = f_a, stp = pass == 0 ? 25.0 : 1.0;
+		int k_max = pass == 0 ? 260 : 25;
+
+		for (int k = -k_max; k <= k_max; k++) {
+			double f = f0 + stp * k, m = 0.0;
+
+			for (int g = 0; g < 2; g++) {
+				double th = ESP_SDR_TAU * f * dt[g];
+
+				m += a_r[g] * cos(th) + a_i[g] * sin(th);
+			}
+			if (m > best) {
+				best = m;
+				f_a = f;
+			}
+		}
+	}
+	/* Both neighbour phases agree there, or it is a side peak (noise or a wrong cell). */
+	if (best < 0.9 * (sqrt(a_r[0] * a_r[0] + a_i[0] * a_i[0]) +
+			  sqrt(a_r[1] * a_r[1] + a_i[1] * a_i[1]))) {
+		return;
+	}
+
+	/* The same subcarriers further apart, each lag inside the range the last one leaves. */
+	double f = f_a;
+	float coherence = 0.0f;
+
+	for (size_t g = 0; g < sizeof(lags) / sizeof(lags[0]); g++) {
+		size_t gap = 2U * (size_t)lags[g];
+		double br = 0.0, bi = 0.0, bm = 0.0;
+		int pairs = 0;
+
+		for (size_t s = 0; s + gap < syms; s++) {
+			const float *a = st + s * LTE_CRS_FLOATS, *b = st + (s + gap) * LTE_CRS_FLOATS;
+			const uint8_t *oks = ok[s & 1U];
+			double cr, ci, cm;
+
+			if (a[2 * LTE_CRS_RE + 1] == 0.0f || b[2 * LTE_CRS_RE + 1] == 0.0f) {
+				continue;
+			}
+			lte_crs_prod(a, kk[s & 1U], b, kk[s & 1U], oks, &cr, &ci, &cm);
+			/* Take off what the offset so far turns over the windows' distance. */
+			double th = -ESP_SDR_TAU * f * (double)(b[2 * LTE_CRS_RE] - a[2 * LTE_CRS_RE]) / fs;
+			double c = cos(th), sn = sin(th);
+
+			br += cr * c - ci * sn;
+			bi += cr * sn + ci * c;
+			bm += cm;
+			pairs++;
+		}
+		if (pairs == 0 || bm <= 0.0) {
+			if (g == 0) {
+				return;
+			}
+			break;
+		}
+		if (g == 0) {
+			coherence = (float)(sqrt(br * br + bi * bi) / bm);
+			if (coherence < LTE_CRS_MIN_COHERENCE) {
+				return;
+			}
+		}
+		f += atan2(bi, br) / (ESP_SDR_TAU * (double)lags[g] * LTE_SLOT_TS / LTE_TS_HZ);
+	}
+	cell->offset_hz += f;
+	cell->crs_symbols = used;
+	cell->crs_metric = coherence;
+}
+
 /**
  * @brief Find a cell in a capture and measure its carrier offset.
  *
  * Runs esp_sdr_lte_pss_search(), then for each of the best few PSS candidates refines the
  * timing (an eighth of a sample) and frequency (250 Hz), decodes the cell group with the SSS
- * in front of every PSS in the capture and takes the fine offset from the phase between the
- * SSS and PSS symbols (range +-7 kHz, about 1 kHz accurate). The PSS alone cannot tell the
+ * in front of every PSS in the capture and takes the offset from the phase between the SSS
+ * and PSS symbols (range +-7 kHz, about 1 kHz accurate). The PSS alone cannot tell the
  * candidates on a Zadoff-Chu ambiguity ridge apart; the one whose SSS matches best wins. The
  * synchronization signals repeat every 5 ms, so a capture of 5 ms or more holds several
- * pairs, which are combined.
+ * pairs, which are combined. A decoded cell's reference signals (CRS, 0.5 ms apart) then
+ * refine the offset to a few Hz over a capture of 2 ms or more (crs_symbols, crs_metric);
+ * where they do not hold together the offset stays the synchronization signals' one.
  *
  * @param x Capture, any gain that does not clip.
- * @param n Capture length.
+ * @param n Capture length, as long as the reference signals should be followed. The PSS is
+ *	    searched for in the first n_fft of @p w less a symbol.
  * @param fs Sample rate in Hz, 1.92 to 4 MS/s.
  * @param max_offset_hz Largest carrier offset from the capture centre to look for.
  * @param min_ratio Smallest PSS detection ratio to go on with (about 20 for a 1 ms capture).
@@ -728,7 +1031,7 @@ static inline int esp_sdr_lte_detect(const struct esp_sdr_lte_iq *x, size_t n, d
 				     double max_offset_hz, float min_ratio,
 				     struct esp_sdr_lte_work *w, struct esp_sdr_lte_cell *cell)
 {
-	struct esp_sdr_lte_cand cd[4];
+	struct esp_sdr_lte_cand cd[LTE_CANDIDATES];
 	int count = esp_sdr_lte_pss_search(x, n, fs, max_offset_hz, w, cd, ARRAY_SIZE_LTE(cd));
 	int found = 0;
 
@@ -747,6 +1050,9 @@ static inline int esp_sdr_lte_detect(const struct esp_sdr_lte_iq *x, size_t n, d
 			*cell = c;
 			found = 1;
 		}
+	}
+	if (found && cell->valid) {
+		lte_crs_refine(x, n, fs, w, cell);
 	}
 	return found ? 0 : -ENOENT;
 }
