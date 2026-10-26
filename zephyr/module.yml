@@ -2,6 +2,9 @@ name: esp-sdr-zephyr
 build:
   cmake: .
   kconfig: Kconfig
+  # After the HAL: lib/esp_sdr links the PHY blob with its esp_blobs_link().
+  depends:
+    - hal_espressif
   settings:
     # boards/waveshare/esp32c5_zero
     board_root: .
