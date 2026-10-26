@@ -7,7 +7,7 @@
 # GNU Radio Python Flow Graph
 # Title: Waterfall
 # Author: esp-sdr
-# Description: A gapless waterfall of 250 kHz to 2 MHz (a chooser, up to the board's top rate: 2 MS/s on the WHY2025 badge, 500 kS/s on the S3), or of 80 MHz: without a gap where the radio streams it (the WHY2025 badge: the bursts its channelizer finds, each at its channel, over quiet noise), else from bursts at 80 MS/s; the knob tunes from 1.8 to 2.8 GHz and sets the level (the top of the colour scale, 22 dB higher at 80 MHz).
+# Description: A gapless waterfall of 250 kHz to 2 MHz (a chooser, up to the board's top rate: 2 MS/s on the WHY2025 badge, 500 kS/s on the S3), or of 80 MHz: without a gap where the radio streams it (the WHY2025 badge: the bursts its channelizer finds, each at its channel, over quiet noise), else from bursts at 80 MS/s; the knob tunes from 1.8 to 2.8 GHz and sets the lower and upper levels of the colour scale (at 80 MHz the lower 3 dB lower, the upper 22 dB higher).
 # GNU Radio version: 3.10.12.0
 
 from PyQt5 import Qt
@@ -65,14 +65,18 @@ class waterfall(gr.top_block, Qt.QWidget):
         ##################################################
         # Variables
         ##################################################
+        self.upper = upper = -57
         self.samp_rate = samp_rate = 250e3
-        self.level = level = -57
+        self.lower = lower = -77
         self.freq = freq = 2.44e9
 
         ##################################################
         # Blocks
         ##################################################
 
+        self._upper_range = qtgui.Range(-100, -10, 1, -57, 200)
+        self._upper_win = qtgui.RangeWidget(self._upper_range, self.set_upper, "Upper dB", "counter_slider", float, QtCore.Qt.Horizontal)
+        self.top_layout.addWidget(self._upper_win)
         # Create the options list
         self._samp_rate_options = [2000000.0, 1000000.0, 500000.0, 250000.0, 80000000.0]
         # Create the labels list
@@ -89,9 +93,9 @@ class waterfall(gr.top_block, Qt.QWidget):
             lambda i: self.set_samp_rate(self._samp_rate_options[i]))
         # Create the radio buttons
         self.top_layout.addWidget(self._samp_rate_tool_bar)
-        self._level_range = qtgui.Range(-100, -20, 1, -57, 200)
-        self._level_win = qtgui.RangeWidget(self._level_range, self.set_level, "Level dB", "counter_slider", float, QtCore.Qt.Horizontal)
-        self.top_layout.addWidget(self._level_win)
+        self._lower_range = qtgui.Range(-110, -20, 1, -77, 200)
+        self._lower_win = qtgui.RangeWidget(self._lower_range, self.set_lower, "Lower dB", "counter_slider", float, QtCore.Qt.Horizontal)
+        self.top_layout.addWidget(self._lower_win)
         self._freq_range = qtgui.Range(1.8e9, 2.8e9, 1e6, 2.44e9, 200)
         self._freq_win = qtgui.RangeWidget(self._freq_range, self.set_freq, "Frequency", "counter_slider", float, QtCore.Qt.Horizontal)
         self.top_layout.addWidget(self._freq_win)
@@ -139,7 +143,7 @@ class waterfall(gr.top_block, Qt.QWidget):
             self.qtgui_waterfall_sink_x_0.set_color_map(i, colors[i])
             self.qtgui_waterfall_sink_x_0.set_line_alpha(i, alphas[i])
 
-        self.qtgui_waterfall_sink_x_0.set_intensity_range(level - (23 if samp_rate > 10e6 else 20), level + (22 if samp_rate > 10e6 else 0))
+        self.qtgui_waterfall_sink_x_0.set_intensity_range(lower - (3 if samp_rate > 10e6 else 0), upper + (22 if samp_rate > 10e6 else 0))
 
         self._qtgui_waterfall_sink_x_0_win = sip.wrapinstance(self.qtgui_waterfall_sink_x_0.qwidget(), Qt.QWidget)
 
@@ -160,6 +164,13 @@ class waterfall(gr.top_block, Qt.QWidget):
 
         event.accept()
 
+    def get_upper(self):
+        return self.upper
+
+    def set_upper(self, upper):
+        self.upper = upper
+        self.qtgui_waterfall_sink_x_0.set_intensity_range(self.lower - (3 if self.samp_rate > 10e6 else 0), self.upper + (22 if self.samp_rate > 10e6 else 0))
+
     def get_samp_rate(self):
         return self.samp_rate
 
@@ -167,15 +178,15 @@ class waterfall(gr.top_block, Qt.QWidget):
         self.samp_rate = samp_rate
         self._samp_rate_callback(self.samp_rate)
         self.qtgui_waterfall_sink_x_0.set_frequency_range(self.freq, self.samp_rate)
-        self.qtgui_waterfall_sink_x_0.set_intensity_range(self.level - (23 if self.samp_rate > 10e6 else 20), self.level + (22 if self.samp_rate > 10e6 else 0))
+        self.qtgui_waterfall_sink_x_0.set_intensity_range(self.lower - (3 if self.samp_rate > 10e6 else 0), self.upper + (22 if self.samp_rate > 10e6 else 0))
         self.soapy_hackrf_source_0.set_sample_rate(0, self.samp_rate)
 
-    def get_level(self):
-        return self.level
+    def get_lower(self):
+        return self.lower
 
-    def set_level(self, level):
-        self.level = level
-        self.qtgui_waterfall_sink_x_0.set_intensity_range(self.level - (23 if self.samp_rate > 10e6 else 20), self.level + (22 if self.samp_rate > 10e6 else 0))
+    def set_lower(self, lower):
+        self.lower = lower
+        self.qtgui_waterfall_sink_x_0.set_intensity_range(self.lower - (3 if self.samp_rate > 10e6 else 0), self.upper + (22 if self.samp_rate > 10e6 else 0))
 
     def get_freq(self):
         return self.freq

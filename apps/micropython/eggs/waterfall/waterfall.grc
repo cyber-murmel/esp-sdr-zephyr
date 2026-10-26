@@ -6,7 +6,7 @@ options:
     cmake_opt: ''
     comment: ''
     copyright: ''
-    description: 'A gapless waterfall of 250 kHz to 2 MHz (a chooser, up to the board''s top rate: 2 MS/s on the WHY2025 badge, 500 kS/s on the S3), or of 80 MHz: without a gap where the radio streams it (the WHY2025 badge: the bursts its channelizer finds, each at its channel, over quiet noise), else from bursts at 80 MS/s; the knob tunes from 1.8 to 2.8 GHz and sets the level (the top of the colour scale, 22 dB higher at 80 MHz).'
+    description: 'A gapless waterfall of 250 kHz to 2 MHz (a chooser, up to the board''s top rate: 2 MS/s on the WHY2025 badge, 500 kS/s on the S3), or of 80 MHz: without a gap where the radio streams it (the WHY2025 badge: the bursts its channelizer finds, each at its channel, over quiet noise), else from bursts at 80 MS/s; the knob tunes from 1.8 to 2.8 GHz and sets the lower and upper levels of the colour scale (at 80 MHz the lower 3 dB lower, the upper 22 dB higher).'
     gen_cmake: 'On'
     gen_linking: dynamic
     generate_options: qt_gui
@@ -54,25 +54,46 @@ blocks:
     coordinate: [312, 4.0]
     rotation: 0
     state: enabled
-- name: level
+- name: lower
   id: variable_qtgui_range
   parameters:
     comment: ''
     gui_hint: ''
-    label: Level dB
+    label: Lower dB
     min_len: '200'
     orient: QtCore.Qt.Horizontal
     rangeType: float
-    start: '-100'
+    start: '-110'
     step: '1'
     stop: '-20'
-    value: '-57'
+    value: '-77'
     widget: counter_slider
   states:
     bus_sink: false
     bus_source: false
     bus_structure: null
     coordinate: [448, 4.0]
+    rotation: 0
+    state: enabled
+- name: upper
+  id: variable_qtgui_range
+  parameters:
+    comment: ''
+    gui_hint: ''
+    label: Upper dB
+    min_len: '200'
+    orient: QtCore.Qt.Horizontal
+    rangeType: float
+    start: '-100'
+    step: '1'
+    stop: '-10'
+    value: '-57'
+    widget: counter_slider
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [584, 4.0]
     rotation: 0
     state: enabled
 - name: samp_rate
@@ -138,8 +159,8 @@ blocks:
     freqhalf: 'True'
     grid: 'False'
     gui_hint: ''
-    int_max: level + (22 if samp_rate > 10e6 else 0)
-    int_min: level - (23 if samp_rate > 10e6 else 20)
+    int_max: upper + (22 if samp_rate > 10e6 else 0)
+    int_min: lower - (3 if samp_rate > 10e6 else 0)
     label1: ''
     label10: ''
     label2: ''
