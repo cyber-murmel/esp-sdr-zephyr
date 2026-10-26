@@ -31,6 +31,7 @@
 #include <esp_sdr/esp_sdr_ring.h>
 #include <esp_sdr/esp_sdr_tx.h>
 
+#include "esdr_cal.h"
 #include "esdr_dev.h"
 #include "esdr_proto.h"
 #include "sdr.h"
@@ -325,6 +326,10 @@ int usb_sdr_control_in(uint8_t req, uint16_t value, uint8_t *buf, size_t max)
 		sys_put_le16((uint16_t)dc, buf);
 		return 2;
 	}
+	case ESDR_REQ_GET_CAL:
+		/* The library's correction as esp_sdr_init() applied it; SET_CAL would have to
+		 * wait for the worker (it retunes), so this app takes none. */
+		return esdr_cal_get(buf, max);
 	default:
 		return -ENOTSUP;
 	}

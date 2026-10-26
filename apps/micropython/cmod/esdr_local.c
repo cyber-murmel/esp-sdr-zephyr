@@ -27,6 +27,7 @@
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_rx.h>
 
+#include "esdr_cal.h"
 #include "esdr_defs.h"
 #include "esdr_mon.h"
 #include "esdr_remote.h"
@@ -167,6 +168,13 @@ static void trig_burst(void)
 
 /* ---- requests ---- */
 
+/* Where the LO is: the whole kHz asked for, and what the crystal correction leaves. */
+static void center_update(void)
+{
+	set.center_hz = (uint64_t)set.lo_mhz * 1000000U + (int64_t)set.lo_khz * 1000 +
+			esp_sdr_get_lo_residual_hz();
+}
+
 static int tune(uint64_t hz)
 {
 	uint32_t mhz;
@@ -184,7 +192,7 @@ static int tune(uint64_t hz)
 	set.freq_hz = hz;
 	set.lo_mhz = mhz;
 	set.lo_khz = khz;
-	set.center_hz = (uint64_t)mhz * 1000000U + (int64_t)khz * 1000;
+	center_update();
 	return 0;
 }
 
@@ -263,6 +271,15 @@ int esdr_remote_request(uint8_t req, uint16_t value, const void *data, uint16_t 
 		}
 		sys_put_le16((uint16_t)dc, reply);
 		return 2;
+	}
+	case ESDR_REQ_GET_CAL:
+		return esdr_cal_get(reply, reply_max);
+	case ESDR_REQ_SET_CAL: {
+		int ret = esdr_cal_set(value, data, len);
+
+		/* The correction retuned: where the LO is now. */
+		center_update();
+		return ret;
 	}
 	default:
 		return -ENOTSUP;

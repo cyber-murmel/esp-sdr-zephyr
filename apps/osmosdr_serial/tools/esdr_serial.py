@@ -5,6 +5,7 @@
     esdr_serial.py [--baud B] PORT info
     esdr_serial.py PORT rx [--rate HZ] [--seconds S] [--bits 8|16] [--freq HZ] [--out FILE.npy]
     esdr_serial.py PORT tx [--rate HZ] [--seconds S] [--tone HZ] [--freq HZ] [--gain STEP]
+    esdr_serial.py PORT cal [--set PPB | --clear]
 
 The port is opened raw, without touching DTR/RTS: that would reset the board. --baud sets
 the line rate where it matters (a UART behind a USB bridge, as the MCH2022 badge's RP2040, which
@@ -29,7 +30,9 @@ BLK = struct.Struct("<IHHQ")
 BLOCK_BYTES = 4096
 REQ = dict(GET_INFO=1, SET_MODE=2, SET_FREQ=3, SET_SAMPLE_RATE=4, SET_RX_GAIN=5, SET_TX_GAIN=6,
            SET_BANDWIDTH=7, SET_FORMAT=8, SET_FREQ_CORR=9, GET_STATE=10, GET_STATS=11,
-           SET_OPTIONS=12, SET_DIGITAL_GAIN=13, GET_TEMP=0x18)
+           SET_OPTIONS=12, SET_DIGITAL_GAIN=13, GET_TEMP=0x18, GET_CAL=0x19, SET_CAL=0x1A)
+CAL_ADD, CAL_SET, CAL_CLEAR, CAL_LOAD = 0, 1, 2, 3
+TEMP_UNKNOWN = -32768
 MODE_OFF, MODE_RX, MODE_TX = 0, 1, 2
 INFO = struct.Struct("<IHH32sQQIHHHHHH")
 STATS = struct.Struct("<QQQQQQIIIIIIIIIIQQIIII")
@@ -38,6 +41,11 @@ STATS_NAMES = ("rx_samples rx_overflow_samples rx_ring_lost_pairs rx_restart_sam
                "ring_cycles_x100 ring_abandoned ring_gain_refreshed ring_last_status "
                "ring_last_detail tx_samples tx_dropped tx_underruns tx_sessions tx_restarts "
                "tx_queued_max").split()
+# struct esdr_cal: the header, the record, its points.
+CAL_HDR = struct.Struct("<iihhhH")
+CAL_REC = struct.Struct("<iiIhHhBB")
+CAL_PT = struct.Struct("<hhi")
+CAL_SIZE = CAL_HDR.size + CAL_REC.size + 8 * CAL_PT.size
 
 
 class Esdr:
@@ -198,6 +206,26 @@ def cmd_rx(d, a):
         np.save(a.out, x)
 
 
+def temp_str(dc):
+    return "?" if dc == TEMP_UNKNOWN else f"{dc / 10:.1f}"
+
+
+def cmd_cal(d, a):
+    if a.set is not None:
+        d.request("SET_CAL", CAL_SET, struct.pack("<i", a.set))
+    elif a.clear:
+        d.request("SET_CAL", CAL_CLEAR)
+    b = d.request("GET_CAL", in_len=CAL_SIZE)
+    h = CAL_HDR.unpack_from(b)
+    r = CAL_REC.unpack_from(b, CAL_HDR.size)
+    print(f"correction {h[0]} ppb, LO {h[1]:+d} Hz off the frequency asked, die {temp_str(h[2])} C")
+    print(f"calibration {r[0]} ppb: cell {r[3]} at {r[2]} kHz, {r[4]} estimates, spread {r[1]} ppb, "
+          f"{temp_str(r[5])} C; stored {h[3]}, last store {h[4]}")
+    for i in range(min(r[6], 8)):
+        t, _, ppb = CAL_PT.unpack_from(b, CAL_HDR.size + CAL_REC.size + CAL_PT.size * i)
+        print(f"  point {temp_str(t)} C: {ppb} ppb")
+
+
 def cmd_tx(d, a):
     n, dt = transmit(d, a.rate, a.seconds, a.tone, a.bits, a.freq, a.gain)
     print(f"sent {n} samples in {dt:.2f} s = {n / dt / 1e3:.1f} kS/s")
@@ -210,6 +238,9 @@ def main():
     ap.add_argument("port")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("info")
+    p = sub.add_parser("cal", help="the crystal calibration in force")
+    p.add_argument("--set", type=int, help="a constant correction in ppb")
+    p.add_argument("--clear", action="store_true", help="correction 0, nothing stored")
     for name in ("rx", "tx"):
         p = sub.add_parser(name)
         p.add_argument("--rate", type=int, default=250000)
@@ -230,6 +261,8 @@ def main():
                 print(f"{k}: {v.rstrip(b'\0').decode() if isinstance(v, bytes) else v}")
         elif a.cmd == "rx":
             cmd_rx(d, a)
+        elif a.cmd == "cal":
+            cmd_cal(d, a)
         else:
             cmd_tx(d, a)
     finally:

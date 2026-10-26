@@ -6,6 +6,8 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(esp_sdr_osmosdr)
 
 include(${CMAKE_CURRENT_LIST_DIR}/../common/common.cmake)
+# The crystal calibration requests on the library (ESDR_REQ_GET_CAL here).
+include(${CMAKE_CURRENT_LIST_DIR}/../common/esdr_cal.cmake)
 
 target_sources(app PRIVATE
   src/main.c

@@ -36,6 +36,7 @@
 #include <cmath>
 #include <atomic>
 #include <condition_variable>
+#include <cstdio>
 #include <cstring>
 #include <functional>
 #include <memory>
@@ -1029,6 +1030,60 @@ public:
 	}
 
 	double getFrequencyCorrection(const int, const size_t) const override { return corrPpm_; }
+
+	/* Sensors: the radio chip's die temperature and its own crystal calibration (the
+	 * library's, under the correction above), where the device has them. */
+	std::vector<std::string> listSensors(void) const override
+	{
+		return {"temperature", "corr_ppb", "lo_residual_hz"};
+	}
+
+	SoapySDR::ArgInfo getSensorInfo(const std::string &key) const override
+	{
+		SoapySDR::ArgInfo info;
+
+		info.key = key;
+		if (key == "temperature") {
+			info.name = "Die temperature";
+			info.units = "C";
+			info.type = SoapySDR::ArgInfo::FLOAT;
+		} else if (key == "corr_ppb") {
+			info.name = "Crystal correction in force on the device";
+			info.units = "ppb";
+			info.type = SoapySDR::ArgInfo::INT;
+		} else if (key == "lo_residual_hz") {
+			info.name = "LO offset the device's correction leaves";
+			info.units = "Hz";
+			info.type = SoapySDR::ArgInfo::INT;
+		}
+		return info;
+	}
+
+	std::string readSensor(const std::string &key) const override
+	{
+		if (key == "temperature") {
+			uint8_t b[2];
+			char t[16];
+
+			if (link_->ctrlIn(ESDR_REQ_GET_TEMP, b, sizeof(b)) != (int)sizeof(b)) {
+				throw std::runtime_error("esdr: no temperature sensor");
+			}
+			snprintf(t, sizeof(t), "%.1f", (int16_t)(b[0] | b[1] << 8) / 10.0);
+			return t;
+		}
+		struct esdr_cal c{};
+
+		if (link_->ctrlIn(ESDR_REQ_GET_CAL, &c, sizeof(c)) != (int)sizeof(c)) {
+			throw std::runtime_error("esdr: no crystal calibration on this device");
+		}
+		if (key == "corr_ppb") {
+			return std::to_string(c.corr_ppb);
+		}
+		if (key == "lo_residual_hz") {
+			return std::to_string(c.lo_residual_hz);
+		}
+		throw std::runtime_error("esdr: unknown sensor " + key);
+	}
 
 private:
 	int setU32(uint8_t req, uint32_t v)

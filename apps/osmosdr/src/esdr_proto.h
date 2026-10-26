@@ -127,6 +127,22 @@ enum esdr_req {
 	 * runs.
 	 */
 	ESDR_REQ_GET_TEMP = 0x18,
+	/*
+	 * IN: struct esdr_cal: the library's crystal correction in force, where it leaves the
+	 * LO, the die temperature, and the calibration behind the correction (its temperature
+	 * points) with whether the device stores it. -ENOTSUP from a device without the
+	 * library's correction (apps/osmosdr answers it, SET_CAL not).
+	 */
+	ESDR_REQ_GET_CAL = 0x19,
+	/*
+	 * wValue: ESDR_CAL_*. A crystal calibration a host measured (the WHY2025 badge's P4 for
+	 * its C6, apps/micropython's ltecal), a whole record a host kept, a constant set by
+	 * hand, or none: the device applies it from its next tuning, and stores it where it
+	 * can (struct esdr_cal last_store tells; a device without a store keeps it for the
+	 * session, and the host sends it again at its start). Separate from SET_FREQ_CORR, the
+	 * host's own correction on top of it.
+	 */
+	ESDR_REQ_SET_CAL = 0x1a,
 };
 
 #define ESDR_BURST_MAX 16380U
@@ -169,6 +185,21 @@ enum esdr_mode {
 #define ESDR_GAIN_AUTO 0xffffU
 #define ESDR_DGAIN_DEFAULT 0xffffU
 #define ESDR_DGAIN_MAX_DB  42U
+
+/* ESDR_REQ_SET_CAL operations (wValue). */
+/* OUT struct esdr_cal_meas: a measured crystal error, a point of the temperature model. */
+#define ESDR_CAL_ADD   0U
+/* OUT 4 bytes: a constant correction in ppb (int32_t); the points go. */
+#define ESDR_CAL_SET   1U
+/* No data: correction 0, the stored calibration removed. */
+#define ESDR_CAL_CLEAR 2U
+/* OUT struct esdr_cal_rec: a whole record, as GET_CAL gave it. */
+#define ESDR_CAL_LOAD  3U
+
+/* A temperature field with no reading. */
+#define ESDR_TEMP_UNKNOWN (-32768)
+/* Temperature points a calibration keeps (esp_sdr_cal.h). */
+#define ESDR_CAL_POINTS 8U
 
 /*
  * Offset tuning (default on): the LO sits 4 MHz below the centre and the
@@ -213,6 +244,64 @@ struct esdr_state {
 	/* LO as programmed (MHz plus kHz offset). */
 	uint32_t lo_mhz;
 	int32_t lo_offset_khz;
+} __attribute__((packed));
+
+struct esdr_cal_point {
+	/* Die temperature in 0.1 degC, and the crystal's error there in ppb. */
+	int16_t temp_dc;
+	int16_t reserved;
+	int32_t ppb;
+} __attribute__((packed));
+
+/* A calibration: the crystal's error and how it was measured, with its temperature points. */
+struct esdr_cal_rec {
+	/* The crystal's error (ppb, positive when the LO runs high), the spread of its estimates. */
+	int32_t ppb;
+	int32_t spread_ppb;
+	/* Carrier it was measured on (kHz) and that cell's id, or 0 and -1 when set by hand. */
+	uint32_t carrier_khz;
+	int16_t cell_id;
+	/* Estimates combined. */
+	uint16_t estimates;
+	/* Die temperature during the measurement, 0.1 degC, or ESDR_TEMP_UNKNOWN. */
+	int16_t temp_dc;
+	/* Points in use, oldest first; with none the correction is the constant ppb. */
+	uint8_t points;
+	uint8_t reserved;
+	struct esdr_cal_point point[ESDR_CAL_POINTS];
+} __attribute__((packed));
+
+struct esdr_cal {
+	/*
+	 * Correction in force (ppb, positive when the crystal runs fast), and where it leaves the
+	 * LO for the current tuning (Hz above the frequency asked for: it reaches the PLL in
+	 * whole kHz).
+	 */
+	int32_t corr_ppb;
+	int32_t lo_residual_hz;
+	/* Die temperature now, 0.1 degC, or ESDR_TEMP_UNKNOWN. */
+	int16_t temp_dc;
+	/* Stored calibration: 0 there is one, -ENOENT none, -ENOTSUP no store on this device. */
+	int16_t stored;
+	/* What storing the last ESDR_REQ_SET_CAL gave (0 before any, or a negative errno). */
+	int16_t last_store;
+	uint16_t reserved;
+	/* The calibration behind the correction. */
+	struct esdr_cal_rec rec;
+} __attribute__((packed));
+
+struct esdr_cal_meas {
+	/* The crystal's error (ppb, positive when the LO runs high), the spread of its estimates. */
+	int32_t ppb;
+	int32_t spread_ppb;
+	/* Carrier it was measured on (kHz) and that cell's id, or 0 and -1. */
+	uint32_t carrier_khz;
+	int16_t cell_id;
+	/* Estimates combined. */
+	uint16_t estimates;
+	/* Die temperature during the measurement, 0.1 degC, or ESDR_TEMP_UNKNOWN: a constant. */
+	int16_t temp_dc;
+	uint16_t reserved;
 } __attribute__((packed));
 
 struct esdr_stats {

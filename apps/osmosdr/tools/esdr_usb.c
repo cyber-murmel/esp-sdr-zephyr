@@ -805,10 +805,57 @@ static int run_stream(struct stream *s, bool in, double seconds, double rate)
 	return 0;
 }
 
+/* A temperature in 0.1 degC as text, "?" when unknown. */
+static const char *temp_str(char *buf, size_t len, int dc)
+{
+	if (dc == ESDR_TEMP_UNKNOWN) {
+		return "?";
+	}
+	snprintf(buf, len, "%d.%d", dc / 10, abs(dc % 10));
+	return buf;
+}
+
+/* cal: the crystal calibration in force; cal-set -p ppb: a constant; cal-clear: none. */
+static int cmd_cal(const char *cmd, int ppb)
+{
+	struct esdr_cal c;
+	char t[16];
+	int n = 0;
+
+	if (strcmp(cmd, "cal-set") == 0) {
+		uint8_t b[4] = {(uint8_t)ppb, (uint8_t)(ppb >> 8), (uint8_t)(ppb >> 16),
+				(uint8_t)(ppb >> 24)};
+
+		n = ctrl_out(ESDR_REQ_SET_CAL, ESDR_CAL_SET, b, sizeof(b));
+	} else if (strcmp(cmd, "cal-clear") == 0) {
+		n = ctrl_out(ESDR_REQ_SET_CAL, ESDR_CAL_CLEAR, NULL, 0);
+	}
+	if (n < 0) {
+		fprintf(stderr, "%s: %d\n", cmd, n);
+		return 1;
+	}
+	n = ctrl_in(ESDR_REQ_GET_CAL, &c, sizeof(c));
+	if (n != (int)sizeof(c)) {
+		fprintf(stderr, "cal: %d\n", n);
+		return 1;
+	}
+	printf("correction %d ppb, LO %+d Hz off the frequency asked, die %s C\n", c.corr_ppb,
+	       c.lo_residual_hz, temp_str(t, sizeof(t), c.temp_dc));
+	printf("calibration %d ppb: cell %d at %u kHz, %u estimates, spread %d ppb, %s C; "
+	       "stored %d, last store %d\n",
+	       c.rec.ppb, c.rec.cell_id, c.rec.carrier_khz, c.rec.estimates, c.rec.spread_ppb,
+	       temp_str(t, sizeof(t), c.rec.temp_dc), c.stored, c.last_store);
+	for (unsigned int i = 0; i < c.rec.points && i < ESDR_CAL_POINTS; i++) {
+		printf("  point %s C: %d ppb\n", temp_str(t, sizeof(t), c.rec.point[i].temp_dc),
+		       c.rec.point[i].ppb);
+	}
+	return 0;
+}
+
 static void usage(void)
 {
 	fprintf(stderr, "usage: esdr_usb [-s serial] info | test-in | test-out | rx | tx | trig |"
-			" gapless | chan | temp | c6 | fw\n"
+			" gapless | chan | temp | cal | cal-set | cal-clear | c6 | fw\n"
 			"  [-t seconds] [-f Hz] [-r S/s] [-g gain|auto] [-d digital dB] [-b 4|8|16] [-B bw Hz]\n"
 			"  [-p ppb] [-n (no offset tuning)] [-o file] [-x Hz (retune half way)]\n"
 			"  tx: [-G step] (-i file | -T tone Hz [-a amplitude])\n"
@@ -816,6 +863,7 @@ static void usage(void)
 			"  gapless: [-R ratio, the threshold's floor | -L fixed level, raw units^2 a pair]"
 			" [-o file of blocks]\n"
 			"  chan: [-C channels] [-O open dB] [-R ratio | -L level] [-o file of blocks]\n"
+			"  cal: the crystal calibration; cal-set: -p ppb, a constant; cal-clear\n"
 			"  c6: [-t seconds J8 goes to the C6]\n"
 			"  fw: -i image\n");
 }
@@ -1103,6 +1151,9 @@ int main(int argc, char **argv)
 		if (s.out != NULL) {
 			fclose(s.out);
 		}
+	} else if (strcmp(cmd, "cal") == 0 || strcmp(cmd, "cal-set") == 0 ||
+		   strcmp(cmd, "cal-clear") == 0) {
+		ret = cmd_cal(cmd, ppb);
 	} else if (strcmp(cmd, "temp") == 0) {
 		uint8_t b[2];
 		int n = ctrl_in(ESDR_REQ_GET_TEMP, b, sizeof(b));

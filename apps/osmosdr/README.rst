@@ -97,6 +97,17 @@ little endian:
      - dB in steps of 6 up to 42, or 0xffff: 24 dB at 8 bit, 0 at 16
    * - ``GET_TEMP`` (0x18, in)
      - die temperature in 0.1 degC, 2 bytes signed (-ENOTSUP without the sensor)
+   * - ``GET_CAL`` (0x19, in)
+     - the device's own crystal correction (the library's, under ``SET_FREQ_CORR``): in force,
+       where it leaves the LO (whole kHz at the PLL), the die temperature, the calibration
+       behind it with its temperature points, whether it is stored (``struct esdr_cal``,
+       ``doc/lte-calibration.md``)
+   * - ``SET_CAL`` (0x1a)
+     - wValue 0: a measured crystal error (``struct esdr_cal_meas``), a point of the
+       temperature model; 1: a constant in ppb (4 bytes signed); 2: none; 3: a whole record
+       (``struct esdr_cal_rec``, as ``GET_CAL`` gave it). Applied from the next tuning, stored
+       where the device has a store. The serial transport and the MicroPython radios take it;
+       this app answers ``GET_CAL`` only
 
 Receive data comes in 4096-byte blocks on bulk IN: a 16-byte header
 (magic ``EBLK``, flags, sample count, index of the first sample on the

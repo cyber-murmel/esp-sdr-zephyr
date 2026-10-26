@@ -41,6 +41,7 @@
 #include <esp_sdr/esp_sdr_gapless.h>
 #endif
 
+#include "esdr_cal.h"
 #include "esdr_dev.h"
 #include "esdr_proto.h"
 #if defined(CONFIG_ESP_SDR_GAPLESS)
@@ -510,9 +511,13 @@ static int radio_apply(void)
 		ret = want.bandwidth_hz == 0U ? esp_sdr_rx_set_lpf(ESP_SDR_RX_LPF_AUTO)
 					      : esp_sdr_rx_set_bandwidth(want.bandwidth_hz / 1000000U);
 	}
-	/* Where the LO lands, back in the host's frequency scale. */
+	/*
+	 * Where the LO lands, back in the host's frequency scale, with what the library's crystal
+	 * correction leaves (it reaches the PLL in whole kHz).
+	 */
 	center_hz = ((uint64_t)lo_mhz * 1000000U + (int64_t)lo_khz * 1000) +
-		    (int64_t)want.freq_hz * want.corr_ppb / 1000000000LL;
+		    (int64_t)want.freq_hz * want.corr_ppb / 1000000000LL +
+		    esp_sdr_get_lo_residual_hz();
 	/* Applied once: a setting the radio refuses keeps its previous value. */
 	radio_dirty = false;
 #if defined(CONFIG_ESP_SDR_TRIG)
@@ -1014,6 +1019,10 @@ static int handle_out(uint8_t r, uint16_t value, const uint8_t *data, size_t len
 		want.corr_ppb = (int32_t)sys_get_le32(data);
 		radio_dirty = true;
 		return 0;
+	case ESDR_REQ_SET_CAL:
+		/* The library's correction (radio idle between streams): the centre moves. */
+		radio_dirty = true;
+		return esdr_cal_set(value, data, len);
 	case ESDR_REQ_SET_OPTIONS:
 		/* No offset tuning: the paced receiver sums around the LO itself. */
 		return 0;
@@ -1075,6 +1084,8 @@ static int handle_in(uint8_t r, uint8_t *buf, size_t max)
 		sys_put_le16((uint16_t)dc, buf);
 		return 2;
 	}
+	case ESDR_REQ_GET_CAL:
+		return esdr_cal_get(buf, max);
 #if defined(CONFIG_ESP_SDR_GAPLESS)
 	case ESDR_REQ_GET_GAPLESS_STATS:
 		memcpy(buf, &gl_stats, MIN(max, sizeof(gl_stats)));

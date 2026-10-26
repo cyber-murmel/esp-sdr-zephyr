@@ -52,6 +52,8 @@ elseif(CONFIG_SOC_SERIES_ESP32)
   # plain Zephyr code as esdr_remote.c is on the P4).
   target_sources(app PRIVATE cmod/esdr_local.c cmod/esdr_mon.c src/setjmp.S)
   target_include_directories(app PRIVATE cmod ../osmosdr/src)
+  # The crystal calibration requests on the library (apps/common).
+  include(${CMAKE_CURRENT_LIST_DIR}/../common/esdr_cal.cmake)
   # The ROM's setjmp spills windows by SYSCALL, as on the S3 (setjmp.S).
   zephyr_link_libraries("-Wl,--wrap=setjmp")
 else()
