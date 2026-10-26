@@ -77,8 +77,13 @@
  *                              (esptool) for that long, then back to this chip's REPL and DFU
  *                              (esdr_usb.c)
  *   request(req, value=0, data=None, n_in=0) -> bytes or None
- *                              P4: one protocol request to the radio (esdr_proto.h); n_in > 0
- *                              asks for that many bytes back; a negative status raises OSError
+ *                              one protocol request to the radio (esdr_proto.h; on the ESP32
+ *                              the subset esdr_local.c takes); n_in > 0 asks for that many
+ *                              bytes back; a negative status raises OSError
+ *   lte_detect(buf, fs, lo_hz, ...) -> dict or None, iq_power(buf, count=0)
+ *                              the LTE crystal calibration's estimator on a capture
+ *                              (esdr_lte.c); modules/ltecal.py measures the radio's crystal
+ *                              with it and keeps the result
  *
  * Memory: the Python heap is CONFIG_APP_MP_PSRAM_HEAP_KB of PSRAM, added at every start; LVGL
  * allocates from it too (CONFIG_LV_Z_MEM_POOL_MICROPYTHON).
@@ -103,6 +108,7 @@
 
 #include "esdr_board.h"
 #include "esdr_defs.h"
+#include "esdr_lte.h"
 #include "esdr_remote.h"
 #include "esdr_rx.h"
 
@@ -879,7 +885,6 @@ static mp_obj_t esdr_usb_to_c6_fn(size_t n_args, const mp_obj_t *args)
 static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_usb_to_c6_obj, 0, 1, esdr_usb_to_c6_fn);
 #endif
 
-#if RADIO_LINKED
 static mp_obj_t esdr_request_fn(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args)
 {
 	enum { ARG_req, ARG_value, ARG_data, ARG_n_in };
@@ -912,7 +917,6 @@ static mp_obj_t esdr_request_fn(size_t n_args, const mp_obj_t *pos_args, mp_map_
 	return a[ARG_n_in].u_int > 0 ? mp_obj_new_bytes(in, ret) : mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_KW(esdr_request_obj, 1, esdr_request_fn);
-#endif
 
 static const mp_rom_map_elem_t esdr_globals_table[] = {
 	{MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_esdr)},
@@ -952,9 +956,9 @@ static const mp_rom_map_elem_t esdr_globals_table[] = {
 #if RADIO_LINKED && ESDR_USB_TO_C6
 	{MP_ROM_QSTR(MP_QSTR_usb_to_c6), MP_ROM_PTR(&esdr_usb_to_c6_obj)},
 #endif
-#if RADIO_LINKED
 	{MP_ROM_QSTR(MP_QSTR_request), MP_ROM_PTR(&esdr_request_obj)},
-#endif
+	{MP_ROM_QSTR(MP_QSTR_lte_detect), MP_ROM_PTR(&esdr_lte_detect_obj)},
+	{MP_ROM_QSTR(MP_QSTR_iq_power), MP_ROM_PTR(&esdr_iq_power_obj)},
 	{MP_ROM_QSTR(MP_QSTR_next_app), MP_ROM_PTR(&esdr_next_app_obj)},
 	{MP_ROM_QSTR(MP_QSTR_home), MP_ROM_PTR(&esdr_home_obj)},
 	{MP_ROM_QSTR(MP_QSTR_shift), MP_ROM_PTR(&esdr_shift_obj)},

@@ -296,7 +296,10 @@ or int16 I/Q from a buffer), ``tx_loop()`` / ``tx_period()`` (loop one period at
 ``claim()`` / ``release()`` (a volume away from USB while
 writing), ``shell()`` (Zephyr shell commands, such as ``usj`` and ``mcuboot confirm``),
 ``crash()`` and ``reset_reason()`` (why the board last restarted), ``temp()`` (the radio
-chip's die temperature, ``doc/lte-calibration.md``), ``sd_info()``,
+chip's die temperature), ``lte_detect()`` and ``iq_power()`` (the LTE crystal calibration's
+estimator on a capture, ``cmod/esdr_lte.c``: the frozen ``ltecal`` module measures the radio's
+crystal with it, keeps the record in ``/FLASH:/esdr_cal.bin`` and sends it to the radio again
+whenever an app starts it, ``doc/lte-calibration.md``), ``sd_info()``,
 ``next_app()`` and ``home()`` (the launcher: the app the next soft reset starts, whether the
 knob ended the app). The C5's ``esdr`` (``cmod/esdr_c5.c``) has the radio part for packet
 flowgraphs, ``rx_lsb()``, ``fsk_frames()`` and ``first_start()``; its docstring lists it. The

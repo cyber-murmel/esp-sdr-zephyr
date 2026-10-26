@@ -14,6 +14,7 @@ if(CONFIG_SOC_SERIES_ESP32C5)
 elseif(CONFIG_SOC_SERIES_ESP32P4 OR CONFIG_SOC_SERIES_ESP32)
   target_sources(usermod_esdr INTERFACE
     ${CMAKE_CURRENT_LIST_DIR}/esdr_radio.c
+    ${CMAKE_CURRENT_LIST_DIR}/esdr_lte.c
     ${CMAKE_CURRENT_LIST_DIR}/esdr_chan.c
     ${CMAKE_CURRENT_LIST_DIR}/esdr_board.c
     ${CMAKE_CURRENT_LIST_DIR}/esdr_gui.c

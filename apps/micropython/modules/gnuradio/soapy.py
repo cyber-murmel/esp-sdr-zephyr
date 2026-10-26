@@ -80,6 +80,14 @@ class source(gr.basic_block):
         # A packet flowgraph's receive tuning correction (Hz, gnuradio/_link.py's AFC).
         self._afc = 0.0
         esdr.init()
+        # The radio's crystal calibration kept on this chip (ltecal.py): to the radio again
+        # after its restart or ours; nothing to do without one, or on a radio without the
+        # request (an older image).
+        try:
+            import ltecal
+            ltecal.restore()
+        except Exception:
+            pass
 
     def _halt(self):
         if self._gapless:
