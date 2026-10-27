@@ -1,0 +1,18 @@
+sample:
+  name: ESP-SDR pcap
+  description: >-
+    An ESP32-P4 (WHY2025 badge, ESP32-P4-Function-EV-Board) demodulates and decodes the bursts
+    its ESP32-C6 radio receives (Bluetooth LE, IEEE 802.15.4, any other as a burst record with
+    its metadata) and streams them as pcapng over USB for Wireshark
+common:
+  tags: esp-sdr
+  sysbuild: true
+  platform_allow:
+    - why2025_badge/esp32p4/hpcore
+    - esp32p4_function_ev_board/esp32p4/hpcore
+  integration_platforms:
+    - why2025_badge/esp32p4/hpcore
+    - esp32p4_function_ev_board/esp32p4/hpcore
+tests:
+  esp_sdr.pcap:
+    build_only: true

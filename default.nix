@@ -101,6 +101,8 @@ let
       pyqt5
       # The host tools' serial ports.
       pyserial
+      # The host tools' USB devices (chancap_bridge.py, esdr_pcap.py).
+      pyusb
     ];
   };
 
@@ -179,6 +181,8 @@ let
     tcpdump
     texliveBasic
     west2nix-update
+    # tshark: the host tests read the pcap app's stream with it.
+    wireshark-cli
   ]);
 
   env = {

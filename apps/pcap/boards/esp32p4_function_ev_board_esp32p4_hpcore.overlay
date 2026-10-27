@@ -1,0 +1,42 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * The ESP32-P4-Function-EV-Board's ESP32-P4: its USB 2.0 OTG HS port (USB-C) with the shell on
+ * CDC-ACM, DFU and the pcapng stream; the C6 on sdhc1 (apps/osmosdr_serial with
+ * CONFIG_APP_LINK_SDIO, installed by apps/c6_bootstrap).
+ */
+
+/ {
+	chosen {
+		esdr,link-sdio = &sdhc1;
+		zephyr,shell-uart = &cdc_acm_uart0;
+	};
+
+	/* GPIO54 is the ESP32-C6's enable. */
+	zephyr,user {
+		c6-enable-gpios = <&gpio1 22 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+&esp_hosted_mcu {
+	status = "disabled";
+};
+
+zephyr_udc0: &usb_otg {
+	status = "okay";
+	/*
+	 * An IN endpoint is bulk capable only with a FIFO of a whole high-speed packet (512 bytes,
+	 * 128 words). The endpoints take the FIFOs in order: CDC-ACM's notification endpoint the
+	 * first (16 words, its packets are short), its data endpoint the second, the pcapng stream
+	 * the third. With the RX FIFO (256) and EP0's (32) that is 816 of the controller's 896
+	 * words (GHWCFG3), where three FIFOs of 128 would not fit.
+	 */
+	g-tx-fifo-size = <16 128 128 64 64 64 64>;
+
+	cdc_acm_uart0: cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+		label = "ESP-SDR pcap shell";
+	};
+};
+
+#include "../../micropython/boards/partitions_p4.dtsi"

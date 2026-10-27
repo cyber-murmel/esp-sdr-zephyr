@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+mainmenu "ESP-SDR pcap"
+
+menu "ESP-SDR pcap"
+
+config APP_PCAP_BURSTS
+	int "Burst buffers"
+	default 48
+	help
+	  Buffers of a burst's samples (BURST_MAX_SAMPLES int16 pairs, 128 KiB
+	  each) in PSRAM: bursts the channelizer assembles and the decoder has
+	  yet to take.
+
+config APP_PCAP_STREAM_CPU
+	int "CPU of the stream thread"
+	range 0 1
+	default 1
+	depends on SMP
+	help
+	  The channelizer's PIE state is per core and not saved on a
+	  context switch: the stream thread is pinned before it starts.
+	  The radio reader, USB, the shell and the work queues stay on
+	  CPU 0 (SCHED_CPU_MASK_PIN_ONLY), where the interrupts and the
+	  tick are. With the stream alone on CPU 1 and the decoders on
+	  CPU 0, a 40 MS/s survey lost no bursts; the other way round the
+	  reader and the stream overloaded CPU 0 (doc/pcap.md).
+
+config APP_PCAP_DECODE_CPU
+	int "CPU of the decoder and the generic analysis"
+	range 0 1
+	default 0
+	depends on SMP
+
+endmenu
+
+rsource "../common/Kconfig"
+
+# The USB device's identity (sample_usbd).
+source "samples/subsys/usb/common/Kconfig.sample_usbd"
+
+source "Kconfig.zephyr"

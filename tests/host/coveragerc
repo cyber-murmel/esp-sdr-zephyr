@@ -10,6 +10,7 @@ source =
     apps/micropython/modules
     apps/micropython/modules_c5
     apps/chancap/tools
+    apps/pcap/tools
     apps/ubertooth/tools
     scripts
     doc/registers
