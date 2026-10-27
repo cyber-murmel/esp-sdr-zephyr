@@ -11,8 +11,10 @@
  * Branch sums: for the frame with newest pair N and the branches r = 4 g .. 4 g + 3, tap p
  * reads the pairs N - 4 g - 3 - p M .. N - 4 g - p M, four consecutive pairs of the history: one
  * vector, against a vector of the four branches' taps (each twice, for I and Q), T multiply-adds
- * into the 40-bit accumulators. Frames are D apart and D and M are multiples of 4, so with pair
- * i at a history position of i + 3 mod 4 every load is aligned. The four frames' vectors are
+ * into the 40-bit accumulators. Frames are D apart and M is a multiple of 4, so with pair i at
+ * a history position of i + 3 mod 4 the loads of frames 0 and 2 are aligned, and those of frames
+ * 1 and 3 when D is a multiple of 4 too; for M = 20 (D = 10) they are 8 bytes off, which the
+ * PIE kernels allow (esdr_pfbq_pie_on()) at 3 to 4 cycles a load. The four frames' vectors are
  * transposed (lanes become frames) and stored at their branches' FFT input positions.
  *
  * DFT: every frame uses an even frame's input order ((M - r) mod M, digit reversed); an odd

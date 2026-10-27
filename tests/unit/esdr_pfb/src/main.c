@@ -23,7 +23,7 @@
 uint64_t test_host_ns(void);
 uint64_t test_host_cycles(void);
 
-static const uint16_t channels[] = {16, 32, 40, 64, 80};
+static const uint16_t channels[] = {16, 20, 32, 40, 64, 80};
 
 /* The largest bank (M 80, T 16, 41 frames) fits. */
 static uint8_t mem[120000] __aligned(16);
@@ -623,7 +623,7 @@ ZTEST(esdr_pfb, test_edges)
 
 		n += esdr_pfb_mem_size(&cfg) != 0U;
 	}
-	zassert_equal(n, 5, "supported M");
+	zassert_equal(n, ARRAY_SIZE(channels), "supported M");
 }
 
 ZTEST(esdr_pfb, test_init_rejects)

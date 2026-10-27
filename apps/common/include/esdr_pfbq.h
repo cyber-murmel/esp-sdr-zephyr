@@ -27,7 +27,8 @@
  * that continues it lands in the frames after.
  *
  * Use from one thread only: the PIE kernels' vector state is not saved across context switches,
- * so no other thread on the core may use PIE.
+ * so no other thread on the core may use PIE. PIE is switched on per core (in esdr_pfbq_init()
+ * and esdr_detq_init()): with SMP that thread is pinned to its core before it starts.
  */
 
 #ifndef ESDR_PFBQ_H_
@@ -46,7 +47,7 @@
 #define ESDR_PFBQ_SHIFT_MAX 6U
 
 struct esdr_pfbq_cfg {
-	/* M: 16, 32, 40, 64 or 80. */
+	/* M: 16, 20, 32, 40, 64 or 80. */
 	uint16_t channels;
 	/* T, taps per branch: 4, 8 or 12 (0: 8). */
 	uint16_t taps;
@@ -131,7 +132,7 @@ unsigned int esdr_pfbq_qt(const struct esdr_pfbq *p);
 uint64_t esdr_pfbq_now(void);
 
 #if defined(__riscv)
-/* The core's cycle counter (mcycle), 64 bits. */
+/* The core's cycle counter (mcycle), 64 bits: each core has its own, so time a pinned thread. */
 static inline uint64_t esdr_pfbq_cycles(void)
 {
 	uint32_t hi, lo, hi2;

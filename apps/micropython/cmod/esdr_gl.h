@@ -21,7 +21,7 @@
 #define ESDR_GL_BURSTS 64U
 
 /*
- * Starts the channelizer on @p channels (16, 32, 40, 64 or 80) with the detector opening at
+ * Starts the channelizer on @p channels (16, 20, 32, 40, 64 or 80) with the detector opening at
  * @p open_db over a channel's floor; the radio's stream must be started too
  * (esdr_remote_gl_start()). 0, -EINVAL for an unsupported @p channels.
  */

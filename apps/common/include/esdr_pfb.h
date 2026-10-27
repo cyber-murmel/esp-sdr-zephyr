@@ -6,7 +6,7 @@
  * esdr_pfbq.h computes them in fixed point on the P4; the float bank of the tests
  * (tests/common/include/esdr_pfb_ref.h) evaluates them directly, as their reference.
  *
- * Channelizer: M channels (16, 32, 40, 64 or 80) spaced fs / M apart, oversampled twice:
+ * Channelizer: M channels (16, 20, 32, 40, 64 or 80) spaced fs / M apart, oversampled twice:
  * decimation D = M / 2, output rate 2 fs / M. Channel k is centred at k fs / M (k > M / 2:
  * k - M, below the centre). The prototype low pass h[n], n = 0 .. L - 1, L = M T, gives
  *

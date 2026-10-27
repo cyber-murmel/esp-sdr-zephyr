@@ -12,7 +12,8 @@
  * - A hardware loop's setup is written as a word (LP_SETUP): the assembler's label form needs a
  *   relocation only Espressif's linker knows.
  * - A vector loaded by one instruction and used by the next stalls a cycle; unaligned vector
- *   access costs 3 to 4 cycles, so all vectors here are 16-byte aligned.
+ *   access costs 3 to 4 cycles, so the vectors here are 16-byte aligned, but for the history
+ *   loads of frames 1 and 3 when D is not a multiple of 4 (M = 20).
  * - srcmb with select 1 saturates, cmul's two modes write the low and the high half (so it
  *   works in place), vadd and vsub saturate.
  */

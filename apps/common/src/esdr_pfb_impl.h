@@ -26,8 +26,8 @@
 static inline unsigned int esdr_pfb_plan(unsigned int m, uint8_t radix[4])
 {
 	static const uint8_t tab[][5] = {
-		{16, 4, 4, 0, 0}, {32, 4, 4, 2, 0}, {40, 5, 4, 2, 0},
-		{64, 4, 4, 4, 0}, {80, 5, 4, 4, 0},
+		{16, 4, 4, 0, 0}, {20, 5, 4, 0, 0}, {32, 4, 4, 2, 0},
+		{40, 5, 4, 2, 0}, {64, 4, 4, 4, 0}, {80, 5, 4, 4, 0},
 	};
 
 	for (size_t i = 0; i < sizeof(tab) / sizeof(tab[0]); i++) {

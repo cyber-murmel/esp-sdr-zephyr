@@ -24,15 +24,15 @@ import pathlib
 import numpy as np
 
 TAU = 2.0 * math.pi
-CHANNELS = (16, 32, 40, 64, 80)
+CHANNELS = (16, 20, 32, 40, 64, 80)
 TAPS = 8
 STOP_DB = 60.0
 # First pair's absolute index: not a multiple of any D or M, beyond 32 bits.
 I0 = (1 << 33) + 12345
 SEED = 1
 # Segments: (offset from I0, pairs, shift, DC of I, DC of Q). Gaps of 100 (zeros for every M),
-# 700 (a new run for every M), 300 (a new run for M 16 and 32 only, zeros for the others), none,
-# 3. The DC (raw units, int8 as esdr_seg_hdr carries it) changes at every segment.
+# 700 (a new run for every M), 300 (a new run for M 16, 20 and 32 only, zeros for the others),
+# none, 3. The DC (raw units, int8 as esdr_seg_hdr carries it) changes at every segment.
 SEGS = ((0, 700, 0, 37, -21), (800, 500, 2, -80, 64), (2000, 600, 1, 5, 3),
         (2900, 500, 0, -128, 127), (3400, 400, 2, 80, -6), (3800, 37, 1, -1, 90),
         (3840, 1000, 0, 19, -45))

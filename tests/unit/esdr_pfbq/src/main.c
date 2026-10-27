@@ -19,7 +19,7 @@
 #include "esdr_pfbq.h"
 #include "test_rng.h"
 
-static const uint16_t channels[] = {16, 32, 40, 64, 80};
+static const uint16_t channels[] = {16, 20, 32, 40, 64, 80};
 
 /*
  * The largest banks fit (M 80, T 12, 9 quads; the float bank with one frame, or M 64 with 33);

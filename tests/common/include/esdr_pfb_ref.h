@@ -20,7 +20,7 @@
 #define ESDR_PFB_GROUP 8U
 
 struct esdr_pfb_cfg {
-	/* M: 16, 32, 40, 64 or 80. */
+	/* M: 16, 20, 32, 40, 64 or 80. */
 	uint16_t channels;
 	/* T, taps per branch: 4, 8, 12 or 16 (0: 8). */
 	uint16_t taps;

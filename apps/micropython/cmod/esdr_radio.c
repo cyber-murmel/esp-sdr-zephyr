@@ -45,8 +45,8 @@
  *                              stream, its default build), the 10 us windows ratio times the
  *                              quiet power (or past a fixed level) and pre / post of them
  *                              around, at most budget bytes a second; monitor: their samples to
- *                              rx_latest() (full scale 16384); channels (16, 32, 40, 64, 80):
- *                              the channelizer and burst detector (esdr_gl.c), opening open_db
+ *                              rx_latest() (full scale 16384); channels (16, 20, 32, 40, 64,
+ *                              80): the channelizer and burst detector (esdr_gl.c), opening open_db
  *                              over a channel's floor. OSError EOPNOTSUPP from a C6 without the
  *                              mode
  *   gapless_stop(), gapless_stats() -> dict

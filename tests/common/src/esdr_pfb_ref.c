@@ -223,6 +223,12 @@ static void fft16(const struct esdr_pfb *p, const float *src, float *dst)
 	stage4(dst, dst, 16, 4, p->tw[1]);
 }
 
+static void fft20(const struct esdr_pfb *p, const float *src, float *dst)
+{
+	stage5(src, dst, 20, 1, NULL);
+	stage4(dst, dst, 20, 5, p->tw[1]);
+}
+
 static void fft32(const struct esdr_pfb *p, const float *src, float *dst)
 {
 	stage4(src, dst, 32, 1, NULL);
@@ -402,6 +408,7 @@ KERNEL void branches1(const float *h, const float *xn, float *u, const uint16_t 
 	}
 
 PFB_KERNELS(16)
+PFB_KERNELS(20)
 PFB_KERNELS(32)
 PFB_KERNELS(40)
 PFB_KERNELS(64)
@@ -416,6 +423,7 @@ static const struct {
 	void (*fft)(const struct esdr_pfb *p, const float *src, float *dst);
 } kernels[] = {
 	{16, b4_16_8, b4_16, b1_16_8, b1_16, fft16},
+	{20, b4_20_8, b4_20, b1_20_8, b1_20, fft20},
 	{32, b4_32_8, b4_32, b1_32_8, b1_32, fft32},
 	{40, b4_40_8, b4_40, b1_40_8, b1_40, fft40},
 	{64, b4_64_8, b4_64, b1_64_8, b1_64, fft64},
