@@ -42,6 +42,10 @@ repos:
             apps/micropython/(tools|eggs|modules|modules_c5)/|
             apps/micropython/cmod/esdr_fsk\.[ch]$|
             apps/chancap/tools/ble_pcap\.py$|
+            apps/pcap/tools/esdr_(pcap\.py|burst\.lua)$|
+            apps/pcap/src/(pcap_proto|pcapng|records|decode|burst)\.h$|
+            apps/pcap/src/(pcapng|records)\.c$|
+            apps/osmosdr/src/esdr_proto\.h$|
             apps/ubertooth/tools/le_ref\.py$|
             tests/unit/ubertooth_le/src/le_vectors\.h$|
             scripts/|
