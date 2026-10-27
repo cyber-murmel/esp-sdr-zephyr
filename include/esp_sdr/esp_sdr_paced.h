@@ -20,7 +20,9 @@
  *
  * Between start and stop the caller polls in a tight loop with interrupts
  * locked and serves its own I/O between polls. A poll that comes late moves
- * that sample's instant; the stats count it. One direction at a time.
+ * that sample's instant (esp_sdr_rx_paced_fill_iq8() spreads a poll whole
+ * periods late over the samples it missed instead); the stats count it. One
+ * direction at a time.
  */
 
 #ifndef ESP_SDR_ESP_SDR_PACED_H_
@@ -78,8 +80,12 @@ bool esp_sdr_rx_paced_poll(int32_t *i, int32_t *q);
  * The tight form of esp_sdr_rx_paced_poll() for MS/s rates: blocks until the last one.
  * @param out 2 * @p n bytes, 2-byte aligned.
  * @param n Samples to produce.
+ * A poll a whole period or more late (the caller's I/O between calls) spans
+ * that many windows more: each sample it missed gets an equal share of its
+ * sums, so that the samples stay on their grid.
+ *
  * @param shift Right shift of each sum before it saturates to -127 to 127.
- * @return Samples among them that came a whole period or more late.
+ * @return Polls among them that came a whole period or more late.
  */
 uint32_t esp_sdr_rx_paced_fill_iq8(int8_t *out, size_t n, unsigned int shift);
 
