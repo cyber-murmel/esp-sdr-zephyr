@@ -4,7 +4,9 @@
  * Software 802.15.4 2.4 GHz O-QPSK PHY (portable C, no Zephyr deps).
  * Assumes 4 MS/s interleaved int16 I/Q (2 samples per chip, 2 Mchip/s).
  *
- * RX: MSK-style discriminator -> hard chips -> 32-chip correlation.
+ * RX: MSK-style discriminator -> hard chips -> 32-chip correlation, per
+ * receiver instance (struct ieee154_phy_rx); the original API runs one
+ * static instance.
  * TX: reference modulator (also used to calibrate MSK_MASK, see below).
  */
 #include <stdint.h>
@@ -100,37 +102,38 @@ static uint16_t crc16(const uint8_t *p, int n)
 
 /* ---------------------------------------------------------------- RX */
 
+/* Tracker states; ST_HUNT is 0 so that a zeroed receiver is idle. */
 enum { ST_HUNT, ST_PREAMBLE, ST_SFD2, ST_PHR, ST_PSDU };
 
-struct trk {
-	uint32_t win, nchip, anchor;
-	uint8_t run, st, nib_have, nib_lo, len, pos;
-	/* The header callback still wants bytes of this frame. */
-	uint8_t hdr_want;
-	uint16_t err_sum, nsym;
-	/* Sample count at which the frame's last symbol will be decided. */
-	uint32_t end_pos;
-	uint8_t buf[MAX_PSDU];
-};
+/* The receiver behind the original API. */
+static struct ieee154_phy_rx g_rx;
 
-static struct trk g_trk[2]; /* one tracker per sampling phase */
-static ieee154_phy_frame_cb_t g_cb;
-static void *g_user;
-static ieee154_phy_hdr_cb_t g_hdr_cb;
-static void *g_hdr_user;
-/* Samples fed before the block, or up to the sample being decided in it. */
-static uint32_t g_pos;
+void ieee154_phy_set_hdr_cb_i(struct ieee154_phy_rx *rx, ieee154_phy_hdr_cb_t cb, void *user)
+{
+	rx->hdr_cb = cb;
+	rx->hdr_user = user;
+}
+
+void ieee154_phy_set_rx_cb_i(struct ieee154_phy_rx *rx, ieee154_phy_frame_cb_t cb, void *user)
+{
+	rx->cb = cb;
+	rx->user = user;
+}
+
+void ieee154_phy_set_all_cb_i(struct ieee154_phy_rx *rx, ieee154_phy_all_cb_t cb, void *user)
+{
+	rx->all_cb = cb;
+	rx->all_user = user;
+}
 
 void ieee154_phy_set_hdr_cb(ieee154_phy_hdr_cb_t cb, void *user)
 {
-	g_hdr_cb = cb;
-	g_hdr_user = user;
+	ieee154_phy_set_hdr_cb_i(&g_rx, cb, user);
 }
 
 void ieee154_phy_set_rx_cb(ieee154_phy_frame_cb_t cb, void *user)
 {
-	g_cb = cb;
-	g_user = user;
+	ieee154_phy_set_rx_cb_i(&g_rx, cb, user);
 }
 
 static int match(uint32_t w, int *err)
@@ -149,17 +152,53 @@ static int match(uint32_t w, int *err)
 	return best;
 }
 
-static void trk_reset(struct trk *t)
+static void trk_reset(struct ieee154_phy_trk *t)
 {
 	t->st = ST_HUNT;
 	t->run = 0;
 }
 
 /*
- * Everything but a preamble miss while hunting: t->win and t->nchip already
- * hold the new chip (ieee154_phy_rx_block() keeps the common case inline).
+ * A complete PSDU in tracker t: the FCS decides who gets it. A good frame goes to both
+ * callbacks and stops the sibling tracker (the other sampling phase) delivering it again; a bad
+ * one goes to the all-frames callback only, once: both trackers may complete it, a sample or two
+ * apart (a good copy from the sibling still follows: ieee154_phy_all_cb_t).
  */
-static __attribute__((noinline)) void trk_chip_slow(struct trk *t)
+static void frame_done(struct ieee154_phy_rx *rx, struct ieee154_phy_trk *t)
+{
+	struct ieee154_phy_trk *sib = t == &rx->trk[0] ? &rx->trk[1] : &rx->trk[0];
+	uint16_t fcs = t->buf[t->len - 2] | (t->buf[t->len - 1] << 8);
+	int avg = t->err_sum / t->nsym;
+	int lqi = 255 - avg * 25;
+
+	lqi = lqi < 0 ? 0 : lqi;
+	rx->frame_start = rx->pos - IEEE154_PHY_FRAME_SAMPLES(t->len);
+	if (crc16(t->buf, t->len - 2) == fcs) {
+		if (rx->cb) {
+			rx->cb(t->buf, t->len, lqi, rx->user);
+		}
+		if (rx->all_cb) {
+			rx->all_cb(t->buf, t->len, lqi, true, rx->all_user);
+		}
+		/* Only on success: stop the sibling phase tracker delivering it twice. */
+		trk_reset(sib);
+	} else if (rx->all_cb) {
+		int32_t d = (int32_t)(rx->pos - rx->bad_end);
+
+		if (!rx->bad_seen || d > IEEE154_PHY_DUP_SAMPLES || d < -IEEE154_PHY_DUP_SAMPLES) {
+			rx->bad_seen = true;
+			rx->bad_end = rx->pos;
+			rx->all_cb(t->buf, t->len, lqi, false, rx->all_user);
+		}
+	}
+}
+
+/*
+ * Everything but a preamble miss while hunting: t->win and t->nchip already
+ * hold the new chip (ieee154_phy_rx_block_i() keeps the common case inline).
+ */
+static __attribute__((noinline)) void trk_chip_slow(struct ieee154_phy_rx *rx,
+						    struct ieee154_phy_trk *t)
 {
 	if (t->st == ST_HUNT) {
 		if (popcount32((t->win ^ chips_msk[0]) & DMASK) <= SYNC_MAX_ERR) {
@@ -224,31 +263,17 @@ static __attribute__((noinline)) void trk_chip_slow(struct trk *t)
 			t->pos = 0;
 			t->st = ST_PSDU;
 			/* A symbol is 32 chips, 64 samples at 2 per chip; a byte two symbols. */
-			t->end_pos = g_pos + 128U * t->len;
-			t->hdr_want = g_hdr_cb != NULL &&
-				      g_hdr_cb(t->buf, 0, t->len, t->end_pos, g_hdr_user);
+			t->end_pos = rx->pos + 128U * t->len;
+			t->hdr_want = rx->hdr_cb != NULL &&
+				      rx->hdr_cb(t->buf, 0, t->len, t->end_pos, rx->hdr_user);
 		} else {
 			t->buf[t->pos++] = byte;
 			if (t->hdr_want && t->pos < t->len) {
-				t->hdr_want = g_hdr_cb(t->buf, t->pos, t->len, t->end_pos,
-						       g_hdr_user);
+				t->hdr_want = rx->hdr_cb(t->buf, t->pos, t->len, t->end_pos,
+							 rx->hdr_user);
 			}
 			if (t->pos == t->len) {
-				uint16_t fcs = t->buf[t->len - 2] |
-					       (t->buf[t->len - 1] << 8);
-
-				if (crc16(t->buf, t->len - 2) == fcs) {
-					int avg = t->err_sum / t->nsym;
-					int lqi = 255 - avg * 25;
-
-					if (g_cb) {
-						g_cb(t->buf, t->len,
-						     lqi < 0 ? 0 : lqi, g_user);
-					}
-					/* Only on success: stop the sibling
-					 * phase tracker delivering it twice. */
-					trk_reset(t == &g_trk[0] ? &g_trk[1] : &g_trk[0]);
-				}
+				frame_done(rx, t);
 				trk_reset(t);
 			}
 		}
@@ -257,20 +282,43 @@ static __attribute__((noinline)) void trk_chip_slow(struct trk *t)
 	}
 }
 
-/* DC removal state (Q8) and discriminator history */
-static int32_t dc_i, dc_q, pi1, pq1, pi2, pq2;
-static uint32_t n_total;
+uint32_t ieee154_phy_rx_position_i(const struct ieee154_phy_rx *rx)
+{
+	return rx->pos;
+}
+
+uint32_t ieee154_phy_rx_frame_start_i(const struct ieee154_phy_rx *rx)
+{
+	return rx->frame_start;
+}
+
+void ieee154_phy_rx_reset_i(struct ieee154_phy_rx *rx)
+{
+	trk_reset(&rx->trk[0]);
+	trk_reset(&rx->trk[1]);
+	rx->pi1 = rx->pq1 = rx->pi2 = rx->pq2 = 0;
+	rx->bad_seen = false;
+}
+
+void ieee154_phy_rx_init(struct ieee154_phy_rx *rx)
+{
+	memset(rx, 0, sizeof(*rx));
+	ieee154_phy_rx_reset_i(rx);
+}
 
 uint32_t ieee154_phy_rx_position(void)
 {
-	return g_pos;
+	return ieee154_phy_rx_position_i(&g_rx);
+}
+
+uint32_t ieee154_phy_rx_frame_start(void)
+{
+	return ieee154_phy_rx_frame_start_i(&g_rx);
 }
 
 void ieee154_phy_rx_reset(void)
 {
-	trk_reset(&g_trk[0]);
-	trk_reset(&g_trk[1]);
-	pi1 = pq1 = pi2 = pq2 = 0;
+	ieee154_phy_rx_reset_i(&g_rx);
 }
 
 uint32_t ieee154_phy_chips(int sym)
@@ -283,7 +331,8 @@ uint32_t ieee154_phy_chips(int sym)
  * Even samples (from n_total) go to tracker 0, odd ones to tracker 1. The
  * state lives in locals (builds without strict aliasing would reload it
  * after every store), chip counts are derived from the sample index, and
- * only a preamble hit or a frame in progress leaves the inline path.
+ * only a preamble hit or a frame in progress leaves the inline path. The
+ * instance is one pointer, loaded once; the loop writes it only on that path.
  */
 #define RX_STEP(w_, s_, a_, t, cnt)                                                         \
 	do {                                                                                 \
@@ -306,8 +355,8 @@ uint32_t ieee154_phy_chips(int sym)
 				    : (uint32_t)(cnt) - (a_) >= 32U) {                       \
 			(t)->win = w_;                                                       \
 			(t)->nchip = (cnt);                                                  \
-			g_pos = n_total + (uint32_t)k + 1U;                                  \
-			trk_chip_slow(t);                                                    \
+			rx->pos = n0 + (uint32_t)k + 1U;                                     \
+			trk_chip_slow(rx, t);                                                \
 			s0 = t0->st;                                                         \
 			s1 = t1->st;                                                         \
 			a0 = t0->anchor;                                                     \
@@ -316,10 +365,12 @@ uint32_t ieee154_phy_chips(int sym)
 		}                                                                            \
 	} while (0)
 
-void ieee154_phy_rx_block(const int16_t *iq, size_t n)
+void ieee154_phy_rx_block_i(struct ieee154_phy_rx *rx, const int16_t *iq, size_t n)
 {
-	int32_t dci = dc_i, dcq = dc_q, i1 = pi1, q1 = pq1, i2 = pi2, q2 = pq2;
-	struct trk *t0 = &g_trk[n_total & 1], *t1 = &g_trk[(n_total + 1) & 1];
+	int32_t dci = rx->dc_i, dcq = rx->dc_q, i1 = rx->pi1, q1 = rx->pq1, i2 = rx->pi2,
+		q2 = rx->pq2;
+	const uint32_t n0 = rx->n_total;
+	struct ieee154_phy_trk *t0 = &rx->trk[n0 & 1], *t1 = &rx->trk[(n0 + 1) & 1];
 	uint32_t w0 = t0->win, w1 = t1->win, c0 = t0->nchip, c1 = t1->nchip;
 	uint8_t s0 = t0->st, s1 = t1->st;
 	uint32_t a0 = t0->anchor, a1 = t1->anchor;
@@ -327,7 +378,7 @@ void ieee154_phy_rx_block(const int16_t *iq, size_t n)
 	const uint32_t ref = chips_msk[0];
 	size_t k = 0;
 
-	g_pos = n_total;
+	rx->pos = n0;
 
 	/* Sample k goes to t0 for even k: chip count c0 + k / 2 + 1 after it. */
 	for (; k + 1 < n; k++) {
@@ -342,9 +393,18 @@ void ieee154_phy_rx_block(const int16_t *iq, size_t n)
 	t0->nchip = c0 + (uint32_t)(n + 1) / 2U;
 	t1->win = w1;
 	t1->nchip = c1 + (uint32_t)n / 2U;
-	dc_i = dci; dc_q = dcq;
-	pi1 = i1; pq1 = q1; pi2 = i2; pq2 = q2;
-	n_total += (uint32_t)n;
+	rx->dc_i = dci;
+	rx->dc_q = dcq;
+	rx->pi1 = i1;
+	rx->pq1 = q1;
+	rx->pi2 = i2;
+	rx->pq2 = q2;
+	rx->n_total = n0 + (uint32_t)n;
+}
+
+void ieee154_phy_rx_block(const int16_t *iq, size_t n)
+{
+	ieee154_phy_rx_block_i(&g_rx, iq, n);
 }
 
 /* ---------------------------------------------------------------- TX */
