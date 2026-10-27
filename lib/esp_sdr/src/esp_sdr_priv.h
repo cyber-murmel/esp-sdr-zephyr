@@ -80,6 +80,11 @@
 #define DUMP_CTRL_TRIGGER BIT(19)
 #define DUMP_CTRL_DONE    BIT(18)
 #define DUMP_CTRL_COUNT   GENMASK(13, 0)
+/*
+ * 40 MS/s: the S3's rate bit works on the C6 too; the ring index advanced 2003 samples in
+ * 8000 CPU cycles against 4005 without it (bench 2026-10-27). Bit 16 gave 1335 (26.7 MS/s).
+ */
+#define DUMP_CTRL_40MSPS  BIT(15)
 #define DUMP_MODE_REG     0x600a9008U
 #define DUMP_MODE_SOURCE  GENMASK(18, 15)
 #define DUMP_SOURCE_IQ    15U

@@ -23,12 +23,20 @@
  * while their block can still be read, then packed to int8 I/Q (a right shift
  * chosen from the window's power and DC, the DC left in and reported) into the
  * caller's sink, which sends them on. Each segment keeps its index on the
- * 80 MS/s axis.
+ * run's axis (80 MS/s, 40 with esp_sdr_gapless_cfg.half_rate).
  *
  * Two servos keep headroom: the threshold rises and falls so that what is kept
  * fills the link's budget short of its headroom, and the receive gain steps so
  * that the loudest windows' estimated peaks stay short of full scale by theirs,
  * without lifting the noise floor further than it needs.
+ *
+ * With width sorting (esp_sdr_gapless_cfg.wide) the kept samples are judged
+ * by how fast they decorrelate before they are packed: a chunk of a window's
+ * length whose correlations 4, 6 and 10 samples (50 to 125 ns) apart all stay
+ * below half its power over the noise carries a signal wider than some
+ * 10 MHz (Wi-Fi), and goes to the sink as a short record
+ * (ESP_SDR_GAPLESS_SEG_WIDE) instead of its samples, so the link's budget goes
+ * to the narrow ones and the threshold servo can hold a lower threshold.
  *
  * A run holds interrupts off on the CPU from start to end: the sink's
  * service() callback is where the caller moves data and polls its link.
@@ -59,11 +67,11 @@ extern "C" {
  */
 #define ESP_SDR_GAPLESS_HOT IRAM_ATTR __attribute__((hot))
 
-/** Samples in the ring (one lap, 205 us). */
+/** Samples in the ring (one lap, 205 us at 80 MS/s, 410 us at 40). */
 #define ESP_SDR_GAPLESS_RING 16384U
-/** Samples per unit: the CPU switches blocks once this many are written (154 us). */
+/** Samples per unit: the CPU switches blocks after this many (154 us, 307 at 40 MS/s). */
 #define ESP_SDR_GAPLESS_UNIT 12288U
-/** Sample rate. */
+/** Sample rate (esp_sdr_gapless_cfg.half_rate: half of it). */
 #define ESP_SDR_GAPLESS_RATE_HZ 80000000U
 /** Estimator window, the unit of the keep decision. */
 #define ESP_SDR_GAPLESS_WINDOW_US 10U
@@ -87,10 +95,38 @@ enum esp_sdr_gapless_error {
 #define ESP_SDR_GAPLESS_SEG_DROPPED 0x01U
 #define ESP_SDR_GAPLESS_SEG_RESTART 0x02U
 #define ESP_SDR_GAPLESS_SEG_LOUD    0x04U
+/**
+ * A width record (esp_sdr_gapless_cfg.wide): the segment's ESP_SDR_GAPLESS_WIDE_PAIRS pairs hold
+ * a struct esp_sdr_gapless_wide, not samples; the samples it stands for (its span, from the
+ * segment's index on) carried a signal wider than some 10 MHz and were not sent.
+ */
+#define ESP_SDR_GAPLESS_SEG_WIDE    0x08U
+
+/** Pairs of a width record's segment: the bytes of struct esp_sdr_gapless_wide. */
+#define ESP_SDR_GAPLESS_WIDE_PAIRS 4U
+
+/**
+ * A width record's payload (esdr_proto.h's struct esdr_seg_wide, the same bytes). The
+ * correlations are over the record's samples less their DC, summed at evenly spaced points
+ * (points of them).
+ */
+struct esp_sdr_gapless_wide {
+	/** Samples the record stands for, from the segment's index on. */
+	uint16_t span;
+	/**
+	 * The correlation one sample apart, scaled so that the larger component is +-127: its
+	 * angle is the signal's mean frequency in radians a sample (80 MHz a turn).
+	 */
+	int8_t r1_i, r1_q;
+	/** Correlations 4, 6 and 10 samples apart over the power above the noise, 255 for 1. */
+	uint8_t rho4, rho6, rho10;
+	/** Points the correlations summed. */
+	uint8_t points;
+} __attribute__((packed));
 
 /** A segment of kept samples, as reserve() is asked for it. */
 struct esp_sdr_gapless_seg {
-	/** First sample's index on the 80 MS/s axis, and up to how many samples. */
+	/** First sample's index on the run's axis (80 or 40 MS/s), and up to how many samples. */
 	uint64_t index;
 	uint32_t pairs;
 	/** int8 = raw >> shift (saturated); the DC is left in. */
@@ -150,6 +186,19 @@ struct esp_sdr_gapless_cfg {
 	bool gain_servo;
 	/** Gain index range of the servo (0, 0: the PHY's whole range). */
 	uint8_t gain_min, gain_max;
+	/**
+	 * Width sorting: chunks of kept samples that carry a signal wider than some 10 MHz go to
+	 * the sink as width records (ESP_SDR_GAPLESS_SEG_WIDE) instead of their samples. The sink's
+	 * reserve() must then grant a width record's ESP_SDR_GAPLESS_WIDE_PAIRS pairs whole, as a
+	 * segment of its own, or none. Off with @p half_rate.
+	 */
+	bool wide;
+	/**
+	 * The dump engine at 40 MS/s (its own rate bit): every index, count and length of the run is
+	 * on that axis (a ring lap 410 us, a unit 307 us), the CPU has twice the cycles for each
+	 * sample (the per-unit cap doubles) and staging holds twice as long.
+	 */
+	bool half_rate;
 };
 
 /** What a unit's CPU cycles go to (esp_sdr_gapless_stats.cycles). */
@@ -166,6 +215,8 @@ enum esp_sdr_gapless_activity {
 	ESP_SDR_GAPLESS_PREP,
 	/** The switch, finding the unit, the servos. */
 	ESP_SDR_GAPLESS_SWITCH,
+	/** Width sorting of the staged samples (esp_sdr_gapless_cfg.wide). */
+	ESP_SDR_GAPLESS_SORT,
 	ESP_SDR_GAPLESS_ACTIVITIES,
 };
 
@@ -209,6 +260,26 @@ struct esp_sdr_gapless_stats {
 	 * before the deadline. A step that overran its budget, for tuning.
 	 */
 	uint32_t overrun_activity, overrun_cycles, overrun_room;
+	/** Width sorting: chunks sent as width records, and the samples they stood for. */
+	uint32_t wide_chunks;
+	uint64_t wide_pairs;
+	/**
+	 * Width sorting: chunks judged, and the loud ones by their largest correlation (bin k:
+	 * up to (k + 1) / 8 of the power above the noise; wide below 1/2, bins 0 to 3).
+	 */
+	uint32_t sort_chunks;
+	uint32_t sort_hist[8];
+	/**
+	 * Bursts (runs of kept windows) begun; of them, refused at their start (too little room
+	 * in staging) and cut short later (staging full or the unit's cap): their rest went, up to
+	 * what a window's staging can reach (what goes on past that counts as a new burst).
+	 */
+	uint32_t bursts, bursts_refused, bursts_cut;
+	/**
+	 * Staging words in service at the end (block 3's ring, plus the dump blocks' upper halves
+	 * once their canaries came back intact), and canary checks that failed.
+	 */
+	uint32_t stage_words, spare_errors;
 };
 
 /**

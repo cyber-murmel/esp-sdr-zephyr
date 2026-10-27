@@ -44,10 +44,14 @@ Other links
   register 0x08C: the radio drops the send queue and starts its counters again.
 
   Receive then reaches **2 MS/s** (2, 1, 0.5 MS/s, then the rates above), gapless at the
-  WHY badge's P4. Above 250 kS/s the items are 8 bit, filled a quarter block at a time by a
-  tight loop (``esp_sdr_rx_paced_fill_iq8()``, 59 CPU cycles a sample of the 80 there are at
-  2 MS/s; the digital gain is a power of 2 there). 2.5 MS/s leaves 3 % of the samples late,
-  3.2 MS/s does not fit. Transmit stays at 250 kS/s.
+  WHY badge's P4. Above 250 kS/s the items are 8 bit, filled a block at a time by a tight loop
+  (``esp_sdr_rx_paced_fill_iq8()``, 59 CPU cycles a sample of the 80 there are at 2 MS/s; the
+  digital gain is a power of 2 there). The link's turn between blocks makes the next poll a few
+  samples late: the fill gives each sample that poll missed an equal share of its sums, so that
+  the samples stay on their grid. (Filled a quarter block at a time and catching up with short
+  windows, the stream had a glitch every 255 us at 2 MS/s, a spike and 16 us of skewed samples:
+  it cost most Bluetooth LE packets and one 802.15.4 symbol in seventy.) 2.5 MS/s leaves 3 % of
+  the samples late, 3.2 MS/s does not fit. Transmit stays at 250 kS/s.
 
 The MCH2022 badge
 =================
@@ -104,22 +108,49 @@ every 12288 samples (154 us), with marker words in the next block that prove eac
 where the last one ended. The ring takes two blocks, so the image must fit block 0: the radio
 comes up without the Wi-Fi driver (``CONFIG_ESP_SDR_PHY_ONLY``), which also drops its periodic
 receive glitch. The other modes (paced receive and transmit, triggered snapshots, bursts) stay
-in the image.
+in the image. The run keeps the PHY in its 20 MHz mode with the widest low-pass (unless the host
+set a bandwidth), which passes the whole band: within 7 dB out to +-35 MHz, where the PHY's
+40 MHz mode is some 35 dB down and ignores the low-pass.
 
 The IQ estimator's 10 us windows decide what is kept: windows past a threshold over the quiet
-baseline, with one before and one after, are copied raw into a staging ring in block 3 while
-their block can still be read, then packed to int8 with a shift from the window's power and DC
-(the DC left in and reported) into ``ESDR_BLK_SEG`` blocks of segments (``esdr_seg.h``). Every
-segment keeps its index on the 80 MS/s axis, across the runs a request or a ring error
-restarts. Two servos keep 5 to 10 % headroom (``ESDR_REQ_SET_GAPLESS``): the threshold rises and
-falls so that what is kept fills the link's budget short of it, and with automatic gain the
-receive gain steps so that the loudest windows' peaks stay short of full scale.
+baseline, with one before and one after, are copied raw into staging while their block can still be
+read (the ring in block 3, then the upper halves of blocks 1 and 2, which the ring leaves free: a
+window goes to its own unit's block, which the engine has just left, and is packed while the engine
+writes the other one; canary words guard those halves), then packed to int8 with a shift from the
+window's power and DC (the DC left in and reported) into ``ESDR_BLK_SEG`` blocks of segments
+(``esdr_seg.h``). Every segment keeps its index on the run's axis (80 MS/s, 40 with
+``ESDR_GAPLESS_F_HALF``), across the runs a request or a ring error restarts. Two servos keep 5 to
+10 % headroom (``ESDR_REQ_SET_GAPLESS``): the threshold rises and falls so that what is kept fills
+the link's budget short of it, and with automatic gain the receive gain steps so that the loudest
+windows' peaks stay short of full scale. Bursts are kept whole or not at all: a window is admitted
+only with room for it in the staging it can reach (block 3 and the smaller half), a burst starts
+only with an eighth of that free, and one cut for want of room drops its rest until a quiet window
+(or, in a band that never rests, until as many samples as that staging holds have gone by and an
+eighth is free again).
 
-On the badge the ring ran 120 s (9.6 G samples) without an error. The CPU packs some 1000
-samples a unit while kept windows come in, about the link's 11 MB/s; a burst longer than the
-staging ring keeps its start and drops its tail. ``../osmosdr/tools/esdr_usb gapless`` records
-the blocks through ``apps/osmosdr_bridge``, ``tools/gapless.py`` checks them (with a carrier on
-air, its phase across the gaps proves every segment's index).
+With ``ESDR_GAPLESS_F_HALF`` the dump engine runs at 40 MS/s (its rate bit, DUMP_CTRL bit 15): a
+unit lasts 307 us, the CPU has twice the time to copy a sample, and every index, count and window of
+the run is on the 40 MS/s axis. The engine drops every other sample without a filter, so the run
+sets the low-pass to 31 MHz: +-15 MHz stays flat, and what lies beyond 20 MHz out folds in, a few dB
+down near 20 MHz and 15 to 25 dB down from 25 MHz on. Width sorting is off at that rate. The CPU
+cannot read a block while the engine writes it (stale data), so reading the ring behind the engine
+is not possible on the C6.
+
+With ``ESDR_GAPLESS_F_WIDE`` (width sorting, off by default) the C6 judges each kept chunk of a
+window's length by how fast it decorrelates (its correlations 50 to 125 ns apart against its
+power above the noise, ``lib/esp_sdr/src/esp_sdr_gapless_sort.h``): a signal wider than some
+10 MHz (Wi-Fi) goes to the link as a 4-pair record (``ESDR_SEG_WIDE``, ``struct esdr_seg_wide``:
+its span, the lag-one correlation whose angle is its mean frequency, the three correlations) in
+place of its samples, and the threshold servo counts the bytes saved. A judged point costs
+103 cycles, the sorting 5 to 12 % of the CPU on the badge; ``ESDR_REQ_GET_GAPLESS_STATS`` counts
+the chunks judged, those sent as records and the cycles by activity.
+
+On the badge the ring ran 120 s (9.6 G samples) without an error. The CPU packs some 1000 samples a
+unit while kept windows come in, about the link's 11 MB/s; what it can copy per unit, some 4000
+samples at 80 MS/s, keeps a burst whole up to some 50 us (some three times as long at 40 MS/s, where
+a unit's cap is twice the samples, each twice as long). ``../osmosdr/tools/esdr_usb gapless``
+records the blocks through ``apps/osmosdr_bridge``, ``tools/gapless.py`` checks them (with a carrier
+on air, its phase across the gaps proves every segment's index).
 
 Building and flashing
 *********************
@@ -170,5 +201,5 @@ Statistics
 **********
 
 ``GET_STATS`` fills the osmosdr fields; the pacing reports in the S3 ring's: ``ring_runs``
-counts streams, ``ring_errors`` samples taken a whole period late, ``ring_late_max`` the worst
+counts streams, ``ring_errors`` polls a whole period late, ``ring_late_max`` the worst
 lateness in CPU cycles.

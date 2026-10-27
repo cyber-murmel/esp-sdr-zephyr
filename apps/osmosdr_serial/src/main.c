@@ -695,9 +695,9 @@ static int set_trigger(uint16_t value, const uint8_t *data, size_t len)
 /*
  * ESDR_MODE_GAPLESS: the whole 80 MHz without a gap (esp_sdr_gapless.h), its kept windows as
  * segments (esdr_seg.h) in the stream's blocks, queued to the link straight from them.
- * Every sample keeps its index on the 80 MS/s axis: a run's own index counts from the
- * systimer's time at its start, so the axis goes on across the runs a request or a ring error
- * starts anew (the first segment of a run is flagged ESDR_SEG_RESTART).
+ * Every sample keeps its index on the run's axis (80 MS/s, 40 with ESDR_GAPLESS_F_HALF): a run's
+ * own index counts from the systimer's time at its start, so the axis goes on across the runs a
+ * request or a ring error starts anew (the first segment of a run is flagged ESDR_SEG_RESTART).
  */
 /* The sink's blocks are the stream's (out.blk). */
 #define GL_BLOCKS OUT_BLOCKS
@@ -705,9 +705,16 @@ static int set_trigger(uint16_t value, const uint8_t *data, size_t len)
 #define GL_FLUSH_CYC (ESP_SDR_CPU_HZ / 1000U)
 /* Payload bytes per second the SDIO link carries, for the threshold servo. */
 #define GL_LINK_BPS 11000000U
+/* The analog bandwidth at 40 MS/s (run_gapless()), MHz. */
+#define GL_HALF_BW_MHZ 31U
 
 BUILD_ASSERT(ESDR_GAPLESS_RATE_HZ % CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC == 0,
-	     "the gapless axis counts in whole systimer cycles");
+	     "the gapless axis counts in whole systimer cycles (the 40 MS/s one halves it)");
+BUILD_ASSERT(ESP_SDR_GAPLESS_SEG_WIDE == ESDR_SEG_WIDE &&
+	     ESP_SDR_GAPLESS_WIDE_PAIRS == ESDR_SEG_WIDE_PAIRS &&
+	     sizeof(struct esp_sdr_gapless_wide) == sizeof(struct esdr_seg_wide) &&
+	     ESP_SDR_GAPLESS_ACTIVITIES == ESDR_GAPLESS_ACTIVITIES,
+	     "the library's width records and activities are the protocol's");
 
 static struct {
 	struct esdr_seg_writer w;
@@ -755,7 +762,15 @@ static APP_HOT uint32_t gl_reserve(const struct esp_sdr_gapless_seg *seg, int8_t
 			gl.open = true;
 			gl.t_open = esp_sdr_paced_cycles();
 		}
-		n = esdr_seg_writer_put(&gl.w, gl.base + seg->index, seg->pairs, &m, dst);
+		if ((seg->flags & ESP_SDR_GAPLESS_SEG_WIDE) != 0U) {
+			/* A width record: whole, as a segment of its own. */
+			n = esdr_seg_writer_room(&gl.w) >= ESP_SDR_GAPLESS_WIDE_PAIRS
+				    ? esdr_seg_writer_add(&gl.w, gl.base + seg->index,
+							  ESP_SDR_GAPLESS_WIDE_PAIRS, &m, dst)
+				    : 0U;
+		} else {
+			n = esdr_seg_writer_put(&gl.w, gl.base + seg->index, seg->pairs, &m, dst);
+		}
 		if (n > 0U) {
 			gl.first_flags = 0U;
 			return n;
@@ -823,12 +838,25 @@ static void gl_account(const struct esp_sdr_gapless_stats *st, int ret)
 	gl_stats.late_max = MAX(gl_stats.late_max, st->late_max);
 	gl_stats.idle_cycles_min = gl_stats.runs == 1U ? st->idle_cycles_min
 						       : MIN(gl_stats.idle_cycles_min, st->idle_cycles_min);
-	gl_stats.stage_bytes = CONFIG_ESP_SDR_GAPLESS_STAGE_KB * 1024U;
+	gl_stats.stage_bytes = st->stage_words * 4U;
 	gl_stats.stage_peak_bytes = MAX(gl_stats.stage_peak_bytes, st->stage_peak * 4U);
 	gl_stats.baseline = st->baseline;
 	gl_stats.ratio_x16 = st->ratio_x16;
 	gl_stats.gain = st->gain;
 	gl_stats.gain_steps += st->gain_steps;
+	gl_stats.wide_chunks += st->wide_chunks;
+	gl_stats.wide_pairs += st->wide_pairs;
+	for (int k = 0; k < ESP_SDR_GAPLESS_ACTIVITIES; k++) {
+		gl_stats.cycles[k] += st->cycles[k];
+	}
+	gl_stats.sort_chunks += st->sort_chunks;
+	for (int k = 0; k < ARRAY_SIZE(gl_stats.sort_hist); k++) {
+		gl_stats.sort_hist[k] += st->sort_hist[k];
+	}
+	gl_stats.bursts += st->bursts;
+	gl_stats.bursts_refused += st->bursts_refused;
+	gl_stats.bursts_cut += st->bursts_cut;
+	gl_stats.spare_errors += st->spare_errors;
 	stats.rx_samples += st->kept_pairs;
 }
 
@@ -847,6 +875,8 @@ static void run_gapless(void)
 		.headroom_hi = g->headroom_hi,
 		.gain_servo = (g->flags & ESDR_GAPLESS_F_GAIN_SERVO) != 0U ||
 			      want.rx_gain == ESDR_GAIN_AUTO,
+		.wide = (g->flags & ESDR_GAPLESS_F_WIDE) != 0U,
+		.half_rate = (g->flags & ESDR_GAPLESS_F_HALF) != 0U,
 	};
 	const struct esp_sdr_gapless_sink sink = {
 		.reserve = gl_reserve,
@@ -860,18 +890,27 @@ static void run_gapless(void)
 	memset(&gl, 0, sizeof(gl));
 	gl.done_base = sdio_link_blocks_done();
 	/*
-	 * The whole 80 MHz: the PHY's 40 MHz mode and the widest low-pass (unless the host set a
-	 * bandwidth); the 20 MHz mode's filters would leave little beyond +-10 MHz.
+	 * The PHY's 20 MHz mode, whose low-pass alone sets the band (unless the host set a
+	 * bandwidth): the widest passes the whole 80 MHz, an 802.15.4 sender within 7 dB of
+	 * +-15 MHz out to +-35 MHz, where the 40 MHz mode is 35 dB down and ignores the low-pass
+	 * (2026-10-27, the WHY2025 badge). At 40 MS/s the engine drops every other sample without
+	 * a filter: 31 MHz (dcap 14) keeps +-15 MHz flat and puts what folds in from +-25 MHz 15
+	 * to 25 dB down.
 	 */
-	(void)esp_sdr_set_channel_bw(2);
+	(void)esp_sdr_set_channel_bw(0);
 	if (want.bandwidth_hz == 0U) {
-		(void)esp_sdr_rx_set_lpf(0);
+		(void)esp_sdr_rx_set_bandwidth(cfg.half_rate ? GL_HALF_BW_MHZ : 0U);
 	}
 	while (!req.ready && want.mode == ESDR_MODE_GAPLESS) {
 		int ret;
 
+		/*
+		 * On the run's axis: 80 MS/s, or 40 with the engine's rate bit, halved from the 80 MS/s
+		 * count (40 MHz is not a whole multiple of the 16 MHz systimer).
+		 */
 		gl.base = k_cycle_get_64() *
-			  (ESDR_GAPLESS_RATE_HZ / CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC);
+			  (ESDR_GAPLESS_RATE_HZ / CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC) /
+			  (cfg.half_rate ? 2U : 1U);
 		gl.first_flags = ESDR_SEG_RESTART;
 		ret = esp_sdr_gapless_run(&cfg, &sink, &st);
 		gl_account(&st, ret);
@@ -1274,18 +1313,24 @@ static void run_rx_diag(void)
 #endif
 
 #if defined(CONFIG_APP_LINK_SDIO)
-/* Samples per esp_sdr_rx_paced_fill_iq8() call: a quarter block, then the link's turn. */
-#define FAST_CHUNK (ESDR_BLOCK_PAYLOAD / 2U / 4U)
+/*
+ * Samples per esp_sdr_rx_paced_fill_iq8() call: a block, then the link's turn (a request waits
+ * up to a block, 1 ms at 2 MS/s). The turn makes the next poll a few samples late, which the fill
+ * spreads over them: once a block, not once a quarter block (a glitch every 255 us at 2 MS/s
+ * cost Bluetooth LE packets and 802.15.4 symbols). Drops go a quarter block at a time.
+ */
+#define FAST_CHUNK (ESDR_BLOCK_PAYLOAD / 2U)
+#define DROP_CHUNK (FAST_CHUNK / 4U)
 
 /*
- * Above RATE_MAX_HZ, 8-bit items: the tight loop fills the blocks in place, a quarter block
- * at a time, and the DMA takes them as they are. The gain is a shift: sums of 80 MHz / rate
+ * Above RATE_MAX_HZ, 8-bit items: the tight loop fills the blocks in place, a block at a time
+ * (FAST_CHUNK), and the DMA takes them as they are. The gain is a shift: sums of 80 MHz / rate
  * inputs, times 2^(gain / 6) / 4 per input, to the nearest power of 2 (within 3 dB of the
  * one-sample path's scale).
  */
 static void run_rx_fast(void)
 {
-	static int8_t drop[2U * FAST_CHUNK] __aligned(4);
+	static int8_t drop[2U * DROP_CHUNK] __aligned(4);
 	uint32_t v = 4U * (ESP_SDR_PACED_INPUT_HZ / want.rate_hz);
 	/* log2(v) to the nearest integer, less the digital gain. */
 	int shift = 31 - __builtin_clz(v);
@@ -1305,7 +1350,9 @@ static void run_rx_fast(void)
 	while (!req.ready) {
 		if (out.committed - out.sent >= OUT_BLOCKS) {
 			/* No free block: the samples go, the next block marks the gap. */
-			esp_sdr_rx_paced_fill_iq8(drop, FAST_CHUNK, (unsigned int)shift);
+			for (uint32_t j = 0; j < FAST_CHUNK / DROP_CHUNK; j++) {
+				esp_sdr_rx_paced_fill_iq8(drop, DROP_CHUNK, (unsigned int)shift);
+			}
 			out.index += FAST_CHUNK;
 			stats.rx_overflow_samples += FAST_CHUNK;
 			if (out.next_flags == 0U) {

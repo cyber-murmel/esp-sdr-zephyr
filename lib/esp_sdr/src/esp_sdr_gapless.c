@@ -4,9 +4,14 @@
  * Gapless receive on the ESP32-C6 (esp_sdr_gapless.h): the dump engine's ring
  * switched between SRAM blocks 1 and 2 (upstream ring_capture.c, after
  * h0m3us3r/eSpDR capture.c), the IQ estimator's windows deciding what is
- * kept, kept windows copied raw into a staging ring while their block can be
- * read and packed to int8 into the caller's sink from there, and two servos
- * (threshold, gain) keeping headroom on the link and at the converter.
+ * kept, kept windows copied raw into staging while their block can be read
+ * (a ring in block 3, then the idle upper halves of blocks 1 and 2) and
+ * packed to int8 into the caller's sink from there (or, with width sorting,
+ * a record in place of a wide chunk's samples), and two servos (threshold,
+ * gain) keeping headroom on the link and at the converter. A burst is kept
+ * whole or not at all, as far as staging and the copy allow: one that
+ * cannot start with room goes, and one cut short loses its rest (up to what
+ * a window's staging can reach; what goes on past that is a new burst).
  */
 
 #include <errno.h>
@@ -22,6 +27,8 @@
 #include <esp_sdr/esp_sdr_paced.h>
 #include <esp_sdr/esp_sdr_rx.h>
 
+#define ESP_SDR_SORT_INLINE static ALWAYS_INLINE
+#include "esp_sdr_gapless_sort.h"
 #include "esp_sdr_mark.h"
 #include "esp_sdr_priv.h"
 
@@ -51,15 +58,17 @@ BUILD_ASSERT(2U * LATE_LIMIT + 64U < END_GUARD && LATE_LIMIT + 64U < START_GUARD
 #define USAGE_CLEAR        0x10f00U
 #define USAGE_BLOCK1       9U
 
-#define CPP         (ESP_SDR_CPU_HZ / ESP_SDR_GAPLESS_RATE_HZ)
-#define SETTLE_CYC  (16U * CPP)
-#define MAX_AGE_CYC ((ESP_SDR_GAPLESS_RING - 128U) * CPP)
+/*
+ * CPU cycles a sample: 2 at 80 MS/s, 4 with the engine at 40 MS/s (esp_sdr_gapless_cfg.half_rate,
+ * rs.cpp). The settling after a switch, a block's age limit and the preparation's lead in samples
+ * follow from it at the run's start.
+ */
+#define CPP_FULL    (ESP_SDR_CPU_HZ / ESP_SDR_GAPLESS_RATE_HZ)
 #define WINDOW_CYC  (ESP_SDR_GAPLESS_WINDOW_US * (ESP_SDR_CPU_HZ / 1000000U))
 /* The estimator restarts every 10 windows: its sums stay below 2^31 at full scale. */
 #define RESTART_CYC (WINDOW_CYC * 10U)
 /* Marker preparation of a block: 1536 stores, measured 2050 cycles. */
 #define PREP_CYC    3000U
-#define PREP_PAIRS  (PREP_CYC / CPP + 256U)
 /*
  * A window's length comes from the ring's index, so a reading may wait for a slice to end:
  * slices run up to SLICE_LATE cycles past a window's due time, and no reading starts closer
@@ -91,7 +100,7 @@ BUILD_ASSERT(2U * PREPOST_MAX + 2U <= WIN_HIST);
  * one unit later, so what the CPU cannot copy in that time is lost anyway. Better to keep a
  * burst's start than to lose most of it: past the cap a unit's windows are dropped. The cap
  * shrinks by an eighth after a unit that lost samples, and grows while units end with free
- * time left.
+ * time left. CAP_START is the 80 MS/s value (twice that at 40).
  */
 #define CAP_START    4000U
 #define CAP_MIN      512U
@@ -136,11 +145,32 @@ BUILD_ASSERT(2U * PREPOST_MAX + 2U <= WIN_HIST);
 /* The staging ring, and the runs of it waiting to be packed. */
 #define STAGE_WORDS (CONFIG_ESP_SDR_GAPLESS_STAGE_KB * 256U)
 #define STAGED      64U
+/*
+ * The ring writes the lower 64 KiB of its block: the upper half of each is staging too, readable
+ * while the engine writes the other block. Canary words at both ends of each half prove that the
+ * engine leaves them alone: the halves are used once both have come back intact from the engine,
+ * and every return is checked again.
+ */
+#define STORES          3U
+#define CANARY          0x6b1e5a3cU
+#define CANARY_WORDS    8U
+#define SPARE_WORDS     (ESP_SDR_GAPLESS_RING - 2U * CANARY_WORDS)
+BUILD_ASSERT(CANARY != ESP_SDR_MARK, "canary and marker words differ");
+/* A burst starts only with this share of the staging free (1 / 8): one about to be cut goes. */
+#define START_FREE_SHIFT 3U
 /* Copy and pack costs per sample until measured, Q4 cycles. */
 #define COPY_CPP_Q4_START (3U * 16U)
 #define PACK_CPP_Q4_START (14U * 16U)
 /* A pack slice's fixed cost until measured. */
 #define PACK_OVH_START    600U
+/* A width-sorting point's cost until measured, Q4 cycles (measured 103 on the C6). */
+#define SORT_POINT_Q4_START (128U * 16U)
+/* What a chunk's verdict and record cost, at most: no slice judges one with less left. */
+#define SORT_DECIDE_CYC     600U
+/* Bytes a width record costs on the link: its segment header and payload. */
+#define WIDE_BYTES (SEG_OVERHEAD + 2U * ESP_SDR_GAPLESS_WIDE_PAIRS)
+BUILD_ASSERT(sizeof(struct esp_sdr_gapless_wide) == 2U * ESP_SDR_GAPLESS_WIDE_PAIRS,
+	     "a width record fills its pairs");
 
 struct unit {
 	uint64_t abs;
@@ -154,7 +184,7 @@ struct window {
 	bool loud;
 };
 
-/* A kept run on the 80 MS/s axis, waiting to be copied. */
+/* A kept run on the run's axis (80 or 40 MS/s), waiting to be copied. */
 struct job {
 	uint64_t s;
 	uint32_t left;
@@ -163,16 +193,32 @@ struct job {
 	int16_t dbfs;
 };
 
-/* A run of raw words in the staging ring, waiting to be packed. */
+/* A run of raw words in a staging store, waiting to be packed. */
 struct staged {
 	uint64_t index;
 	uint32_t at, pairs;
+	/* The store it is in (0: block 3, 1 + k: the upper half of block k). */
+	uint8_t store;
 	uint8_t shift, flags, gain;
 	int8_t dc_i, dc_q;
 	int16_t dbfs;
+	/*
+	 * Width sorting: samples at the front judged already, whether they are wide (they go as a
+	 * width record), and the verdict on the run's last loud chunk (quiet ones take it).
+	 */
+	uint32_t cls_left;
+	bool wide, last_wide;
+	/* In a half whose canaries failed: dropped unread. */
+	bool bad;
 };
 
 static uint32_t stage[STAGE_WORDS] __aligned(16) ESP_SDR_HIGH_RAM;
+
+/* A staging store: a ring of words whose runs never wrap. */
+struct store {
+	uint32_t *base;
+	uint32_t words, head, tail, used;
+};
 
 /* Run state, in one place so that the hot loop reaches it with one base register. */
 static struct {
@@ -191,7 +237,12 @@ static struct {
 	uint32_t job_head, job_tail;
 	/* Samples the queued jobs still hold. */
 	uint32_t job_pairs;
-	uint8_t pending_flags;
+	/*
+	 * Flags for the next segment: of windows dropped when decided (they go on the next job, in
+	 * stream order: jobs kept before them are still being copied) and of samples lost later,
+	 * when copied or packed (they go on the next run).
+	 */
+	uint8_t decide_flags, pending_flags;
 	/* DC in raw units, Q4. */
 	int32_t dc_i, dc_q;
 	/* Keep threshold and quiet threshold, window power per sample. */
@@ -217,20 +268,56 @@ static struct {
 	uint32_t cap, kept_cur, kept_prev;
 	uint64_t cur_abs;
 	bool unit_capped, unit_lost;
-	/* Staging ring: runs, write and read positions, words in use. */
+	/*
+	 * Staging: runs, the stores, words in use and in service over all of them; the block the
+	 * engine writes (its upper half is out of reach), whether the halves are in service, which
+	 * halves came back intact.
+	 */
 	struct staged sq[STAGED];
 	uint32_t sq_head, sq_tail;
-	uint32_t st_head, st_tail, st_used;
+	struct store sto[STORES];
+	uint32_t st_used, st_words;
+	unsigned int eng;
+	bool spare_ok;
+	uint8_t spare_seen;
+	/*
+	 * Drop policy: the last decided window was kept; the burst it belongs to lost a window, and
+	 * the samples dropped since.
+	 */
+	bool in_burst, burst_cut;
+	uint32_t cut_pairs;
 	/*
 	 * Copy cost per sample and pack cost per sample by shift (0 and 1 share a path), Q4 cycles;
 	 * a pack slice's fixed cost (the sink's reserve() and commit()), cycles.
 	 */
 	uint32_t copy_cpp_q4, pack_cpp_q4[2], pack_ovh;
+	/*
+	 * Width sorting: the front run's chunk being judged (its samples, the next point, the
+	 * sums), the verdict's record and power, a point's cost (Q4 cycles), and the bytes width
+	 * records saved this servo period.
+	 */
+	struct {
+		uint32_t n, pos;
+		struct sort_acc acc;
+		struct esp_sdr_gapless_wide rec;
+		int16_t dbfs;
+		bool active;
+	} sort;
+	uint32_t sort_point_q4;
+	uint64_t servo_saved;
 	/* This unit's cycles by activity; the longest window reading and service() call. */
 	uint32_t ucyc[ESP_SDR_GAPLESS_ACTIVITIES];
 	uint32_t window_cyc_max, service_cyc;
 	/* The last step: its activity, when it began, the cycles it had before the deadline. */
 	uint32_t last_activity, last_t, last_room;
+	/*
+	 * Rate: CPU cycles a sample, samples a microsecond, the estimator's inputs (80 MHz) a
+	 * sample; what follows from it (a switch's settling, a block's age limit, the preparation's
+	 * lead); width sorting (off at 40 MS/s: its lags are 80 MS/s ones).
+	 */
+	uint32_t cpp, pairs_us, inputs_per;
+	uint32_t settle_cyc, max_age_cyc, prep_pairs;
+	bool wide;
 } rs;
 
 /* Quiet baseline, window power per sample, Q8 (a plain integer IIR stalls at small values). */
@@ -336,7 +423,7 @@ static ALWAYS_INLINE void est_read(struct est *e, uint32_t ref, uint64_t ref_abs
 static ESP_SDR_GAPLESS_HOT uint32_t est_power(const struct est *a, const struct est *b,
 					      int32_t *mi, int32_t *mq)
 {
-	uint32_t n = MIN((uint32_t)(b->abs - a->abs), 4096U);
+	uint32_t n = MIN((uint32_t)(b->abs - a->abs) * rs.inputs_per, 4096U);
 	int32_t si = (int32_t)(b->si - a->si) / 64;
 	int32_t sq = (int32_t)(b->sq - a->sq) / 64;
 	uint32_t p8 = (b->p - a->p) * 8U;
@@ -554,13 +641,16 @@ static ESP_SDR_GAPLESS_HOT void thr_servo(uint32_t count, uint32_t lo, uint32_t 
 		return;
 	}
 	/* budget_bps * pairs / 80e6 in 32 bits: (bytes per ms) * (pairs per 80) / 1000. */
-	budget = (rs.cfg->budget_bps / 1000U) * (uint32_t)(rs.servo_pairs / 80U) / 1000U;
-	bytes = (uint32_t)MIN(rs.servo_bytes, UINT32_MAX / 100U);
+	budget = (rs.cfg->budget_bps / 1000U) * (uint32_t)(rs.servo_pairs / rs.pairs_us) / 1000U;
+	/* Width records went out in place of samples counted when their windows were kept. */
+	bytes = (uint32_t)MIN(rs.servo_bytes - MIN(rs.servo_saved, rs.servo_bytes),
+			      UINT32_MAX / 100U);
 	/*
 	 * Over the budget or losing samples: up fast; past the low headroom: up; below the high
-	 * headroom: down. Windows dropped for want of room in the staging ring do not count: a
-	 * burst longer than the ring drops its tail whatever the threshold, and a band that
-	 * bursts and rests would only push it up for the rests.
+	 * headroom: down. Windows dropped for want of room in staging do not count: a burst longer
+	 * than staging drops its tail whatever the threshold, and a band that bursts and rests would
+	 * only push it up for the rests. (Holding it while staging drops windows was tried: it rose
+	 * further and decoded a third fewer Bluetooth LE packets at 40 MS/s.)
 	 */
 	if (rs.servo_lost > 0U || bytes > budget) {
 		rs.thr_q8 = (uint32_t)MIN((uint64_t)rs.thr_q8 * THR_UP_FAST >> 8, THR_MAX_Q8);
@@ -572,6 +662,7 @@ static ESP_SDR_GAPLESS_HOT void thr_servo(uint32_t count, uint32_t lo, uint32_t 
 	rs.servo_units = 0;
 	rs.servo_pairs = 0;
 	rs.servo_bytes = 0;
+	rs.servo_saved = 0;
 	rs.servo_lost = 0;
 	thr_update();
 }
@@ -648,9 +739,95 @@ static ESP_SDR_GAPLESS_HOT bool gain_step(uint32_t room)
 	return true;
 }
 
+/* ---- staging stores ---- */
+
+/* Store @p k can be read and written now (the engine owns the block it writes, upper half too). */
+static ALWAYS_INLINE bool store_ready(unsigned int k)
+{
+	return k == 0U || k - 1U != rs.eng;
+}
+
+static ALWAYS_INLINE uint32_t *run_ptr(const struct staged *e)
+{
+	return rs.sto[e->store].base + e->at;
+}
+
+static ALWAYS_INLINE uint32_t store_free(unsigned int k)
+{
+	return rs.sto[k].words - rs.sto[k].used;
+}
+
+/*
+ * Words free that every queued job can reach, less what they will copy: a unit's windows go to
+ * block 3 or to their own block's half, so only the smaller half counts (then the jobs of both
+ * blocks fit, whichever copies first).
+ */
+static ALWAYS_INLINE uint32_t stage_free(void)
+{
+	uint32_t f = store_free(0U);
+
+	if (rs.spare_ok) {
+		f += MIN(store_free(1U), store_free(2U));
+	}
+	return f > rs.job_pairs ? f - rs.job_pairs : 0U;
+}
+
+/* The most stage_free() can give, what a burst's start is held against. */
+static ALWAYS_INLINE uint32_t stage_reach(void)
+{
+	return rs.sto[0].words + (rs.spare_ok ? SPARE_WORDS : 0U);
+}
+
+static void canaries_set(void)
+{
+	for (unsigned int k = 0; k < 2U; k++) {
+		volatile uint32_t *half = bank_ptr(k) + ESP_SDR_GAPLESS_RING;
+
+		for (unsigned int i = 0; i < CANARY_WORDS; i++) {
+			half[i] = CANARY;
+			half[ESP_SDR_GAPLESS_RING - 1U - i] = CANARY;
+		}
+	}
+}
+
+/*
+ * Block @p k came back from the engine: are its upper half's canaries intact? Both blocks once:
+ * the halves go into service. Any later failure takes them out (the samples in them are suspect).
+ */
+static ESP_SDR_GAPLESS_HOT void canaries_check(unsigned int k)
+{
+	const volatile uint32_t *half = bank_ptr(k) + ESP_SDR_GAPLESS_RING;
+	bool ok = true;
+
+	for (unsigned int i = 0; i < CANARY_WORDS; i++) {
+		ok = ok && half[i] == CANARY && half[ESP_SDR_GAPLESS_RING - 1U - i] == CANARY;
+	}
+	if (!ok) {
+		rs.st.spare_errors++;
+		if (rs.spare_ok) {
+			rs.spare_ok = false;
+			rs.st_words = rs.sto[0].words;
+		}
+		rs.spare_seen = 0xffU;
+		for (uint32_t i = rs.sq_head; i != rs.sq_tail; i++) {
+			if (rs.sq[i % STAGED].store == 1U + k) {
+				rs.sq[i % STAGED].bad = true;
+			}
+		}
+		return;
+	}
+	if (rs.spare_seen != 0xffU) {
+		rs.spare_seen |= (uint8_t)BIT(k);
+		if (rs.spare_seen == 3U && !rs.spare_ok) {
+			rs.spare_ok = true;
+			rs.st_words = rs.sto[0].words + 2U * SPARE_WORDS;
+		}
+	}
+}
+
 /* ---- keep decision ---- */
 
-static ESP_SDR_GAPLESS_HOT void job_add(uint64_t s, uint64_t e, unsigned int shift, uint8_t flags,
+static ESP_SDR_GAPLESS_HOT bool job_add(uint64_t s, uint64_t e, unsigned int shift, uint8_t flags,
 					uint32_t power)
 {
 	struct job *last = &rs.jobs[(rs.job_tail - 1U) % JOBS];
@@ -658,37 +835,39 @@ static ESP_SDR_GAPLESS_HOT void job_add(uint64_t s, uint64_t e, unsigned int shi
 	uint32_t *kept = s >= rs.cur_abs ? &rs.kept_cur : &rs.kept_prev;
 
 	/*
-	 * Admitted only with room for it in the staging ring, counting what the queued jobs will
-	 * copy: a burst longer than the ring keeps its start, and nothing kept is lost later.
-	 * The cap is the other limit: what the CPU can copy before the block is needed again.
+	 * Admitted only with room for it in staging, counting what the queued jobs will copy: a
+	 * burst longer than staging keeps its start, and nothing kept is lost later. The cap is
+	 * the other limit: what the CPU can copy before the block is needed again.
 	 */
-	if (rs.st_used + rs.job_pairs + n > STAGE_WORDS) {
+	if (n > stage_free()) {
 		rs.st.dropped_pairs += n;
-		rs.pending_flags |= ESP_SDR_GAPLESS_SEG_DROPPED;
-		return;
+		rs.decide_flags |= ESP_SDR_GAPLESS_SEG_DROPPED;
+		return false;
 	}
 	if (*kept >= rs.cap || rs.job_tail - rs.job_head >= JOBS) {
 		rs.unit_capped = true;
 		rs.st.dropped_pairs += n;
-		rs.pending_flags |= ESP_SDR_GAPLESS_SEG_DROPPED;
-		return;
+		rs.decide_flags |= ESP_SDR_GAPLESS_SEG_DROPPED;
+		return false;
 	}
 	*kept += n;
 	rs.job_pairs += n;
 	rs.servo_bytes += n * 2U;
 	if (rs.job_tail != rs.job_head && last->s + last->left == s && last->shift == shift &&
-	    last->gain == (uint8_t)rs.gain) {
+	    last->gain == (uint8_t)rs.gain && rs.decide_flags == 0U) {
 		last->left += n;
-		return;
+		return true;
 	}
 	rs.servo_bytes += SEG_OVERHEAD;
 	rs.jobs[rs.job_tail % JOBS] = (struct job){
-		.s = s, .left = n, .shift = (uint8_t)shift, .flags = flags,
+		.s = s, .left = n, .shift = (uint8_t)shift, .flags = flags | rs.decide_flags,
 		.gain = (uint8_t)rs.gain,
 		.dc_i = (int8_t)CLAMP((rs.dc_i + 8) >> 4, INT8_MIN, INT8_MAX),
 		.dc_q = (int8_t)CLAMP((rs.dc_q + 8) >> 4, INT8_MIN, INT8_MAX),
 		.dbfs = dbfs_x10(power)};
 	rs.job_tail++;
+	rs.decide_flags = 0U;
+	return true;
 }
 
 /* Decide window @p w (all windows up to w + pre are in), queueing it if kept. */
@@ -702,7 +881,37 @@ static ESP_SDR_GAPLESS_HOT void decide(uint32_t w, uint32_t pre, uint32_t span)
 
 	rs.decided_to = win->e;
 	if (near == 0U) {
+		/* A burst ends at a window not kept. */
+		rs.in_burst = false;
+		rs.burst_cut = false;
 		return;
+	}
+	if (!rs.in_burst) {
+		rs.in_burst = true;
+		rs.st.bursts++;
+		/* A burst starts only with room to grow: one that would be cut at once goes whole. */
+		if (stage_free() < stage_reach() >> START_FREE_SHIFT) {
+			rs.st.bursts_refused++;
+			rs.burst_cut = true;
+			rs.cut_pairs = 0;
+		}
+	}
+	if (rs.burst_cut) {
+		/*
+		 * A burst that lost a window loses its rest: a piece without its start decodes nothing.
+		 * After as many samples as a window's staging can reach (block 3 and one half), with an
+		 * eighth of it free again, what goes on counts as a new burst: a band that never rests
+		 * would drop everything.
+		 */
+		rs.cut_pairs += (uint32_t)(win->e - win->s);
+		if (rs.cut_pairs < stage_reach() ||
+		    stage_free() < stage_reach() >> START_FREE_SHIFT) {
+			rs.st.dropped_pairs += (uint32_t)(win->e - win->s);
+			rs.decide_flags |= ESP_SDR_GAPLESS_SEG_DROPPED;
+			return;
+		}
+		rs.burst_cut = false;
+		rs.st.bursts++;
 	}
 	/* The loudest window around sets the shift, so a burst and its edges share one. */
 	for (uint32_t k = 0, idx = w + pre; k < span && idx + 1U > 0U; k++, idx--) {
@@ -711,8 +920,12 @@ static ESP_SDR_GAPLESS_HOT void decide(uint32_t w, uint32_t pre, uint32_t span)
 		}
 	}
 	rs.st.kept_windows++;
-	job_add(win->s, win->e, seg_shift(pmax, rs.dc_i >> 4, rs.dc_q >> 4),
-		win->loud ? ESP_SDR_GAPLESS_SEG_LOUD : 0U, win->power);
+	if (!job_add(win->s, win->e, seg_shift(pmax, rs.dc_i >> 4, rs.dc_q >> 4),
+		     win->loud ? ESP_SDR_GAPLESS_SEG_LOUD : 0U, win->power)) {
+		rs.st.bursts_cut++;
+		rs.burst_cut = true;
+		rs.cut_pairs = 0;
+	}
 }
 
 static ESP_SDR_GAPLESS_HOT void window_done(const struct est *a, const struct est *b)
@@ -752,23 +965,23 @@ enum slice_result {
 	SLICE_FULL,
 };
 
-/* Contiguous free words at the staging ring's write position; runs never wrap. */
-static ESP_SDR_GAPLESS_HOT uint32_t stage_contig(void)
+/* Contiguous free words at store @p s's write position; runs never wrap. */
+static ESP_SDR_GAPLESS_HOT uint32_t stage_contig(struct store *s)
 {
-	if (rs.st_used == 0U) {
-		rs.st_head = rs.st_tail = 0;
-		return STAGE_WORDS;
+	if (s->used == 0U) {
+		s->head = s->tail = 0;
+		return s->words;
 	}
-	if (rs.st_used == STAGE_WORDS) {
+	if (s->used == s->words) {
 		return 0U;
 	}
-	if (rs.st_head == STAGE_WORDS) {
-		if (rs.st_tail == 0U) {
+	if (s->head == s->words) {
+		if (s->tail == 0U) {
 			return 0U;
 		}
-		rs.st_head = 0;
+		s->head = 0;
 	}
-	return rs.st_head >= rs.st_tail ? STAGE_WORDS - rs.st_head : rs.st_tail - rs.st_head;
+	return s->head >= s->tail ? s->words - s->head : s->tail - s->head;
 }
 
 static ESP_SDR_GAPLESS_HOT __attribute__((optimize("O3"))) void
@@ -802,7 +1015,9 @@ static ESP_SDR_GAPLESS_HOT enum slice_result copy_slice(uint32_t budget, uint64_
 	struct job *j;
 	const struct unit *u = NULL;
 	struct staged *last;
-	uint32_t n, t0, dt, at, run;
+	struct store *dst;
+	uint32_t n, t0, dt, at, run, room;
+	unsigned int ub, k;
 	bool extend;
 
 	if (rs.job_head == rs.job_tail) {
@@ -844,11 +1059,21 @@ static ESP_SDR_GAPLESS_HOT enum slice_result copy_slice(uint32_t budget, uint64_
 	}
 	n = MIN(j->left, (uint32_t)(u->abs + u->count - j->s));
 	n = MIN(n, MAX(budget * 14U / rs.copy_cpp_q4, 16U));
-	n = MIN(n, stage_contig());
+	/* Block 3 first; else the upper half of the unit's own block, which the CPU owns now. */
+	ub = (unsigned int)(u - rs.u);
+	k = 0U;
+	room = stage_contig(&rs.sto[0]);
+	if (room == 0U && rs.spare_ok) {
+		k = 1U + ub;
+		room = stage_contig(&rs.sto[k]);
+	}
+	dst = &rs.sto[k];
+	n = MIN(n, room);
 	last = &rs.sq[(rs.sq_tail - 1U) % STAGED];
 	extend = rs.sq_tail != rs.sq_head && last->index + last->pairs == j->s &&
-		 last->at + last->pairs == rs.st_head && last->shift == j->shift &&
-		 last->gain == j->gain && rs.pending_flags == 0U;
+		 last->store == k && last->at + last->pairs == dst->head &&
+		 last->shift == j->shift && last->gain == j->gain && rs.pending_flags == 0U &&
+		 (j->flags & ESP_SDR_GAPLESS_SEG_DROPPED) == 0U;
 	if (n == 0U || (!extend && rs.sq_tail - rs.sq_head >= STAGED)) {
 		return SLICE_FULL;
 	}
@@ -856,9 +1081,9 @@ static ESP_SDR_GAPLESS_HOT enum slice_result copy_slice(uint32_t budget, uint64_
 	t0 = esp_sdr_paced_cycles();
 	/* Up to the ring's end, then from its start. */
 	run = MIN(n, ESP_SDR_GAPLESS_RING - at);
-	copy_words(&stage[rs.st_head], bank_ptr((unsigned int)(u - rs.u)) + at, run);
+	copy_words(dst->base + dst->head, bank_ptr(ub) + at, run);
 	if (run < n) {
-		copy_words(&stage[rs.st_head + run], bank_ptr((unsigned int)(u - rs.u)), n - run);
+		copy_words(dst->base + dst->head + run, bank_ptr(ub), n - run);
 	}
 	dt = esp_sdr_paced_cycles() - t0;
 	if (n >= 64U) {
@@ -871,15 +1096,16 @@ static ESP_SDR_GAPLESS_HOT enum slice_result copy_slice(uint32_t budget, uint64_
 		last->pairs += n;
 	} else {
 		rs.sq[rs.sq_tail % STAGED] = (struct staged){
-			.index = j->s, .at = rs.st_head, .pairs = n, .shift = j->shift,
-			.flags = j->flags | rs.pending_flags, .gain = j->gain, .dc_i = j->dc_i,
-			.dc_q = j->dc_q, .dbfs = j->dbfs};
+			.index = j->s, .at = dst->head, .pairs = n, .store = (uint8_t)k,
+			.shift = j->shift, .flags = j->flags | rs.pending_flags, .gain = j->gain,
+			.dc_i = j->dc_i, .dc_q = j->dc_q, .dbfs = j->dbfs};
 		rs.sq_tail++;
 		rs.pending_flags = 0U;
 		/* Only the first run of a job carries its flags. */
-		j->flags &= ~ESP_SDR_GAPLESS_SEG_LOUD;
+		j->flags &= ~(ESP_SDR_GAPLESS_SEG_LOUD | ESP_SDR_GAPLESS_SEG_DROPPED);
 	}
-	rs.st_head += n;
+	dst->head += n;
+	dst->used += n;
 	rs.st_used += n;
 	rs.job_pairs -= n;
 	rs.st.stage_peak = MAX(rs.st.stage_peak, rs.st_used);
@@ -889,6 +1115,147 @@ static ESP_SDR_GAPLESS_HOT enum slice_result copy_slice(uint32_t budget, uint64_
 		rs.job_head++;
 	}
 	return SLICE_DONE;
+}
+
+/* ---- width sorting ---- */
+
+/*
+ * Judge (part of) the next chunk of the front run @p e as far as @p budget cycles go. A chunk
+ * is a window's length, judged once that many samples are staged (or the run is complete:
+ * not the last one staged, or no job continues it); a run too short for a point is narrow.
+ */
+static ESP_SDR_GAPLESS_HOT enum slice_result sort_slice(struct staged *e, uint32_t budget)
+{
+	struct sort_result res;
+	uint32_t t0, dt, max, before;
+	bool wide;
+
+	if (!rs.sort.active) {
+		bool complete = rs.sq_tail - rs.sq_head > 1U || rs.job_head == rs.job_tail ||
+				rs.jobs[rs.job_head % JOBS].s != e->index + e->pairs;
+
+		if (e->pairs < SORT_CHUNK && !complete) {
+			return SLICE_IDLE;
+		}
+		rs.sort.n = MIN(e->pairs, SORT_CHUNK);
+		if (rs.sort.n <= SORT_LAG_C) {
+			e->cls_left = rs.sort.n;
+			e->wide = false;
+			return SLICE_DONE;
+		}
+		rs.sort.pos = SORT_LAG_C;
+		rs.sort.acc = (struct sort_acc){0};
+		rs.sort.active = true;
+	}
+	/* An eighth of the budget is margin, as for packing; the verdict needs its share. */
+	if (budget <= SORT_DECIDE_CYC + (2U * rs.sort_point_q4 >> 4)) {
+		return SLICE_IDLE;
+	}
+	max = (budget - SORT_DECIDE_CYC) * 14U / rs.sort_point_q4;
+	t0 = esp_sdr_paced_cycles();
+	before = rs.sort.acc.points;
+	rs.sort.pos = sort_points(&rs.sort.acc, run_ptr(e), rs.sort.pos, rs.sort.n, max,
+				  e->dc_i, e->dc_q);
+	if (rs.sort.pos >= rs.sort.n) {
+		wide = sort_decide(&rs.sort.acc, baseline_q8 >> 8, rs.thr, e->last_wide, &res);
+		rs.st.sort_chunks++;
+		if (res.loud) {
+			e->last_wide = wide;
+			rs.st.sort_hist[MAX(MAX(res.rho[0], res.rho[1]), res.rho[2]) >> 5]++;
+		}
+		rs.sort.rec = (struct esp_sdr_gapless_wide){
+			.span = (uint16_t)rs.sort.n, .r1_i = res.r1_i, .r1_q = res.r1_q,
+			.rho4 = res.rho[0], .rho6 = res.rho[1], .rho10 = res.rho[2],
+			.points = (uint8_t)MIN(rs.sort.acc.points, 255U)};
+		rs.sort.dbfs = dbfs_x10(res.power);
+		e->cls_left = rs.sort.n;
+		e->wide = wide;
+		rs.sort.active = false;
+	}
+	dt = esp_sdr_paced_cycles() - t0;
+	/* Running estimate of a point's cost; it rises at once. */
+	if (rs.sort.acc.points - before >= 8U) {
+		uint32_t c = dt * 16U / (rs.sort.acc.points - before);
+
+		rs.sort_point_q4 = c > rs.sort_point_q4 ? c : rs.sort_point_q4 -
+							   (rs.sort_point_q4 - c) / 8U;
+		rs.sort_point_q4 = MAX(rs.sort_point_q4, 16U);
+	}
+	/* The run loop books the whole slice as packing. */
+	rs.ucyc[ESP_SDR_GAPLESS_SORT] += dt;
+	rs.ucyc[ESP_SDR_GAPLESS_PACK] -= dt;
+	return SLICE_DONE;
+}
+
+/*
+ * The judged chunk at the front of @p e is wide: its record goes out, its samples go. The
+ * sink's reserve() costs what a pack slice's fixed part does (it may finish a block).
+ */
+static ESP_SDR_GAPLESS_HOT enum slice_result wide_slice(struct staged *e, uint32_t budget)
+{
+	struct esp_sdr_gapless_seg seg = {
+		.index = e->index,
+		.pairs = ESP_SDR_GAPLESS_WIDE_PAIRS,
+		.shift = e->shift,
+		.flags = e->flags | ESP_SDR_GAPLESS_SEG_WIDE,
+		.gain = e->gain,
+		.dc_i = e->dc_i,
+		.dc_q = e->dc_q,
+		.power_dbfs_x10 = rs.sort.dbfs,
+	};
+	uint32_t n = e->cls_left, got, t0, ovh;
+	int8_t *dst;
+
+	if (budget <= rs.pack_ovh + 64U) {
+		return SLICE_IDLE;
+	}
+	t0 = esp_sdr_paced_cycles();
+	got = rs.sink->reserve(&seg, &dst, rs.sink->user);
+	if (got < ESP_SDR_GAPLESS_WIDE_PAIRS) {
+		/* A sink that grants part of a record breaks the contract: what it granted is zeros,
+		 * a record of the wrong length readers drop. The record waits for room. */
+		if (got != 0U) {
+			memset(dst, 0, 2U * got);
+			rs.sink->commit(got, rs.sink->user);
+		}
+		return SLICE_FULL;
+	}
+	memcpy(dst, &rs.sort.rec, sizeof(rs.sort.rec));
+	rs.sink->commit(ESP_SDR_GAPLESS_WIDE_PAIRS, rs.sink->user);
+	/* The fixed cost rises at once, falls slowly (as pack_slice() keeps it). */
+	ovh = esp_sdr_paced_cycles() - t0;
+	rs.pack_ovh = ovh > rs.pack_ovh ? ovh : rs.pack_ovh - (rs.pack_ovh - ovh) / 16U;
+	rs.st.wide_chunks++;
+	rs.st.wide_pairs += n;
+	rs.servo_saved += 2U * n > WIDE_BYTES ? 2U * n - WIDE_BYTES : 0U;
+	e->flags = 0U;
+	e->index += n;
+	e->at += n;
+	e->pairs -= n;
+	e->cls_left = 0U;
+	rs.sto[e->store].tail = e->at;
+	rs.sto[e->store].used -= n;
+	rs.st_used -= n;
+	if (e->pairs == 0U) {
+		rs.sq_head++;
+	}
+	return SLICE_DONE;
+}
+
+/* The front run is in a half whose canaries failed: dropped unread, its successor marked. */
+static ESP_SDR_GAPLESS_HOT void drop_front(struct staged *e)
+{
+	rs.st.dropped_pairs += e->pairs;
+	rs.sto[e->store].tail = e->at + e->pairs;
+	rs.sto[e->store].used -= e->pairs;
+	rs.st_used -= e->pairs;
+	rs.sort.active = false;
+	rs.sq_head++;
+	if (rs.sq_head != rs.sq_tail) {
+		rs.sq[rs.sq_head % STAGED].flags |= ESP_SDR_GAPLESS_SEG_DROPPED;
+	} else {
+		rs.pending_flags |= ESP_SDR_GAPLESS_SEG_DROPPED;
+	}
 }
 
 /* Pack from the front staged run into the sink as far as @p budget cycles go: no deadline. */
@@ -903,6 +1270,22 @@ static ESP_SDR_GAPLESS_HOT enum slice_result pack_slice(uint32_t budget)
 		return SLICE_IDLE;
 	}
 	e = &rs.sq[rs.sq_head % STAGED];
+	if (e->bad) {
+		drop_front(e);
+		return SLICE_DONE;
+	}
+	/* In the half of the block the engine writes: it waits (the order is the stream's). */
+	if (!store_ready(e->store)) {
+		return SLICE_IDLE;
+	}
+	if (rs.wide) {
+		if (e->cls_left == 0U) {
+			return sort_slice(e, budget);
+		}
+		if (e->wide) {
+			return wide_slice(e, budget);
+		}
+	}
 	cpp = &rs.pack_cpp_q4[e->shift >= 2U ? 1 : 0];
 	/* Not even a few samples fit after the slice's fixed cost: not now. */
 	if (budget <= rs.pack_ovh + (8U * *cpp >> 4)) {
@@ -912,7 +1295,8 @@ static ESP_SDR_GAPLESS_HOT enum slice_result pack_slice(uint32_t budget)
 	/* An eighth of what is left is margin: the estimate is an average. */
 	seg = (struct esp_sdr_gapless_seg){
 		.index = e->index,
-		.pairs = MIN(e->pairs, MAX((budget - rs.pack_ovh) * 14U / *cpp, 8U)),
+		.pairs = MIN(rs.wide ? e->cls_left : e->pairs,
+			     MAX((budget - rs.pack_ovh) * 14U / *cpp, 8U)),
 		.shift = e->shift,
 		.flags = e->flags,
 		.gain = e->gain,
@@ -926,7 +1310,7 @@ static ESP_SDR_GAPLESS_HOT enum slice_result pack_slice(uint32_t budget)
 	}
 	n = MIN(n, seg.pairs);
 	t0 = esp_sdr_paced_cycles();
-	pack_run(&stage[e->at], n, (uint16_t *)dst, e->shift);
+	pack_run(run_ptr(e), n, (uint16_t *)dst, e->shift);
 	dt = esp_sdr_paced_cycles() - t0;
 	rs.sink->commit(n, rs.sink->user);
 	/* The fixed cost rises at once, falls slowly. */
@@ -946,7 +1330,11 @@ static ESP_SDR_GAPLESS_HOT enum slice_result pack_slice(uint32_t budget)
 	e->index += n;
 	e->at += n;
 	e->pairs -= n;
-	rs.st_tail = e->at;
+	if (rs.wide) {
+		e->cls_left -= MIN(n, e->cls_left);
+	}
+	rs.sto[e->store].tail = e->at;
+	rs.sto[e->store].used -= n;
 	rs.st_used -= n;
 	if (e->pairs == 0U) {
 		rs.sq_head++;
@@ -986,13 +1374,28 @@ static void run_init(const struct esp_sdr_gapless_cfg *cfg, const struct esp_sdr
 	sat_lut_init();
 	rs.cfg = cfg;
 	rs.sink = sink;
+	rs.inputs_per = cfg->half_rate ? 2U : 1U;
+	rs.cpp = CPP_FULL * rs.inputs_per;
+	rs.pairs_us = ESP_SDR_GAPLESS_RATE_HZ / 1000000U / rs.inputs_per;
+	rs.settle_cyc = 16U * rs.cpp;
+	rs.max_age_cyc = (ESP_SDR_GAPLESS_RING - 128U) * rs.cpp;
+	rs.prep_pairs = PREP_CYC / rs.cpp + 256U;
+	rs.wide = cfg->wide && !cfg->half_rate;
 	rs.service_cyc = SERVICE_CYC_START;
 	rs.pack_ovh = PACK_OVH_START;
 	rs.pack_cpp_q4[0] = PACK_CPP_Q4_START;
 	rs.pack_cpp_q4[1] = PACK_CPP_Q4_START;
 	rs.copy_cpp_q4 = COPY_CPP_Q4_START;
+	rs.sort_point_q4 = SORT_POINT_Q4_START;
 	rs.st.idle_cycles_min = UINT32_MAX;
-	rs.cap = CAP_START;
+	/* At 40 MS/s a unit lasts twice as long: twice the copy time. */
+	rs.cap = CAP_START * rs.inputs_per;
+	rs.sto[0] = (struct store){.base = stage, .words = STAGE_WORDS};
+	for (unsigned int k = 0; k < 2U; k++) {
+		rs.sto[1U + k] = (struct store){
+			.base = bank_ptr(k) + ESP_SDR_GAPLESS_RING + CANARY_WORDS, .words = SPARE_WORDS};
+	}
+	rs.st_words = STAGE_WORDS;
 	rs.thr_floor_q8 = (cfg->ratio_x16 != 0U ? cfg->ratio_x16 : 64U) * 16U;
 	rs.thr_q8 = rs.thr_floor_q8;
 	rs.lim_hot = FULL_SCALE * (int32_t)(100U - lo) / 100;
@@ -1020,7 +1423,7 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 					    struct esp_sdr_gapless_stats *stats)
 {
 	uint32_t start_probe[2], end_probe[2];
-	uint32_t usage, saved, ctrl1, lo, hi;
+	uint32_t usage, saved, ctrl1, lo, hi, rate;
 	uint32_t epoch, w0, expected, wi = 0, written = 0, t_win, t_restart, t_unit, t_service;
 	uint64_t base;
 	unsigned int b = 0, key;
@@ -1049,16 +1452,18 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 	esp_sdr_paced_cycles_enable();
 	fill_marks(0, 0, ESP_SDR_GAPLESS_RING);
 	fill_marks(1, 0, ESP_SDR_GAPLESS_RING);
+	canaries_set();
 
 	ctrl1 = iqe_window_mode();
 
 	key = irq_lock();
 	saved = esp_sdr_dump_arm(usage);
 	/* As upstream: a pulse of the done bit, then the ring runs on block 1. */
-	sys_write32(DUMP_CTRL_CIRCULAR | DUMP_CTRL_DONE, DUMP_CTRL_REG);
-	sys_write32(DUMP_CTRL_CIRCULAR, DUMP_CTRL_REG);
+	rate = cfg->half_rate ? DUMP_CTRL_40MSPS : 0U;
+	sys_write32(DUMP_CTRL_CIRCULAR | DUMP_CTRL_DONE | rate, DUMP_CTRL_REG);
+	sys_write32(DUMP_CTRL_CIRCULAR | rate, DUMP_CTRL_REG);
 	select_blocks(saved, BIT(0));
-	sys_write32(DUMP_CTRL_CIRCULAR | DUMP_CTRL_RUN, DUMP_CTRL_REG);
+	sys_write32(DUMP_CTRL_CIRCULAR | DUMP_CTRL_RUN | rate, DUMP_CTRL_REG);
 	epoch = t_unit = t_service = esp_sdr_paced_cycles();
 	w0 = write_index();
 	/* Unit 0 starts near w0, found exactly after the first switch; index 0 is w0 - 256. */
@@ -1073,6 +1478,7 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 		bool stop_checked = false;
 		uint32_t busy = 0;
 
+		rs.eng = b;
 		for (;;) {
 			uint32_t now, limit, room, budget, t;
 			enum slice_result r;
@@ -1088,7 +1494,7 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 				rs.st.overrun_cycles = now - rs.last_t;
 				rs.st.overrun_room = rs.last_room;
 			}
-			if (unlikely(now - epoch > MAX_AGE_CYC)) {
+			if (unlikely(now - epoch > rs.max_age_cyc)) {
 				rs.st.error = ESP_SDR_GAPLESS_ERR_AGE;
 				rs.st.detail = now - epoch;
 				goto out;
@@ -1108,7 +1514,7 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 				stop = sink->stop(sink->user);
 			}
 			/* The next deadline: the switch, or else the preparation before it. */
-			limit = prepared ? THRESHOLD : THRESHOLD - PREP_PAIRS - LATE_LIMIT;
+			limit = prepared ? THRESHOLD : THRESHOLD - rs.prep_pairs - LATE_LIMIT;
 			if (!prepared && (written >= limit || unit_done(&rs.u[next]))) {
 				t = esp_sdr_paced_cycles();
 				rs.last_activity = ESP_SDR_GAPLESS_PREP;
@@ -1124,7 +1530,7 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 			if (written + 64U >= limit) {
 				continue;
 			}
-			room = (limit - written - 64U) * CPP;
+			room = (limit - written - 64U) * rs.cpp;
 			if (now - t_win >= WINDOW_CYC && room > rs.window_cyc_max + WINDOW_GUARD_CYC / 2U) {
 				t = esp_sdr_paced_cycles();
 				rs.last_activity = ESP_SDR_GAPLESS_WINDOWS;
@@ -1215,7 +1621,7 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 			goto out;
 		}
 		if (stop) {
-			sys_write32(DUMP_CTRL_CIRCULAR, DUMP_CTRL_REG);
+			sys_write32(DUMP_CTRL_CIRCULAR | rate, DUMP_CTRL_REG);
 			select_blocks(saved, 0U);
 		} else {
 			select_blocks(saved, BIT(next));
@@ -1223,7 +1629,7 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 		}
 		uint32_t t = esp_sdr_paced_cycles(), first, end, count;
 
-		while (esp_sdr_paced_cycles() - t < SETTLE_CYC) {
+		while (esp_sdr_paced_cycles() - t < rs.settle_cyc) {
 		}
 		if (unit == 0U) {
 			first = find_first(b, (w0 - 1024U) & RING_MASK, UNIT0_GUARD);
@@ -1252,6 +1658,8 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 		}
 		rs.u[b] = (struct unit){.abs = base + ((first - expected) & RING_MASK),
 					.first = first, .count = count, .valid = true};
+		/* Block b is the CPU's again: its upper half's canaries. */
+		canaries_check(b);
 		base += (end - expected) & RING_MASK;
 		expected = end;
 		rs.st.units++;
@@ -1281,7 +1689,7 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 		for (int k = 0; k < ESP_SDR_GAPLESS_ACTIVITIES; k++) {
 			rs.st.cycles[k] += rs.ucyc[k];
 		}
-		if (rs.st_used > STAGE_WORDS / 2U) {
+		if (rs.st_used > rs.st_words / 2U) {
 			rs.st.busy_units++;
 			for (int k = 0; k < ESP_SDR_GAPLESS_ACTIVITIES; k++) {
 				rs.st.busy_cycles[k] += rs.ucyc[k];
@@ -1303,6 +1711,7 @@ out:
 	rs.st.ratio_x16 = rs.thr_q8 / 16U;
 	rs.st.gain = (uint32_t)rs.gain;
 	rs.st.cap = rs.cap;
+	rs.st.stage_words = rs.st_words;
 	if (rs.st.error != ESP_SDR_GAPLESS_OK) {
 		ret = -EIO;
 	}

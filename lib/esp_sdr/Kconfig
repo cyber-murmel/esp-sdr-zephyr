@@ -101,8 +101,9 @@ config ESP_SDR_GAPLESS_STAGE_KB
 	  Kept windows are copied raw from the ring's blocks into this ring
 	  in SRAM block 3 before they are packed: a block is readable for one
 	  unit (154 us) only, the copy is cheap, and the packing then has no
-	  deadline. Bursts up to its size (4 bytes a sample, 12288 samples in
-	  48 KiB) are kept whole.
+	  deadline. The upper halves of blocks 1 and 2 (the ring takes the
+	  lower ones) add 2 x 64 KiB once their canaries hold. What the CPU
+	  can copy per unit, not this size, bounds a whole burst.
 
 config ESP_SDR_DIAG
 	bool "Gapless receive through the modem diagnostic bus (ESP32-C5)"

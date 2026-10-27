@@ -111,7 +111,7 @@ static inline ESDR_SEG_HOT uint32_t esdr_seg_writer_room(const struct esdr_seg_w
 }
 
 /*
- * Starts a segment of up to @p pairs pairs at pair @p index (80 MS/s axis), its header from
+ * Starts a segment of up to @p pairs pairs at pair @p index (the run's axis), its header from
  * @p m, and points @p dst at its items; returns how many pairs fit, and the caller writes twice
  * that many int8 items there. 0 when the block cannot take the segment: no room for a header
  * and a pair, an index before the last segment's end, or one 2^32 pairs or more past the
@@ -239,7 +239,7 @@ static inline ESDR_SEG_HOT size_t esdr_seg_writer_finish(struct esdr_seg_writer 
 /* ---- reader ---- */
 
 struct esdr_seg {
-	/* The first pair's index on the 80 MS/s axis. */
+	/* The first pair's index on the run's axis (80 MS/s, 40 with ESDR_GAPLESS_F_HALF). */
 	uint64_t index;
 	uint16_t pairs;
 	uint8_t shift, flags;
