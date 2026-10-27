@@ -33,7 +33,7 @@ manifest:
     # why2025-badge, mch2022-badge, p4-function-ev-board).
     - name: zephyr
       remote: cyber-murmel
-      revision: 9e90a821cf42644259b2d71925fdfe835469710c # p4-function-ev-board
+      revision: ebef6eb3a2e4613613cb5672211ab0a4ce25d867 # p4-smp
       path: modules/zephyr
       import:
         name-allowlist:

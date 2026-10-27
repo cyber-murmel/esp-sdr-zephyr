@@ -423,6 +423,23 @@ XIAO ESP32-C6 on the other end of a 30 dB coax attenuator.
     fused load too (the core issues one instruction a cycle, so fusing halves
     the cost); a vector used by the next instruction stalls one.
   - The vector state is in no thread context: one thread per core may use it.
+    The enables and the vector, accumulator and loop registers are per core,
+    so under SMP that thread is pinned before it starts (`apps/pcap`): moved,
+    it would trap where PIE is off, or carry on with the other core's state.
+- **The ESP32-P4's branch prediction** (MHCR, CSR 0x7c1: return stack,
+  predictive jumps, BTB) is set by ESP-IDF's start code on both cores. In
+  Zephyr only the flash cache restore set it, for the core doing the flash
+  operation, so the second core could run without it; the SMP port sets it
+  on both at start.
+- **The ESP32-P4's core-1 boot address and stall survive warm resets** (both
+  sit in the always-on domain): after an image that started core 1, the ROM can
+  release core 1 into whatever code now occupies that address, and ESP-IDF's
+  restart leaves core 1 stalled. MCUboot clears the address, resets core 1 and
+  releases the stall first (`soc/espressif/esp32p4/hw_init.c`). On the WHY2025
+  badge, with an MCUboot without the first two steps the first reboot of an SMP
+  image wedged the chip (USB stayed enumerated, nothing answered); without the
+  release, a single-core image (MicroPython, pcap) hung early after an SMP
+  image's reboot, before its USB came up, while a cold boot was fine.
 - **The ESP32-P4's memcpy, memmove and memset are ROM routines** (the
   `esp32p4.rom.libc*.ld` scripts) at some 5.5 cycles a byte. Moving the
   channelizer's 1.5 kB history cost 13 cycles a sample until a PIE copy took
