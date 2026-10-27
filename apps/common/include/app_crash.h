@@ -13,6 +13,7 @@ struct app_crash {
 	uint32_t magic;
 	/* K_ERR_* reason, or APP_CRASH_WATCHDOG. */
 	uint32_t reason;
+	/* Xtensa; on RISC-V mepc, ra, mstatus, mcause, mtval. */
 	uint32_t pc, a0, ps, exccause, excvaddr;
 	uint32_t cpu;
 	uint32_t uptime_ms;
