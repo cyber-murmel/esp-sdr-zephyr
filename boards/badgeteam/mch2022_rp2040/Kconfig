@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# The flash type only chooses the second stage bootloader, which an image behind the badge's own
+# bootloader does not have. A W25Q16JV, as on the Pico.
+config BOARD_MCH2022_RP2040
+	select RP2_FLASH_W25Q080

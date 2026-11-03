@@ -39,7 +39,11 @@ manifest:
       path: modules/zephyr
       import:
         name-allowlist:
+          # The MCH2022 badge's RP2040 (apps/mch2022_coproc): its HAL and the
+          # Cortex-M headers.
+          - cmsis_6
           - fatfs
+          - hal_rpi_pico
           - loramac-node
           - mcuboot
           - mbedtls

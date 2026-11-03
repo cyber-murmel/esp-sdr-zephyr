@@ -78,6 +78,8 @@ let
       "xtensa-espressif_esp32_zephyr-elf"
       "xtensa-espressif_esp32s3_zephyr-elf"
       "riscv64-zephyr-elf"
+      # The MCH2022 badge's RP2040 (apps/mch2022_coproc).
+      "arm-zephyr-eabi"
     ];
   };
 
@@ -179,6 +181,8 @@ let
     mermaid-filter
     nextpnr
     pandoc
+    # The MCH2022 badge's RP2040 in its ROM bootloader: backup, rollback, images.
+    picotool
     # The CI checks as git hooks (.pre-commit-config.yaml).
     pre-commit
     qemu-esp32

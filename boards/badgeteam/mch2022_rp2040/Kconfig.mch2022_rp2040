@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+config BOARD_MCH2022_RP2040
+	select SOC_RP2040

@@ -94,6 +94,16 @@ path = "modules/lib/gui/lv_binding_micropython/pycparser"
 hash = "sha256-3X0jr7bKNdz3n/82dMuwTyKHJYgLW2QEQ+Lj6esZ91Q="
 
 [[manifest.projects]]
+name = "cmsis_6"
+url = "https://github.com/zephyrproject-rtos/CMSIS_6"
+revision = "1c1840af7a7e757d6e2fec3ddb0e5ce0dfcc93c8"
+path = "modules/hal/cmsis_6"
+groups = ["hal"]
+
+[manifest.projects.nix]
+hash = "sha256-IiE4Wzh1aWgPI589n7CaoDM8l25KtrRsGwUF0r74b18="
+
+[[manifest.projects]]
 name = "fatfs"
 url = "https://github.com/zephyrproject-rtos/fatfs"
 revision = "4f60a12c58c3de4246857ad87c40239ecd93349b"
@@ -102,6 +112,16 @@ groups = ["fs"]
 
 [manifest.projects.nix]
 hash = "sha256-xJ4NabPhqIirDq7f9BJGMgu9RMBoWIwJvCbF4BQQgKA="
+
+[[manifest.projects]]
+name = "hal_rpi_pico"
+url = "https://github.com/zephyrproject-rtos/hal_rpi_pico"
+revision = "2e9dbf14fa56e5907aefb07e8e75010ec5210946"
+path = "modules/hal/rpi_pico"
+groups = ["hal"]
+
+[manifest.projects.nix]
+hash = "sha256-JVh+y7u67C3X5DIOSmG6s4frGwBaT8epRJfkkzsArpQ="
 
 [[manifest.projects]]
 name = "loramac-node"
