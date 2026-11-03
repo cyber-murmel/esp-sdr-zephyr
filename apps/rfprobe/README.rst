@@ -73,7 +73,9 @@ Shell
    probe cal lte [start MHz] [stop MHz] [gain|-1]
                                measure the crystal's error against an LTE cell (default band
                                1 downlink, 2110 to 2170 MHz), apply and store it with the die
-                               temperature (doc/lte-calibration.md); minutes
+                               temperature (doc/lte-calibration.md); minutes. Where carriers
+                               fill the band nothing stands out of it: start = stop at a known
+                               carrier's centre searches only there
    probe cal show              correction in force, where it leaves the LO (whole kHz at the
                                PLL), temperature, the stored record, its temperature points
                                and what the model gives now

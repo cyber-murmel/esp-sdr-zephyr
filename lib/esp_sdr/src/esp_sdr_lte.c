@@ -121,6 +121,9 @@ static int cmp_i32(const void *a, const void *b)
  * The order to search the LO steps in: a downlink carrier is 5 to 20 MHz wide and its
  * synchronization signals sit at its centre, so take runs of steps well above the median
  * power of the reachable ones, strongest run first, and each run from its centre outwards.
+ * Where nothing stands out, a band the carriers fill (band 1 at the desk, 2026-11-03: every
+ * step 6 to 9 dB over the floor beyond it, the median with them) or a span of one step, the
+ * strongest steps.
  */
 static size_t search_order(const float *pw, size_t steps, uint16_t *order, size_t max)
 {
@@ -196,6 +199,20 @@ static size_t search_order(const float *pw, size_t steps, uint16_t *order, size_
 		for (size_t i = best_lo; i < best_hi; i++) {
 			used[i] = true;
 		}
+	}
+	for (bool none = n == 0U; none && n < max; n++) {
+		size_t best = steps;
+
+		for (size_t i = 0; i < steps; i++) {
+			if (pw[i] >= 0.0f && !used[i] && (best == steps || pw[i] > pw[best])) {
+				best = i;
+			}
+		}
+		if (best == steps) {
+			break;
+		}
+		used[best] = true;
+		order[n] = (uint16_t)best;
 	}
 	k_free(used);
 	return n;

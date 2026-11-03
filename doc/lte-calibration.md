@@ -137,6 +137,12 @@ probe cal set <ppb> | probe cal clear
 probe temp
 ```
 
+The survey searches runs of steps 6 dB over the band's median, each from its centre. Where the
+downlinks fill the band (band 1 at the desk, 2026-11-03: every step 3 to 9 dB over the floor
+above it, in bursts) none stands out, and it takes the strongest steps instead, which need not
+be a carrier's centre: a span of one step at a known centre (`probe cal lte 2135 2135 50`)
+searches only there. The S3 devkit decoded cell 150 that way at gain 50, not at 60.
+
 Over the protocol (`apps/osmosdr/src/esdr_proto.h`, `apps/common/src/esdr_cal.c` answers them
 on a chip with the radio):
 
