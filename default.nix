@@ -90,6 +90,8 @@ let
       myst-parser
       # nanopb's generator (Zephyr's esp-hosted-mcu driver, apps/c6_bootstrap).
       protobuf
+      # The MCH2022 badge's console bridge for twister (tests/integration/esdr_fpga/mch2022_pty.py).
+      pyusb
     ];
   };
 
