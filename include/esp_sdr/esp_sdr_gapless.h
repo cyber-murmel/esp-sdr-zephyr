@@ -297,6 +297,16 @@ struct esp_sdr_gapless_stats {
 int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cfg,
 			const struct esp_sdr_gapless_sink *sink, struct esp_sdr_gapless_stats *stats);
 
+/**
+ * @brief The statistics of the run so far.
+ *
+ * For the sink's callbacks during esp_sdr_gapless_run(), which fills its own only at the end;
+ * after a run, the last run's.
+ *
+ * @param stats Filled in.
+ */
+void esp_sdr_gapless_peek(struct esp_sdr_gapless_stats *stats);
+
 /** @brief Forget the learnt baseline (after a retune or a gain change). */
 void esp_sdr_gapless_reset(void);
 

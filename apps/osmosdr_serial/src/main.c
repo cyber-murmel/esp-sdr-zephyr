@@ -739,6 +739,19 @@ static struct {
 
 static struct esdr_gapless_stats gl_stats;
 
+/*
+ * ESDR_REQ_GET_GAPLESS_STATS during a run, answered in place so that polling does not restart
+ * it: the totals with the run so far, from a buffer of its own that stays the link's until the
+ * host has read it. The link sends in order, so that is once no more than the blocks queued
+ * after it are pending.
+ */
+static struct {
+	struct esdr_ser_hdr h;
+	struct esdr_gapless_stats st;
+} __packed __aligned(4) gl_rep;
+static uint32_t gl_rep_after;
+static bool gl_rep_busy;
+
 static APP_HOT void gl_finish(void)
 {
 	(void)esdr_seg_writer_finish(&gl.w, 0U);
@@ -813,6 +826,7 @@ static APP_HOT bool gl_service(uint32_t budget, void *user)
 	while (gl.queued != gl.filled &&
 	       sdio_link_queue(out.blk[gl.queued % GL_BLOCKS], ESDR_BLOCK_BYTES, true)) {
 		gl.queued++;
+		gl_rep_after++;
 	}
 	sdio_link_pump();
 	gl.done = sdio_link_blocks_done() - gl.done_base;
@@ -820,54 +834,96 @@ static APP_HOT bool gl_service(uint32_t budget, void *user)
 	return true;
 }
 
-static APP_HOT bool gl_stop(void *user)
+/* A run's statistics added to @p to. */
+static APP_HOT void gl_add(struct esdr_gapless_stats *to, const struct esp_sdr_gapless_stats *st,
+			   int ret)
 {
-	ARG_UNUSED(user);
-	return req.ready;
+	to->pairs += st->pairs;
+	to->kept_pairs += st->kept_pairs;
+	to->dropped_pairs += st->dropped_pairs;
+	to->abandoned_pairs += st->abandoned_pairs;
+	to->runs++;
+	to->units += st->units;
+	to->windows += st->windows;
+	to->loud_windows += st->loud_windows;
+	to->kept_windows += st->kept_windows;
+	if (ret == -EIO) {
+		to->ring_errors++;
+		to->ring_last_error = st->error;
+		to->ring_last_detail = st->detail;
+	}
+	to->overrun_activity = st->overrun_activity;
+	to->overrun_cycles = st->overrun_cycles;
+	to->overrun_room = st->overrun_room;
+	to->late_max = MAX(to->late_max, st->late_max);
+	to->idle_cycles_min = to->runs == 1U ? st->idle_cycles_min
+						       : MIN(to->idle_cycles_min, st->idle_cycles_min);
+	to->stage_bytes = st->stage_words * 4U;
+	to->stage_peak_bytes = MAX(to->stage_peak_bytes, st->stage_peak * 4U);
+	to->baseline = st->baseline;
+	to->ratio_x16 = st->ratio_x16;
+	to->gain = st->gain;
+	to->gain_steps += st->gain_steps;
+	to->wide_chunks += st->wide_chunks;
+	to->wide_pairs += st->wide_pairs;
+	for (int k = 0; k < ESP_SDR_GAPLESS_ACTIVITIES; k++) {
+		to->cycles[k] += st->cycles[k];
+	}
+	to->sort_chunks += st->sort_chunks;
+	for (int k = 0; k < ARRAY_SIZE(to->sort_hist); k++) {
+		to->sort_hist[k] += st->sort_hist[k];
+	}
+	to->bursts += st->bursts;
+	to->bursts_refused += st->bursts_refused;
+	to->bursts_cut += st->bursts_cut;
+	to->spare_errors += st->spare_errors;
 }
 
 static void gl_account(const struct esp_sdr_gapless_stats *st, int ret)
 {
-	gl_stats.pairs += st->pairs;
-	gl_stats.kept_pairs += st->kept_pairs;
-	gl_stats.dropped_pairs += st->dropped_pairs;
-	gl_stats.abandoned_pairs += st->abandoned_pairs;
-	gl_stats.runs++;
-	gl_stats.units += st->units;
-	gl_stats.windows += st->windows;
-	gl_stats.loud_windows += st->loud_windows;
-	gl_stats.kept_windows += st->kept_windows;
-	if (ret == -EIO) {
-		gl_stats.ring_errors++;
-		gl_stats.ring_last_error = st->error;
-		gl_stats.ring_last_detail = st->detail;
-	}
-	gl_stats.overrun_activity = st->overrun_activity;
-	gl_stats.overrun_cycles = st->overrun_cycles;
-	gl_stats.overrun_room = st->overrun_room;
-	gl_stats.late_max = MAX(gl_stats.late_max, st->late_max);
-	gl_stats.idle_cycles_min = gl_stats.runs == 1U ? st->idle_cycles_min
-						       : MIN(gl_stats.idle_cycles_min, st->idle_cycles_min);
-	gl_stats.stage_bytes = st->stage_words * 4U;
-	gl_stats.stage_peak_bytes = MAX(gl_stats.stage_peak_bytes, st->stage_peak * 4U);
-	gl_stats.baseline = st->baseline;
-	gl_stats.ratio_x16 = st->ratio_x16;
-	gl_stats.gain = st->gain;
-	gl_stats.gain_steps += st->gain_steps;
-	gl_stats.wide_chunks += st->wide_chunks;
-	gl_stats.wide_pairs += st->wide_pairs;
-	for (int k = 0; k < ESP_SDR_GAPLESS_ACTIVITIES; k++) {
-		gl_stats.cycles[k] += st->cycles[k];
-	}
-	gl_stats.sort_chunks += st->sort_chunks;
-	for (int k = 0; k < ARRAY_SIZE(gl_stats.sort_hist); k++) {
-		gl_stats.sort_hist[k] += st->sort_hist[k];
-	}
-	gl_stats.bursts += st->bursts;
-	gl_stats.bursts_refused += st->bursts_refused;
-	gl_stats.bursts_cut += st->bursts_cut;
-	gl_stats.spare_errors += st->spare_errors;
+	gl_add(&gl_stats, st, ret);
 	stats.rx_samples += st->kept_pairs;
+}
+
+static APP_HOT bool gl_answer_stats(void)
+{
+	struct esp_sdr_gapless_stats cur;
+	size_t len = MIN(sys_le16_to_cpu(req.h.len), sizeof(gl_rep.st));
+	size_t padded = ROUND_UP(sizeof(gl_rep.h) + len, 4U);
+
+	if (gl_rep_busy && sdio_link_pending() > gl_rep_after) {
+		return false;
+	}
+	gl_rep.st = gl_stats;
+	esp_sdr_gapless_peek(&cur);
+	gl_add(&gl_rep.st, &cur, 0);
+	gl_rep.h = (struct esdr_ser_hdr){
+		.magic = sys_cpu_to_le32(ESDR_SER_MAGIC),
+		.req = req.h.req,
+		.len = sys_cpu_to_le16((uint16_t)len),
+	};
+	/* The host's parser skips zeros between frames: the padding must be zero. */
+	memset((uint8_t *)&gl_rep + sizeof(gl_rep.h) + len, 0, padded - sizeof(gl_rep.h) - len);
+	if (!sdio_link_queue((const uint8_t *)&gl_rep, padded, false)) {
+		return false;
+	}
+	gl_rep_busy = true;
+	gl_rep_after = 0;
+	req.ready = false;
+	req.got = 0;
+	return true;
+}
+
+/* Any request ends the run but the statistics, answered meanwhile (when not now, later). */
+static APP_HOT bool gl_stop(void *user)
+{
+	ARG_UNUSED(user);
+	if (req.ready && (req.h.flags & ESDR_SER_IN) != 0U &&
+	    req.h.req == ESDR_REQ_GET_GAPLESS_STATS) {
+		(void)gl_answer_stats();
+		return false;
+	}
+	return req.ready;
 }
 
 static void run_gapless(void)

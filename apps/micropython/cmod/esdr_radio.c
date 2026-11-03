@@ -568,7 +568,7 @@ static mp_obj_t esdr_gapless_stats_fn(void)
 	PUT(bursts, mp_obj_new_int_from_uint(cs.bursts));
 	PUT(bursts_lost, mp_obj_new_int_from_uint(cs.bursts_lost));
 	PUT(chan_stack_free, mp_obj_new_int_from_uint(cs.stack_free));
-	/* The radio's own counters (the request restarts its run). */
+	/* The radio's own counters, the run it is in included (it answers without a restart). */
 	int ret = esdr_remote_gl_busy() ? esdr_remote_gl_radio_stats(&rs) : -ENODEV;
 
 	if (ret != 0) {

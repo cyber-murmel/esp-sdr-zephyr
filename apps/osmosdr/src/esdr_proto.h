@@ -89,7 +89,10 @@ enum esdr_req {
 	 * Applies to ESDR_MODE_GAPLESS, now or next.
 	 */
 	ESDR_REQ_SET_GAPLESS = 0x11,
-	/* Serial transport, ESP32-C6. IN: struct esdr_gapless_stats of the current or last run. */
+	/*
+	 * Serial transport, ESP32-C6. IN: struct esdr_gapless_stats, the runs so far and the
+	 * current one; answered during a run without ending it (any other request ends it).
+	 */
 	ESDR_REQ_GET_GAPLESS_STATS = 0x12,
 	/*
 	 * P4 bridge (apps/osmosdr_bridge) over a gapless C6. OUT struct esdr_chan_cfg: the
