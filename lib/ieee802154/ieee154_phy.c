@@ -87,15 +87,23 @@ void ieee154_phy_init(void)
 	}
 }
 
+/*
+ * The FCS: CRC-16/KERMIT (polynomial 0x1021 reflected, initial 0), four bits a step from the
+ * remainders of the 16 nibbles: a quarter of the bitwise loop's steps and no RAM.
+ */
+static const uint16_t crc16_nibble[16] = {
+	0x0000, 0x1081, 0x2102, 0x3183, 0x4204, 0x5285, 0x6306, 0x7387,
+	0x8408, 0x9489, 0xa50a, 0xb58b, 0xc60c, 0xd68d, 0xe70e, 0xf78f,
+};
+
 static uint16_t crc16(const uint8_t *p, int n)
 {
 	uint16_t c = 0;
 
 	while (n--) {
 		c ^= *p++;
-		for (int i = 0; i < 8; i++) {
-			c = (c & 1) ? (c >> 1) ^ 0x8408 : (c >> 1);
-		}
+		c = (c >> 4) ^ crc16_nibble[c & 15];
+		c = (c >> 4) ^ crc16_nibble[c & 15];
 	}
 	return c;
 }
