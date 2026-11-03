@@ -53,7 +53,8 @@ to 20 000 bursts in 15 s into records (most of them wideband), 83 to 91 cycles a
 filterbank. On the WHY2025 badge the P4 runs both cores: the channelizer has CPU 1, the reader, USB
 and the decoders CPU 0. A 40 MS/s survey there lost 16 and 0 of some 40 000 bursts in 30 s and
 decoded 325 to 353 Bluetooth LE packets (on one core: a fifth of the bursts lost, 295 to 314
-packets); the channelizer used half of CPU 1 (doc/pcap.md).
+packets); the channelizer used half of CPU 1, and a second generic analysis worker there takes the
+rest (twice the bursts analysed; doc/pcap.md).
 
 The radio
 *********

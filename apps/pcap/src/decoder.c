@@ -5,9 +5,9 @@
  * fit it (Bluetooth LE on a channel of its grid at 4 or 2 MS/s, IEEE 802.15.4 on a channel of
  * its grid at 4 MS/s, from one bin or two neighbouring ones), wideband bursts as burst records;
  * each packet goes out as a pcapng packet with its metadata. What no decoder claimed goes to the
- * generic analysis, a thread of its own at the lowest priority with a short queue: it takes the
- * time left over and never holds the decoders up; a burst it has no room for goes out as a
- * record of its metadata. Below the channelizer and USB in priority; with two cores both
+ * generic analysis, threads of its own at the lowest priority with a short queue (with two cores
+ * a second one on the stream's core): it takes the time left over and never holds the decoders
+ * up; a burst it has no room for goes out as a record of its metadata. Below the channelizer and USB in priority; with two cores both
  * threads are pinned (CONFIG_APP_PCAP_DECODE_CPU, beside the reader and USB by default). Floats
  * (FPU sharing), no PIE.
  */
@@ -38,9 +38,10 @@ LOG_MODULE_REGISTER(decoder, LOG_LEVEL_INF);
 /* The decoders' scratch, PSRAM: the larger of dec_ble_scratch() and dec_wpan_scratch() of
  * BURST_MAX_SAMPLES (decoder_init() checks). */
 #define SCRATCH   (136U * 1024U)
-/* The generic analysis: time-sliced with the shell, bursts waiting for it at most (an eighth of
- * the pool: the rest stays free for new ones), samples of a burst's loud part it looks at (4 ms
- * at 2 MS/s), its scratch (dec_generic_scratch(BURST_MAX_SAMPLES)). */
+/* The generic analysis: time-sliced with the shell (the second worker with the stream), bursts
+ * waiting for it at most (an eighth of the pool: the rest stays free for new ones), samples of a
+ * burst's loud part it looks at (4 ms at 2 MS/s), a worker's scratch
+ * (dec_generic_scratch(BURST_MAX_SAMPLES)). */
 #define GEN_STACK   4096
 #define GEN_PRIO    K_LOWEST_APPLICATION_THREAD_PRIO
 #define GEN_Q       (CONFIG_APP_PCAP_BURSTS / 8)
@@ -68,9 +69,8 @@ static struct k_thread dec_thread;
 static uint8_t scratch[SCRATCH] __aligned(16) PSRAM;
 
 K_MSGQ_DEFINE(gen_q, sizeof(struct burst *), GEN_Q, 4);
-static K_THREAD_STACK_DEFINE(gen_stack, GEN_STACK);
-static struct k_thread gen_thread;
-static uint8_t gen_scratch[GEN_SCRATCH] __aligned(16) PSRAM;
+static K_THREAD_STACK_ARRAY_DEFINE(gen_stacks, APP_GEN_WORKERS, GEN_STACK);
+static uint8_t gen_scratch[APP_GEN_WORKERS][GEN_SCRATCH] __aligned(16) PSRAM;
 
 static struct {
 	/* The burst kept for a neighbour that may follow (802.15.4 between two bins). */
@@ -90,11 +90,12 @@ static struct {
 	struct dec_generic_out meta;
 } dc;
 
-/* The generic analysis's thread. */
-static struct {
+/* The generic analysis's workers: both take from gen_q. */
+static struct gen_worker {
+	struct k_thread thread;
 	uint8_t rec[REC_BURST_MAX] __aligned(4);
 	struct dec_generic_out out;
-} gen;
+} gen[APP_GEN_WORKERS];
 
 int decoder_put(struct burst *b)
 {
@@ -553,29 +554,30 @@ static void dec_fn(void *a, void *b, void *c)
 
 /* ---- the generic analysis ---- */
 
-static void analyse(const struct burst *b)
+static void analyse(unsigned int k, const struct burst *b)
 {
 	const struct dec_generic_cfg gc = {
 		.max_bits = app_cfg.dec.max_bits != 0U ? app_cfg.dec.max_bits : PCAP_BURST_BITS_MAX,
 		.max_samples = GEN_SAMPLES,
 	};
+	struct gen_worker *w = &gen[k];
 	int n;
 
-	if (dec_generic_run(b, &gc, gen_scratch, sizeof(gen_scratch), &gen.out) != 0) {
+	if (dec_generic_run(b, &gc, gen_scratch[k], sizeof(gen_scratch[k]), &w->out) != 0) {
 		return;
 	}
-	n = rec_burst(gen.rec, sizeof(gen.rec), &gen.out.hdr, gen.out.bits);
+	n = rec_burst(w->rec, sizeof(w->rec), &w->out.hdr, w->out.bits);
 	if (n > 0) {
-		(void)output_packet(PCAP_IF_BURST, sample_ns(b, gen.out.start), gen.rec, (uint32_t)n,
+		(void)output_packet(PCAP_IF_BURST, sample_ns(b, w->out.start), w->rec, (uint32_t)n,
 				    NULL);
 	}
 }
 
 static void gen_fn(void *a, void *b, void *c)
 {
+	unsigned int k = (unsigned int)(uintptr_t)a;
 	struct burst *bu;
 
-	ARG_UNUSED(a);
 	ARG_UNUSED(b);
 	ARG_UNUSED(c);
 	for (;;) {
@@ -583,10 +585,10 @@ static void gen_fn(void *a, void *b, void *c)
 
 		(void)k_msgq_get(&gen_q, &bu, K_FOREVER);
 		t0 = esdr_pfbq_cycles();
-		analyse(bu);
+		analyse(k, bu);
 		burst_put(bu);
-		app_stats.generic++;
-		app_stats.generic_cycles += esdr_pfbq_cycles() - t0;
+		app_stats.generic[k]++;
+		app_stats.generic_cycles[k] += esdr_pfbq_cycles() - t0;
 	}
 }
 
@@ -594,24 +596,39 @@ void decoder_init(void)
 {
 	size_t need = MAX(dec_ble_scratch(BURST_MAX_SAMPLES), dec_wpan_scratch(BURST_MAX_SAMPLES));
 
-	if (need > sizeof(scratch) || dec_generic_scratch(BURST_MAX_SAMPLES) > sizeof(gen_scratch)) {
+	if (need > sizeof(scratch) ||
+	    dec_generic_scratch(BURST_MAX_SAMPLES) > sizeof(gen_scratch[0])) {
 		LOG_ERR("decoders need %u and %u bytes of scratch, %u and %u at hand",
 			(unsigned int)need, (unsigned int)dec_generic_scratch(BURST_MAX_SAMPLES),
-			(unsigned int)sizeof(scratch), (unsigned int)sizeof(gen_scratch));
+			(unsigned int)sizeof(scratch), (unsigned int)sizeof(gen_scratch[0]));
 	}
 	k_thread_create(&dec_thread, dec_stack, K_THREAD_STACK_SIZEOF(dec_stack), dec_fn, NULL,
 			NULL, NULL, DEC_PRIO, 0, K_FOREVER);
 	k_thread_name_set(&dec_thread, "decoder");
-	k_thread_create(&gen_thread, gen_stack, K_THREAD_STACK_SIZEOF(gen_stack), gen_fn, NULL,
-			NULL, NULL, GEN_PRIO, 0, K_FOREVER);
-	k_thread_name_set(&gen_thread, "generic");
+	for (unsigned int k = 0; k < APP_GEN_WORKERS; k++) {
+		k_thread_create(&gen[k].thread, gen_stacks[k], K_THREAD_STACK_SIZEOF(gen_stacks[k]),
+				gen_fn, (void *)(uintptr_t)k, NULL, NULL, GEN_PRIO, 0, K_FOREVER);
+		k_thread_name_set(&gen[k].thread, k == 0U ? "generic" : "generic 1");
+	}
 #if defined(CONFIG_SMP)
-	/* Pinned, so the cycle counts (mcycle, per core) stay on one core. */
-	if (k_thread_cpu_pin(&dec_thread, CONFIG_APP_PCAP_DECODE_CPU) != 0 ||
-	    k_thread_cpu_pin(&gen_thread, CONFIG_APP_PCAP_DECODE_CPU) != 0) {
+	/* Pinned, so the cycle counts (mcycle, per core) stay on one core; the second generic
+	 * worker below the stream on its core takes the time the stream leaves.
+	 */
+	bool pinned = k_thread_cpu_pin(&dec_thread, CONFIG_APP_PCAP_DECODE_CPU) == 0;
+
+	for (unsigned int k = 0; k < APP_GEN_WORKERS; k++) {
+		int cpu = k == 0U ? CONFIG_APP_PCAP_DECODE_CPU : CONFIG_APP_PCAP_STREAM_CPU;
+
+		if (k_thread_cpu_pin(&gen[k].thread, cpu) != 0) {
+			pinned = false;
+		}
+	}
+	if (!pinned) {
 		LOG_ERR("decoder threads not pinned");
 	}
 #endif
 	k_thread_start(&dec_thread);
-	k_thread_start(&gen_thread);
+	for (unsigned int k = 0; k < APP_GEN_WORKERS; k++) {
+		k_thread_start(&gen[k].thread);
+	}
 }

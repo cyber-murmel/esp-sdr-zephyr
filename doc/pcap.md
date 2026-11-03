@@ -140,16 +140,18 @@ host: tools/esdr_pcap.py (extcap) sets up, starts, copies; Wireshark, tools/esdr
 ```
 
 **Cores** (the WHY2025 badge, `boards/why2025_badge_esp32p4_hpcore.conf`): Zephyr SMP with pin-only
-scheduling, so a thread nobody pins stays on CPU 0. CPU 1 runs the stream thread alone; CPU 0 runs
-the reader, USB, the decoder, the generic analysis, the control queue, the shell and logging, and
-takes every interrupt and the tick (`CONFIG_APP_PCAP_STREAM_CPU`, `CONFIG_APP_PCAP_DECODE_CPU`).
-The other way round (decoders on CPU 1) the reader, which preempts the stream, and the stream
-overloaded CPU 0 at 40 MS/s: radio blocks dropped, USB starved, a third fewer Bluetooth LE packets
-(Implementation). The stream thread is created suspended and pinned before it starts: PIE is
-switched on per core and its vector, accumulator and loop registers are not saved on a context
-switch, so a PIE thread that moved would trap on the other core or carry on with its registers. The
-cores share the L1 data cache: bursts change cores without cache maintenance. `mcycle` is per core,
-so the cycle statistics come from pinned threads. The EV board and MicroPython stay on one core.
+scheduling, so a thread nobody pins stays on CPU 0. CPU 1 runs the stream thread and, at the lowest
+priority, a second generic analysis worker that takes the time the stream leaves
+(`CONFIG_APP_PCAP_GEN_WORKERS`); CPU 0 runs the reader, USB, the decoder, the generic analysis, the
+control queue, the shell and logging, and takes every interrupt and the tick
+(`CONFIG_APP_PCAP_STREAM_CPU`, `CONFIG_APP_PCAP_DECODE_CPU`). The other way round (decoders on CPU
+1) the reader, which preempts the stream, and the stream overloaded CPU 0 at 40 MS/s: radio blocks
+dropped, USB starved, a third fewer Bluetooth LE packets (Implementation). The stream thread is
+created suspended and pinned before it starts: PIE is switched on per core and its vector,
+accumulator and loop registers are not saved on a context switch, so a PIE thread that moved would
+trap on the other core or carry on with its registers. The cores share the L1 data cache: bursts
+change cores without cache maintenance. `mcycle` is per core, so the cycle statistics come from
+pinned threads. The EV board and MicroPython stay on one core.
 
 **Survey assembler** (`src/survey.c`): each channel's opening becomes a burst (`burst.h`): the
 detector's frames (`esdr_detq_take()`), a short gap zero filled so that every sample keeps its
@@ -327,3 +329,10 @@ the reader's preemption and the generic analysis' traffic through the shared L1 
 the analysis 128) took the filterbank to 141 to 145 cycles a pair, 5 % of the radio blocks were
 dropped and the USB threads starved (output records dropped): fewer packets decoded than on one
 core.
+
+A second generic analysis worker on CPU 1 (2026-11-03, the same overlay, ambient traffic, 30 s
+runs, one and two workers alternated) analysed 13 827 and 14 067 bursts at 40 MS/s against 5874 and
+6356 with one (skipped 22 365 and 22 311 against 35 105 and 27 950), with no burst lost and no
+radio block dropped either way; the filterbank stayed at 83 to 85 cycles a pair (81 to 83 with one)
+and CPU 1 went from 46 to 58 % idle to 4 to 7 %. At 80 MS/s one worker already analysed nearly
+everything (655 to 2033 skipped, 213 to 1070 with two).

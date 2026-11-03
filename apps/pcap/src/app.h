@@ -113,6 +113,9 @@ void narrow_block(const uint8_t *blk);
 
 /* ---- counters ---- */
 
+/* Generic analysis workers (decoder.c): a second one goes on the stream's core. */
+#define APP_GEN_WORKERS CONFIG_APP_PCAP_GEN_WORKERS
+
 struct app_stats {
 	uint32_t seg_blocks, seg_dropped, other_blocks;
 	uint64_t pairs, chan_cycles;
@@ -121,8 +124,9 @@ struct app_stats {
 	uint64_t dec_cycles;
 	uint64_t channel_samples;
 	uint32_t channel_gaps, c6_wide;
-	uint32_t generic, generic_skipped, generic_wide;
-	uint64_t generic_cycles;
+	/* generic and generic_cycles per worker: one writer each. */
+	uint32_t generic[APP_GEN_WORKERS], generic_skipped, generic_wide;
+	uint64_t generic_cycles[APP_GEN_WORKERS];
 };
 
 extern struct app_stats app_stats;

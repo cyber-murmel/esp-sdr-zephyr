@@ -32,6 +32,16 @@ config APP_PCAP_DECODE_CPU
 	default 0
 	depends on SMP
 
+config APP_PCAP_GEN_WORKERS
+	int "Generic analysis workers"
+	range 1 2
+	default 2 if SMP
+	default 1
+	help
+	  Threads that analyse the bursts no decoder claimed, at the
+	  lowest priority. The second is pinned to the stream thread's
+	  CPU and takes the time the stream leaves there.
+
 endmenu
 
 rsource "../common/Kconfig"

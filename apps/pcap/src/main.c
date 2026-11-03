@@ -489,11 +489,13 @@ static void fill_stats(struct pcap_stats *s)
 		.channel_samples = app_stats.channel_samples,
 		.channel_gaps = app_stats.channel_gaps,
 		.c6_wide = app_stats.c6_wide,
-		.generic = app_stats.generic,
 		.generic_skipped = app_stats.generic_skipped,
 		.generic_wide = app_stats.generic_wide,
-		.generic_cycles = app_stats.generic_cycles,
 	};
+	for (unsigned int k = 0; k < APP_GEN_WORKERS; k++) {
+		s->generic += app_stats.generic[k];
+		s->generic_cycles += app_stats.generic_cycles[k];
+	}
 	for (unsigned int k = 0; k < PCAP_IF_COUNT; k++) {
 		s->packets[k] = os.packets[k];
 		s->dropped[k] = os.dropped[k];
