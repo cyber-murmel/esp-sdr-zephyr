@@ -59,15 +59,52 @@ The MCH2022 badge
 The badge's classic ESP32 (``mch2022/esp32/procpu``) has no paced receiver: it streams 16 MS/s
 bursts decimated by the library (``esp_sdr_rx_capture_decimated()``) at 2 MS/s to 125 kS/s,
 each about 1 ms contiguous; the gap to the next burst moves the block index and flags the block
-``ESDR_BLK_GAP``, as many bursts as the link carries (about 46 per second: 46 kS/s of samples
-on average at 2 MS/s). Bursts at the native rates (``ESDR_REQ_CAPTURE_BURST``) are as on the
-others; no transmit. The link is UART0 at 2 Mbaud, which the badge's RP2040 bridges to its first
-USB serial port without flow control (3 and 4 Mbaud did not answer); the host sets the line
-rate: ``baud=2000000`` in the SoapySDR device string, ``--baud 2000000`` for
-``tools/esdr_serial.py``. No console.
+``ESDR_BLK_GAP``, as many bursts as the link carries. Bursts at the native rates
+(``ESDR_REQ_CAPTURE_BURST``) are as on the others; no transmit. No console. The link is UART0,
+which the badge's RP2040 bridges to USB without flow control wires, in one of two ways:
 
-The RP2040 resets the ESP32 into its download mode for esptool and keeps IO0 low until a reset
-into the application, which the RTS/DTR sequences do not always give; its WebUSB request 0x23
+- With ``apps/mch2022_coproc`` on the RP2040: the framed link (``esp_sdr/esdr_link.h``) on its USB
+  interface 6, up to 5 Mbaud. Blocks go by their length, with a checksum and a credit that keeps the
+  RP2040's buffer from overrunning. ``driver=esdr,badge=<serial>`` for SoapySDR (found by itself),
+  ``usb`` or ``usb:<serial>`` as ``tools/esdr_serial.py``'s port; ``baud=`` and ``--baud`` lower the
+  rate.
+- With any firmware on the RP2040: the plain transport on its first USB serial port at 2 Mbaud
+  (the stock firmware did not answer at 3 and 4): ``driver=esdr,port=<port>,baud=2000000``,
+  ``--baud 2000000 <port>``. The firmware understands both and follows the host: hello goes to frames,
+  the zeros a plain host opens with go back.
+
+The rate of samples on average, in 4 s at the desk (all blocks whole):
+
+.. list-table::
+   :header-rows: 1
+
+   * - Stream
+     - Plain, 2 Mbaud
+     - Framed, 2 Mbaud
+     - Framed, 5 Mbaud
+   * - 2 MS/s
+     - 46.4 kS/s
+     - 82.2 kS/s
+     - 157.8 kS/s
+   * - 1 MS/s
+     - 44.8 kS/s
+     - 77.7 kS/s
+     - 139.7 kS/s
+   * - 500 kS/s
+     - 22.8 kS/s
+     - 70.4 kS/s
+     - 113.6 kS/s
+   * - 250 kS/s
+     - 11.5 kS/s
+     - 59.1 kS/s
+     - 82.6 kS/s
+   * - 125 kS/s
+     - not measured (a single failed start, see ``doc/mch2022-rp2040.md``)
+     - 44.7 kS/s
+     - 53.0 kS/s
+
+The stock RP2040 firmware resets the ESP32 into its download mode for esptool and keeps IO0 low until
+a reset into the application, which the RTS/DTR sequences do not always give; its WebUSB request 0x23
 does (``wValue`` 0: application), e.g. with pyusb
 ``usb.core.find(idVendor=0x16D0, idProduct=0x0F9A).ctrl_transfer(0x21, 0x23, 0, 4, None)``.
 

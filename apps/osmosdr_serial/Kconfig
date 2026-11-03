@@ -57,6 +57,15 @@ configdefault NET_RX_STACK_SIZE
 configdefault ESP_SDR_GAPLESS_STAGE_KB
 	default 64
 
+config APP_LINK_FRAMED
+	bool "Framed link on the UART, beside the plain one"
+	depends on !APP_LINK_SDIO
+	select UART_USE_RUNTIME_CONFIGURE
+	help
+	  Understand the framed serial link (esp_sdr/esdr_link.h) as well: a host that says hello gets
+	  frames, with checksums and flow control and blocks of the length they have, at the
+	  highest rate the UART takes; any other host goes on with esdr_proto.h's transport.
+
 config APP_FW_UPDATE
 	bool "Firmware update over the link"
 	default y if ESP_IDF_BOOTLOADER

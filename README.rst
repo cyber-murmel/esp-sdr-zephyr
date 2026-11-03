@@ -63,6 +63,8 @@ Contents
          ESP32); on the WHY2025 badge's C6 gapless 80 MS/s receive
        - ``osmosdr_bridge``: the WHY2025 badge's P4 as a USB high-speed osmosdr device, its
          C6 running ``osmosdr_serial`` behind it
+       - ``mch2022_coproc``: firmware for the MCH2022 badge's RP2040, all the stock one does
+         with its UARTs on DMA and a bulk link to the ESP32
        - ``link``: QAM or OFDM packet link
        - ``wpan``: 802.15.4 test shell
        - ``zstack``: Zigbee coordinator with the Z-Stack ZNP serial protocol

@@ -46,6 +46,7 @@
 #include <vector>
 
 #include "esdr_proto.h"
+#include <esp_sdr/esdr_link.h>
 
 #define ESDR_VID 0x2fe3
 #define ESDR_PID 0x0005
@@ -585,6 +586,343 @@ private:
 
 } /* namespace */
 
+/*
+ * The framed link (esp_sdr/esdr_link.h) through the MCH2022 badge's RP2040 running
+ * apps/mch2022_coproc: its bulk interface 6, up to 5 Mbaud on the ESP32's UART. One reader thread
+ * sorts the frames; blocks come by their length and go on padded to the size the callers expect.
+ */
+static constexpr uint16_t COPROC_VID = 0x16D0, COPROC_PID = 0x0F9A;
+static constexpr uint8_t COPROC_IF_LINK = 6, COPROC_EP_OUT = 0x07, COPROC_EP_IN = 0x87;
+/* esp_sdr/mch2022_coproc.h */
+static constexpr uint8_t COPROC_REQ_SET_BAUD = 0x10, COPROC_REQ_ESP32_RESET = 0x20,
+			 COPROC_REQ_LINK_OPEN = 0x30, COPROC_REQ_LINK_CLOSE = 0x31;
+static constexpr uint32_t LINK_BOOT_BAUD = 2000000;
+/* Wire bytes the device may have on the way: what the RP2040's ring takes if USB stops. */
+static constexpr uint32_t LINK_WINDOW = 16384, LINK_CREDIT_STEP = 4096;
+
+/* A badge with interface 6, of this serial if one is given. */
+static bool openCoproc(libusb_context *ctx, const std::string &wantSerial, libusb_device_handle **out,
+		       std::string *serial)
+{
+	libusb_device **list;
+	ssize_t n = libusb_get_device_list(ctx, &list);
+	bool found = false;
+
+	for (ssize_t i = 0; i < n && !found; i++) {
+		libusb_device_descriptor dd;
+		libusb_config_descriptor *cfg;
+		libusb_device_handle *h;
+		char sn[64] = "";
+
+		if (libusb_get_device_descriptor(list[i], &dd) != 0 || dd.idVendor != COPROC_VID ||
+		    dd.idProduct != COPROC_PID || libusb_get_active_config_descriptor(list[i], &cfg) != 0) {
+			continue;
+		}
+		bool has_link = cfg->bNumInterfaces > COPROC_IF_LINK;
+
+		libusb_free_config_descriptor(cfg);
+		if (!has_link || libusb_open(list[i], &h) != 0) {
+			continue;
+		}
+		if (dd.iSerialNumber != 0) {
+			libusb_get_string_descriptor_ascii(h, dd.iSerialNumber, (unsigned char *)sn,
+							   sizeof(sn));
+		}
+		if ((!wantSerial.empty() && wantSerial != sn) ||
+		    (out != nullptr && libusb_claim_interface(h, COPROC_IF_LINK) != 0)) {
+			libusb_close(h);
+			continue;
+		}
+		if (serial != nullptr) {
+			*serial = sn;
+		}
+		if (out != nullptr) {
+			*out = h;
+		} else {
+			libusb_close(h);
+		}
+		found = true;
+	}
+	libusb_free_device_list(list, 1);
+	return found;
+}
+
+class FramedLink : public Link {
+public:
+	FramedLink(const std::string &serial, unsigned long baud)
+	{
+		if (libusb_init(&ctx_) != 0) {
+			throw std::runtime_error("esdr: libusb_init failed");
+		}
+		if (!openCoproc(ctx_, serial, &h_, &serial_)) {
+			libusb_exit(ctx_);
+			throw std::runtime_error("esdr: no MCH2022 badge with interface 6");
+		}
+		reader_ = std::thread(&FramedLink::readLoop, this);
+		uint32_t rate = LINK_BOOT_BAUD;
+
+		coproc(COPROC_REQ_SET_BAUD, 0, &rate, sizeof(rate));
+		coproc(COPROC_REQ_LINK_OPEN, 0, nullptr, 0);
+		std::this_thread::sleep_for(std::chrono::milliseconds(20));
+		if (!hello(3)) {
+			/* At another rate after a host that went away, or still booting: anew. */
+			coproc(COPROC_REQ_ESP32_RESET, 0, nullptr, 0);
+			std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+			if (!hello(5)) {
+				shutdown();
+				throw std::runtime_error("esdr: no answer from the ESP32");
+			}
+		}
+		if (baud != 0 && baud != LINK_BOOT_BAUD && !setBaud((uint32_t)baud)) {
+			SoapySDR_logf(SOAPY_SDR_WARNING, "esdr: staying at %u baud", baud_);
+		}
+	}
+
+	~FramedLink() override
+	{
+		if (baud_ != LINK_BOOT_BAUD) {
+			setBaud(LINK_BOOT_BAUD);
+		}
+		sendFrame(ESDR_LINK_BYE, nullptr, 0, nullptr, 0);
+		coproc(COPROC_REQ_LINK_CLOSE, 0, nullptr, 0);
+		shutdown();
+	}
+
+	int ctrlOut(uint8_t req, uint16_t value, const void *data, uint16_t len) override
+	{
+		std::vector<uint8_t> rep;
+
+		return request(req, 0, value, data, len, rep);
+	}
+
+	int ctrlIn(uint8_t req, void *data, uint16_t len) override
+	{
+		std::vector<uint8_t> rep;
+		int r = request(req, ESDR_SER_IN, 0, nullptr, len, rep);
+
+		if (r < 0) {
+			return r;
+		}
+		size_t n = std::min<size_t>(rep.size(), len);
+
+		std::memcpy(data, rep.data(), n);
+		return (int)n;
+	}
+
+	/* No transmit on the badge's ESP32. */
+	int writeSamples(const uint8_t *, size_t, long) override { return -1; }
+
+	void startRx(RxFn fn) override
+	{
+		std::lock_guard<std::mutex> g(rxm_);
+		fn_ = std::move(fn);
+	}
+
+	void stopRx() override
+	{
+		std::lock_guard<std::mutex> g(rxm_);
+		fn_ = nullptr;
+	}
+
+	std::string serial() const override { return serial_; }
+
+private:
+	void shutdown()
+	{
+		stop_ = true;
+		if (reader_.joinable()) {
+			reader_.join();
+		}
+		libusb_release_interface(h_, COPROC_IF_LINK);
+		libusb_close(h_);
+		libusb_exit(ctx_);
+	}
+
+	void coproc(uint8_t req, uint16_t value, void *data, uint16_t len)
+	{
+		libusb_control_transfer(h_, LIBUSB_ENDPOINT_OUT | LIBUSB_REQUEST_TYPE_VENDOR |
+					    LIBUSB_RECIPIENT_INTERFACE,
+					req, value, COPROC_IF_LINK, (unsigned char *)data, len, 1000);
+	}
+
+	bool write(const uint8_t *p, size_t n)
+	{
+		int done = 0;
+
+		if (libusb_bulk_transfer(h_, COPROC_EP_OUT, const_cast<uint8_t *>(p), (int)n, &done,
+					 2000) != 0) {
+			return false;
+		}
+		/* The firmware's buffer completes at a short packet (esp_sdr/mch2022_coproc.h). */
+		if (n % 64U == 0U) {
+			libusb_bulk_transfer(h_, COPROC_EP_OUT, const_cast<uint8_t *>(p), 0, &done, 2000);
+		}
+		return true;
+	}
+
+	bool sendFrame(uint8_t type, const void *a, size_t alen, const void *b, size_t blen)
+	{
+		std::vector<uint8_t> wire(ESDR_LINK_ENCODED_MAX(alen + blen) + 1U);
+		std::lock_guard<std::mutex> g(wm_);
+		size_t n = esdr_link_encode(wire.data(), wire.size(), type, txSeq_++, a, alen, b, blen);
+
+		return n != 0U && write(wire.data(), n);
+	}
+
+	bool hello(int tries)
+	{
+		const esdr_link_hello h{ESDR_LINK_VERSION, 0, 0, LINK_WINDOW, 0};
+		const uint8_t zero = 0;
+
+		for (int k = 0; k < tries; k++) {
+			std::unique_lock<std::mutex> lk(cm_);
+
+			gotHello_ = false;
+			unacked_ = 0;
+			{
+				std::lock_guard<std::mutex> g(wm_);
+
+				/* A zero first ends whatever the device had before this frame. */
+				write(&zero, 1);
+			}
+			sendFrame(ESDR_LINK_HELLO, &h, sizeof(h), nullptr, 0);
+			if (cv_.wait_for(lk, std::chrono::milliseconds(300), [&] { return gotHello_; })) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	bool setBaud(uint32_t rate)
+	{
+		std::vector<uint8_t> rep;
+		uint32_t r = rate;
+
+		if (request(ESDR_REQ_SET_LINK_BAUD, 0, 0, &r, sizeof(r), rep) < 0) {
+			return false;
+		}
+		coproc(COPROC_REQ_SET_BAUD, 0, &r, sizeof(r));
+		std::this_thread::sleep_for(std::chrono::milliseconds(20));
+		if (!hello(3)) {
+			return false;
+		}
+		baud_ = rate;
+		return true;
+	}
+
+	int request(uint8_t req, uint8_t flags, uint16_t value, const void *data, uint16_t len,
+		    std::vector<uint8_t> &rep)
+	{
+		std::unique_lock<std::mutex> lk(cm_);
+		esdr_ser_hdr h{ESDR_SER_MAGIC, req, flags, value, len, 0};
+
+		gotReply_ = false;
+		wantReq_ = req;
+		if (!sendFrame(ESDR_LINK_REQUEST, &h, sizeof(h), data,
+			       (flags & ESDR_SER_IN) == 0 ? len : 0U)) {
+			return -1;
+		}
+		if (!cv_.wait_for(lk, std::chrono::seconds(3), [&] { return gotReply_; })) {
+			SoapySDR_logf(SOAPY_SDR_WARNING, "esdr: no reply to request %u", req);
+			return -1;
+		}
+		if (replyStatus_ != 0) {
+			return replyStatus_;
+		}
+		rep = reply_;
+		return (flags & ESDR_SER_IN) != 0 ? (int)rep.size() : (int)len;
+	}
+
+	void onFrame(uint8_t *wire, size_t n)
+	{
+		esdr_link_frame f;
+
+		unacked_ += (uint32_t)n + 1U;
+		if (unacked_ >= LINK_CREDIT_STEP) {
+			uint32_t grant = unacked_;
+
+			unacked_ = 0;
+			sendFrame(ESDR_LINK_CREDIT, &grant, sizeof(grant), nullptr, 0);
+		}
+		if (esdr_link_decode(wire, n, &f) != 0) {
+			badFrames_++;
+			return;
+		}
+		if (f.type == ESDR_LINK_BLOCK && f.len >= sizeof(esdr_block_hdr) &&
+		    f.len <= ESDR_BLOCK_BYTES) {
+			std::memcpy(block_, f.payload, f.len);
+			std::memset(block_ + f.len, 0, ESDR_BLOCK_BYTES - f.len);
+			std::lock_guard<std::mutex> g(rxm_);
+
+			if (fn_) {
+				fn_(block_, ESDR_BLOCK_BYTES);
+			}
+		} else if (f.type == ESDR_LINK_REPLY && f.len >= sizeof(esdr_ser_hdr)) {
+			esdr_ser_hdr h;
+
+			std::memcpy(&h, f.payload, sizeof(h));
+			std::lock_guard<std::mutex> g(cm_);
+
+			if (h.req == wantReq_) {
+				reply_.assign(f.payload + sizeof(h), f.payload + f.len);
+				replyStatus_ = h.status;
+				gotReply_ = true;
+				cv_.notify_all();
+			}
+		} else if (f.type == ESDR_LINK_HELLO) {
+			std::lock_guard<std::mutex> g(cm_);
+
+			gotHello_ = true;
+			cv_.notify_all();
+		}
+	}
+
+	void readLoop()
+	{
+		std::vector<uint8_t> tmp(16384);
+		std::vector<uint8_t> frame;
+
+		frame.reserve(ESDR_LINK_ENCODED_MAX(ESDR_BLOCK_BYTES));
+		while (!stop_) {
+			int got = 0;
+			int r = libusb_bulk_transfer(h_, COPROC_EP_IN, tmp.data(), (int)tmp.size(), &got,
+						     100);
+
+			if (r != 0 && r != LIBUSB_ERROR_TIMEOUT) {
+				std::this_thread::sleep_for(std::chrono::milliseconds(10));
+				continue;
+			}
+			for (int k = 0; k < got; k++) {
+				if (tmp[k] != 0U) {
+					frame.push_back(tmp[k]);
+				} else if (!frame.empty()) {
+					onFrame(frame.data(), frame.size());
+					frame.clear();
+				}
+			}
+		}
+	}
+
+	libusb_context *ctx_ = nullptr;
+	libusb_device_handle *h_ = nullptr;
+	std::string serial_;
+	std::thread reader_;
+	std::atomic<bool> stop_{false};
+	/* Writes (frames stay whole), requests (one at a time), receive callback. */
+	std::mutex wm_, cm_, rxm_;
+	std::condition_variable cv_;
+	bool gotReply_ = false, gotHello_ = false;
+	uint8_t wantReq_ = 0;
+	int16_t replyStatus_ = 0;
+	std::vector<uint8_t> reply_;
+	RxFn fn_;
+	uint16_t txSeq_ = 0;
+	uint32_t baud_ = LINK_BOOT_BAUD;
+	uint32_t unacked_ = 0;
+	uint64_t badFrames_ = 0;
+	uint8_t block_[ESDR_BLOCK_BYTES];
+};
+
 class SoapyEsdr : public SoapySDR::Device {
 public:
 	explicit SoapyEsdr(const SoapySDR::Kwargs &args)
@@ -594,6 +932,11 @@ public:
 				args.at("port"),
 				args.count("baud") ? std::stoul(args.at("baud")) : 0UL);
 			/* About 500 kB/s each way: 250 kS/s fits as 8-bit items only. */
+			narrow_ = true;
+		} else if (args.count("badge")) {
+			link_ = std::make_unique<FramedLink>(
+				args.at("badge"),
+				args.count("baud") ? std::stoul(args.at("baud")) : 5000000UL);
 			narrow_ = true;
 		} else {
 			link_ = std::make_unique<UsbLink>(args.count("serial") ? args.at("serial") : "");
@@ -1035,7 +1378,14 @@ public:
 	 * library's, under the correction above), where the device has them. */
 	std::vector<std::string> listSensors(void) const override
 	{
-		return {"temperature", "corr_ppb", "lo_residual_hz"};
+		std::vector<std::string> keys = {"corr_ppb", "lo_residual_hz"};
+		uint8_t b[2];
+
+		/* The classic ESP32 has no sensor: asking for what is not listed fails. */
+		if (link_->ctrlIn(ESDR_REQ_GET_TEMP, b, sizeof(b)) == (int)sizeof(b)) {
+			keys.insert(keys.begin(), "temperature");
+		}
+		return keys;
 	}
 
 	SoapySDR::ArgInfo getSensorInfo(const std::string &key) const override
@@ -1375,6 +1725,18 @@ static SoapySDR::KwargsList findEsdr(const SoapySDR::Kwargs &args)
 		result.push_back(dev);
 	}
 	libusb_free_device_list(list, 1);
+	/* The MCH2022 badge with apps/mch2022_coproc on its RP2040. */
+	std::string badge;
+
+	if (!args.count("port") &&
+	    openCoproc(ctx, args.count("badge") ? args.at("badge") : "", nullptr, &badge)) {
+		SoapySDR::Kwargs dev;
+
+		dev["driver"] = "esdr";
+		dev["badge"] = badge;
+		dev["label"] = "ESP-SDR osmosdr_serial, MCH2022 badge (" + badge + ")";
+		result.push_back(dev);
+	}
 	libusb_exit(ctx);
 	/* The serial link (osmosdr_serial) is not probed: name its port. */
 	if (args.count("port")) {

@@ -117,10 +117,14 @@ let
     pname = "soapy-esdr";
     inherit version;
     src = lib.fileset.toSource {
-      root = ./apps/osmosdr;
-      fileset = lib.fileset.unions [ ./apps/osmosdr/soapy ./apps/osmosdr/src/esdr_proto.h ];
+      root = ./.;
+      fileset = lib.fileset.unions [
+        ./apps/osmosdr/soapy
+        ./apps/osmosdr/src/esdr_proto.h
+        ./include/esp_sdr/esdr_link.h
+      ];
     };
-    cmakeDir = "../soapy";
+    cmakeDir = "../apps/osmosdr/soapy";
     nativeBuildInputs = [ pkgs.cmake ];
     buildInputs = [ pkgs.soapysdr pkgs.libusb1 ];
   };

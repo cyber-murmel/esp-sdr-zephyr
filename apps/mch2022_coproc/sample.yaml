@@ -7,9 +7,9 @@ sample:
 common:
   tags: esp-sdr
   platform_allow:
-    - mch2022_rp2040
+    - mch2022_rp2040/rp2040
   integration_platforms:
-    - mch2022_rp2040
+    - mch2022_rp2040/rp2040
 tests:
   esp_sdr.mch2022_coproc:
     build_only: true

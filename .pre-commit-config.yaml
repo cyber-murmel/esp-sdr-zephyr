@@ -46,7 +46,10 @@ repos:
             apps/pcap/src/(pcap_proto|pcapng|records|decode|burst)\.h$|
             apps/pcap/src/(pcapng|records)\.c$|
             apps/osmosdr/src/esdr_proto\.h$|
+            apps/osmosdr_serial/tools/esdr_serial\.py$|
+            include/esp_sdr/(esdr_link|mch2022_coproc)\.h$|
             apps/ubertooth/tools/le_ref\.py$|
+            boards/badgeteam/mch2022_rp2040/support/|
             tests/unit/ubertooth_le/src/le_vectors\.h$|
             gateware/esdr_fpga/|
             include/esp_sdr/esdr_fpga_regs\.h$|
@@ -69,7 +72,7 @@ repos:
         name: SoapySDR module builds
         entry: scripts/pre-commit/soapy.sh
         language: system
-        files: ^apps/osmosdr/(soapy/|src/esdr_proto\.h$)
+        files: ^(apps/osmosdr/(soapy/|src/esdr_proto\.h$)|include/esp_sdr/esdr_link\.h$)
         pass_filenames: false
 
       # docs.yml "Build": Doxygen and Sphinx with warnings as errors
@@ -102,6 +105,7 @@ repos:
           -p esp32p4_function_ev_board/esp32p4/hpcore
           -p waveshare_esp32c5_zero/esp32c5/hpcore
           -p mch2022/esp32/procpu
+          -p mch2022_rp2040/rp2040
         language: system
         pass_filenames: false
         always_run: true

@@ -462,6 +462,9 @@ static void bridge_fn(void *a, void *b, void *c)
 			}
 			continue;
 		}
+		if (test_mode == COPROC_TEST_CRASH) {
+			k_oops();
+		}
 		if (test_mode == COPROC_TEST_SOURCE && vendor_enabled(vendor_link)) {
 			test_source();
 		} else if (test_mode == COPROC_TEST_LOOPBACK && vendor_enabled(vendor_link)) {

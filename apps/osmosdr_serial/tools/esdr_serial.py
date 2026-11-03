@@ -10,6 +10,9 @@
 The port is opened raw, without touching DTR/RTS: that would reset the board. --baud sets
 the line rate where it matters (a UART behind a USB bridge, as the MCH2022 badge's RP2040, which
 passes it on); USB-Serial-JTAG ignores it.
+
+PORT "usb" or "usb:SERIAL" is the MCH2022 badge's RP2040 running apps/mch2022_coproc: its bulk
+interface 6 with the framed link (esp_sdr/esdr_link.h), up to 5 Mbaud (--baud, 5000000 by default).
 """
 
 import argparse
@@ -19,6 +22,7 @@ import struct
 import sys
 import termios
 import time
+import zlib
 
 import numpy as np
 
@@ -127,6 +131,235 @@ class Esdr:
         for k in range(0, len(raw), 4096):
             chunk = raw[k:k + 4096]
             os.write(self.fd, HDR.pack(SER_MAGIC, SER_TX_DATA, 0, 0, len(chunk), 0) + chunk)
+
+
+# The framed link (esp_sdr/esdr_link.h). Its constants are read from there by the tests.
+LINK_VERSION = 1
+LINK_HELLO, LINK_REQUEST, LINK_REPLY, LINK_BLOCK, LINK_TEXT, LINK_CREDIT, LINK_BYE = range(1, 8)
+LINK_HELLO_FMT = struct.Struct("<BBHII")
+# Requests of apps/mch2022_coproc (esp_sdr/mch2022_coproc.h) and esdr_proto.h's for the link.
+COPROC_VID, COPROC_PID = 0x16D0, 0x0F9A
+COPROC_IF_LINK = 6
+COPROC_EP_OUT, COPROC_EP_IN = 0x07, 0x87
+COPROC_SET_BAUD, COPROC_ESP32_RESET, COPROC_LINK_OPEN, COPROC_LINK_CLOSE = 0x10, 0x20, 0x30, 0x31
+REQ_SET_LINK_BAUD = 0x1B
+LINK_BOOT_BAUD = 2000000
+# Wire bytes the device may have on the way: what the RP2040's ring takes if USB stops.
+LINK_WINDOW = 16384
+LINK_CREDIT_STEP = 4096
+
+
+def cobs_encode(data):
+    out = bytearray()
+    at = 0
+    while True:
+        end = data.find(b"\0", at, at + 254)
+        if end < 0:
+            n = min(254, len(data) - at)
+            out.append(n + 1)
+            out += data[at:at + n]
+            at += n
+            if n < 254:
+                return bytes(out)
+        else:
+            out.append(end - at + 1)
+            out += data[at:end]
+            at = end + 1
+
+
+def cobs_decode(data):
+    """The bytes COBS encoded, without the ending zero; ValueError if it cannot be."""
+    out = bytearray()
+    at = 0
+    while at < len(data):
+        code = data[at]
+        if code == 0 or at + code > len(data):
+            raise ValueError("not COBS")
+        out += data[at + 1:at + code]
+        at += code
+        if code != 0xFF and at < len(data):
+            out.append(0)
+    return bytes(out)
+
+
+def link_encode(ftype, seq, payload=b""):
+    body = bytes((ftype, 0)) + struct.pack("<H", seq & 0xFFFF) + payload
+    return cobs_encode(body + struct.pack("<I", zlib.crc32(body))) + b"\0"
+
+
+def link_decode(wire):
+    """(type, seq, payload) of a frame's bytes without its zero; ValueError if it is not whole."""
+    body = cobs_decode(wire)
+    if len(body) < 8 or struct.unpack_from("<I", body, len(body) - 4)[0] != zlib.crc32(body[:-4]):
+        raise ValueError("bad frame")
+    return body[0], struct.unpack_from("<H", body, 2)[0], body[4:-4]
+
+
+class EsdrFramed(Esdr):
+    """The same requests and blocks over interface 6 of the MCH2022 badge's RP2040."""
+
+    def __init__(self, dev, baud=5000000, sleep=time.sleep):
+        self.d = dev
+        self.sleep = sleep
+        self.buf = b""
+        self.blocks = []
+        self.tx_seq = 0
+        self.rx_seq = None
+        self.unacked = 0
+        self.bad_frames = 0
+        self.lost_frames = 0
+        self.baud = LINK_BOOT_BAUD
+        self._ctrl(COPROC_SET_BAUD, 0, struct.pack("<I", LINK_BOOT_BAUD))
+        self._ctrl(COPROC_LINK_OPEN)
+        try:
+            self.sleep(0.02)
+            self._drain()
+            if not self._hello(tries=3):
+                # At another rate after a host that went away, or still booting: from the start.
+                self._ctrl(COPROC_ESP32_RESET)
+                self.sleep(1.5)
+                self._drain()
+                if not self._hello(tries=5):
+                    raise TimeoutError("no answer from the ESP32 (apps/osmosdr_serial?)")
+            if baud and baud != self.baud:
+                self.set_baud(baud)
+        except (OSError, TimeoutError):
+            # The UART back to its CDC ACM port, for whoever comes next.
+            self._ctrl(COPROC_LINK_CLOSE)
+            raise
+
+    def _ctrl(self, req, value=0, data=None):
+        self.d.ctrl_transfer(0x41, req, value, COPROC_IF_LINK, data)
+
+    def _write(self, data):
+        self.d.write(COPROC_EP_OUT, data, timeout=2000)
+        # The firmware's buffer completes at a short packet (esp_sdr/mch2022_coproc.h).
+        if len(data) % 64 == 0:
+            self.d.write(COPROC_EP_OUT, b"", timeout=2000)
+
+    def _send(self, ftype, payload=b""):
+        self._write(link_encode(ftype, self.tx_seq, payload))
+        self.tx_seq += 1
+
+    def _drain(self):
+        self.buf = b""
+        try:
+            while True:
+                self.d.read(COPROC_EP_IN, 16384, timeout=20)
+        except OSError:
+            pass
+
+    def _frame(self, timeout):
+        """The next whole frame: (type, seq, payload)."""
+        end = time.time() + timeout
+        while True:
+            zero = self.buf.find(b"\0")
+            if zero >= 0:
+                wire, self.buf = self.buf[:zero], self.buf[zero + 1:]
+                if not wire:
+                    continue
+                self.unacked += len(wire) + 1
+                if self.unacked >= LINK_CREDIT_STEP:
+                    self._send(LINK_CREDIT, struct.pack("<I", self.unacked))
+                    self.unacked = 0
+                try:
+                    f = link_decode(wire)
+                except ValueError:
+                    self.bad_frames += 1
+                    continue
+                if self.rx_seq is not None and f[1] != self.rx_seq:
+                    self.lost_frames += (f[1] - self.rx_seq) & 0xFFFF
+                self.rx_seq = (f[1] + 1) & 0xFFFF
+                return f
+            if time.time() > end:
+                raise TimeoutError("no frame")
+            try:
+                self.buf += bytes(self.d.read(COPROC_EP_IN, 16384, timeout=100))
+            except OSError:
+                pass
+
+    def _hello(self, tries):
+        """Says hello with the credit: the device's answer, or False."""
+        h = LINK_HELLO_FMT.pack(LINK_VERSION, 0, 0, LINK_WINDOW, 0)
+        for _ in range(tries):
+            self.rx_seq = None
+            self.unacked = 0
+            # A zero first ends whatever the device had before this frame.
+            self._write(b"\0" + link_encode(LINK_HELLO, self.tx_seq, h))
+            self.tx_seq += 1
+            try:
+                while True:
+                    ftype, _, payload = self._frame(0.3)
+                    if ftype == LINK_HELLO:
+                        self.hello = LINK_HELLO_FMT.unpack_from(payload)
+                        return True
+            except TimeoutError:
+                pass
+        return False
+
+    def set_baud(self, baud):
+        """The ESP32's UART and the RP2040's to @p baud, as esdr_proto.h says."""
+        self.request_raw(REQ_SET_LINK_BAUD, data=struct.pack("<I", baud))
+        self._ctrl(COPROC_SET_BAUD, 0, struct.pack("<I", baud))
+        self.sleep(0.02)
+        self._drain()
+        if not self._hello(tries=3):
+            raise TimeoutError(f"no answer at {baud} baud")
+        self.baud = baud
+
+    def close(self):
+        try:
+            if self.baud != LINK_BOOT_BAUD:
+                self.set_baud(LINK_BOOT_BAUD)
+            self._send(LINK_BYE)
+            self._ctrl(COPROC_LINK_CLOSE)
+        except (OSError, TimeoutError):
+            pass
+
+    def _next(self, timeout=2.0):
+        while True:
+            ftype, _, payload = self._frame(timeout)
+            if ftype == LINK_BLOCK:
+                return "block", BLK.unpack_from(payload), payload[BLK.size:]
+            if ftype == LINK_REPLY:
+                return "frame", HDR.unpack_from(payload), payload[HDR.size:]
+
+    def request_raw(self, req, value=0, data=b"", in_len=0, timeout=2.0):
+        flags = SER_IN if in_len else 0
+        self._send(LINK_REQUEST,
+                   HDR.pack(SER_MAGIC, req, flags, value, in_len or len(data), 0) + data)
+        while True:
+            kind, h, payload = self._next(timeout)
+            if kind == "block":
+                self.blocks.append((h, payload))
+                continue
+            if h[1] != req:
+                continue
+            if h[5] != 0:
+                raise OSError(-h[5], f"request {req:#x}: {os.strerror(-h[5])}")
+            return payload
+
+    def request(self, name, value=0, data=b"", in_len=0, timeout=2.0):
+        return self.request_raw(REQ[name], value, data, in_len, timeout)
+
+    def send_tx(self, raw):
+        raise NotImplementedError("no transmit on the MCH2022 badge's ESP32")
+
+
+def open_usb(port):
+    """The badge named by "usb" or "usb:SERIAL", its interface 6 claimed."""
+    import usb.core
+    import usb.util
+
+    serial = port.partition(":")[2]
+    for dev in usb.core.find(idVendor=COPROC_VID, idProduct=COPROC_PID, find_all=True):
+        if serial and dev.serial_number != serial:
+            continue
+        if not any(i.bInterfaceNumber == COPROC_IF_LINK for i in dev.get_active_configuration()):
+            sys.exit("that badge's RP2040 runs the stock firmware: no interface 6")
+        usb.util.claim_interface(dev, COPROC_IF_LINK)
+        return dev
+    sys.exit("no MCH2022 badge on USB")
 
 
 def peaks(x, fs, k=5):
@@ -254,7 +487,10 @@ def main():
             p.add_argument("--tone", type=float, default=50000)
             p.add_argument("--gain", type=int, default=8)
     a = ap.parse_args()
-    d = Esdr(a.port, a.baud)
+    if a.port == "usb" or a.port.startswith("usb:"):
+        d = EsdrFramed(open_usb(a.port), a.baud or 5000000)
+    else:
+        d = Esdr(a.port, a.baud)
     try:
         if a.cmd == "info":
             for k, v in d.info().items():

@@ -415,7 +415,7 @@ static int link_to_dev(const struct usb_setup_packet *setup, const struct net_bu
 		esp32_set_reset_mode((uint8_t)setup->wValue);
 		return 0;
 	case COPROC_REQ_TEST_MODE:
-		if (setup->wValue > COPROC_TEST_LOOPBACK) {
+		if (setup->wValue > COPROC_TEST_CRASH) {
 			return -EINVAL;
 		}
 		bridge_set_test((uint8_t)setup->wValue);

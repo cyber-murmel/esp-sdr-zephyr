@@ -15,7 +15,9 @@
 #include <string.h>
 
 #include <zephyr/app_version.h>
+#include <zephyr/device.h>
 #include <zephyr/devicetree.h>
+#include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/sys_io.h>
@@ -43,6 +45,9 @@
 
 #include "esdr_cal.h"
 #include "esdr_dev.h"
+#if defined(CONFIG_APP_LINK_FRAMED)
+#include <esp_sdr/esdr_link.h>
+#endif
 #include "esdr_proto.h"
 #if defined(CONFIG_ESP_SDR_GAPLESS)
 #if !defined(CONFIG_APP_LINK_SDIO)
@@ -332,9 +337,122 @@ static void write_now(const uint8_t *p, size_t n)
 	} while (sdio_link_pending() > 0U && k_uptime_get() <= end);
 }
 #else
+#if defined(CONFIG_APP_LINK_FRAMED)
+/*
+ * The framed link (esp_sdr/esdr_link.h), once the host has said hello: blocks go by their length,
+ * with a checksum, while the host's credit lasts. The UART has no flow control wires, and behind
+ * it the RP2040's ring overruns if USB stops taking: the credit stops the sender in time.
+ */
+#define FRAME_RX_BYTES ESDR_LINK_ENCODED_MAX(sizeof(struct esdr_ser_hdr) + ESDR_SER_MAX_DATA)
+#define FRAME_TX_BYTES ESDR_LINK_ENCODED_MAX(ESDR_BLOCK_BYTES)
+/* The ESP32's UART at its 80 MHz clock, 16 times per bit. */
+#define LINK_BAUD_MAX  5000000U
+/* The request a hello frame turns into: it ends a stream as any other. */
+#define REQ_LINK_HELLO 0xFEU
+
+static struct {
+	/* The host speaks frames. */
+	bool on;
+	/* Wire bytes of blocks the host still takes; whether it counts them at all. */
+	bool limited;
+	uint32_t credit;
+	uint16_t tx_seq, rx_seq;
+	/* What came since the last zero, and the zeros in a row. */
+	uint32_t rx_n, zeros;
+	uint8_t rx[FRAME_RX_BYTES];
+	/* The encoded frame going out. */
+	uint32_t tx_len, tx_off;
+	uint8_t tx[FRAME_TX_BYTES];
+	/* A rate to go to after the reply. */
+	uint32_t baud_next;
+} fr APP_HIGH;
+
+/* Payload of a block as it stands in out.blk: its header and its samples. */
+static size_t block_bytes(const uint8_t *blk)
+{
+	const struct esdr_block_hdr *h = (const struct esdr_block_hdr *)blk;
+	const size_t item = (sys_le16_to_cpu(h->flags) & ESDR_BLK_16BIT) != 0U ? 4U : 2U;
+
+	return sizeof(*h) + sys_le16_to_cpu(h->samples) * item;
+}
+
+static void framed_out(uint32_t max)
+{
+	while (max-- > 0U) {
+		if (fr.tx_off == fr.tx_len) {
+			const uint8_t *blk;
+			size_t n;
+
+			if (out.sent == out.committed) {
+				return;
+			}
+			blk = out.blk[out.sent % OUT_BLOCKS];
+			/* Whatever its length, it fits: the frame's bound holds for a whole block. */
+			n = esdr_link_encode(fr.tx, sizeof(fr.tx), ESDR_LINK_BLOCK, fr.tx_seq, blk,
+					     block_bytes(blk), NULL, 0);
+			if (fr.limited && fr.credit < n) {
+				return;
+			}
+			fr.tx_seq++;
+			fr.credit = fr.limited ? fr.credit - (uint32_t)n : 0U;
+			fr.tx_len = (uint32_t)n;
+			fr.tx_off = 0;
+			stats.usb_in_bytes += n;
+		}
+		if (!link_writable()) {
+			return;
+		}
+		link_putc(fr.tx[fr.tx_off++]);
+		if (fr.tx_off == fr.tx_len) {
+			fr.tx_off = 0;
+			fr.tx_len = 0;
+			out.sent++;
+			stats.rx_blocks++;
+		}
+	}
+}
+
+/* Replies and single blocks, with the frame in hand finished first. */
+static void framed_now(const uint8_t *p, size_t n)
+{
+	const uint8_t type = n >= 4U && sys_get_le32(p) == ESDR_BLOCK_MAGIC ? ESDR_LINK_BLOCK
+									    : ESDR_LINK_REPLY;
+	int64_t end = k_uptime_get() + 100;
+	size_t len;
+
+	while (fr.tx_off != fr.tx_len) {
+		if (k_uptime_get() > end) {
+			return;
+		}
+		if (link_writable()) {
+			link_putc(fr.tx[fr.tx_off++]);
+		}
+	}
+	len = esdr_link_encode(fr.tx, sizeof(fr.tx), type, fr.tx_seq++, p, n, NULL, 0);
+	for (size_t k = 0; k < len; k++) {
+		while (!link_writable()) {
+			if (k_uptime_get() > end) {
+				fr.tx_off = 0;
+				fr.tx_len = 0;
+				return;
+			}
+		}
+		link_putc(fr.tx[k]);
+	}
+	fr.tx_off = 0;
+	fr.tx_len = 0;
+}
+#endif /* CONFIG_APP_LINK_FRAMED */
+
 /* Write what is queued while the FIFO takes it; at most @p max bytes. */
 static void out_service(uint32_t max)
 {
+#if defined(CONFIG_APP_LINK_FRAMED)
+	if (fr.on) {
+		framed_out(max);
+		return;
+	}
+#endif
 	while (max-- > 0U && out.sent != out.committed && link_writable()) {
 		link_putc(out.blk[out.sent % OUT_BLOCKS][out.off++]);
 		if (out.off == ESDR_BLOCK_BYTES) {
@@ -374,6 +492,12 @@ static void write_now(const uint8_t *p, size_t n)
 {
 	int64_t end = k_uptime_get() + 100;
 
+#if defined(CONFIG_APP_LINK_FRAMED)
+	if (fr.on) {
+		framed_now(p, n);
+		return;
+	}
+#endif
 	for (size_t k = 0; k < n; k++) {
 		while (!link_writable()) {
 			if (k_uptime_get() > end) {
@@ -385,6 +509,9 @@ static void write_now(const uint8_t *p, size_t n)
 	link_flush();
 }
 #endif
+
+/* Between looks at an idle link. */
+#define IDLE_SLEEP_US 100U
 
 /* Transmit samples from the host, as received (int8 or int16 little endian pairs). */
 static struct {
@@ -438,6 +565,132 @@ static APP_HOT void req_feed(uint8_t b)
 	}
 }
 
+#if defined(CONFIG_APP_LINK_FRAMED)
+static void framed_off(void)
+{
+	fr.on = false;
+	fr.limited = false;
+	fr.zeros = 0;
+	fr.tx_off = 0;
+	fr.tx_len = 0;
+}
+
+/* A frame whole. Those that fail their CRC cost themselves, and are counted. */
+static void framed_frame(void)
+{
+	struct esdr_link_frame f;
+
+	if (esdr_link_decode(fr.rx, fr.rx_n, &f) != 0) {
+		if (fr.on) {
+			stats.ring_errors++;
+		}
+		return;
+	}
+	if (fr.on && f.type != ESDR_LINK_HELLO && f.seq != fr.rx_seq) {
+		/* Frames lost on the way. */
+		stats.ring_abandoned++;
+	}
+	fr.rx_seq = f.seq + 1U;
+	switch (f.type) {
+	case ESDR_LINK_HELLO: {
+		struct esdr_link_hello h;
+
+		if (f.len < sizeof(h)) {
+			return;
+		}
+		memcpy(&h, f.payload, sizeof(h));
+		fr.on = true;
+		fr.zeros = 0;
+		fr.credit = sys_le32_to_cpu(h.credit);
+		fr.limited = fr.credit != 0U;
+		fr.tx_seq = 0;
+		fr.tx_off = 0;
+		fr.tx_len = 0;
+		req.h.req = REQ_LINK_HELLO;
+		req.tx_left = 0;
+		req.ready = true;
+		break;
+	}
+	case ESDR_LINK_REQUEST:
+		if (fr.on && f.len >= sizeof(req.raw) &&
+		    f.len - sizeof(req.raw) <= sizeof(req.data)) {
+			memcpy(req.raw, f.payload, sizeof(req.raw));
+			/* An IN request's len is the most it accepts, and it has no data. */
+			if ((req.h.flags & ESDR_SER_IN) == 0U) {
+				memcpy(req.data, f.payload + sizeof(req.raw),
+				       f.len - sizeof(req.raw));
+				req.h.len = sys_cpu_to_le16((uint16_t)(f.len - sizeof(req.raw)));
+			}
+			req.ready = true;
+		}
+		break;
+	case ESDR_LINK_CREDIT:
+		if (fr.on && f.len == sizeof(uint32_t)) {
+			fr.credit += sys_get_le32(f.payload);
+		}
+		break;
+	case ESDR_LINK_BYE:
+		framed_off();
+		break;
+	default:
+		break;
+	}
+}
+
+/* One byte from the host, in whichever transport it speaks. */
+static APP_HOT void link_byte(uint8_t b)
+{
+	if (!fr.on) {
+		req_feed(b);
+	}
+	if (b != 0U) {
+		fr.zeros = 0;
+		if (fr.rx_n < sizeof(fr.rx)) {
+			fr.rx[fr.rx_n] = b;
+		}
+		fr.rx_n++;
+		return;
+	}
+	if (fr.rx_n == 0U) {
+		/* The older transport's host opens with a block's worth of zeros. */
+		if (fr.on && ++fr.zeros >= ESDR_LINK_FALLBACK_ZEROS) {
+			framed_off();
+		}
+		return;
+	}
+	if (fr.rx_n <= sizeof(fr.rx)) {
+		framed_frame();
+	} else if (fr.on) {
+		stats.ring_errors++;
+	}
+	fr.rx_n = 0;
+}
+
+/* After a reply that asked for it: the UART to its new rate, with the reply gone. */
+static void framed_baud(void)
+{
+	/* Not read back: the driver has no name for link_init()'s RTS alone (no such wire here). */
+	const struct uart_config cfg = {
+		.baudrate = fr.baud_next,
+		.parity = UART_CFG_PARITY_NONE,
+		.stop_bits = UART_CFG_STOP_BITS_1,
+		.data_bits = UART_CFG_DATA_BITS_8,
+		.flow_ctrl = UART_CFG_FLOW_CTRL_NONE,
+	};
+
+	if (fr.baud_next == 0U) {
+		return;
+	}
+	while (!uart_ll_is_tx_idle(link_hw)) {
+	}
+	(void)uart_configure(DEVICE_DT_GET(LINK_UART), &cfg);
+	uart_ll_rxfifo_rst(link_hw);
+	fr.baud_next = 0;
+}
+#else
+#define link_byte req_feed
+#endif /* CONFIG_APP_LINK_FRAMED */
+
 /* Read from the host while there is room for transmit data; at most @p max bytes. */
 static APP_HOT void in_service(uint32_t max)
 {
@@ -445,7 +698,7 @@ static APP_HOT void in_service(uint32_t max)
 		if (req.tx_left > 0U && txr.head - txr.tail >= TX_RING_BYTES) {
 			return;
 		}
-		req_feed(link_getc());
+		link_byte(link_getc());
 	}
 }
 
@@ -1124,6 +1377,15 @@ static int handle_out(uint8_t r, uint16_t value, const uint8_t *data, size_t len
 		want.corr_ppb = (int32_t)sys_get_le32(data);
 		radio_dirty = true;
 		return 0;
+#if defined(CONFIG_APP_LINK_FRAMED)
+	case ESDR_REQ_SET_LINK_BAUD:
+		if (len != 4U || !fr.on || sys_get_le32(data) == 0U ||
+		    sys_get_le32(data) > LINK_BAUD_MAX) {
+			return -EINVAL;
+		}
+		fr.baud_next = sys_get_le32(data);
+		return 0;
+#endif
 	case ESDR_REQ_SET_CAL:
 		/* The library's correction (radio idle between streams): the centre moves. */
 		radio_dirty = true;
@@ -1211,6 +1473,27 @@ static void req_answer(void)
 	uint16_t len = sys_le16_to_cpu(req.h.len);
 	int ret;
 
+#if defined(CONFIG_APP_LINK_FRAMED)
+	if (req.h.req == REQ_LINK_HELLO) {
+		const struct esdr_link_hello h = {
+			.version = ESDR_LINK_VERSION,
+			.max_frame = sys_cpu_to_le16((uint16_t)FRAME_RX_BYTES),
+			.credit = sys_cpu_to_le32(fr.credit),
+			.baud_max = sys_cpu_to_le32(LINK_BAUD_MAX),
+		};
+		size_t n = esdr_link_encode(fr.tx, sizeof(fr.tx), ESDR_LINK_HELLO, fr.tx_seq++, &h,
+					    sizeof(h), NULL, 0);
+
+		for (size_t k = 0; k < n; k++) {
+			while (!link_writable()) {
+			}
+			link_putc(fr.tx[k]);
+		}
+		req.ready = false;
+		req.got = 0;
+		return;
+	}
+#endif
 	if ((req.h.flags & ESDR_SER_IN) != 0U) {
 		ret = handle_in(req.h.req, rep.data, MIN(len, sizeof(rep.data)));
 	} else {
@@ -1222,6 +1505,9 @@ static void req_answer(void)
 		rep.h.status = sys_cpu_to_le16((uint16_t)(int16_t)ret);
 	}
 	write_now((const uint8_t *)&rep, sizeof(rep.h) + (ret > 0 ? (size_t)ret : 0U));
+#if defined(CONFIG_APP_LINK_FRAMED)
+	framed_baud();
+#endif
 	req.ready = false;
 	req.got = 0;
 }
@@ -1314,7 +1600,16 @@ static void rx_end(void)
 	/* A host that stopped reading leaves them after 200 ms. */
 	while (out.sent != out.committed && k_uptime_get() <= end) {
 		out_service(64);
+#if defined(CONFIG_APP_LINK_FRAMED)
+		in_service(16);
+#endif
 	}
+#if defined(CONFIG_APP_LINK_FRAMED)
+	/* What a host out of credit did not take: no half frames, they go between two. */
+	if (fr.on) {
+		out.sent = out.committed;
+	}
+#endif
 	link_flush();
 	out.fill_n = 0;
 	out.next_flags = ESDR_BLK_GAP;
@@ -1672,12 +1967,15 @@ int main(void)
 			uint32_t got = req.got + req.tx_left;
 
 			in_service(64);
-			/* Sleep only while nothing arrives: a link without flow control overruns. */
+			/*
+			 * Sleep only while nothing arrives, and shortly: a link without flow control
+			 * overruns the 128-byte FIFO in 640 us at 2 Mbaud, 256 us at 5.
+			 */
 			if (!req.ready && !link_readable()) {
-				k_msleep(1);
+				k_usleep(IDLE_SLEEP_US);
 				/* A frame the host abandoned halfway (it crashed): drop it after 200 ms. */
 				if (got != 0U && got == req.got + req.tx_left) {
-					if (++stale_ms >= 200U) {
+					if (++stale_ms >= 200000U / IDLE_SLEEP_US) {
 						req.got = 0;
 						req.tx_left = 0;
 						stale_ms = 0;

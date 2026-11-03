@@ -17,7 +17,8 @@ have host tests of their own (pytest). Five tiers:
 `.github/workflows/build.yml` runs on every push and pull request. It builds every app and test
 for each board it allows (`xiao_esp32s3/esp32s3/procpu`, `communicator_badge/esp32s3/procpu`,
 `xiao_esp32c6/esp32c6/hpcore`, `why2025_badge/esp32c6/hpcore` with `why2025_badge/esp32p4/hpcore`,
-`waveshare_esp32c5_zero/esp32c5/hpcore` and `mch2022/esp32/procpu`, one job per board) and
+`waveshare_esp32c5_zero/esp32c5/hpcore`, `mch2022/esp32/procpu` and `mch2022_rp2040/rp2040`, one job
+per board) and
 builds and runs the unit tests on
 `native_sim` and `native_sim/native/64`. A GitHub runner has no boards, so the integration and
 regression tests and the console smoke test are only built there; run them on the desk as below.

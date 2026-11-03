@@ -10,7 +10,8 @@ Per image (MCUboot and the app with sysbuild, the app alone without):
 <image>.config. multiapp adds its FAT volume and the llext files. All of them
 at their flash offsets (from the runners' --esp-app-address) go into
 flash_args, for "esptool --chip CHIP write-flash @flash_args" in OUT_DIR, and
-are merged into merged.bin, to be written at 0x0.
+are merged into merged.bin, to be written at 0x0. The RP2040 has no esptool: <image>.uf2 is its
+image, for the ROM's USB bootloader (apps/mch2022_coproc: "west rp2040 flash <image>.uf2").
 """
 
 import shutil
@@ -33,6 +34,13 @@ def runner_args(zephyr_dir):
 def main():
     build, app, chip, out = Path(sys.argv[1]), sys.argv[2], sys.argv[3], Path(sys.argv[4])
     out.mkdir(parents=True)
+
+    if chip == "rp2040":
+        zephyr = build / "zephyr"
+        for src, dst in (("zephyr.elf", "elf"), ("zephyr.bin", "bin"), (".config", "config"),
+                         ("zephyr.uf2", "uf2")):
+            shutil.copy(zephyr / src, out / f"{app}.{dst}")
+        return
 
     domains = build / "domains.yaml"
     if domains.exists():

@@ -79,6 +79,8 @@ enum coproc_test_mode {
 	COPROC_TEST_SOURCE = 1,
 	/** What comes in on OUT goes back on IN. */
 	COPROC_TEST_LOOPBACK = 2,
+	/** A fatal error: the crash handling's test (register 18 reads 1 after the reboot). */
+	COPROC_TEST_CRASH = 3,
 };
 
 #define COPROC_INFO_MAGIC 0x31325043U /* "CP21" */

@@ -146,6 +146,12 @@ enum esdr_req {
 	 * host's own correction on top of it.
 	 */
 	ESDR_REQ_SET_CAL = 0x1a,
+	/*
+	 * OUT uint32_t: the framed serial link's line rate (esp_sdr/esdr_link.h). The reply still
+	 * comes at the old rate, the device changes right after it; then the host changes
+	 * its side and says HELLO. -EINVAL above struct esdr_link_hello's baud_max.
+	 */
+	ESDR_REQ_SET_LINK_BAUD = 0x1b,
 };
 
 #define ESDR_BURST_MAX 16380U

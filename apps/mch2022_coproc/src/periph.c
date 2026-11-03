@@ -121,8 +121,9 @@ void gpio_regs_apply(uint8_t dir, uint8_t out)
 		if (k == 0U && regs_get(REG_WS2812_MODE) != 0U) {
 			continue;
 		}
+		/* Input too: register 2 reads the pin back, the driver would switch that off. */
 		if ((dir & BIT(k)) != 0U) {
-			flags = (out & BIT(k)) != 0U ? GPIO_OUTPUT_HIGH : GPIO_OUTPUT_LOW;
+			flags |= (out & BIT(k)) != 0U ? GPIO_OUTPUT_HIGH : GPIO_OUTPUT_LOW;
 		}
 		(void)gpio_pin_configure_dt(&sao[k], flags);
 	}
