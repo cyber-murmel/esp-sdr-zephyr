@@ -533,14 +533,16 @@ static int radio_apply(void)
 /*
  * ESDR_REQ_CAPTURE_BURST: one burst at a native rate (@p mhz), sent as int16 blocks (the raw
  * 10 bits times 32, as the S3's bursts) flagged ESDR_BLK_BURST before the reply. The radio is
- * idle meanwhile (main() runs requests only between streams).
+ * idle meanwhile (main() runs requests only between streams), so the blocks are built in the
+ * stream's first output block once the host has read the last stream's.
  */
 static int capture_burst(uint16_t mhz, const uint8_t *data, size_t len)
 {
-	static uint8_t blk[ESDR_BLOCK_BYTES];
+	uint8_t *blk = out.blk[0];
 	const size_t per = ESDR_BLOCK_PAYLOAD / 4U;
 	struct esp_sdr_rx_burst b;
 	enum esp_sdr_rate rate;
+	int64_t end;
 	uint32_t n;
 	int ret;
 
@@ -555,6 +557,14 @@ static int capture_burst(uint16_t mhz, const uint8_t *data, size_t len)
 	}
 	if (rate > ESP_SDR_RATE_16MSPS || n < ESP_SDR_SAMPLES_MIN || n > ESP_SDR_SAMPLES_MAX) {
 		return -EINVAL;
+	}
+	/* A host that stopped reading leaves them after 200 ms, as rx_end() does. */
+	end = k_uptime_get() + 200;
+	while (out.sent != out.committed) {
+		if (k_uptime_get() > end) {
+			return -EBUSY;
+		}
+		out_service(64);
 	}
 	if (radio_dirty) {
 		ret = radio_apply();
@@ -582,9 +592,9 @@ static int capture_burst(uint16_t mhz, const uint8_t *data, size_t len)
 			sys_put_le16((uint16_t)(esp_sdr_rx_i(b.words[k + j]) * 32), p + 4U * j);
 			sys_put_le16((uint16_t)(esp_sdr_rx_q(b.words[k + j]) * 32), p + 4U * j + 2U);
 		}
-		write_now(blk, sizeof(blk));
+		write_now(blk, ESDR_BLOCK_BYTES);
 		stats.rx_blocks++;
-		stats.usb_in_bytes += sizeof(blk);
+		stats.usb_in_bytes += ESDR_BLOCK_BYTES;
 	}
 	return 0;
 }
