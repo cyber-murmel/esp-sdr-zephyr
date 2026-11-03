@@ -29,11 +29,13 @@ manifest:
     # ST7703, TCA8418 and RP2040 coprocessor drivers, an SX126x without BUSY
     # and DIO1 lines and the ESP32 SPI timing fixes, and the
     # ESP32-P4-Function-EV-Board's C6 and V1.0B (ESP-IDF bootloader mode,
-    # esp-hosted OTA, P4 rev v0.0) (branches communicator-badge,
-    # why2025-badge, mch2022-badge, p4-function-ev-board).
+    # esp-hosted OTA, P4 rev v0.0), SMP on the ESP32-P4 (apps/pcap), and the
+    # MIPI DBI SPI tearing effect wait and ESP32 SPI reads without a write
+    # phase (the MCH2022 FPGA) (branches communicator-badge, why2025-badge,
+    # mch2022-badge, p4-function-ev-board, p4-smp, zsdr).
     - name: zephyr
       remote: cyber-murmel
-      revision: ebef6eb3a2e4613613cb5672211ab0a4ce25d867 # p4-smp
+      revision: 2a648358ad13cf02c2682d53f0cc1de1e5d54c10 # zsdr
       path: modules/zephyr
       import:
         name-allowlist:
