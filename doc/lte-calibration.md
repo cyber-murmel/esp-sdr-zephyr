@@ -23,9 +23,10 @@ the result over the protocol (`ESDR_REQ_SET_CAL`).
    15 kHz steps, normalised by the energy of each symbol-long window (the downlink's power comes
    in bursts 12 dB over its floor; an unnormalised peak locks onto them). The templates are
    evaluated at the capture's own sample rate, so no 1.92 MS/s resampler is needed. The search
-   looks at the first transform length less a symbol of the capture (8 ms at 16384 points,
-   more than the 5 ms period of the synchronization signals, so it always holds a PSS); a
-   longer capture feeds the refinement only, and the work memory stays 8 floats a point.
+   looks at windows of the transform length less a symbol, back to back over the first 5 ms
+   (the period of the synchronization signals, so one of them holds a PSS whole) until one
+   gives a valid cell; the whole capture feeds the decoding and the refinement, and the work
+   memory stays 8 floats a point of the transform.
 2. **Candidates.** A Zadoff-Chu sequence trades frequency error for timing error: a coarse step
    a few kHz off puts the peak tens of samples from the true start, and such ridge points can
    outdo the true one in peak height or in peak over mean alike. So the six strongest coarse
@@ -155,9 +156,10 @@ cal-clear`, `esdr_serial.py PORT cal [--set PPB | --clear]`, SoapySDR sensors `t
 ### The WHY2025 badge
 
 The P4 has the C6's 2 MS/s stream and the estimator (`esdr.lte_detect()`, `cmod/esdr_lte.c`,
-about 512 KiB of work memory from the Python heap, which is PSRAM: the 16384-point transforms
-stream from it, so one 20 ms capture takes about 20 s there against 0.2 s on the host; a search
-in 2048-point windows of the capture, decoded over the whole of it, would cut that). The frozen `ltecal` module does what the
+its work memory comes from the Python heap, which is PSRAM, so a transform's size decides the
+time: 4096 points, three windows, 128 KiB, take about 7 s a 20 ms capture at the +-520 kHz
+`ltecal` searches, against 25 s for one 16384-point window and 0.1 s on the host; 2048
+points picked a wrong cell on the 23 Oct capture). The frozen `ltecal` module does what the
 library's run does: `ltecal.calibrate()` surveys the band, captures 20 ms at the strongest
 places until a cell decodes, collects estimates (each from `esdr.radio_state()['centre']`, the
 LO with its residual, and `GET_CAL`'s correction in force), and hands the median with the

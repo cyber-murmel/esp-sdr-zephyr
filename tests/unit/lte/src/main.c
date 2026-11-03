@@ -328,6 +328,32 @@ ZTEST(lte, test_search_window)
 	zassert_equal(esp_sdr_lte_detect(cap, N, FS, 900e3, 20.0f, &small, &c), -EINVAL);
 }
 
+ZTEST(lte, test_search_windows)
+{
+	/*
+	 * A small transform searches windows of itself across the first 5 ms: a PSS in the
+	 * second or the third is found, the cell decoded and refined over the whole capture.
+	 */
+	static const double first[] = {7000.3, 9500.6};
+	struct esp_sdr_lte_work small;
+
+	esp_sdr_lte_work_init(&small, small_mem, 4096);
+	for (size_t i = 0; i < ARRAY_SIZE(first); i++) {
+		struct esp_sdr_lte_cell c;
+
+		test_rng_seed(31 + i);
+		synth_cell(42, 2, 0, 250321.0, first[i], 5.0, 5.0);
+		int ret = esp_sdr_lte_detect(cap, N, FS, 900e3, 20.0f, &small, &c);
+
+		zassert_equal(ret, 0, "first %f ret %d", first[i], ret);
+		zassert_true(c.valid, "first %f", first[i]);
+		zassert_equal(c.cell_id, 128, "first %f cell %d", first[i], c.cell_id);
+		zassert_within(c.timing, first[i], 1.0, "first %f timing %f", first[i], c.timing);
+		zassert_within(c.offset_hz, 250321.0, 10.0, "first %f offset %f", first[i],
+			       c.offset_hz);
+	}
+}
+
 ZTEST(lte, test_one_pair_in_a_short_capture)
 {
 	/* A 1 ms window with one pair: the parity of the half frame is free, the cell is not. */

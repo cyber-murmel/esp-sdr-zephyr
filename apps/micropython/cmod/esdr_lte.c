@@ -5,10 +5,11 @@
  * Zephyr) on a capture in this chip's memory, for a radio behind a link: on the WHY2025 badge
  * the ESP32-P4 measures its ESP32-C6's crystal from the C6's 2 MS/s stream (modules/ltecal.py).
  *
- *   lte_detect(buf, fs, lo_hz, max_offset=900000, min_ratio=15.0, nfft=16384) -> dict or None
+ *   lte_detect(buf, fs, lo_hz, max_offset=900000, min_ratio=15.0, nfft=4096) -> dict or None
  *                              find an LTE cell in buf (int16 I, Q at fs, 1.92 to 4 MS/s;
- *                              nfft a power of two: the PSS is searched for in the first
- *                              nfft - symbol samples, 8 ms at 16384, the rest refines) and
+ *                              nfft a power of two: the PSS is searched for in windows of
+ *                              nfft - symbol samples across the first 5 ms, the rest refines;
+ *                              4096 is the fastest on the P4, whose work memory is PSRAM) and
  *                              measure its carrier's offset from the capture's centre; lo_hz
  *                              (int) is where the LO was, for ppb and raster_khz. None without
  *                              a PSS; keys cell, valid, offset, offset_sync, timing, pss_ratio,
@@ -37,7 +38,7 @@ static mp_obj_t esdr_lte_detect_fn(size_t n_args, const mp_obj_t *pos_args, mp_m
 		{MP_QSTR_lo_hz, MP_ARG_REQUIRED | MP_ARG_OBJ, {.u_obj = MP_OBJ_NULL}},
 		{MP_QSTR_max_offset, MP_ARG_INT, {.u_int = 900000}},
 		{MP_QSTR_min_ratio, MP_ARG_OBJ, {.u_obj = MP_OBJ_NULL}},
-		{MP_QSTR_nfft, MP_ARG_INT, {.u_int = 16384}},
+		{MP_QSTR_nfft, MP_ARG_INT, {.u_int = 4096}},
 	};
 	mp_arg_val_t a[MP_ARRAY_SIZE(allowed)];
 	mp_buffer_info_t bi;

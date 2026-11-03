@@ -1006,7 +1006,10 @@ static inline void lte_crs_refine(const struct esp_sdr_lte_iq *x, size_t n, doub
 /**
  * @brief Find a cell in a capture and measure its carrier offset.
  *
- * Runs esp_sdr_lte_pss_search(), then for each of the best few PSS candidates refines the
+ * Runs esp_sdr_lte_pss_search() on windows of the transform, back to back over the first
+ * synchronization period (where every PSS of the capture shows once), until one gives a valid
+ * cell: a small transform searches several, each fast, where one large transform would hold
+ * the period in slow memory. For each of a window's best few PSS candidates it refines the
  * timing (an eighth of a sample) and frequency (250 Hz), decodes the cell group with the SSS
  * in front of every PSS in the capture and takes the offset from the phase between the SSS
  * and PSS symbols (range +-7 kHz, about 1 kHz accurate). The PSS alone cannot tell the
@@ -1018,7 +1021,7 @@ static inline void lte_crs_refine(const struct esp_sdr_lte_iq *x, size_t n, doub
  *
  * @param x Capture, any gain that does not clip.
  * @param n Capture length, as long as the reference signals should be followed. The PSS is
- *	    searched for in the first n_fft of @p w less a symbol.
+ *	    searched for in its first 5 ms and a symbol, in windows of n_fft of @p w less a symbol.
  * @param fs Sample rate in Hz, 1.92 to 4 MS/s.
  * @param max_offset_hz Largest carrier offset from the capture centre to look for.
  * @param min_ratio Smallest PSS detection ratio to go on with (about 20 for a 1 ms capture).
@@ -1031,24 +1034,39 @@ static inline int esp_sdr_lte_detect(const struct esp_sdr_lte_iq *x, size_t n, d
 				     double max_offset_hz, float min_ratio,
 				     struct esp_sdr_lte_work *w, struct esp_sdr_lte_cell *cell)
 {
-	struct esp_sdr_lte_cand cd[LTE_CANDIDATES];
-	int count = esp_sdr_lte_pss_search(x, n, fs, max_offset_hz, w, cd, ARRAY_SIZE_LTE(cd));
+	size_t len = esp_sdr_lte_symbol_len(fs);
+	/* The positions one window searches (esp_sdr_lte_pss_search()), and those needed. */
+	size_t step = w->n_fft > 2U * len ? w->n_fft - 2U * len + 1U : 1U;
+	size_t span = (size_t)(ESP_SDR_LTE_SYNC_PERIOD_S * fs);
 	int found = 0;
 
 	*cell = (struct esp_sdr_lte_cell){0};
-	if (count < 0) {
-		return count;
-	}
-	for (int k = 0; k < count; k++) {
-		struct esp_sdr_lte_cell c;
+	for (size_t start = 0; start == 0 || (start < span && start + len < n); start += step) {
+		struct esp_sdr_lte_cand cd[LTE_CANDIDATES];
+		int count = esp_sdr_lte_pss_search(x + start, n - start, fs, max_offset_hz, w, cd,
+						   ARRAY_SIZE_LTE(cd));
 
-		if (cd[k].ratio < min_ratio || lte_decode(x, n, fs, &cd[k], &c) != 0) {
-			continue;
+		if (count < 0) {
+			if (start == 0) {
+				return count;
+			}
+			break;
 		}
-		if (!found || (c.valid && !cell->valid) ||
-		    (c.valid == cell->valid && c.sss_metric > cell->sss_metric)) {
-			*cell = c;
-			found = 1;
+		for (int k = 0; k < count; k++) {
+			struct esp_sdr_lte_cell c;
+
+			cd[k].pos += start;
+			if (cd[k].ratio < min_ratio || lte_decode(x, n, fs, &cd[k], &c) != 0) {
+				continue;
+			}
+			if (!found || (c.valid && !cell->valid) ||
+			    (c.valid == cell->valid && c.sss_metric > cell->sss_metric)) {
+				*cell = c;
+				found = 1;
+			}
+		}
+		if (found && cell->valid) {
+			break;
 		}
 	}
 	if (found && cell->valid) {
