@@ -91,6 +91,8 @@ int esdr_fpga_columns(const struct device *dev, const uint8_t *rows, size_t n);
 /**
  * @brief Start or stop the renderer.
  *
+ * @param dev the FPGA
+ * @param on start (true) or stop the renderer
  * @param te_sync start renders on the panel's tearing-effect edge
  * @param line_dirty redraw the waterfall after every new line
  */
