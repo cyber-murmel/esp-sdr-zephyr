@@ -1,0 +1,15 @@
+sample:
+  name: ESP-SDR MCH2022 coprocessor
+  description: >-
+    Firmware for the RP2040 of the MCH2022 badge: all the stock firmware does (USB to the ESP32
+    and the FPGA, their reset lines, the I2C coprocessor), with the UARTs on DMA and a bulk
+    interface for a faster link
+common:
+  tags: esp-sdr
+  platform_allow:
+    - mch2022_rp2040
+  integration_platforms:
+    - mch2022_rp2040
+tests:
+  esp_sdr.mch2022_coproc:
+    build_only: true
