@@ -250,6 +250,9 @@ let
         ./west.yml
         ./apps
         ./boards
+        # The module's own drivers and their bindings (the MCH2022 FPGA).
+        ./drivers
+        ./dts
         ./include
         ./lib
         ./scripts/west-commands.yml
@@ -261,11 +264,22 @@ let
 
   # The west workspace, made in $out: this repo at its path, the west2nix hook copies the other
   # projects in (each a git repo, which west wants) and runs west init, then the blobs.
+  # Projects inside another project's directory (micropython-lib in micropython). The hook
+  # copies each project from the read-only store, so it could not create these in their parent:
+  # it gets the others, the build phase copies these.
+  projectPath = project: project.path or project.name;
+  isNested = project: lib.any (other: other != project
+    && lib.hasPrefix "${projectPath other}/" (projectPath project)) lock.manifest.projects;
+  nestedProjects = lib.filter isNested lock.manifest.projects;
+  hookLock = lock // {
+    manifest = lock.manifest // { projects = lib.filter (p: !isNested p) lock.manifest.projects; };
+  };
+
   westWorkspace = pkgs.stdenvNoCC.mkDerivation {
     name = "esp-sdr-west-workspace-${version}";
     src = firmwareSrc;
     nativeBuildInputs = [
-      (west2nix.mkWest2nixHook { manifest = ./west2nix.toml; })
+      (west2nix.mkWest2nixHook { manifest = hookLock; })
       pkgs.gitMinimal
       python
     ];
@@ -278,6 +292,12 @@ let
     buildPhase = ''
       cd $out
       chmod -R u+w .
+      # The projects inside another one, now that the tree is writable (in place of the empty
+      # directory a submodule leaves).
+      ${lib.concatMapStrings (project: ''
+        rm -rf ${projectPath project}
+        __west2nix_copyProject ${fetchProject project} ${projectPath project}
+      '') nestedProjects}
       # West would write this on its first command, read-only later.
       west config zephyr.base modules/zephyr
       ${lib.concatMapStrings (blob: ''
@@ -288,9 +308,34 @@ let
     dontFixup = true;
   };
 
-  mkImage = img: pkgs.stdenvNoCC.mkDerivation (env // {
+  # MicroPython's cross compiler for the frozen modules, from the pinned MicroPython: the port's
+  # build would make it inside the read-only project; MICROPY_MPYCROSS points it here instead.
+  micropythonProject = lib.findFirst (p: p.name == "micropython") null lock.manifest.projects;
+  mpy-cross = pkgs.stdenv.mkDerivation {
+    name = "mpy-cross-${builtins.substring 0 12 micropythonProject.revision}";
+    src = fetchProject micropythonProject;
+    nativeBuildInputs = [ pkgs.python3 ];
+    dontConfigure = true;
+    buildPhase = "make -C mpy-cross -j$NIX_BUILD_CORES";
+    installPhase = "install -Dm755 mpy-cross/build/mpy-cross $out/bin/mpy-cross";
+  };
+
+  # LVGL's gen_json.py (the MicroPython binding) copies LVGL's sources with their modes and then
+  # cannot delete the read-only copy: MicroPython images build with a writable copy of LVGL.
+  lvglPath = projectPath (lib.findFirst (p: p.name == "lvgl") null lock.manifest.projects);
+  writableLvgl = img: lib.optionalString (img.app == "micropython") ''
+    cp -r --no-preserve=mode ${westWorkspace}/${lvglPath} $TMPDIR/lvgl
+    modules=$(west list -f '{abspath}' | sed "s|^${westWorkspace}/${lvglPath}\$|$TMPDIR/lvgl|" | paste -sd';')
+  '';
+  lvglArg = img: lib.optionalString (img.app == "micropython") "\"-DZEPHYR_MODULES=$modules\"";
+
+  mkImage = img: pkgs.stdenvNoCC.mkDerivation (env // lib.optionalAttrs (img.app == "micropython") {
+    MICROPY_MPYCROSS = "${mpy-cross}/bin/mpy-cross";
+  } // {
     name = "esp-sdr-${img.board}-${img.name}-${version}";
-    nativeBuildInputs = build ++ [ pkgs.gitMinimal ];
+    # A host compiler for MicroPython images: LVGL's gen_json.py preprocesses lvgl.h with gcc and
+    # writes an empty description without one, so the binding's callbacks lose their user_data.
+    nativeBuildInputs = build ++ [ pkgs.gitMinimal ] ++ lib.optional (img.app == "micropython") pkgs.gcc;
     buildCommand = ''
       export HOME=$TMPDIR
       # Zephyr's caches, which it would otherwise put into ZEPHYR_BASE.
@@ -298,9 +343,10 @@ let
       # West finds its projects (and so west build) by git, in a store path someone else owns.
       git config --global safe.directory '*'
       cd ${westWorkspace}/${selfPath}
+      ${writableLvgl img}
       west build -d $TMPDIR/build -b ${img.platform} ${lib.optionalString img.sysbuild "--sysbuild"} \
         apps/${img.app} -o=-j$NIX_BUILD_CORES \
-        -- ${lib.escapeShellArgs (map (arg: "-D${arg}") img.extraArgs)}
+        -- ${lib.escapeShellArgs (map (arg: "-D${arg}") img.extraArgs)} ${lvglArg img}
       python3 ${./nix/collect.py} $TMPDIR/build ${img.app} ${img.chip} $out/${img.board}/${img.name}
     '';
   });
