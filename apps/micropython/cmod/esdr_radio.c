@@ -71,6 +71,7 @@
  *                              (esdr_gui.c)
  *   fc32_to_sc16(), sc16_to_fc32(), display_size(), reset_reason(), next_app([path]), home(),
  *   shift()                    (esdr_board.c)
+ *   crash() -> dict or None    P4: what ended the previous boot (esdr_crash.c, as on the S3)
  *   claim(mnt), release(mnt)   no-ops: the volumes are not USB drives here
  *   shell(cmd) -> str          a Zephyr shell command (mcuboot confirm, ...)
  *   usb_to_c6(seconds=60)      WHY2025 P4: USB-C port J8 to the ESP32-C6's USB-Serial-JTAG
@@ -950,6 +951,9 @@ static const mp_rom_map_elem_t esdr_globals_table[] = {
 	{MP_ROM_QSTR(MP_QSTR_fc32_to_sc16), MP_ROM_PTR(&esdr_fc32_to_sc16_obj)},
 	{MP_ROM_QSTR(MP_QSTR_sc16_to_fc32), MP_ROM_PTR(&esdr_sc16_to_fc32_obj)},
 	{MP_ROM_QSTR(MP_QSTR_reset_reason), MP_ROM_PTR(&esdr_reset_reason_obj)},
+#if defined(CONFIG_SOC_SERIES_ESP32P4)
+	{MP_ROM_QSTR(MP_QSTR_crash), MP_ROM_PTR(&esdr_crash_obj)},
+#endif
 #if defined(CONFIG_SHELL_BACKEND_DUMMY)
 	{MP_ROM_QSTR(MP_QSTR_shell), MP_ROM_PTR(&esdr_shell_obj)},
 #endif

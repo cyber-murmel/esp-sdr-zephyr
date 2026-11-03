@@ -27,6 +27,8 @@ void esdr_gen_from(struct esdr_gen *g, mp_obj_t t);
 extern const mp_obj_fun_builtin_fixed_t esdr_fc32_to_sc16_obj, esdr_sc16_to_fc32_obj,
 	esdr_display_size_obj, esdr_reset_reason_obj, esdr_home_obj, esdr_shift_obj;
 extern const mp_obj_fun_builtin_var_t esdr_next_app_obj;
+/* crash() (esdr_crash.c, where apps/common's app_crash.c is built: the S3 and the P4). */
+extern const mp_obj_fun_builtin_fixed_t esdr_crash_obj;
 /* shell(cmd): with the shell's dummy backend (CONFIG_SHELL_BACKEND_DUMMY). */
 extern const mp_obj_fun_builtin_fixed_t esdr_shell_obj;
 
