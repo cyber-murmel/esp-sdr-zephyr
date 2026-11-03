@@ -32,7 +32,9 @@ LOG_MODULE_REGISTER(app_usb, LOG_LEVEL_INF);
 static struct k_work_delayable start_work;
 /* The device once started, for "usj". */
 static struct usbd_context *usb_ctx;
+#if defined(CONFIG_APP_USB_DFU)
 static struct k_work_delayable reboot_work;
+#endif
 
 #if defined(CONFIG_APP_TRIAL_WATCHDOG) || defined(CONFIG_APP_LIVENESS_WATCHDOG)
 static const struct device *const app_wdt = DEVICE_DT_GET(DT_ALIAS(watchdog0));
@@ -55,7 +57,7 @@ static void wdt_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
 
-	if (trial && boot_is_img_confirmed()) {
+	if (IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT) && trial && boot_is_img_confirmed()) {
 		trial = false;
 		LOG_INF("image confirmed");
 		if (!IS_ENABLED(CONFIG_APP_LIVENESS_WATCHDOG)) {
