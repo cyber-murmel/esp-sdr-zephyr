@@ -94,6 +94,10 @@ test source (a tone generator) is gone: the ESP32 makes test samples. The UART p
 build variant (`debug`). New features need cells found first: `synth_ice40 -noflatten` with
 yosys `stat` shows them per module.
 
+Zephyr's `lattice,ice40-fpga` driver configures the FPGA, at 25 MHz, the configuration port's
+limit in the data sheet; frames run at 40 MHz. The board holds it in reset until a load
+(`creset-hold`), and its CRESET and CDONE go through a GPIO driver on the RP2040.
+
 ## Sample formats
 
 `gateware/tools/bfp_eval.py` compares formats on real bursts (`fpga dump`): eight bursts at

@@ -1,0 +1,16 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * The esp-sdr gateware on the MCH2022 badge's iCE40, under the board's lattice,ice40-fpga node;
+ * the interrupt on IO39.
+ */
+
+#include <freq.h>
+
+&ice40 {
+	fpga: gateware {
+		compatible = "esdr,mch2022-fpga";
+		frequency = <DT_FREQ_M(40)>;
+		irq-gpios = <&gpio1 7 GPIO_ACTIVE_LOW>;		/* GPIO39 */
+	};
+};

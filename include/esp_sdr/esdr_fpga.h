@@ -20,20 +20,7 @@
 extern "C" {
 #endif
 
-/**
- * @brief Configure the FPGA with a bitstream.
- *
- * Holds the FPGA in reset through the RP2040, releases it with CS low (SPI slave mode), then
- * streams @p image in DMA-sized chunks. The image may sit in flash or PSRAM.
- *
- * @return 0, -EIO when CDONE does not follow, or a bus error.
- */
-int esdr_fpga_load(const struct device *dev, const uint8_t *image, size_t size);
-
-/** @brief Hold the FPGA in reset (its pins float). */
-int esdr_fpga_off(const struct device *dev);
-
-/** @brief Whether a bitstream is loaded and CDONE is high. */
+/** @brief Whether the FPGA (the parent lattice,ice40-fpga device) has a bitstream. */
 bool esdr_fpga_loaded(const struct device *dev);
 
 /**
@@ -45,7 +32,7 @@ int esdr_fpga_write(const struct device *dev, const void *head, size_t head_len,
 /**
  * @brief One read frame at the read clock: send @p head, then receive @p len bytes.
  *
- * @p rx must be 4-byte aligned and @p len a multiple of 4.
+ * @p len must be a multiple of 4.
  */
 int esdr_fpga_read(const struct device *dev, const void *head, size_t head_len, void *rx,
 		   size_t len);

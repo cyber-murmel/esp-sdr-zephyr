@@ -31,13 +31,14 @@ manifest:
     # ESP32-P4-Function-EV-Board's C6 and V1.0B (ESP-IDF bootloader mode,
     # esp-hosted OTA, P4 rev v0.0), SMP on the ESP32-P4 (apps/pcap), and the
     # MIPI DBI SPI tearing effect wait and ESP32 SPI reads without a write
-    # phase (the MCH2022 FPGA), and on the RP2040 double buffered bulk IN,
-    # clearing an IN endpoint's halt and I2C target transactions kept apart
-    # when served late (branches communicator-badge, why2025-badge,
-    # mch2022-badge, p4-function-ev-board, p4-smp, zsdr).
+    # phase (the MCH2022 FPGA), on the RP2040 double buffered bulk IN, clearing
+    # an IN endpoint's halt and I2C target transactions kept apart when served
+    # late, and the MCH2022 FPGA as a lattice,ice40-fpga device, its lines on the
+    # RP2040 (branches communicator-badge, why2025-badge, mch2022-badge,
+    # p4-function-ev-board, p4-smp, zsdr).
     - name: zephyr
       remote: cyber-murmel
-      revision: 74e011a161b8ee3acc05960f52a2e3c9d97490f3 # zsdr
+      revision: 673de1d17fde621c3af4d9d749871bf4fa00d6d6 # zsdr
       path: modules/zephyr
       import:
         name-allowlist:

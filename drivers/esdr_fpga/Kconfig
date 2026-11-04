@@ -7,11 +7,12 @@ config ESDR_FPGA
 	select SPI
 	select GPIO
 	select MFD
+	select FPGA
 	# Frames of up to 64 KiB: wait for them, do not spin.
 	imply SPI_ESP32_INTERRUPT
 	help
-	  Loads the iCE40UP5K through the RP2040 (CRESET, CDONE) and SPI3, and talks to the
-	  gateware in gateware/ over the same SPI port.
+	  Loads a bitstream through the iCE40UP5K's lattice,ice40-fpga parent node at boot, and
+	  talks to the gateware in gateware/ over the same SPI port.
 
 if ESDR_FPGA
 
@@ -25,11 +26,17 @@ config ESDR_FPGA_IMAGE
 	string "Bitstream to embed and load at boot"
 	help
 	  Path of a bitstream built from gateware/ (python -m esdr_fpga.build). Empty: nothing is
-	  loaded at boot; esdr_fpga_load() can still configure the FPGA later.
+	  loaded at boot; fpga_load() can still configure the FPGA later.
 
 config ESDR_FPGA_IMAGE_EMBEDDED
 	bool
 	default y if ESDR_FPGA_IMAGE != ""
+
+# The ESP32's SPI driver copies what its DMA cannot reach, the image in flash, pixels in PSRAM,
+# through a buffer of up to 4092 bytes from the heap.
+config HEAP_MEM_POOL_ADD_SIZE_ESDR_FPGA
+	int
+	default 5120
 
 module = ESDR_FPGA
 module-str = esdr_fpga

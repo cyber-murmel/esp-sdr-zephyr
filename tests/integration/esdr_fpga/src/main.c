@@ -38,6 +38,17 @@ ZTEST(esdr_fpga, test_loaded)
 	zassert_true(reg(ESDR_FPGA_REG_STATUS) & BIT(0));
 }
 
+/* The load ran on the system work queue, through both I2C and SPI. */
+ZTEST(esdr_fpga, test_load_stack)
+{
+	size_t unused = 0;
+
+	zassert_ok(k_thread_stack_space_get(k_work_queue_thread_get(&k_sys_work_q), &unused));
+	printk("system work queue: %zu of %d bytes unused\n", unused,
+	       CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE);
+	zassert_true(unused >= CONFIG_SYSTEM_WORKQUEUE_STACK_SIZE / 5);
+}
+
 static uint16_t tx[256], rx[256];
 
 ZTEST(esdr_fpga, test_link)

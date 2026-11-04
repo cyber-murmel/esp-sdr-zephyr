@@ -10,6 +10,7 @@
 
 #include <zephyr/device.h>
 #include <zephyr/drivers/display.h>
+#include <zephyr/drivers/fpga.h>
 #include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>
 
@@ -22,10 +23,11 @@
 #endif
 
 static const struct device *const fpga = DEVICE_DT_GET(DT_NODELABEL(fpga));
+static const struct device *const ice40 = DEVICE_DT_GET(DT_NODELABEL(ice40));
 
 static int cmd_off(const struct shell *sh, size_t argc, char **argv)
 {
-	int ret = esdr_fpga_off(fpga);
+	int ret = fpga_off(ice40);
 
 	shell_print(sh, "off: %d", ret);
 	return ret;

@@ -1,18 +1,17 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 description: |
-  esp-sdr gateware (gateware/) on the MCH2022 badge's iCE40UP5K. The FPGA's configuration port
-  doubles as its SPI slave; the RP2040 holds CRESET_B and reports CDONE.
+  esp-sdr gateware (gateware/) on the MCH2022 badge's iCE40UP5K: a child of the board's
+  lattice,ice40-fpga node, which configures the FPGA. The configuration port doubles as the
+  gateware's SPI slave.
 
 compatible: "esdr,mch2022-fpga"
 
-include: spi-device.yaml
-
 properties:
-  mfd:
-    type: phandle
+  frequency:
+    type: int
     required: true
-    description: The badge's RP2040 (badgeteam,mch2022-rp2040).
+    description: SPI clock for frames; the parent's is the configuration port's, at most 25 MHz.
 
   irq-gpios:
     type: phandle-array
