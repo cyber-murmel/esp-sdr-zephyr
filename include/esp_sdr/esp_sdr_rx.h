@@ -42,6 +42,8 @@ extern "C" {
 /** Decimation factor limits for esp_sdr_rx_capture_decimated(). */
 #define ESP_SDR_RX_DECIM_MIN 2U
 #define ESP_SDR_RX_DECIM_MAX 160U
+/** Outputs esp_sdr_rx_capture_decimated() drops while its filter settles: it gives count / m less these. */
+#define ESP_SDR_RX_DECIM_SETTLE 3U
 
 /** Fold factor limits for esp_sdr_rx_capture_folded(). */
 #define ESP_SDR_RX_FOLD_MIN 2U
@@ -150,6 +152,18 @@ int esp_sdr_rx_capture_iq(enum esp_sdr_rate rate, size_t count, struct esp_sdr_i
  */
 int esp_sdr_rx_capture_bank(enum esp_sdr_rate rate, size_t count, int bank,
 			    struct esp_sdr_rx_burst *burst);
+
+/**
+ * @brief Have work done while a capture runs.
+ *
+ * The engine needs no CPU while it fills the bank, so @p fn is called once in each capture from
+ * its start, in the capturing thread, instead of spinning all that time. It must not start a
+ * capture or read the bank. It may take longer than the capture, which then only ends late.
+ *
+ * @param fn Called with @p user; NULL for none.
+ * @param user Passed to @p fn.
+ */
+void esp_sdr_rx_set_capture_hook(void (*fn)(void *user), void *user);
 
 /**
  * @brief Capture a burst and decimate it with a third order CIC filter.
