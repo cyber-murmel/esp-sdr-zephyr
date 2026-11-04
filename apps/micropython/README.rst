@@ -54,12 +54,20 @@ What runs:
      - drawn on the ST7789V display (LVGL canvases filled by C helpers), placed as the
        export's layouts place them, in the board's colours (``modules/dusk.py``, derived in
        OkLab by ``tools/dusk.py``): a waterfall uses its heat scale, dark purple through
-       orange to near white, whatever colour map the export sets
+       orange to near white, whatever colour map the export sets. GRC's Grid switch
+       (``enable_grid()``) gives a waterfall fine and coarse lines for frequency and time,
+       spaced to suit the span and the plot, and named on its title row; frequency lines
+       sit at multiples of their spacing, time lines scroll with their rows.
+       ``waterfall_sink_c.set_grid_spacing(freq_fine, freq_coarse, time_fine, time_coarse)``
+       (Hz and seconds, not in GNU Radio; ``None``: automatic, 0: off) sets them. The MCH2022
+       badge's FPGA draws its waterfall without a grid
    * - QT GUI Range, Chooser (combo box and radio buttons), Check Box, Push Button, Label,
        Entry (shown, not editable)
      - LVGL widgets; the rotary encoder moves between them (turn), its switch edits or
-       presses the selected one, and the export's setters run (a frequency variable retunes;
-       a waterfall keeps its history). On a Range of more than 100 steps a fast turn takes
+       presses the selected one, and the export's setters run (a frequency variable retunes:
+       a waterfall's picture moves with it, showing 0 power where it has no history, and comes
+       back when tuned back; on the FPGA it stays put; a new sample rate clears it). On a Range
+       of more than 100 steps a fast turn takes
        bigger steps (n detents between two display updates move n * n steps). A value the
        flowgraph refuses, such as a frequency outside the range the PLL locks over (about 1.8
        to 2.8 GHz, it varies from chip to chip), stops the slider at the last value that works
@@ -209,7 +217,8 @@ author). Run it again after changing the flowgraph; the revision goes up when th
 The menu lists:
 
 - the apps bundled with the firmware, ``eggs/``: Spectrum, Waterfall (250 kS/s to 2 MS/s,
-  gapless, or 80 MS/s: the bursts in the gapless stream where the radio has it, else bursts),
+  gapless, 40 MS/s in bursts, or 80 MS/s: the bursts in the gapless stream where the radio has
+  it, else bursts),
   Constellation,
   Receiver (tabs, radio buttons, a check box), Tone (transmits), Data link (two-way messages,
   `Data link`_) and, on the WHY2025 and MCH2022 badges, Bursts (80 MHz in channels, not a GRC
@@ -343,6 +352,9 @@ reset):
 - ``egg_sliders.py``: a bundled app (``EGG='"spectrum"'``) for a few seconds, imported as the
   launcher does, with every slider moved part way through its range (floats, as the knob gives
   them; ``SLIDERS=0``: none, a smoke run), and the frames its bands drew;
+- ``waterfall_grid.py``: the Waterfall egg's picture through a retune and back, every rate of
+  its chooser, the grid's spacings and what a redraw costs (``HOLD=1``: also that what is on the
+  air stays on its frequency);
 - ``datalink_auto.py``: the Data link egg in auto mode on two boards at once (start both),
   then the node's counters: ``acked`` against ``msgs``;
 - ``trig_snapshots.py``: triggered snapshots (the WHY2025 and MCH2022 badges), channelized: how

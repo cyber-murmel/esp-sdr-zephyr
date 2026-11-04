@@ -32,6 +32,23 @@ def run_main(monkeypatch):
     return run
 
 
+@pytest.fixture(scope="session")
+def wf_clib(tmp_path_factory):
+    """The waterfall's picture as the board draws it (apps/micropython/cmod/esdr_wf.c), built once
+    with the host compiler; None without a compiler."""
+    cc = shutil.which("cc") or shutil.which("gcc")
+    if cc is None:
+        return None
+    out = tmp_path_factory.mktemp("wf") / "libesdr_wf.so"
+    src = REPO / "apps/micropython/cmod/esdr_wf.c"
+    subprocess.run([cc, "-O2", "-Wall", "-Wextra", "-Werror", "-shared", "-fPIC", "-o", str(out),
+                    str(src)], check=True)
+    lib = ctypes.CDLL(str(out))
+    lib.esdr_wf_compose.restype = None
+    lib.esdr_wf_compose.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+    return lib
+
+
 class FskFrame(ctypes.Structure):
     """struct esdr_fsk_frame of apps/micropython/cmod/esdr_fsk.h."""
     _fields_ = [("len", ctypes.c_uint32), ("errors", ctypes.c_uint32), ("end", ctypes.c_uint32),

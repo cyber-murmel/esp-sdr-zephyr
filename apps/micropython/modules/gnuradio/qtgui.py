@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """qtgui for GRC Qt GUI exports on the board. freq_sink, waterfall_sink and time_sink draw
 on the board's display (_gui.py); the other sinks accept their samples and draw nothing.
-Range and RangeWidget become variables the encoder changes. Line colours, labels, grids and
-other styling calls are accepted and ignored. While the radio streams gapless with the
-channelizer (soapy.source at 80 MS/s), the spectrum sinks draw the bursts it found, each at its
-channel, over quiet noise (esdr.chan_spectrum()), instead of the latest samples' spectrum."""
+Range and RangeWidget become variables the encoder changes. Line colours, labels and other
+styling calls are accepted and ignored, grids except a waterfall's. While the radio streams
+gapless with the channelizer (soapy.source at 80 MS/s), the spectrum sinks draw the bursts it
+found, each at its channel, over quiet noise (esdr.chan_spectrum()), instead of the latest
+samples' spectrum."""
 
 import array
 import framebuf
@@ -12,7 +13,7 @@ import time
 
 import dusk
 import esdr
-from gnuradio import _fpga, _gui, gr
+from gnuradio import _fpga, _gui, _wfgrid, gr
 from PyQt5._nothing import Nothing
 
 TRIG_MODE_FREE = 0
@@ -198,10 +199,13 @@ class _spectrum(_sink):
         return "{} {}".format(self._title, _gui.eng(self._fc, "Hz"))
 
     def _spectrum(self):
+        """The columns of the latest spectrum; how many samples have come in all, or None for a
+        row of the channelizer's."""
         if _composed(self._cols):
-            return
-        esdr.rx_latest(self._src)
+            return None
+        total = esdr.rx_latest(self._src)
         esdr.psd(self._src, self._cols, self._state, self._avg, self._win)
+        return total
 
 
 class freq_sink_c(_spectrum):
@@ -238,7 +242,20 @@ class freq_sink_c(_spectrum):
         esdr.fb_trace(buf, self._w, x, y, w, h, self._cols, self._ymin, self._ymax, _gui.TRACE[0])
 
 
+def _pair(fine, coarse, unit):
+    # "100k/500kHz", one value with one level, "" with none.
+    parts = [_gui.eng(v) for v in (fine, coarse) if v]
+    return "/".join(parts) + unit if parts else ""
+
+
 class waterfall_sink_c(_spectrum):
+    """The rows hold only power, in a ring (_img, newest at _rhead), each with the view it was
+    drawn in (_col0) and its time line (_marks). Every redraw puts them on the canvas with the grid
+    over them, which on the WHY badge beats scrolling the canvas in place (160 frames against 156
+    in 15 s). A retune changes the view and no row: the picture moves with the frequency, 0 power
+    where no row knows it, and a tune back finds the rows again. A new span clears them: old rows
+    are at a scale the new axis cannot show. The FPGA draws none of this (no grid, no move)."""
+
     _draws = True
     _accel = "waterfall"
 
@@ -247,6 +264,40 @@ class waterfall_sink_c(_spectrum):
         self._imin = -140.0
         self._imax = 10.0
         self._palette = _gui.PALETTE
+        self._img = None
+        self._fbi = None
+        self._shape = None
+        self._rows = 0
+        self._rhead = 0
+        self._col0 = None
+        self._marks = None
+        self._lines = array.array("H")
+        self._last = 0
+        # What the export asks for, integers before a float can round them; what is drawn.
+        self._hz = int(fc)
+        self._span = max(1, int(bw))
+        self._drawn = (self._hz, self._span)
+        self._anchor = self._hz
+        self._view = 0
+        self._dirty = True
+        self._grid = False
+        self._spacing = (None, None, None, None)
+        self._notes = ""
+        self._time = _wfgrid.TimeMarks()
+        self._settle = _wfgrid.Settle()
+
+    def enable_grid(self, on=True):
+        self._grid = bool(on)
+        self._dirty = True
+
+    def set_grid_spacing(self, freq_fine=None, freq_coarse=None, time_fine=None, time_coarse=None):
+        """Not in GNU Radio, GRC never calls it: the grid's fine and coarse lines, in Hz and in
+        seconds. None follows the span and the plot's height in 1, 2, 5 steps, 0 turns a level off.
+        Frequency lines closer than 6 columns are not drawn. Rows already drawn keep the time lines
+        only while the time spacings stay the same."""
+        self._spacing = (_wfgrid.spacing(freq_fine), _wfgrid.spacing(freq_coarse),
+                         _wfgrid.spacing(time_fine, 1000), _wfgrid.spacing(time_coarse, 1000))
+        self._dirty = True
 
     def set_intensity_range(self, imin, imax):
         # An upper level at or below the lower one (two sliders crossed) leaves 1 dB.
@@ -262,31 +313,105 @@ class waterfall_sink_c(_spectrum):
             _fpga.configure()
 
     def set_frequency_range(self, fc, bw):
-        # A retune keeps the history: only the label changes.
+        # An export calls this before it tunes, and RangeWidget.set_index() takes any exception
+        # for a refused tune and tries other values: this only notes the request, the next
+        # _draw() applies the last one, which is the one the radio took.
         self._fc = float(fc)
         self._bw = float(bw)
-        if self._h:
+        self._hz = int(fc)
+        self._span = max(1, int(bw))
+        self._dirty = True
+        if self._fpga:
             self._head()
             self._canvas.invalidate()
-        if self._fpga:
             _fpga.configure()
+
+    def _label(self):
+        return super()._label() + ("" if self._fpga else self._notes)
+
+    def _make(self, parent, x, y, w, h):
+        super()._make(parent, x, y, w, h)
+        if self._fpga:
+            self._img = self._fbi = self._col0 = self._marks = None
+            self._shape = None
 
     def _setup(self):
         super()._setup()
-        fb = self._fbo
+        x, y, w, rows = self._plot()
+        if rows <= 0:
+            self._img = self._fbi = None
+            self._shape = None
+            return
+        # The ring stays through a new layout of the same size (a tab change).
+        if self._shape != (w, rows):
+            self._shape = (w, rows)
+            self._rows = rows
+            self._rhead = 0
+            self._img = None
+            self._img = bytearray(w * rows * 2)
+            self._fbi = framebuf.FrameBuffer(self._img, w, rows, framebuf.RGB565)
+            self._forget()
+        self._last = time.ticks_ms()
+        self._apply()
+        self._compose()
+
+    def _forget(self):
+        # All history unknown: the cold end of the scale, which is 0 power whatever the gamma.
+        self._fbi.fill(self._palette[0])
+        self._col0 = array.array("i", [0] * self._rows)
+        self._marks = bytearray(self._rows)
+        self._anchor = self._hz
+        self._view = 0
+        self._drawn = (self._hz, self._span)
+
+    def _apply(self):
+        self._dirty = False
+        wanted = (self._hz, self._span)
+        if self._span != self._drawn[1]:
+            self._forget()
+            self._settle.retuned()
+        elif wanted != self._drawn:
+            self._drawn = wanted
+            self._settle.retuned()
+        self._view = _wfgrid.view(self._hz, self._anchor, self._w, self._span)
+        ff = fc = tf = tc = 0
+        if self._grid:
+            ff, fc = _wfgrid.freq_levels(self._spacing[0], self._spacing[1], self._span, self._w)
+            tf, tc = _wfgrid.time_levels(self._spacing[2], self._spacing[3], self._rows,
+                                         self._update)
+        self._lines = _wfgrid.lines(self._hz, self._span, self._w, self._size, ff, fc)
+        if self._time.set(tf, tc):
+            self._marks = bytearray(self._rows)
+        self._notes = "".join(" " + t for t in (_pair(ff, fc, "Hz"),
+                                                _pair(tf / 1000, tc / 1000, "s")) if t)
+        self._head()
+
+    def _compose(self):
         x, y, w, h = self._plot()
-        # The cold end of the scale, so the first rows scroll in over the same colour.
-        fb.fill_rect(x, y, w, h, self._palette[0])
+        esdr.fb_wf_compose(self._buf, self._w, x, y, w, h, self._img, self._rhead, self._col0,
+                           self._marks, self._view, self._palette[0], self._lines, _gui.FG,
+                           _gui.MUTED)
 
     def _draw(self):
         if self._fpga:
             _fpga.feed()
             return
-        self._spectrum()
-        buf = self._buf
-        x, y, w, h = self._plot()
-        esdr.fb_scroll(buf, self._w, x, y, w, h)
-        esdr.fb_wf_row(buf, self._w, x, y, w, 1, self._cols, self._imin, self._imax, self._palette)
+        if self._img is None:
+            return
+        total = self._spectrum()
+        if self._dirty:
+            self._apply()
+        now = time.ticks_ms()
+        self._rhead = r = (self._rhead - 1) % self._rows
+        self._col0[r] = self._view
+        self._marks[r] = self._time.row(time.ticks_diff(now, self._last))
+        self._last = now
+        if self._settle.known(total, self._size):
+            esdr.fb_wf_row(self._img, self._w, 0, r, self._w, 1, self._cols, self._imin,
+                           self._imax, self._palette)
+        else:
+            self._fbi.fill_rect(0, r, self._w, 1, self._palette[0])
+        self._compose()
 
 
 class time_sink_c(_sink):

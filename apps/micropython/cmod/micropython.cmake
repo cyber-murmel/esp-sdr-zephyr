@@ -18,6 +18,7 @@ elseif(CONFIG_SOC_SERIES_ESP32P4 OR CONFIG_SOC_SERIES_ESP32)
     ${CMAKE_CURRENT_LIST_DIR}/esdr_chan.c
     ${CMAKE_CURRENT_LIST_DIR}/esdr_board.c
     ${CMAKE_CURRENT_LIST_DIR}/esdr_gui.c
+    ${CMAKE_CURRENT_LIST_DIR}/esdr_wf.c
     ${CMAKE_CURRENT_LIST_DIR}/esdr_fsk.c
     ${CMAKE_CURRENT_LIST_DIR}/esdr_link.c)
   # The crash records of apps/common, built on the P4 (common.cmake).
@@ -36,6 +37,7 @@ else()
     ${CMAKE_CURRENT_LIST_DIR}/esdr_rx.c
     ${CMAKE_CURRENT_LIST_DIR}/esdr_tx.c
     ${CMAKE_CURRENT_LIST_DIR}/esdr_gui.c
+    ${CMAKE_CURRENT_LIST_DIR}/esdr_wf.c
     ${CMAKE_CURRENT_LIST_DIR}/esdr_fsk.c
     ${CMAKE_CURRENT_LIST_DIR}/esdr_link.c)
 endif()

@@ -6,7 +6,7 @@ options:
     cmake_opt: ''
     comment: ''
     copyright: ''
-    description: 'A gapless waterfall of 250 kHz to 2 MHz (a chooser, up to the board''s top rate: 2 MS/s on the WHY2025 badge, 500 kS/s on the S3), or of 80 MHz: without a gap where the radio streams it (the WHY2025 badge: the bursts its channelizer finds, each at its channel, over quiet noise), else from bursts at 80 MS/s; the knob tunes from 1.8 to 2.8 GHz and sets the lower and upper levels of the colour scale (at 80 MHz the lower 3 dB lower, the upper 22 dB higher).'
+    description: 'A gapless waterfall of 250 kHz to 2 MHz (a chooser, up to the board''s top rate: 2 MS/s on the WHY2025 badge, 500 kS/s on the S3), or of 80 MHz: without a gap where the radio streams it (the WHY2025 badge: the bursts its channelizer finds, each at its channel, over quiet noise), else from bursts at 80 MS/s, or of 40 MHz from bursts; the knob tunes from 1.8 to 2.8 GHz and sets the lower and upper levels of the colour scale (at 40 and 80 MHz the lower 3 dB lower, the upper 22 dB higher).'
     gen_cmake: 'On'
     gen_linking: dynamic
     generate_options: qt_gui
@@ -102,19 +102,19 @@ blocks:
     comment: ''
     gui_hint: ''
     label: Sample rate
-    label0: 2 MS/s
-    label1: 1 MS/s
-    label2: 500 kS/s
-    label3: 250 kS/s
-    label4: 80 MS/s
-    labels: '[]'
-    num_opts: '5'
-    option0: 2e6
-    option1: 1e6
-    option2: 500e3
-    option3: 250e3
-    option4: 80e6
-    options: '[0, 1, 2]'
+    label0: ''
+    label1: ''
+    label2: ''
+    label3: ''
+    label4: ''
+    labels: '["250 kS/s", "500 kS/s", "1 MS/s", "2 MS/s", "40 MS/s", "80 MS/s"]'
+    num_opts: '0'
+    option0: '0'
+    option1: '1'
+    option2: '2'
+    option3: '3'
+    option4: '4'
+    options: '[250e3, 500e3, 1e6, 2e6, 40e6, 80e6]'
     orient: Qt.QVBoxLayout
     type: real
     value: 250e3
@@ -157,7 +157,7 @@ blocks:
     fc: freq
     fftsize: '256'
     freqhalf: 'True'
-    grid: 'False'
+    grid: 'True'
     gui_hint: ''
     int_max: upper + (22 if samp_rate > 10e6 else 0)
     int_min: lower - (3 if samp_rate > 10e6 else 0)

@@ -707,7 +707,7 @@ extern const mp_obj_fun_builtin_var_t esdr_fsk_rx_init_obj, esdr_fsk_rx_obj, esd
 /* esdr_gui.c */
 extern const mp_obj_fun_builtin_fixed_t esdr_rx_latest_obj, esdr_iq_cols_obj;
 extern const mp_obj_fun_builtin_var_t esdr_psd_obj, esdr_fb_trace_obj, esdr_fb_wf_row_obj,
-	esdr_fb_scroll_obj, esdr_fb_points_obj;
+	esdr_fb_scroll_obj, esdr_fb_wf_compose_obj, esdr_fb_points_obj;
 
 static const mp_rom_obj_tuple_t esdr_burst_rates_obj = {
 	{&mp_type_tuple},
@@ -782,6 +782,7 @@ static const mp_rom_map_elem_t esdr_globals_table[] = {
 	{MP_ROM_QSTR(MP_QSTR_fb_trace), MP_ROM_PTR(&esdr_fb_trace_obj)},
 	{MP_ROM_QSTR(MP_QSTR_fb_wf_row), MP_ROM_PTR(&esdr_fb_wf_row_obj)},
 	{MP_ROM_QSTR(MP_QSTR_fb_scroll), MP_ROM_PTR(&esdr_fb_scroll_obj)},
+	{MP_ROM_QSTR(MP_QSTR_fb_wf_compose), MP_ROM_PTR(&esdr_fb_wf_compose_obj)},
 	{MP_ROM_QSTR(MP_QSTR_fb_points), MP_ROM_PTR(&esdr_fb_points_obj)},
 	{MP_ROM_QSTR(MP_QSTR_RATES), MP_ROM_PTR(&esdr_rates_obj)},
 	{MP_ROM_QSTR(MP_QSTR_BURST_RATES), MP_ROM_PTR(&esdr_burst_rates_obj)},

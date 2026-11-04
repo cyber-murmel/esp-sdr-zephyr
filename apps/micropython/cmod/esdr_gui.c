@@ -23,6 +23,7 @@
 #include "esdr_defs.h"
 #include "esdr_gui.h"
 #include "esdr_rx.h"
+#include "esdr_wf.h"
 
 #define FULL_SCALE 16384.0f
 
@@ -246,6 +247,40 @@ static mp_obj_t esdr_fb_scroll(size_t n_args, const mp_obj_t *args)
 	return mp_const_none;
 }
 MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_fb_scroll_obj, 6, 6, esdr_fb_scroll);
+
+/*
+ * fb_wf_compose(fb, stride, x, y, w, h, img, head, col0, marks, view, fill, lines, coarse, fine):
+ * the waterfall's rows out of their ring, with the grid over them (esdr_wf.h): img holds h rows
+ * of w pixels, col0 (int32) and marks (bytes) an entry per row, lines (uint16) the columns.
+ */
+static mp_obj_t esdr_fb_wf_compose(size_t n_args, const mp_obj_t *args)
+{
+	struct fb_rect r;
+	struct esdr_wf_src s;
+	size_t ilen, clen, mlen, llen;
+
+	ARG_UNUSED(n_args);
+	fb_rect(&r, args);
+	s.img = esdr_buffer(args[6], &ilen, MP_BUFFER_READ, 2);
+	s.head = (int)mp_obj_get_int(args[7]);
+	s.col0 = esdr_buffer(args[8], &clen, MP_BUFFER_READ, 4);
+	s.marks = esdr_buffer(args[9], &mlen, MP_BUFFER_READ, 1);
+	s.view = (int32_t)mp_obj_get_int(args[10]);
+	s.fill = (uint16_t)mp_obj_get_int(args[11]);
+	s.lines = esdr_buffer(args[12], &llen, MP_BUFFER_READ, 2);
+	s.coarse = (uint16_t)mp_obj_get_int(args[13]);
+	s.fine = (uint16_t)mp_obj_get_int(args[14]);
+	s.w = r.w;
+	s.rows = r.h;
+	s.nlines = (int)(llen / 2U);
+	if (ilen < (size_t)r.w * (size_t)r.h * 2U || clen / 4U < (size_t)r.h ||
+	    mlen < (size_t)r.h || s.head < 0 || s.head >= r.h) {
+		mp_raise_ValueError(MP_ERROR_TEXT("fb_wf_compose: a ring of h rows of w, head in it"));
+	}
+	esdr_wf_compose(&r.px[r.y * r.stride + r.x], r.stride, &s);
+	return mp_const_none;
+}
+MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_fb_wf_compose_obj, 15, 15, esdr_fb_wf_compose);
 
 /*
  * fb_points(fb, stride, x, y, w, h, samples, xmin, xmax, ymin, ymax, colour): a constellation,

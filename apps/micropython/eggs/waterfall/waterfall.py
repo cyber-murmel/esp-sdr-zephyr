@@ -7,7 +7,7 @@
 # GNU Radio Python Flow Graph
 # Title: Waterfall
 # Author: esp-sdr
-# Description: A gapless waterfall of 250 kHz to 2 MHz (a chooser, up to the board's top rate: 2 MS/s on the WHY2025 badge, 500 kS/s on the S3), or of 80 MHz: without a gap where the radio streams it (the WHY2025 badge: the bursts its channelizer finds, each at its channel, over quiet noise), else from bursts at 80 MS/s; the knob tunes from 1.8 to 2.8 GHz and sets the lower and upper levels of the colour scale (at 80 MHz the lower 3 dB lower, the upper 22 dB higher).
+# Description: A gapless waterfall of 250 kHz to 2 MHz (a chooser, up to the board's top rate: 2 MS/s on the WHY2025 badge, 500 kS/s on the S3), or of 80 MHz: without a gap where the radio streams it (the WHY2025 badge: the bursts its channelizer finds, each at its channel, over quiet noise), else from bursts at 80 MS/s, or of 40 MHz from bursts; the knob tunes from 1.8 to 2.8 GHz and sets the lower and upper levels of the colour scale (at 40 and 80 MHz the lower 3 dB lower, the upper 22 dB higher).
 # GNU Radio version: 3.10.12.0
 
 from PyQt5 import Qt
@@ -78,9 +78,9 @@ class waterfall(gr.top_block, Qt.QWidget):
         self._upper_win = qtgui.RangeWidget(self._upper_range, self.set_upper, "Upper dB", "counter_slider", float, QtCore.Qt.Horizontal)
         self.top_layout.addWidget(self._upper_win)
         # Create the options list
-        self._samp_rate_options = [2000000.0, 1000000.0, 500000.0, 250000.0, 80000000.0]
+        self._samp_rate_options = [250000.0, 500000.0, 1000000.0, 2000000.0, 40000000.0, 80000000.0]
         # Create the labels list
-        self._samp_rate_labels = ['2 MS/s', '1 MS/s', '500 kS/s', '250 kS/s', '80 MS/s']
+        self._samp_rate_labels = ['250 kS/s', '500 kS/s', '1 MS/s', '2 MS/s', '40 MS/s', '80 MS/s']
         # Create the combo box
         self._samp_rate_tool_bar = Qt.QToolBar(self)
         self._samp_rate_tool_bar.addWidget(Qt.QLabel("Sample rate" + ": "))
@@ -123,7 +123,7 @@ class waterfall(gr.top_block, Qt.QWidget):
             None # parent
         )
         self.qtgui_waterfall_sink_x_0.set_update_time(0.02)
-        self.qtgui_waterfall_sink_x_0.enable_grid(False)
+        self.qtgui_waterfall_sink_x_0.enable_grid(True)
         self.qtgui_waterfall_sink_x_0.enable_axis_labels(True)
 
 
