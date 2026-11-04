@@ -7,7 +7,7 @@
 # GNU Radio Python Flow Graph
 # Title: Waterfall
 # Author: esp-sdr
-# Description: A gapless waterfall of 250 kHz to 2 MHz (a chooser, up to the board's top rate: 2 MS/s on the WHY2025 badge, 500 kS/s on the S3), or of 80 MHz: without a gap where the radio streams it (the WHY2025 badge: the bursts its channelizer finds, each at its channel, over quiet noise), else from bursts at 80 MS/s, or of 40 MHz from bursts; the knob tunes from 1.8 to 2.8 GHz and sets the lower and upper levels of the colour scale (at 40 and 80 MHz the lower 3 dB lower, the upper 22 dB higher).
+# Description: A gapless waterfall of 250 kHz to 2 MHz (a chooser, up to the board's top rate: 2 MS/s on the WHY2025 badge, 500 kS/s on the S3), or of 80 MHz: without a gap where the radio streams it (the WHY2025 badge: the bursts its channelizer finds, each at its channel, over quiet noise), else from bursts at 80 MS/s, or of 40 MHz from bursts; the knob tunes from 1.8 to 2.8 GHz and sets the radio's gain (or leaves it to AGC) and the lower and upper levels of the colour scale (at 40 and 80 MHz the lower 3 dB lower, the upper 22 dB higher).
 # GNU Radio version: 3.10.12.0
 
 from PyQt5 import Qt
@@ -68,7 +68,9 @@ class waterfall(gr.top_block, Qt.QWidget):
         self.upper = upper = -57
         self.samp_rate = samp_rate = 250e3
         self.lower = lower = -77
+        self.gain = gain = 48
         self.freq = freq = 2.44e9
+        self.agc = agc = True
 
         ##################################################
         # Blocks
@@ -96,23 +98,40 @@ class waterfall(gr.top_block, Qt.QWidget):
         self._lower_range = qtgui.Range(-110, -20, 1, -77, 200)
         self._lower_win = qtgui.RangeWidget(self._lower_range, self.set_lower, "Lower dB", "counter_slider", float, QtCore.Qt.Horizontal)
         self.top_layout.addWidget(self._lower_win)
+        self._gain_range = qtgui.Range(0, 73, 1, 48, 200)
+        self._gain_win = qtgui.RangeWidget(self._gain_range, self.set_gain, "Gain", "counter_slider", float, QtCore.Qt.Horizontal)
+        self.top_grid_layout.addWidget(self._gain_win, 0, 0, 1, 1)
+        for r in range(0, 1):
+            self.top_grid_layout.setRowStretch(r, 1)
+        for c in range(0, 1):
+            self.top_grid_layout.setColumnStretch(c, 1)
         self._freq_range = qtgui.Range(1.8e9, 2.8e9, 1e6, 2.44e9, 200)
         self._freq_win = qtgui.RangeWidget(self._freq_range, self.set_freq, "Frequency", "counter_slider", float, QtCore.Qt.Horizontal)
         self.top_layout.addWidget(self._freq_win)
-        self.soapy_hackrf_source_0 = None
-        dev = 'driver=hackrf'
+        _agc_check_box = Qt.QCheckBox("AGC")
+        self._agc_choices = {True: True, False: False}
+        self._agc_choices_inv = dict((v,k) for k,v in self._agc_choices.items())
+        self._agc_callback = lambda i: Qt.QMetaObject.invokeMethod(_agc_check_box, "setChecked", Qt.Q_ARG("bool", self._agc_choices_inv[i]))
+        self._agc_callback(self.agc)
+        _agc_check_box.stateChanged.connect(lambda i: self.set_agc(self._agc_choices[bool(i)]))
+        self.top_grid_layout.addWidget(_agc_check_box, 0, 1, 1, 1)
+        for r in range(0, 1):
+            self.top_grid_layout.setRowStretch(r, 1)
+        for c in range(1, 2):
+            self.top_grid_layout.setColumnStretch(c, 1)
+        self.soapy_plutosdr_source_0 = None
+        dev = 'driver=plutosdr'
         stream_args = ''
         tune_args = ['']
         settings = ['']
 
-        self.soapy_hackrf_source_0 = soapy.source(dev, "fc32", 1, '',
+        self.soapy_plutosdr_source_0 = soapy.source(dev, "fc32", 1, '',
                                   stream_args, tune_args, settings)
-        self.soapy_hackrf_source_0.set_sample_rate(0, samp_rate)
-        self.soapy_hackrf_source_0.set_bandwidth(0, 0)
-        self.soapy_hackrf_source_0.set_frequency(0, freq)
-        self.soapy_hackrf_source_0.set_gain(0, 'AMP', False)
-        self.soapy_hackrf_source_0.set_gain(0, 'LNA', min(max(16, 0.0), 40.0))
-        self.soapy_hackrf_source_0.set_gain(0, 'VGA', min(max(16, 0.0), 62.0))
+        self.soapy_plutosdr_source_0.set_sample_rate(0, samp_rate)
+        self.soapy_plutosdr_source_0.set_bandwidth(0, 0)
+        self.soapy_plutosdr_source_0.set_gain_mode(0, agc)
+        self.soapy_plutosdr_source_0.set_frequency(0, freq)
+        self.soapy_plutosdr_source_0.set_gain(0, min(max(gain, 0.0), 73.0))
         self.qtgui_waterfall_sink_x_0 = qtgui.waterfall_sink_c(
             256, #size
             window.WIN_BLACKMAN_hARRIS, #wintype
@@ -153,7 +172,7 @@ class waterfall(gr.top_block, Qt.QWidget):
         ##################################################
         # Connections
         ##################################################
-        self.connect((self.soapy_hackrf_source_0, 0), (self.qtgui_waterfall_sink_x_0, 0))
+        self.connect((self.soapy_plutosdr_source_0, 0), (self.qtgui_waterfall_sink_x_0, 0))
 
 
     def closeEvent(self, event):
@@ -179,7 +198,7 @@ class waterfall(gr.top_block, Qt.QWidget):
         self._samp_rate_callback(self.samp_rate)
         self.qtgui_waterfall_sink_x_0.set_frequency_range(self.freq, self.samp_rate)
         self.qtgui_waterfall_sink_x_0.set_intensity_range(self.lower - (3 if self.samp_rate > 10e6 else 0), self.upper + (22 if self.samp_rate > 10e6 else 0))
-        self.soapy_hackrf_source_0.set_sample_rate(0, self.samp_rate)
+        self.soapy_plutosdr_source_0.set_sample_rate(0, self.samp_rate)
 
     def get_lower(self):
         return self.lower
@@ -188,13 +207,28 @@ class waterfall(gr.top_block, Qt.QWidget):
         self.lower = lower
         self.qtgui_waterfall_sink_x_0.set_intensity_range(self.lower - (3 if self.samp_rate > 10e6 else 0), self.upper + (22 if self.samp_rate > 10e6 else 0))
 
+    def get_gain(self):
+        return self.gain
+
+    def set_gain(self, gain):
+        self.gain = gain
+        self.soapy_plutosdr_source_0.set_gain(0, min(max(self.gain, 0.0), 73.0))
+
     def get_freq(self):
         return self.freq
 
     def set_freq(self, freq):
         self.freq = freq
         self.qtgui_waterfall_sink_x_0.set_frequency_range(self.freq, self.samp_rate)
-        self.soapy_hackrf_source_0.set_frequency(0, self.freq)
+        self.soapy_plutosdr_source_0.set_frequency(0, self.freq)
+
+    def get_agc(self):
+        return self.agc
+
+    def set_agc(self, agc):
+        self.agc = agc
+        self._agc_callback(self.agc)
+        self.soapy_plutosdr_source_0.set_gain_mode(0, self.agc)
 
 
 

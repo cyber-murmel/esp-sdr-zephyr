@@ -124,14 +124,17 @@ class source(gr.basic_block):
         return self._freq
 
     def set_gain_mode(self, channel, automatic):
-        self._auto = bool(automatic)
-        self._changed()
+        automatic = bool(automatic)
+        if automatic != self._auto:
+            self._auto = automatic
+            self._changed()
 
     def set_gain(self, channel, name_or_gain, gain=None):
         value = name_or_gain if gain is None else gain
-        self._auto = False
         self._gain = int(max(0, min(esdr.rx_gain_max(), float(value))))
-        self._changed()
+        # An export sets the mode, then the gain: under AGC the value waits for its turn.
+        if not self._auto:
+            self._changed()
 
     def get_gain(self, channel=0, name=None):
         return self._gain

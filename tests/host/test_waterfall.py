@@ -386,6 +386,9 @@ class FakeRadio(types.ModuleType):
         self.advance = 1000
         self.top = None
         self.tuned = []
+        self.gains = []
+        self.gain_max = 79
+        self.started = []
         self.composes = 0
 
     def init(self):
@@ -395,16 +398,16 @@ class FakeRadio(types.ModuleType):
         pass
 
     def rx_gain(self, g):
-        pass
+        self.gains.append(g)
 
     def rx_gain_max(self):
-        return 40
+        return self.gain_max
 
     def rx_bandwidth(self, bw):
         pass
 
-    def rx_start(self, *a, **kw):
-        pass
+    def rx_start(self, rate, *a, **kw):
+        self.started.append(rate)
 
     def rx_stop(self):
         pass
@@ -501,7 +504,7 @@ def board(monkeypatch, clib):
     gui._headless = True
     mod = importlib.import_module("waterfall")
     tb = mod.waterfall()
-    tb.soapy_hackrf_source_0._live = True
+    tb.soapy_plutosdr_source_0._live = True
     sink = tb.qtgui_waterfall_sink_x_0
     yield types.SimpleNamespace(tb=tb, sink=sink, radio=radio, clock=clock, gui=gui,
                                 qtgui=sys.modules["gnuradio.qtgui"])
@@ -552,6 +555,76 @@ def test_spectrums_chooser_is_sorted_with_40_ms():
     export = (REPO / "apps/micropython/eggs/spectrum/spectrum.py").read_text()
     assert "_samp_rate_options = [250000.0, 500000.0, 1000000.0, 2000000.0, 40000000.0]" in export
     assert "_samp_rate_labels = ['250 kS/s', '500 kS/s', '1 MS/s', '2 MS/s', '40 MS/s']" in export
+
+
+def test_starts_on_agc_with_a_gain_waiting(board):
+    src = board.tb.soapy_plutosdr_source_0
+    assert board.tb.agc is True and src._auto is True
+    assert board.tb.gain == 48 and src._gain == 48
+    src._changed()
+    assert board.radio.gains[-1] == -1
+
+
+def test_the_gain_slider_waits_under_agc(board):
+    src = board.tb.soapy_plutosdr_source_0
+    win = board.tb._gain_win
+    board.radio.gains.clear()
+    win.set_index(win.index + 4)
+    # No restart of the radio for a value not in use, and AGC stays on.
+    assert board.radio.gains == [] and src._auto is True
+    assert src._gain == 52
+
+
+def test_manual_takes_the_slider_and_agc_comes_back(board):
+    src = board.tb.soapy_plutosdr_source_0
+    win = board.tb._gain_win
+    board.radio.gains.clear()
+    board.tb.set_agc(False)
+    assert src._auto is False and board.radio.gains[-1] == 48
+    win.set_index(win.index - 8)
+    assert board.radio.gains[-1] == 40
+    board.tb.set_agc(True)
+    assert src._auto is True and board.radio.gains[-1] == -1
+
+
+def test_gain_is_clamped_to_what_the_radio_has(board):
+    board.radio.gain_max = 60
+    board.tb.set_agc(False)
+    board.tb._gain_win.set_index(70)
+    assert board.radio.gains[-1] == 60
+
+
+def test_the_same_mode_again_does_not_restart_the_radio(board):
+    board.radio.gains.clear()
+    board.tb.set_agc(True)
+    assert board.radio.gains == []
+
+
+def test_gain_and_agc_share_a_row(board):
+    from PyQt5 import Qt
+
+    out = []
+    board.gui.root._place(0, 18, 720, 702, out)
+    at = {id(leaf): (x, y, w, h) for leaf, x, y, w, h in out}
+    gain = at[id(board.tb._gain_win)]
+    agc = next((x, y, w, h) for leaf, x, y, w, h in out if isinstance(leaf, Qt.QCheckBox))
+    assert gain[1] == agc[1] and gain[0] + gain[2] <= agc[0]
+
+
+def test_the_chooser_reaches_the_radio(board):
+    # The sink's axis alone would look right with the radio left at its old rate.
+    src = board.tb.soapy_plutosdr_source_0
+    for rate in board.tb._samp_rate_options:
+        board.radio.started.clear()
+        board.tb.set_samp_rate(rate)
+        assert src._rate == int(rate)
+        assert board.radio.started and board.radio.started[-1] == int(rate)
+
+
+def test_the_knob_reaches_the_radio(board):
+    board.radio.tuned.clear()
+    board.tb.set_freq(2.45e9)
+    assert board.radio.tuned and board.radio.tuned[-1] == 2.45e9
 
 
 def test_export_turns_the_grid_on(board):

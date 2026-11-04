@@ -135,7 +135,7 @@ def retune(tb, s):
 
 
 def rates(tb, s):
-    src = tb.soapy_hackrf_source_0
+    src = tb.soapy_plutosdr_source_0
     want = sorted(tb._samp_rate_options)
     check("chooser sorted, with 40 MS/s", list(tb._samp_rate_options) == want and 40e6 in want)
     for r in tb._samp_rate_options:
@@ -146,7 +146,8 @@ def rates(tb, s):
         pump(s, 20)
         ms = time.ticks_diff(time.ticks_ms(), t0)
         moved = (esdr.rx_latest(s._src) - before) & 0xFFFFFFFF
-        check("{} S/s".format(int(r)), s._span == int(r) and len(s._lines) > 0 and moved > 0,
+        check("{} S/s".format(int(r)), s._span == int(r) and src._rate == int(r) and
+              len(s._lines) > 0 and moved > 0,
               "radio {} rows/s {:.1f} lines {} coarse {} samples {} title{}".format(
                   src._rate, 20000 / ms, len(s._lines),
                   sum(1 for x in s._lines if x & 0x8000), moved, s._notes))
@@ -158,6 +159,34 @@ def rates(tb, s):
         held = sorted(maxhold(s, 10))
         print("     levels: median {:.0f} dB, top {:.0f} dB, scale {:.0f} to {:.0f} dB".format(
             held[len(held) // 2], held[-1], s._imin, s._imax))
+    tb.set_samp_rate(2e6)
+    pump(s, 2)
+
+
+def gain(tb, s):
+    """The Gain slider and the AGC box, through the export's setters, as the radio reports them."""
+    check("the app starts on AGC", tb.agc is True and esdr.radio_state()["rx_gain"] == -1)
+    win = tb._gain_win
+    i = win.index
+    win.set_index(i + 4)
+    pump(s, 2)
+    check("the slider waits under AGC", esdr.radio_state()["rx_gain"] == -1, str(tb.gain))
+    tb.set_agc(False)
+    pump(s, 4)
+    got = esdr.radio_state()["rx_gain"]
+    check("manual takes the slider's gain", got == int(tb.gain), "{} / {}".format(got, tb.gain))
+    win.set_index(i)
+    pump(s, 4)
+    got = esdr.radio_state()["rx_gain"]
+    check("the slider moves the radio", got == int(tb.gain), "{} / {}".format(got, tb.gain))
+    for rate in tb._samp_rate_options:
+        tb.set_samp_rate(rate)
+        pump(s, 3)
+        got = esdr.radio_state()["rx_gain"]
+        check("manual at {} S/s".format(int(rate)), got == int(tb.gain), str(got))
+    tb.set_agc(True)
+    pump(s, 4)
+    check("AGC again", esdr.radio_state()["rx_gain"] == -1)
     tb.set_samp_rate(2e6)
     pump(s, 2)
 
@@ -302,6 +331,7 @@ def run_all():
         for rate in (250e3, 2e6, 40e6, 80e6):
             cost_at(tb, s, rate)
         tb.set_samp_rate(2e6)
+        gain(tb, s)
         spacing(tb, s)
         if HOLD:
             hold(tb, s)
