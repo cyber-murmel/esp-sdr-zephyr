@@ -456,7 +456,7 @@ def test_extcap_config(run_main, capsys):
         return [(v["value"], v["default"]) for v in values[int(by_call[call]["number"])]]
 
     assert choices("--mode") == [("survey", "true"), ("channel", "false"),
-                                 ("alternate", "false")]
+                                 ("alternate", "false"), ("follow", "false")]
     assert choices("--survey-rate") == [("80", "true"), ("40", "false")]
     assert choices("--channels") == [("16", "false"), ("32", "false"), ("40", "true"),
                                      ("64", "false"), ("80", "false")]
@@ -486,7 +486,9 @@ def test_options(capsys):
     for bad in (["--freq", "2300"], ["--gain", "80"], ["--decoders", "ble,zigbee"],
                 ["--channels", "50"], ["--mode", "scan"], ["--pre", "5"], ["--fre", "2440"],
                 ["--survey-rate", "20"], ["--channels", "16", "--survey-rate", "40"],
-                ["--mode", "alternate", "--channels", "16", "--survey-rate", "40"]):
+                ["--mode", "alternate", "--channels", "16", "--survey-rate", "40"],
+                ["--mode", "follow", "--channels", "80"],
+                ["--mode", "follow", "--decoders", "ble"]):
         with pytest.raises(SystemExit) as e:
             ep.parse_args(bad)
         assert e.value.code == 2, bad
@@ -500,6 +502,16 @@ def test_capture_filter_check(run_main, capsys):
     assert capsys.readouterr().out == ""
     assert run_main(ep, *base, "tcp port 80") == 0
     assert capsys.readouterr().out.count("\n") == 1
+
+
+def test_follow_requests():
+    args = ep.parse_args(["--mode", "follow", "--survey-ms", "300", "--channel-ms", "200",
+                          "--survey-rate", "40"])[1]
+    reqs = {req: data for req, _, data in ep.setup_requests(args, 0)}
+    assert unpack_named(PROTO, "pcap_mode_cfg", reqs[C["PCAP_REQ_SET_MODE"]]) == {
+        "mode": C["PCAP_MODE_SURVEY"], "flags": C["PCAP_MODE_F_FOLLOW"] | C["PCAP_MODE_F_HALF"],
+        "channel_rate_hz": 0, "channel_freq_hz": 2_402_000_000, "survey_ms": 300,
+        "channel_ms": 200}
 
 
 # ---- captures against the fake badge ----

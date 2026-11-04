@@ -84,6 +84,7 @@ struct ctx {
 	/* s->held waits for the other phase tracker's verdict on the frame ending at held_end. */
 	bool held;
 	uint32_t held_end;
+	uint8_t *preamble_run;
 };
 
 static inline int16_t sat16(int32_t v)
@@ -390,6 +391,9 @@ static int receiver_end(struct ctx *c)
 		c->held = false;
 		put(c, &c->s->held);
 	}
+	if (c->preamble_run != NULL) {
+		*c->preamble_run = ieee154_phy_rx_preamble_run_i(&c->s->rx);
+	}
 	return c->count;
 }
 
@@ -437,6 +441,7 @@ int dec_wpan_run(const struct burst *b, const struct dec_wpan_cfg *cfg, void *sc
 	c.s = scratch;
 	c.emit = emit;
 	c.user = user;
+	c.preamble_run = cfg->preamble_run;
 	c.channel = (uint8_t)dec_wpan_channel(b->freq_hz);
 	receiver_start(&c, cfg->keep_bad);
 	if (!c.st.half) {
@@ -493,6 +498,7 @@ int dec_wpan_run_pair(const struct burst *lo, const struct burst *hi,
 	c.s = scratch;
 	c.emit = emit;
 	c.user = user;
+	c.preamble_run = cfg->preamble_run;
 	c.channel = (uint8_t)dec_wpan_channel((lo->freq_hz + hi->freq_hz) / 2U);
 	c.combined = true;
 	receiver_start(&c, cfg->keep_bad);
@@ -521,4 +527,12 @@ int dec_wpan_channel(uint64_t freq_hz)
 		return 0;
 	}
 	return CHAN_FIRST + (int)k;
+}
+
+uint64_t dec_wpan_freq(int channel)
+{
+	if (channel < CHAN_FIRST || channel >= CHAN_FIRST + CHAN_COUNT) {
+		return 0;
+	}
+	return (uint64_t)(CHAN_BASE_HZ + CHAN_STEP_HZ * (channel - CHAN_FIRST));
 }

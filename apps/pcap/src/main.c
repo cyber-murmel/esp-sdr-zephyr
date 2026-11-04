@@ -23,6 +23,8 @@
 #include "app.h"
 #include "app_clock.h"
 #include "app_usb.h"
+#include "decode.h"
+#include "follow.h"
 #include "output.h"
 #include "radio.h"
 #include "usb_pcap.h"
@@ -43,6 +45,10 @@ LOG_MODULE_REGISTER(pcap, LOG_LEVEL_INF);
  */
 #define CHANNEL_GAIN  60U
 #define CHANNEL_DGAIN 0U
+/* The follow mode's times unless the host chooses, and the bank it needs for 802.15.4. */
+#define FOLLOW_SURVEY_MS 1000U
+#define FOLLOW_CHANNEL_MS 1000U
+#define FOLLOW_BANK       40U
 
 struct app_cfg app_cfg = {
 	.mode = PCAP_MODE_SURVEY,
@@ -162,6 +168,14 @@ static uint32_t survey_rate(void)
 							     : ESDR_GAPLESS_RATE_HZ;
 }
 
+/* The follow mode's channel while it stays on one, set before start_mode(). */
+static uint64_t follow_hz;
+
+static bool following(void)
+{
+	return (app_cfg.mode_flags & PCAP_MODE_F_FOLLOW) != 0U;
+}
+
 static int start_mode(uint16_t mode)
 {
 	uint64_t centre;
@@ -204,7 +218,8 @@ static int start_mode(uint16_t mode)
 		radio_set_sink(survey_block);
 		ret = radio_mode(ESDR_MODE_GAPLESS);
 	} else {
-		uint64_t freq = app_cfg.channel_hz != 0U ? app_cfg.channel_hz : app_cfg.survey_hz;
+		uint64_t freq = following() ? follow_hz
+				: app_cfg.channel_hz != 0U ? app_cfg.channel_hz : app_cfg.survey_hz;
 		uint32_t rate = app_cfg.channel_rate_hz != 0U ? app_cfg.channel_rate_hz
 							       : CHANNEL_RATE_HZ;
 		uint8_t le[4];
@@ -241,7 +256,7 @@ static K_WORK_DELAYABLE_DEFINE(alt_work, alt_fn);
 
 static bool alternating(void)
 {
-	return app_cfg.survey_ms != 0U && app_cfg.channel_ms != 0U;
+	return !following() && app_cfg.survey_ms != 0U && app_cfg.channel_ms != 0U;
 }
 
 /*
@@ -251,6 +266,9 @@ static bool alternating(void)
  */
 static int start_check(void)
 {
+	if (following() && (app_cfg.mode != PCAP_MODE_SURVEY || app_cfg.channels != FOLLOW_BANK)) {
+		return -EINVAL;
+	}
 	if (app_cfg.mode != PCAP_MODE_SURVEY && !alternating()) {
 		return 0;
 	}
@@ -274,9 +292,77 @@ static void alt_fn(struct k_work *work)
 		K_MSEC(cur_mode == PCAP_MODE_SURVEY ? app_cfg.survey_ms : app_cfg.channel_ms));
 }
 
+/* ---- the follow mode ---- */
+
+static struct follow fl;
+static struct k_spinlock fl_lock;
+
+static void follow_fn(struct k_work *work);
+static K_WORK_DELAYABLE_DEFINE(follow_work, follow_fn);
+
+void follow_report(int channel, uint32_t points, bool from_survey)
+{
+	k_spinlock_key_t key;
+	bool look;
+
+	if (!following()) {
+		return;
+	}
+	key = k_spin_lock(&fl_lock);
+	look = follow_sight(&fl, channel, points, from_survey, k_uptime_get_32());
+	k_spin_unlock(&fl_lock, key);
+	if (from_survey && dec_wpan_freq(channel) != 0U) {
+		app_stats.follow_sights[channel - FOLLOW_CHANNEL_FIRST]++;
+	}
+	if (look) {
+		(void)k_work_reschedule_for_queue(&ctl_q, &follow_work, K_NO_WAIT);
+	}
+}
+
+static void follow_fn(struct k_work *work)
+{
+	k_spinlock_key_t key;
+	enum follow_act act;
+	uint32_t wait;
+	uint8_t channel;
+
+	ARG_UNUSED(work);
+	if (!running || !following()) {
+		return;
+	}
+	key = k_spin_lock(&fl_lock);
+	act = follow_step(&fl, k_uptime_get_32(), &wait);
+	channel = fl.channel;
+	k_spin_unlock(&fl_lock, key);
+	if (act != FOLLOW_STAY) {
+		stop_mode();
+		follow_hz = dec_wpan_freq(channel);
+		if (start_mode(channel != 0U ? PCAP_MODE_CHANNEL : PCAP_MODE_SURVEY) != 0) {
+			LOG_ERR("following to channel %u failed", channel);
+		}
+		if (act == FOLLOW_TO_CHANNEL) {
+			app_stats.follow_hops++;
+			LOG_INF("following channel %u", channel);
+		}
+	}
+	(void)k_work_reschedule_for_queue(&ctl_q, &follow_work, K_MSEC(wait));
+}
+
+static void follow_start(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&fl_lock);
+
+	follow_init(&fl, app_cfg.survey_ms != 0U ? app_cfg.survey_ms : FOLLOW_SURVEY_MS,
+		    app_cfg.channel_ms != 0U ? app_cfg.channel_ms : FOLLOW_CHANNEL_MS,
+		    k_uptime_get_32());
+	k_spin_unlock(&fl_lock, key);
+	(void)k_work_reschedule_for_queue(&ctl_q, &follow_work, K_NO_WAIT);
+}
+
 static void capture_stop(void)
 {
 	(void)k_work_cancel_delayable(&alt_work);
+	(void)k_work_cancel_delayable(&follow_work);
 	if (!running) {
 		return;
 	}
@@ -303,7 +389,9 @@ static void start_fn(struct k_work *work)
 		return;
 	}
 	LOG_INF("capture started, mode %u", cur_mode);
-	if (alternating()) {
+	if (following()) {
+		follow_start();
+	} else if (alternating()) {
 		(void)k_work_reschedule_for_queue(
 			&ctl_q, &alt_work,
 			K_MSEC(cur_mode == PCAP_MODE_SURVEY ? app_cfg.survey_ms
@@ -491,7 +579,12 @@ static void fill_stats(struct pcap_stats *s)
 		.c6_wide = app_stats.c6_wide,
 		.generic_skipped = app_stats.generic_skipped,
 		.generic_wide = app_stats.generic_wide,
+		.follow_hops = app_stats.follow_hops,
+		.follow_channel = fl.channel,
 	};
+	ARRAY_FOR_EACH(app_stats.follow_sights, k) {
+		s->follow_sights += app_stats.follow_sights[k];
+	}
 	for (unsigned int k = 0; k < APP_GEN_WORKERS; k++) {
 		s->generic += app_stats.generic[k];
 		s->generic_cycles += app_stats.generic_cycles[k];
@@ -554,11 +647,23 @@ static void print_stats(const struct shell *sh)
 		    "channel %u", s.generic,
 		    s.generic != 0U ? (unsigned long long)(s.generic_cycles / s.generic) : 0ULL,
 		    s.generic_skipped, s.generic_wide);
+	if (following()) {
+		shell_print(sh, "follow: channel %u, %u stays, %u sightings:", s.follow_channel,
+			    s.follow_hops, s.follow_sights);
+		ARRAY_FOR_EACH(app_stats.follow_sights, k) {
+			if (app_stats.follow_sights[k] != 0U) {
+				shell_print(sh, "  channel %u: %u",
+					    (unsigned int)(FOLLOW_CHANNEL_FIRST + k),
+					    app_stats.follow_sights[k]);
+			}
+		}
+	}
 }
 
 static int cmd_start(const struct shell *sh, size_t argc, char **argv)
 {
 	if (argc > 1) {
+		app_cfg.mode_flags &= ~PCAP_MODE_F_FOLLOW;
 		if (strcmp(argv[1], "survey") == 0) {
 			app_cfg.mode = PCAP_MODE_SURVEY;
 			app_cfg.survey_ms = app_cfg.channel_ms = 0;
@@ -569,13 +674,19 @@ static int cmd_start(const struct shell *sh, size_t argc, char **argv)
 			app_cfg.mode = PCAP_MODE_SURVEY;
 			app_cfg.survey_ms = argc > 2 ? (uint32_t)atoi(argv[2]) : 2000U;
 			app_cfg.channel_ms = argc > 3 ? (uint32_t)atoi(argv[3]) : 2000U;
+		} else if (strcmp(argv[1], "follow") == 0) {
+			app_cfg.mode = PCAP_MODE_SURVEY;
+			app_cfg.mode_flags |= PCAP_MODE_F_FOLLOW;
+			app_cfg.survey_ms = argc > 2 ? (uint32_t)atoi(argv[2]) : 0U;
+			app_cfg.channel_ms = argc > 3 ? (uint32_t)atoi(argv[3]) : 0U;
 		} else {
-			shell_error(sh, "survey, channel or alt [survey_ms channel_ms]");
+			shell_error(sh, "survey, channel, alt or follow [survey_ms channel_ms]");
 			return -EINVAL;
 		}
 	}
 	if (start_check() != 0) {
-		shell_error(sh, "no survey of %u channels at %u MS/s (16 channels need 80 MS/s)",
+		shell_error(sh, "no survey of %u channels at %u MS/s (16 channels need 80 MS/s, "
+			    "following needs 40 channels)",
 			    app_cfg.channels, survey_rate() / 1000000U);
 		return -EINVAL;
 	}
@@ -721,7 +832,7 @@ static int cmd_stats(const struct shell *sh, size_t argc, char **argv)
 }
 
 SHELL_STATIC_SUBCMD_SET_CREATE(pcap_cmds,
-	SHELL_CMD_ARG(start, NULL, "Start a capture: [survey|channel|alt [survey_ms channel_ms]]",
+	SHELL_CMD_ARG(start, NULL, "Start a capture: [survey|channel|alt|follow [survey_ms channel_ms]]",
 		      cmd_start, 1, 3),
 	SHELL_CMD(stop, NULL, "Stop the capture", cmd_stop),
 	SHELL_CMD_ARG(freq, NULL, "The survey's centre: [MHz]", cmd_freq, 1, 1),

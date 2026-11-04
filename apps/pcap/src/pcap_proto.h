@@ -82,6 +82,12 @@ enum pcap_mode {
  * fold, is left out; the C6 does not sort by width (PCAP_MODE_F_C6_WIDE is ignored).
  */
 #define PCAP_MODE_F_HALF    0x0002U
+/*
+ * Follow 802.15.4 (doc/pcap.md, "Modes"): the capture starts in the survey (PCAP_MODE_SURVEY only,
+ * 40 channels, PCAP_REQ_START fails otherwise) and goes to the channel mode on a channel where
+ * the 802.15.4 decoder sights a frame or a piece of one, back when it goes quiet.
+ */
+#define PCAP_MODE_F_FOLLOW  0x0004U
 
 struct pcap_mode_cfg {
 	/* enum pcap_mode: the mode to start in. */
@@ -93,7 +99,9 @@ struct pcap_mode_cfg {
 	uint64_t channel_freq_hz;
 	/*
 	 * Both non-zero: the capture alternates, survey_ms in the survey, channel_ms in the
-	 * channel mode (each switch costs some 15 ms of the C6's time).
+	 * channel mode (each switch costs some 15 ms of the C6's time). With PCAP_MODE_F_FOLLOW:
+	 * survey_ms at least in the survey before a stay, a stay ends channel_ms after its last
+	 * frame (0: 1000 each).
 	 */
 	uint32_t survey_ms, channel_ms;
 } __attribute__((packed));
@@ -161,6 +169,11 @@ struct pcap_stats {
 	 */
 	uint32_t generic, generic_skipped, generic_wide;
 	uint64_t generic_cycles;
+	/*
+	 * PCAP_MODE_F_FOLLOW: frames or pieces of them the survey sighted, stays on a channel they
+	 * began, the channel of this stay (0: in the survey).
+	 */
+	uint32_t follow_sights, follow_hops, follow_channel;
 } __attribute__((packed));
 
 /* ---- the burst record (LINKTYPE_USER0 payload) ---- */

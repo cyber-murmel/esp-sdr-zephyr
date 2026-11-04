@@ -26,7 +26,7 @@ in ``doc/pcap.md``.
   record each, without bits. The analysis runs in the time the decoders leave: a burst filling
   its channel comes as wideband unanalysed, one it has no time for with the detector's metadata
   only (flag "Not analysed").
-- **Two modes**, chosen per capture or alternating:
+- **Modes**, chosen per capture, alternating, or following 802.15.4:
 
   - the **survey** (default): the C6's gapless 80 MS/s receive, pruned to the 10 us windows that
     stand out, through the P4's 40-channel filterbank (2 MHz, 4 MS/s a channel) and a burst
@@ -41,7 +41,12 @@ in ``doc/pcap.md``.
   - the **channel** mode: one channel streamed without a gap by the C6's paced receive at
     2 MS/s: complete Bluetooth LE 1M packets (an advertising channel: 2402, 2426 or 2480 MHz)
     or 802.15.4 frames (a channel 2405 + 5 (n - 11) MHz, read at 4 MS/s through an
-    interpolator) of that channel.
+    interpolator) of that channel;
+  - **following 802.15.4** (``--mode follow``, ``pcap start follow``): the survey until it finds
+    the start of an 802.15.4 frame, then the channel mode on that channel until it has been quiet
+    for ``--channel-ms`` (at most 4 times that), then at least ``--survey-ms`` of the survey again;
+    a channel other than the last one goes first. Whole frames of the networks in range, without
+    knowing their channels (``doc/pcap.md``, "Following 802.15.4").
 
 - **USB**: the pcapng stream on a vendor bulk IN endpoint (high speed), the shell on CDC-ACM,
   DFU into MCUboot's secondary slot (``west dfu``), VID 0x2fe3, PID 0x0005, product "ESP-SDR
@@ -114,7 +119,7 @@ On the CDC-ACM port, for the bench without the host tool:
 
 .. code-block:: console
 
-   pcap start [survey|channel|alt [survey_ms channel_ms]]
+   pcap start [survey|channel|alt|follow [survey_ms channel_ms]]
    pcap stop
    pcap freq <MHz>          the survey's centre
    pcap chfreq <MHz>        the channel mode's frequency

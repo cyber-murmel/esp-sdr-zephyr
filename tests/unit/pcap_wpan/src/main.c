@@ -359,6 +359,17 @@ static void before_each(void *fixture)
 ZTEST_SUITE(pcap_wpan, NULL, suite_setup, before_each, NULL, NULL);
 
 /* The 2.4 GHz grid: 2405 + 5 (c - 11) MHz within +-100 kHz, c = 11 .. 26. */
+ZTEST(pcap_wpan, test_channel_frequencies)
+{
+	zassert_equal(dec_wpan_freq(11), 2405000000ULL);
+	zassert_equal(dec_wpan_freq(26), 2480000000ULL);
+	zassert_equal(dec_wpan_freq(10), 0ULL);
+	zassert_equal(dec_wpan_freq(27), 0ULL);
+	for (int c = 11; c <= 26; c++) {
+		zassert_equal(dec_wpan_channel(dec_wpan_freq(c)), c);
+	}
+}
+
 ZTEST(pcap_wpan, test_channel_grid)
 {
 	zassert_equal(dec_wpan_channel(2405000000ULL), 11);
@@ -897,6 +908,78 @@ ZTEST(pcap_wpan, test_phase_copies)
 }
 
 /* Noise only emits nothing, with keep_bad too, alone and through the bank; the argument checks. */
+/* What the PHY found of the preamble in a stream, whole or cut. */
+static uint8_t preamble_run(const struct burst *b)
+{
+	uint8_t run = 0xFF;
+	struct dec_wpan_cfg cfg = {.preamble_run = &run};
+
+	npkts = 0;
+	zassert_true(dec_wpan_run(b, &cfg, scratch, sizeof(scratch), emit, NULL) >= 0);
+	return run;
+}
+
+/*
+ * The follow mode's sighting: through the bank, a frame cut after its first 60 us decodes to
+ * nothing but shows 3 preamble symbols in a row, a whole one 4; noise and a tone do not.
+ */
+ZTEST(pcap_wpan, test_preamble_run)
+{
+	uint8_t psdu[IEEE154_PHY_PSDU_MAX];
+	static const double cfos[] = {0.0, 50e3, -50e3};
+	const uint32_t keep = 60U * CHAN_RATE / 1000000U;
+	const uint32_t n = ARRAY_SIZE(dbuf) / 2U;
+	struct burst b, v;
+	uint8_t run_none;
+
+	ARRAY_FOR_EACH(cfos, ci) {
+		unsigned int shift;
+		uint32_t pairs;
+
+		make_psdu(psdu, 40);
+		pairs = make_stream(psdu, 40, 200.0, CH_HZ(CH_LO) + cfos[ci],
+				    noise_sigma(200.0, 12.0), &shift);
+		channelize(pairs, shift);
+		zassert_equal(preamble_run(&tb_lo.b), 4U, "whole, cfo %.0f", cfos[ci]);
+		zassert_equal(npkts, 1);
+
+		v = tb_lo.b;
+		v.n = (uint32_t)EXPECT_START + keep;
+		zassert_true(v.n < tb_lo.b.n);
+		zassert_equal(preamble_run(&v), 3U, "cut, cfo %.0f", cfos[ci]);
+		zassert_equal(npkts, 0, "a cut frame decoded");
+	}
+
+	for (uint32_t k = 0; k < 2U * n; k++) {
+		dbuf[k] = (int16_t)lrint(2000.0 * test_rng_gauss());
+	}
+	memset(&b, 0, sizeof(b));
+	b.chan = 5;
+	b.channels = M;
+	b.rate_hz = CHAN_RATE;
+	b.freq_hz = 2450000000ULL;
+	b.n = n;
+	b.iq = dbuf;
+	run_none = preamble_run(&b);
+	zassert_true(run_none < 3U, "noise showed %u", run_none);
+	for (uint32_t k = 0; k < n; k++) {
+		const double th = ESP_SDR_TAU * 100e3 * (double)k / (double)CHAN_RATE;
+
+		dbuf[2U * k] = (int16_t)lrint(8000.0 * cos(th));
+		dbuf[2U * k + 1U] = (int16_t)lrint(8000.0 * sin(th));
+	}
+	run_none = preamble_run(&b);
+	zassert_true(run_none < 3U, "a tone showed %u", run_none);
+	b.n = 0;
+	run_none = 7;
+	{
+		struct dec_wpan_cfg cfg = {.preamble_run = &run_none};
+
+		zassert_equal(dec_wpan_run(&b, &cfg, scratch, sizeof(scratch), emit, NULL), 0);
+	}
+	zassert_equal(run_none, 7U, "no stream: left as it was");
+}
+
 ZTEST(pcap_wpan, test_noise_only)
 {
 	struct burst b;

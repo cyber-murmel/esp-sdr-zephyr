@@ -111,6 +111,14 @@ int narrow_start(uint64_t freq_hz, uint32_t rate_hz);
 void narrow_stop(void);
 void narrow_block(const uint8_t *blk);
 
+/* ---- the follow mode (main.c) ---- */
+
+/*
+ * The decoder thread found 802.15.4 on @p channel, worth @p points (follow.h), in a burst of the
+ * survey or of the channel mode. Nothing unless the capture follows.
+ */
+void follow_report(int channel, uint32_t points, bool from_survey);
+
 /* ---- counters ---- */
 
 /* Generic analysis workers (decoder.c): a second one goes on the stream's core. */
@@ -127,6 +135,8 @@ struct app_stats {
 	/* generic and generic_cycles per worker: one writer each. */
 	uint32_t generic[APP_GEN_WORKERS], generic_skipped, generic_wide;
 	uint64_t generic_cycles[APP_GEN_WORKERS];
+	/* The follow mode: the survey's sightings per channel (11 to 26), stays on a channel. */
+	uint32_t follow_sights[16], follow_hops;
 };
 
 extern struct app_stats app_stats;

@@ -71,6 +71,7 @@ PCAP_MODE_SURVEY = 0
 PCAP_MODE_CHANNEL = 1
 PCAP_MODE_F_C6_WIDE = 0x0001
 PCAP_MODE_F_HALF = 0x0002
+PCAP_MODE_F_FOLLOW = 0x0004
 PCAP_DEC_BLE = 0x0001
 PCAP_DEC_WPAN = 0x0002
 PCAP_DEC_GENERIC = 0x0004
@@ -84,12 +85,13 @@ MODE_CFG = struct.Struct("<HHIQII")
 # struct pcap_decoders: flags, min_burst_us, max_bits.
 DECODERS_CFG = struct.Struct("<IHH")
 # struct pcap_stats, its arrays per PCAP_IF_* (BLE, 802.15.4, bursts).
-STATS = struct.Struct("<3I2Q3IIQ3I3IQIIIIQII3IQ")
+STATS = struct.Struct("<3I2Q3IIQ3I3IQIIIIQII3IQ3I")
 STATS_FIELDS = ("seg_blocks seg_dropped other_blocks pairs chan_cycles bursts bursts_lost "
                 "bursts_wide decoded dec_cycles packets_ble packets_wpan packets_burst "
                 "dropped_ble dropped_wpan dropped_burst usb_bytes ring_peak cpu_mhz running "
                 "mode channel_samples channel_gaps c6_wide generic generic_skipped "
-                "generic_wide generic_cycles").split()
+                "generic_wide generic_cycles follow_sights follow_hops "
+                "follow_channel").split()
 
 # pcapng.h: the blocks of the stream.
 PCAPNG_BT_SHB = 0x0A0D0D0A
@@ -128,9 +130,10 @@ OPTIONS = [
     Option("--mode", "selector", "survey", "Capture", "Mode",
            "Survey: the 80 MHz through the channelizer, bursts as they come (long ones cut "
            "short). Channel: one channel without gaps at 2 MS/s (whole LE 1M packets). "
-           "Alternate: the two in turn",
+           "Alternate: the two in turn. Follow: the survey, and a channel while the survey "
+           "finds 802.15.4 on it",
            values=[("survey", "Survey (80 MHz)"), ("channel", "Channel (2 MS/s)"),
-                   ("alternate", "Alternate")]),
+                   ("alternate", "Alternate"), ("follow", "Follow 802.15.4")]),
     Option("--freq", "double", 2440.0, "Capture", "Centre frequency (MHz)",
            "The survey's centre: it covers +-40 MHz around it (+-20 MHz at 40 MS/s)",
            2400, 2500),
@@ -148,9 +151,11 @@ OPTIONS = [
            "The radio's gain index (0 to 79), -1 for automatic: the C6's gain servo in the "
            "survey, gain 60 on the channel", -1, 79),
     Option("--survey-ms", "integer", 1000, "Capture", "Survey time (ms)",
-           "Alternate mode: the time in the survey (a switch costs some 15 ms)", 20, 60000),
+           "Alternate mode: the time in the survey (a switch costs some 15 ms). Follow mode: at "
+           "least this long in the survey between two stays on a channel", 20, 60000),
     Option("--channel-ms", "integer", 1000, "Capture", "Channel time (ms)",
-           "Alternate mode: the time on the channel", 20, 60000),
+           "Alternate mode: the time on the channel. Follow mode: a stay ends this long after "
+           "its last frame", 20, 60000),
     Option("--channels", "selector", 40, "Channelizer", "Channels",
            "Channels of the filterbank over the 80 MHz (their spacing): the decoders want "
            "2 MHz; at 40 MS/s half of them run, at the same spacing (16 needs 80 MS/s)",
@@ -244,6 +249,8 @@ def parse_args(argv):
     # At 40 MS/s the survey's bank runs half the channels: 8 is not one the filterbank has.
     if args.mode != "channel" and args.channels == 16 and args.survey_rate == 40:
         ap.error("--channels 16 needs --survey-rate 80 (survey and alternate modes)")
+    if args.mode == "follow" and (args.channels != 40 or "wpan" not in args.decoders):
+        ap.error("--mode follow needs --channels 40 and the wpan decoder")
     return ap, args
 
 
@@ -353,8 +360,8 @@ def setup_requests(args, now_ns):
     """The vendor requests before PCAP_REQ_START, in order, as (bRequest, wValue, data)."""
     gain = ESDR_GAIN_AUTO if args.gain < 0 else args.gain
     mode = PCAP_MODE_CHANNEL if args.mode == "channel" else PCAP_MODE_SURVEY
-    survey_ms, channel_ms = ((args.survey_ms, args.channel_ms) if args.mode == "alternate"
-                             else (0, 0))
+    survey_ms, channel_ms = ((args.survey_ms, args.channel_ms)
+                             if args.mode in ("alternate", "follow") else (0, 0))
     decoders = PCAP_DEC_BAD_CRC if args.bad_crc else 0
     for name in args.decoders:
         decoders |= DECODERS[name]
@@ -370,7 +377,8 @@ def setup_requests(args, now_ns):
         (PCAP_REQ_SET_DECODERS, 0, DECODERS_CFG.pack(decoders, 0, 0)),
         (PCAP_REQ_SET_MODE, 0,
          MODE_CFG.pack(mode, (PCAP_MODE_F_C6_WIDE if args.c6_wide else 0) |
-                       (PCAP_MODE_F_HALF if args.survey_rate == 40 else 0), 0,
+                       (PCAP_MODE_F_HALF if args.survey_rate == 40 else 0) |
+                       (PCAP_MODE_F_FOLLOW if args.mode == "follow" else 0), 0,
                        mhz_hz(args.channel_freq), survey_ms, channel_ms)),
     ]
 
@@ -562,7 +570,9 @@ class Session:
                 f"{s['dropped_wpan']}, {s['dropped_burst']}; {s['bursts']} bursts, "
                 f"{s['bursts_lost']} lost, {s['bursts_wide']} wideband; analysed "
                 f"{s['generic']}, skipped {s['generic_skipped']} (busy), "
-                f"{s['generic_wide']} filling the channel")
+                f"{s['generic_wide']} filling the channel" +
+                (f"; followed {s['follow_hops']} times on {s['follow_sights']} sightings"
+                 if s["follow_sights"] else ""))
 
 
 def open_output(path):

@@ -87,6 +87,12 @@ int dec_ble_rf_channel(uint64_t freq_hz);
 
 struct dec_wpan_cfg {
 	bool keep_bad;
+	/*
+	 * If not NULL: where the run leaves the most preamble symbols in a row the stream held
+	 * (ieee154_phy_rx_preamble_run_i(), 0 to 4), a whole frame or not. Untouched by a run that
+	 * has no stream to read.
+	 */
+	uint8_t *preamble_run;
 };
 
 struct dec_wpan_pkt {
@@ -128,6 +134,8 @@ int dec_wpan_run_pair(const struct burst *lo, const struct burst *hi,
 
 /* The 802.15.4 channel of a frequency on the 2.4 GHz grid (2405 + 5 (c - 11) MHz), else 0. */
 int dec_wpan_channel(uint64_t freq_hz);
+/* The frequency of 802.15.4 channel @p channel (11 to 26), else 0. */
+uint64_t dec_wpan_freq(int channel);
 
 /* ---- generic ---- */
 

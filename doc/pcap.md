@@ -78,8 +78,7 @@ length?"):
   (2.2 M a second), the filterbank takes some 100 cycles a pair (62 % of the CPU), and 15 % of
   the bursts find no buffer.
 - Further levers (from a survey of the code, not built): a faster copy on the C6, its GDMA or the
-  dump engine's four-slot mode, and a follow mode that parks the channel mode on the busiest
-  channel for whole long frames.
+  dump engine's four-slot mode.
 
 **The threshold servo's limits** (Kconfig, 2026-11-04): `CONFIG_ESP_SDR_GAPLESS_THR_LINK_PCT`, how
 full the link may get (95 %), and `CONFIG_ESP_SDR_GAPLESS_THR_LOST_PCT`, the share of the samples
@@ -109,6 +108,40 @@ windows and costs 5 to 12 % of the C6's CPU (a point 103 cycles), and since the 
 limit it could not lower the threshold the CPU holds. Its arithmetic is 32-bit throughout:
 64-bit divisions went to libgcc in ROM and made the ring's switch late.
 
+**Following 802.15.4** (`PCAP_MODE_F_FOLLOW`, `src/follow.c`, the survey's decoder in
+`src/decoder.c`): the survey cannot decode a frame, it keeps some 30 to 50 us of one at 80 MS/s,
+three times that at 40, but a frame begins with 8 equal symbols of 16 us. The PHY counts those in a
+row (`ieee154_phy_rx_preamble_run_i()`) in any burst of the survey on the channel grid, also in
+bursts too short to hold a frame. Three or more are a sighting; two are half a one (one symbol
+matches by chance some 4e-4 of the time; at the desk, in 25 s, two came once on an otherwise empty
+channel, three once on another), and it takes a whole one on a channel to go there.
+
+- The capture starts in the survey. After `survey_ms` at least (a sighting wakes the control
+  thread) it goes to the channel with the most sightings, the newest among equals. A channel other
+  than the last one followed goes first, so several networks take turns.
+- A stay ends `channel_ms` after the last burst that showed a preamble, or at 4 times `channel_ms`
+  however busy the channel: the survey's turn. Both times default to a second. Bursts of the other
+  mode still queued after a switch do not count.
+- It needs the 802.15.4 decoder and 40 channels: `PCAP_REQ_START` fails otherwise. It tunes by the
+  survey it runs: +-40 MHz around the centre, the whole of 802.15.4 with the default 2440 MHz, or
+  +-20 MHz at 40 MS/s.
+
+Measured on the badge (2026-11-04, the office, 80 MS/s unless noted, the channel mode's rate 2 MS/s):
+
+- With no sender of ours, 150 frames in 30 s from the three networks in range (channels 11, 15, 25),
+  where the plain survey decodes none. Every stay brought frames.
+- The S3 devkit sending 40 frames a second at -20 dBm, 300 on each of channels 15, 20, 12 and 22
+  in turn, with the default times: 565 frames in 45 s, 295 of them the S3's. It reached channels
+  12 and 22 after 6 and 5 s and missed channel 20 altogether, while the networks in range had
+  their turns: what is on the air competes for the same time, `channel_ms` trades a stay's length
+  for how soon the next channel is seen. A stay that outlasted the S3 (the limit at 8 s then)
+  decoded 291 of its 300 frames.
+- A sender right beside the badge is harder: at 0 dBm the S3 opens six or more adjacent channels
+  and goes out as a wideband record, which has no samples to look at. Only one frame in 50 made a
+  whole sighting (three in 50 a half one).
+- 180 s of quick switches (100 ms each): 313 stays, no radio block dropped, no burst lost, the S3
+  on channel 20 decoded 3958 times.
+
 **The paced receive** (the channel mode, `lib/esp_sdr/src/esp_sdr_paced.c`): the C6's CPU
 reads the IQ estimator's running sums every 80 cycles at 2 MS/s, each difference a boxcar of
 40 inputs, one 802.15.4 chip. Between calls of `esp_sdr_rx_paced_fill_iq8()` osmosdr_serial
@@ -136,6 +169,8 @@ Bluetooth LE packets.
   detector over it: complete Bluetooth LE 1M packets and 802.15.4 frames of that channel.
 - **Alternating** between the two with dwell times (`struct pcap_mode_cfg`); a switch costs
   some 15 ms of the C6.
+- **Following 802.15.4** (`PCAP_MODE_F_FOLLOW`): the survey until it sights 802.15.4, then the
+  channel mode on that channel while its frames keep coming ("Following 802.15.4" below).
 
 ## The P4 (two cores, 360 MHz)
 

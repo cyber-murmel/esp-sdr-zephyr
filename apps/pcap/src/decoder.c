@@ -26,6 +26,7 @@
 #include "decode.h"
 #include "dec_util.h"
 #include "esdr_pfbq.h"
+#include "follow.h"
 #include "output.h"
 #include "records.h"
 
@@ -263,6 +264,23 @@ static void wpan_emit(const struct dec_wpan_pkt *p, void *user)
 
 /* ---- bursts ---- */
 
+/*
+ * The follow mode: what preamble symbols in a row say of 802.15.4 on the air. One lets 6 of 31
+ * chips differ, a chance of some 4e-4. An 80 MS/s survey keeps 30 to 50 us of a frame, two or
+ * three symbols: at the desk (25 s, 40 channels, three networks in range) two came by chance on an
+ * empty channel about once in that time, so they count as half a sighting (FOLLOW_SIGHT_POINTS).
+ */
+#define WPAN_RUN_HALF 2U
+#define WPAN_RUN_FULL 3U
+
+static void sighted(const struct burst *b, int channel, uint8_t run)
+{
+	if (run >= WPAN_RUN_HALF) {
+		follow_report(channel, run >= WPAN_RUN_FULL ? FOLLOW_SIGHT_POINTS : 1U,
+			      b->channels > 1U);
+	}
+}
+
 /* Bins @p lo and @p hi neighbours whose middle is an 802.15.4 channel, overlapping in time. */
 static bool wpan_pair(const struct burst *lo, const struct burst *hi)
 {
@@ -276,7 +294,9 @@ static bool wpan_pair(const struct burst *lo, const struct burst *hi)
 
 static void decode_pair(struct burst *a, struct burst *b)
 {
-	const struct dec_wpan_cfg wc = {.keep_bad = (app_cfg.dec.flags & PCAP_DEC_BAD_CRC) != 0U};
+	uint8_t run = 0;
+	const struct dec_wpan_cfg wc = {.keep_bad = (app_cfg.dec.flags & PCAP_DEC_BAD_CRC) != 0U,
+					.preamble_run = &run};
 	struct burst *lo = a->freq_hz < b->freq_hz ? a : b, *hi = lo == a ? b : a;
 
 	if ((app_cfg.dec.flags & PCAP_DEC_WPAN) == 0U || !wpan_pair(lo, hi)) {
@@ -284,6 +304,7 @@ static void decode_pair(struct burst *a, struct burst *b)
 	}
 	dc.cur = lo;
 	(void)dec_wpan_run_pair(lo, hi, &wc, scratch, sizeof(scratch), wpan_emit, NULL);
+	sighted(lo, dec_wpan_channel((lo->freq_hz + hi->freq_hz) / 2U), run);
 }
 
 static void decode_wideband(const struct burst *b)
@@ -418,6 +439,9 @@ static struct gate gate(struct burst *b)
 /* An 802.15.4 ACK is 352 us, the longest frame 4256 us. */
 #define WPAN_US_MIN 300U
 #define WPAN_US_MAX 4500U
+/* What a burst of the survey needs for a look at its preamble in the follow mode: WPAN_RUN_HALF
+ * symbols, less the filterbank's transient. */
+#define WPAN_SAMPLES_SIGHT 120U
 
 static void decode(struct burst *b)
 {
@@ -427,6 +451,9 @@ static void decode(struct burst *b)
 	/* A burst cut at either end may hold part of a packet longer than its loud part (one
 	 * shorter than the shortest packet holds none). */
 	bool cut = (b->flags & (BURST_F_TRUNCATED | BURST_F_CUT | BURST_F_DROPPED)) != 0U;
+	/* In the follow mode a piece of a frame says where to go, though it decodes to nothing. */
+	bool piece = (app_cfg.mode_flags & PCAP_MODE_F_FOLLOW) != 0U && b->channels > 1U &&
+		     b->n >= WPAN_SAMPLES_SIGHT;
 
 	dc.cur = b;
 	dc.claimed = false;
@@ -443,10 +470,13 @@ static void decode(struct burst *b)
 	}
 	if ((flags & PCAP_DEC_WPAN) != 0U && (b->rate_hz == 4000000U || b->rate_hz == 2000000U) &&
 	    dec_wpan_channel(b->freq_hz) != 0 &&
-	    loud_us >= WPAN_US_MIN && (cut || loud_us <= WPAN_US_MAX)) {
-		const struct dec_wpan_cfg wc = {.keep_bad = (flags & PCAP_DEC_BAD_CRC) != 0U};
+	    (piece || (loud_us >= WPAN_US_MIN && (cut || loud_us <= WPAN_US_MAX)))) {
+		uint8_t run = 0;
+		const struct dec_wpan_cfg wc = {.keep_bad = (flags & PCAP_DEC_BAD_CRC) != 0U,
+						.preamble_run = &run};
 
 		(void)dec_wpan_run(b, &wc, scratch, sizeof(scratch), wpan_emit, NULL);
+		sighted(b, dec_wpan_channel(b->freq_hz), run);
 	}
 	if (dc.claimed) {
 		b->flags |= BURST_F_CLAIMED;

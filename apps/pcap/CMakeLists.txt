@@ -27,6 +27,7 @@ target_sources(app PRIVATE
 # pcapng), at -O2 for their loops. The 802.15.4 PHY is lib/ieee802154's (no radio needed), the
 # Bluetooth LE whitening and CRC the vendored Ubertooth tables (GPL-2.0-or-later).
 set(PCAP_DSP
+  src/follow.c
   src/pcapng.c
   src/records.c
   src/dec_ble.c
