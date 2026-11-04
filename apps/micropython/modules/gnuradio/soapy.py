@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """soapy.source for the board's own radio, set up as the host plugin "driver=esdr" is
-(apps/osmosdr/soapy): one RF gain index (any gain name sets it, clamped), the continuous rates
+(apps/osmosdr/soapy): one RF gain index (any gain name sets it, clamped, except that a HackRF
+block's AMP, LNA and VGA add up), the continuous rates
 16 MS/s / 64 .. 1024 with offset tuning, and the native rates 80, 40 and 16 MS/s in bursts
 (esdr.BURST_RATES: contiguous within 16380 samples, enough for displays and short captures).
-Where the radio streams the whole 80 MHz without a gap (esdr.gapless_start(): the WHY2025
-badge's C6, gapless by default), displays at 80 MS/s take that instead: the 10 us windows
+Where the radio streams without a gap (esdr.gapless_start(): the WHY2025 badge's C6, gapless
+by default), displays at 80 and 40 MS/s take that instead: the 10 us windows
 that stand out, as many as the link budget holds, through the channelizer, whose bursts the
 spectrum sinks draw at their channels over quiet noise (qtgui.py). Any driver string is
 accepted: the board has one radio. Settings change between captures; while only displays take the stream (qtgui sinks),
@@ -52,6 +53,14 @@ _GAPLESS_RATIO = 1.25
 # Channels of 1 MHz: spectrum rows of 125 kHz bins.
 _GAPLESS_CHANNEL_HZ = 1000000
 _gapless_ok = [hasattr(esdr, "gapless_start")]
+
+# The rate the board's one radio was last set to, which may not be the one asked for.
+_radio_rate = [None]
+
+
+def radio_rate():
+    """What the sinks draw at (they draw the radio's monitor); None before any source is set."""
+    return _radio_rate[0]
 
 
 def _gapless(rate):
@@ -116,6 +125,7 @@ class source(gr.basic_block):
     # -- settings --
     def set_sample_rate(self, channel, rate):
         self._rate = _snap_rate(rate)
+        _radio_rate[0] = self._rate
         self._changed()
 
     def get_sample_rate(self, channel=0):

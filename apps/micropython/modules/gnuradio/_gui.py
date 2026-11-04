@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The board's stand-in for the Qt GUI of GRC exports, on LVGL: a header with the window title,
 a row (label and slider) per QT GUI Range variable, and the qtgui sinks sharing the rest of
-the 320x240 display in bands, top to bottom in the order the flowgraph creates them. A sink
+the display in bands, top to bottom in the order the flowgraph creates them. A sink
 owns an RGB565 buffer shown by an lv.canvas; the esdr C helpers draw into it. QApplication
 .exec_() runs the loop here: sinks redraw at their update time from the latest samples
 (esdr.rx_latest()), the encoder moves between the sliders (turn) and edits one (press, turn,
@@ -130,6 +130,12 @@ def _clear():
         _group.remove_all_objs()
         _scr.clean()
         _scr.scroll_to_y(0, False)
+        # Their canvases went with the screen, but a tab not showing still gets its sinks' calls
+        # (a retune): a deleted object would raise, and a slider takes that for a refused value.
+        from PyQt5._nothing import Nothing
+
+        for s in _active:
+            s._canvas = Nothing()
 
 
 def register(sink):

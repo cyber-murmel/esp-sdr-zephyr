@@ -1,7 +1,7 @@
 {
   "name": "Spectrum",
-  "description": "Spectrum, waterfall and samples of 250 kHz to 2 MHz (a chooser, up to the board's top rate: 2 MS/s on the WHY2025 badge, 500 kS/s on the S3), or of 40 MHz: without a gap where the radio streams it (the WHY2025 badge: the bursts its channelizer finds, over quiet noise), else from bursts; the knob tunes from 1.8 to 2.8 GHz and sets the radio's gain (or leaves it to AGC).",
+  "description": "Spectrum, waterfall and samples of 250 kHz to 2 MHz (a chooser, up to the board's top rate: 2 MS/s on the WHY2025 badge, 500 kS/s on the S3), or of 40 or 80 MHz: without a gap where the radio streams it (the WHY2025 badge: the bursts its channelizer finds, each at its channel, over quiet noise), else from bursts; the knob tunes from 1.8 to 2.8 GHz and sets the radio's gain (or leaves it to AGC).",
   "category": "receive",
   "author": "esp-sdr",
-  "revision": 6
+  "revision": 7
 }

@@ -23,7 +23,8 @@ What runs:
      - the board's receiver: continuously at 250, 125, 62.5, 31.25 or 15.625 kS/s (offset
        tuning), or at the native 80, 40 or 16 MS/s in bursts of 16380 samples, contiguous within
        a burst (wideband displays, short captures; 40 and 80 MS/s open the analog filters to
-       +-18 MHz); other rates are rounded to the nearest; one RF gain index (any gain name sets
+       +-18 MHz; displays there stream without a gap where the radio can, see
+       `The WHY2025 badge`_); other rates are rounded to the nearest; one RF gain index (any gain name sets
        it, as the host plugin ``driver=esdr`` does, except that GRC's HackRF block's ``AMP``,
        ``LNA`` and ``VGA`` add up, the amp counting 11)
    * - ``soapy.sink`` (any ``driver=``)
@@ -52,13 +53,13 @@ What runs:
        stops; host paths are placed under ``/SD:`` (``/tmp/rx.fc32`` ->
        ``/SD:/tmp/rx.fc32``), readable with ``numpy.fromfile()``
    * - ``qtgui.freq_sink_c``, ``waterfall_sink_c``, ``time_sink_c``, ``const_sink_c``
-     - drawn on the ST7789V display (LVGL canvases filled by C helpers), placed as the
+     - drawn on the board's display (LVGL canvases filled by C helpers), placed as the
        export's layouts place them, in the board's colours (``modules/dusk.py``, derived in
        OkLab by ``tools/dusk.py``): a waterfall uses its heat scale, dark purple through
        orange to near white, whatever colour map the export sets. GRC's Grid switch
        (``enable_grid()``) gives a waterfall fine and coarse lines for frequency and time,
-       spaced to suit the span and the plot, and named on its title row; frequency lines
-       sit at multiples of their spacing, time lines scroll with their rows.
+       spaced to suit the radio's real rate and the plot, and named on its title row;
+       frequency lines sit at multiples of their spacing, time lines scroll with their rows.
        ``waterfall_sink_c.set_grid_spacing(freq_fine, freq_coarse, time_fine, time_coarse)``
        (Hz and seconds, not in GNU Radio; ``None``: automatic, 0: off) sets them. The MCH2022
        badge's FPGA draws its waterfall without a grid
@@ -74,7 +75,7 @@ What runs:
        to 2.8 GHz, it varies from chip to chip), stops the slider at the last value that works
    * - ``QVBoxLayout``, ``QHBoxLayout``, ``QGridLayout`` (GUI hints ``row, col, rowspan,
        colspan``), ``QTabWidget`` (GUI hint ``tab@n``)
-     - placed on the 320x240 screen; a tab widget shows one page at a time; a scroll area
+     - placed on the board's screen; a tab widget shows one page at a time; a scroll area
        does not scroll
    * - The rest of a Qt GUI export (``PyQt5``, ``sip``, settings, styling)
      - accepted, does nothing; ``QApplication.exec_()`` runs the display until Ctrl-C (or the
@@ -217,9 +218,9 @@ author). Run it again after changing the flowgraph; the revision goes up when th
 
 The menu lists:
 
-- the apps bundled with the firmware, ``eggs/``: Spectrum (250 kS/s to 2 MS/s, gapless, or
-  40 MS/s: the bursts in the gapless stream where the radio has it, else bursts), Waterfall
-  (the same, or 80 MS/s likewise),
+- the apps bundled with the firmware, ``eggs/``: Spectrum and Waterfall (250 kS/s to 2 MS/s,
+  gapless, or 40 and 80 MS/s: the bursts in the gapless stream where the radio has it, else
+  bursts),
   Constellation,
   Receiver (tabs, radio buttons, a check box), Tone (transmits), Data link (two-way messages,
   `Data link`_) and, on the WHY2025 and MCH2022 badges, Bursts (80 MHz in channels, not a GRC

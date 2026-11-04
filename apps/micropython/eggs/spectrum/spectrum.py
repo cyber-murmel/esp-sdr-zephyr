@@ -7,7 +7,7 @@
 # GNU Radio Python Flow Graph
 # Title: Spectrum
 # Author: esp-sdr
-# Description: Spectrum, waterfall and samples of 250 kHz to 2 MHz (a chooser, up to the board's top rate: 2 MS/s on the WHY2025 badge, 500 kS/s on the S3), or of 40 MHz: without a gap where the radio streams it (the WHY2025 badge: the bursts its channelizer finds, over quiet noise), else from bursts; the knob tunes from 1.8 to 2.8 GHz and sets the radio's gain (or leaves it to AGC).
+# Description: Spectrum, waterfall and samples of 250 kHz to 2 MHz (a chooser, up to the board's top rate: 2 MS/s on the WHY2025 badge, 500 kS/s on the S3), or of 40 or 80 MHz: without a gap where the radio streams it (the WHY2025 badge: the bursts its channelizer finds, each at its channel, over quiet noise), else from bursts; the knob tunes from 1.8 to 2.8 GHz and sets the radio's gain (or leaves it to AGC).
 # GNU Radio version: 3.10.12.0
 
 from PyQt5 import Qt
@@ -75,9 +75,9 @@ class spectrum(gr.top_block, Qt.QWidget):
         ##################################################
 
         # Create the options list
-        self._samp_rate_options = [250000.0, 500000.0, 1000000.0, 2000000.0, 40000000.0]
+        self._samp_rate_options = [250000.0, 500000.0, 1000000.0, 2000000.0, 40000000.0, 80000000.0]
         # Create the labels list
-        self._samp_rate_labels = ['250 kS/s', '500 kS/s', '1 MS/s', '2 MS/s', '40 MS/s']
+        self._samp_rate_labels = ['250 kS/s', '500 kS/s', '1 MS/s', '2 MS/s', '40 MS/s', '80 MS/s']
         # Create the combo box
         self._samp_rate_tool_bar = Qt.QToolBar(self)
         self._samp_rate_tool_bar.addWidget(Qt.QLabel("Sample rate" + ": "))
@@ -134,7 +134,7 @@ class spectrum(gr.top_block, Qt.QWidget):
             None # parent
         )
         self.qtgui_waterfall_sink_x_0.set_update_time(0.10)
-        self.qtgui_waterfall_sink_x_0.enable_grid(False)
+        self.qtgui_waterfall_sink_x_0.enable_grid(True)
         self.qtgui_waterfall_sink_x_0.enable_axis_labels(True)
 
 
@@ -154,7 +154,7 @@ class spectrum(gr.top_block, Qt.QWidget):
             self.qtgui_waterfall_sink_x_0.set_color_map(i, colors[i])
             self.qtgui_waterfall_sink_x_0.set_line_alpha(i, alphas[i])
 
-        self.qtgui_waterfall_sink_x_0.set_intensity_range(-90, -40)
+        self.qtgui_waterfall_sink_x_0.set_intensity_range(-90 + (10 if samp_rate > 10e6 else 0), -40 + (5 if samp_rate > 10e6 else 0))
 
         self._qtgui_waterfall_sink_x_0_win = sip.wrapinstance(self.qtgui_waterfall_sink_x_0.qwidget(), Qt.QWidget)
 
@@ -279,6 +279,7 @@ class spectrum(gr.top_block, Qt.QWidget):
         self.qtgui_freq_sink_x_0.set_frequency_range(self.freq, self.samp_rate)
         self.qtgui_time_sink_x_0.set_samp_rate(self.samp_rate)
         self.qtgui_waterfall_sink_x_0.set_frequency_range(self.freq, self.samp_rate)
+        self.qtgui_waterfall_sink_x_0.set_intensity_range(-90 + (10 if self.samp_rate > 10e6 else 0), -40 + (5 if self.samp_rate > 10e6 else 0))
         self.soapy_plutosdr_source_0.set_sample_rate(0, self.samp_rate)
 
     def get_gain(self):

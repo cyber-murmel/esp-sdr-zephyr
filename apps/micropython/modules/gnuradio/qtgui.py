@@ -3,8 +3,8 @@
 on the board's display (_gui.py); the other sinks accept their samples and draw nothing.
 Range and RangeWidget become variables the encoder changes. Line colours, labels and other
 styling calls are accepted and ignored, grids except a waterfall's. While the radio streams
-gapless with the channelizer (soapy.source at 80 MS/s), the spectrum sinks draw the bursts it
-found, each at its channel, over quiet noise (esdr.chan_spectrum()), instead of the latest
+gapless with the channelizer (soapy.source at 80 and 40 MS/s), the spectrum sinks draw the bursts
+it found, each at its channel, over quiet noise (esdr.chan_spectrum()), instead of the latest
 samples' spectrum."""
 
 import array
@@ -13,7 +13,7 @@ import time
 
 import dusk
 import esdr
-from gnuradio import _fpga, _gui, _wfgrid, gr
+from gnuradio import _fpga, _gui, _wfgrid, gr, soapy
 from PyQt5._nothing import Nothing
 
 TRIG_MODE_FREE = 0
@@ -275,7 +275,8 @@ class waterfall_sink_c(_spectrum):
         self._last = 0
         # What the export asks for, integers before a float can round them; what is drawn.
         self._hz = int(fc)
-        self._span = max(1, int(bw))
+        self._asked = max(1, int(bw))
+        self._span = self._asked
         self._drawn = (self._hz, self._span)
         self._anchor = self._hz
         self._view = 0
@@ -319,7 +320,7 @@ class waterfall_sink_c(_spectrum):
         self._fc = float(fc)
         self._bw = float(bw)
         self._hz = int(fc)
-        self._span = max(1, int(bw))
+        self._asked = max(1, int(bw))
         self._dirty = True
         if self._fpga:
             self._head()
@@ -366,6 +367,9 @@ class waterfall_sink_c(_spectrum):
 
     def _apply(self):
         self._dirty = False
+        # The rows are the radio's: its rate, which can be below the one asked for (a chooser's
+        # 2 MS/s on the S3 runs at 500 kS/s), sets the axis and the grid.
+        self._span = soapy.radio_rate() or self._asked
         wanted = (self._hz, self._span)
         if self._span != self._drawn[1]:
             self._forget()

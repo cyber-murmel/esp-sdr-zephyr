@@ -2,8 +2,8 @@
 # The waterfall widget on the board, in the Waterfall app as the launcher starts it: the C picture
 # against a reference, the picture through a retune by the real slider and back, every rate of the
 # chooser, the grid's spacings, and what a redraw costs. Prints a line per check, then "WATERFALL
-# ok" or "WATERFALL FAILED". HOLD=1 also compares the spectrum before and after a retune: anything
-# on the air should stay on its frequency (needs a signal around the frequency).
+# ok" or "WATERFALL FAILED". HOLD=1 also reads what is on the air in MHz at two tunes: it should
+# stay on its frequency (needs something wide in the band, a Wi-Fi network).
 import array
 import gc
 import sys

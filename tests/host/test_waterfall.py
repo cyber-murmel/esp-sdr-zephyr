@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The waterfall widget (apps/micropython/modules/gnuradio/qtgui.py, _wfgrid.py, cmod/esdr_wf.c):
-the view and the grid's numbers, the C picture against a reference, and the unmodified Waterfall
-export on a fake radio, whose picture comes from that same C. Frequencies go through float32 where
+the view and the grid's numbers, the C picture against a reference, and the unmodified exports of
+the receive apps on a fake radio, whose picture comes from that same C. Frequencies go through float32 where
 the board's would: CPython's doubles would hide its 256 Hz steps at 2.4 GHz."""
 
 import array
@@ -592,10 +592,79 @@ def test_chooser_is_sorted_with_40_ms(board):
     assert board.tb.samp_rate in rates
 
 
-def test_spectrums_chooser_is_sorted_with_40_ms():
-    export = (REPO / "apps/micropython/eggs/spectrum/spectrum.py").read_text()
-    assert "_samp_rate_options = [250000.0, 500000.0, 1000000.0, 2000000.0, 40000000.0]" in export
-    assert "_samp_rate_labels = ['250 kS/s', '500 kS/s', '1 MS/s', '2 MS/s', '40 MS/s']" in export
+@pytest.mark.parametrize("egg", ["waterfall", "spectrum"])
+def test_both_choosers_list_the_same_rates(egg):
+    export = (EGGS / egg / (egg + ".py")).read_text()
+    assert "_samp_rate_options = [250000.0, 500000.0, 1000000.0, 2000000.0, 40000000.0, 80000000.0]" in export
+    assert "_samp_rate_labels = ['250 kS/s', '500 kS/s', '1 MS/s', '2 MS/s', '40 MS/s', '80 MS/s']" in export
+
+
+@pytest.mark.parametrize("egg", ["waterfall", "spectrum", "receiver"])
+def test_every_waterfall_has_its_grid_on(make_board, egg):
+    assert make_board(egg).sink._grid is True
+
+
+@pytest.mark.parametrize("egg", ["waterfall", "spectrum"])
+def test_wide_rates_share_a_colour_scale(make_board, egg):
+    board = make_board(egg)
+    for rate in (40e6, 80e6):
+        board.tb.set_samp_rate(rate)
+        assert (board.sink._imin, board.sink._imax) == (-80.0, -35.0)
+
+
+class SlowRadio(FakeRadio):
+    """The S3: 500 kS/s at the top of its continuous rates."""
+
+    RATES = (500000, 250000, 125000)
+
+
+def test_the_axis_follows_the_rate_the_radio_took(make_board):
+    board = make_board(radio_type=SlowRadio)
+    board.tb.set_samp_rate(2e6)
+    assert board.tb.soapy_plutosdr_source_0._rate == 500000
+    sink = place(board, w=320)
+    sink.enable_grid(True)
+    draw(board)
+    assert sink._span == 500000 and "20k/100kHz" in sink._notes
+    # And 100 kHz moves the picture by the real rate's columns: 64 of 320 over 500 kHz.
+    board.tb.set_freq(board.tb.freq + 100e3)
+    draw(board)
+    assert sink._view == 64
+
+
+def test_a_sink_on_a_tab_not_showing_takes_a_retune(make_board):
+    # The screen is rebuilt without it; its canvas was deleted with the old one. It raised, and
+    # the slider took that for a refused tune ("Frequency: refused: LvReferenceError").
+    board = make_board("receiver")
+    gui = board.gui
+    sinks = [board.tb.qtgui_waterfall_sink_x_0, board.tb.qtgui_freq_sink_x_0]
+    for s in sinks:
+        s._make(None, 0, 0, W, ROWS + gui.LABEL)
+
+    class Gone(FakeCanvas):
+        def invalidate(self):
+            raise RuntimeError("Referenced object was deleted!")
+
+    class Screen:
+        def clean(self):
+            pass
+
+        def scroll_to_y(self, *a):
+            pass
+
+    class Group:
+        def remove_all_objs(self):
+            pass
+
+    for s in sinks:
+        s._canvas = Gone(None)
+    gui._scr, gui._group, gui._active = Screen(), Group(), list(sinks)
+    gui._clear()
+    gui._scr = None
+    win = board.tb._freq_win
+    i = win.index
+    win.set_index(i + 5)
+    assert win.index == i + 5 and board.tb.freq == win.value
 
 
 def test_starts_on_agc_with_a_gain_waiting(board):
@@ -795,7 +864,6 @@ def test_the_knob_reaches_the_radio(board):
 
 
 def test_export_turns_the_grid_on(board):
-    assert board.sink._grid is True
     assert "enable_grid(True)" in (EGG / "waterfall.py").read_text()
 
 

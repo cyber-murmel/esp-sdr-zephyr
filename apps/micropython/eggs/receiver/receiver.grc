@@ -226,7 +226,7 @@ blocks:
     fc: freq
     fftsize: '1024'
     freqhalf: 'True'
-    grid: 'False'
+    grid: 'True'
     gui_hint: 'tabs@0: 0,0,1,1'
     int_max: '-40'
     int_min: '-90'

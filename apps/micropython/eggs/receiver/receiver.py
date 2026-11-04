@@ -160,7 +160,7 @@ class receiver(gr.top_block, Qt.QWidget):
             None # parent
         )
         self.qtgui_waterfall_sink_x_0.set_update_time(0.10)
-        self.qtgui_waterfall_sink_x_0.enable_grid(False)
+        self.qtgui_waterfall_sink_x_0.enable_grid(True)
         self.qtgui_waterfall_sink_x_0.enable_axis_labels(True)
 
 
