@@ -19,6 +19,8 @@
 #define PORT_ESP32 COPROC_UART_ESP32
 #define PORT_FPGA  COPROC_UART_FPGA
 #define PORT_COUNT 2
+/* The FPGA's fast line: a receive ring like the UARTs', from the PIO. */
+#define PORT_FAST  2
 
 extern struct coproc_stats coproc_stats;
 
@@ -36,6 +38,14 @@ bool uart_tx_drained(int port);
 int uart_set_line(int port, const struct uart_config *cfg);
 /* The UART's errors into the counters. */
 void uart_poll_errors(int port);
+/* Bytes waiting in a receive ring. */
+size_t uart_rx_pending(int port);
+/* The FPGA's UART pins: GPIO25 read by the PIO at @p baud, GPIO24 a ready line; or back. */
+int fast_rx_start(uint32_t baud);
+void fast_rx_stop(void);
+void fast_rx_ready(bool ready);
+/* A byte with a bad stop bit since the last call. */
+bool fast_rx_framing_error(void);
 
 /* ---- routing (bridge.c) ---- */
 
@@ -56,6 +66,8 @@ void bridge_link_open(bool open);
 bool bridge_link_is_open(void);
 int bridge_link_baud(int port, uint32_t baud);
 uint32_t bridge_baud(int port);
+/* The FPGA's fast line at @p baud into interface 6; 0 off. */
+int bridge_fastlink(uint32_t baud);
 void bridge_set_test(uint8_t mode);
 uint8_t bridge_get_test(void);
 /* USB configured or not. */

@@ -32,7 +32,7 @@ REQ_BOOTSEL = 0x22
 REQ_GET_LOG = 0x60
 WEBUSB_GET_FW_VER = 0x27
 INFO_MAGIC = 0x31325043
-STATS_FMT = "<2Q2Q2I2I2I2I2Q2I"
+STATS_FMT = "<2Q2Q2I2I2I2I2Q2IQ4I"
 STATS_NAMES = (
     "uart_rx", "uart_tx", "ring_overrun", "uart_overrun", "uart_framing", "stale_dropped",
 )
@@ -230,3 +230,5 @@ class Rp2040(WestCommand):
             print(f"{name:14} ESP32 {v[2 * k]:>12}  FPGA {v[2 * k + 1]:>12}")
         print(f"link           out {v[12]} in {v[13]}")
         print(f"ESP32 resets   {v[14]} ({v[15]} into the application by the reset lock)")
+        print(f"fast line      {v[16]} bytes, {v[17]} lost, held back {v[18]} times, ring peak {v[19]}, "
+              f"framing errors {v[20]}")

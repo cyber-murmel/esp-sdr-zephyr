@@ -12,7 +12,9 @@ the line rate where it matters (a UART behind a USB bridge, as the MCH2022 badge
 passes it on); USB-Serial-JTAG ignores it.
 
 PORT "usb" or "usb:SERIAL" is the MCH2022 badge's RP2040 running apps/mch2022_coproc: its bulk
-interface 6 with the framed link (esp_sdr/esdr_link.h), up to 5 Mbaud (--baud, 5000000 by default).
+interface 6 with the framed link (esp_sdr/esdr_link.h). Blocks come through the FPGA where its
+bitstream allows, else on the UART, up to 5 Mbaud (--baud, 5000000 by default); --no-fast says
+no to the FPGA.
 """
 
 import argparse
@@ -142,10 +144,16 @@ COPROC_VID, COPROC_PID = 0x16D0, 0x0F9A
 COPROC_IF_LINK = 6
 COPROC_EP_OUT, COPROC_EP_IN = 0x07, 0x87
 COPROC_SET_BAUD, COPROC_ESP32_RESET, COPROC_LINK_OPEN, COPROC_LINK_CLOSE = 0x10, 0x20, 0x30, 0x31
+COPROC_FPGA_FASTLINK = 0x40
 REQ_SET_LINK_BAUD = 0x1B
 LINK_BOOT_BAUD = 2000000
-# Wire bytes the device may have on the way: what the RP2040's ring takes if USB stops.
+LINK_HELLO_F_FAST = 0x01
+# The FPGA's line in units of 100 kbaud: 30 MHz over 2 (gateware/esdr_fpga/link.py).
+LINK_FAST_RATE = 150
+# Wire bytes the device may have on the way: what the RP2040's ring takes if USB stops; through
+# the FPGA there is its FIFO too, and the time they take to drain, some 20 ms.
 LINK_WINDOW = 16384
+LINK_WINDOW_FAST = 32768
 LINK_CREDIT_STEP = 4096
 
 
@@ -198,20 +206,24 @@ def link_decode(wire):
 class EsdrFramed(Esdr):
     """The same requests and blocks over interface 6 of the MCH2022 badge's RP2040."""
 
-    def __init__(self, dev, baud=5000000, sleep=time.sleep):
+    def __init__(self, dev, baud=5000000, sleep=time.sleep, fast=True):
         self.d = dev
         self.sleep = sleep
         self.buf = b""
         self.blocks = []
         self.tx_seq = 0
-        self.rx_seq = None
+        self.rx_seq = {}
         self.unacked = 0
+        self.fast = False
         self.bad_frames = 0
         self.lost_frames = 0
         self.baud = LINK_BOOT_BAUD
         self._ctrl(COPROC_SET_BAUD, 0, struct.pack("<I", LINK_BOOT_BAUD))
         self._ctrl(COPROC_LINK_OPEN)
         try:
+            if fast:
+                self._ctrl(COPROC_FPGA_FASTLINK, LINK_FAST_RATE)
+            self.want_fast = fast
             self.sleep(0.02)
             self._drain()
             if not self._hello(tries=3):
@@ -221,7 +233,12 @@ class EsdrFramed(Esdr):
                 self._drain()
                 if not self._hello(tries=5):
                     raise TimeoutError("no answer from the ESP32 (apps/osmosdr_serial?)")
-            if baud and baud != self.baud:
+            if fast and not self.fast:
+                self._ctrl(COPROC_FPGA_FASTLINK, 0)
+            if self.fast:
+                # The UART only carries requests now; the deeper way takes more credit.
+                self._send(LINK_CREDIT, struct.pack("<I", LINK_WINDOW_FAST - LINK_WINDOW))
+            elif baud and baud != self.baud:
                 self.set_baud(baud)
         except (OSError, TimeoutError):
             # The UART back to its CDC ACM port, for whoever comes next.
@@ -267,9 +284,11 @@ class EsdrFramed(Esdr):
                 except ValueError:
                     self.bad_frames += 1
                     continue
-                if self.rx_seq is not None and f[1] != self.rx_seq:
-                    self.lost_frames += (f[1] - self.rx_seq) & 0xFFFF
-                self.rx_seq = (f[1] + 1) & 0xFFFF
+                # Blocks and the rest count apart: they may take different ways.
+                kind = f[0] == LINK_BLOCK
+                if kind in self.rx_seq and f[1] != self.rx_seq[kind]:
+                    self.lost_frames += (f[1] - self.rx_seq[kind]) & 0xFFFF
+                self.rx_seq[kind] = (f[1] + 1) & 0xFFFF
                 return f
             if time.time() > end:
                 raise TimeoutError("no frame")
@@ -280,9 +299,10 @@ class EsdrFramed(Esdr):
 
     def _hello(self, tries):
         """Says hello with the credit: the device's answer, or False."""
-        h = LINK_HELLO_FMT.pack(LINK_VERSION, 0, 0, LINK_WINDOW, 0)
+        h = LINK_HELLO_FMT.pack(LINK_VERSION, LINK_HELLO_F_FAST if self.want_fast else 0, 0,
+                                LINK_WINDOW, 0)
         for _ in range(tries):
-            self.rx_seq = None
+            self.rx_seq = {}
             self.unacked = 0
             # A zero first ends whatever the device had before this frame.
             self._write(b"\0" + link_encode(LINK_HELLO, self.tx_seq, h))
@@ -292,6 +312,7 @@ class EsdrFramed(Esdr):
                     ftype, _, payload = self._frame(0.3)
                     if ftype == LINK_HELLO:
                         self.hello = LINK_HELLO_FMT.unpack_from(payload)
+                        self.fast = (self.hello[1] & LINK_HELLO_F_FAST) != 0
                         return True
             except TimeoutError:
                 pass
@@ -299,6 +320,7 @@ class EsdrFramed(Esdr):
 
     def set_baud(self, baud):
         """The ESP32's UART and the RP2040's to @p baud, as esdr_proto.h says."""
+        self.want_fast = False
         self.request_raw(REQ_SET_LINK_BAUD, data=struct.pack("<I", baud))
         self._ctrl(COPROC_SET_BAUD, 0, struct.pack("<I", baud))
         self.sleep(0.02)
@@ -315,6 +337,10 @@ class EsdrFramed(Esdr):
             self._ctrl(COPROC_LINK_CLOSE)
         except (OSError, TimeoutError):
             pass
+        # Not by name: a fake device has no such things.
+        release = getattr(self.d, "release", None)
+        if release is not None:
+            release()
 
     def _next(self, timeout=2.0):
         while True:
@@ -358,6 +384,7 @@ def open_usb(port):
         if not any(i.bInterfaceNumber == COPROC_IF_LINK for i in dev.get_active_configuration()):
             sys.exit("that badge's RP2040 runs the stock firmware: no interface 6")
         usb.util.claim_interface(dev, COPROC_IF_LINK)
+        dev.release = lambda: usb.util.dispose_resources(dev)
         return dev
     sys.exit("no MCH2022 badge on USB")
 
@@ -468,6 +495,8 @@ def cmd_tx(d, a):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--baud", type=int, help="line rate (a UART behind a USB bridge)")
+    ap.add_argument("--no-fast", action="store_true",
+                    help="port usb: blocks on the UART, not through the FPGA")
     ap.add_argument("port")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("info")
@@ -488,7 +517,7 @@ def main():
             p.add_argument("--gain", type=int, default=8)
     a = ap.parse_args()
     if a.port == "usb" or a.port.startswith("usb:"):
-        d = EsdrFramed(open_usb(a.port), a.baud or 5000000)
+        d = EsdrFramed(open_usb(a.port), a.baud or 5000000, fast=not a.no_fast)
     else:
         d = Esdr(a.port, a.baud)
     try:

@@ -66,6 +66,14 @@ config APP_LINK_FRAMED
 	  frames, with checksums and flow control and blocks of the length they have, at the
 	  highest rate the UART takes; any other host goes on with esdr_proto.h's transport.
 
+config APP_LINK_FAST
+	bool
+	default y
+	depends on APP_LINK_FRAMED && ESDR_FPGA
+	help
+	  A host that asks gets the framed link's blocks through the MCH2022 badge's FPGA, over SPI
+	  by DMA, if the image's bitstream (CONFIG_ESDR_FPGA_IMAGE) is the link variant.
+
 config APP_FW_UPDATE
 	bool "Firmware update over the link"
 	default y if ESP_IDF_BOOTLOADER

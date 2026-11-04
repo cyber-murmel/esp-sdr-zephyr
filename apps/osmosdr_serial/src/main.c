@@ -48,6 +48,9 @@
 #if defined(CONFIG_APP_LINK_FRAMED)
 #include <esp_sdr/esdr_link.h>
 #endif
+#if defined(CONFIG_APP_LINK_FAST)
+#include <esp_sdr/esdr_fpga.h>
+#endif
 #include "esdr_proto.h"
 #if defined(CONFIG_ESP_SDR_GAPLESS)
 #if !defined(CONFIG_APP_LINK_SDIO)
@@ -351,12 +354,13 @@ static void write_now(const uint8_t *p, size_t n)
 #define REQ_LINK_HELLO 0xFEU
 
 static struct {
-	/* The host speaks frames. */
-	bool on;
+	/* The host speaks frames; blocks go through the FPGA. */
+	bool on, fast;
 	/* Wire bytes of blocks the host still takes; whether it counts them at all. */
 	bool limited;
 	uint32_t credit;
-	uint16_t tx_seq, rx_seq;
+	/* Blocks count apart from the others: they may take another way (esp_sdr/esdr_link.h). */
+	uint16_t block_seq, ctl_seq, rx_seq;
 	/* What came since the last zero, and the zeros in a row. */
 	uint32_t rx_n, zeros;
 	uint8_t rx[FRAME_RX_BYTES];
@@ -376,6 +380,22 @@ static size_t block_bytes(const uint8_t *blk)
 	return sizeof(*h) + sys_le16_to_cpu(h->samples) * item;
 }
 
+#if defined(CONFIG_APP_LINK_FAST)
+#define FPGA_REG_CAPS 0x03U
+
+static const struct device *const fpga = DEVICE_DT_GET(DT_NODELABEL(fpga));
+
+/* The link bitstream is what the FPGA runs. */
+static bool fast_available(void)
+{
+	uint16_t caps;
+
+	return device_is_ready(fpga) && esdr_fpga_loaded(fpga) &&
+	       esdr_fpga_reg_read(fpga, FPGA_REG_CAPS, &caps, 1) == 0 &&
+	       (caps & ESDR_LINK_FPGA_CAPS) != 0U;
+}
+#endif
+
 static void framed_out(uint32_t max)
 {
 	while (max-- > 0U) {
@@ -388,16 +408,27 @@ static void framed_out(uint32_t max)
 			}
 			blk = out.blk[out.sent % OUT_BLOCKS];
 			/* Whatever its length, it fits: the frame's bound holds for a whole block. */
-			n = esdr_link_encode(fr.tx, sizeof(fr.tx), ESDR_LINK_BLOCK, fr.tx_seq, blk,
+			n = esdr_link_encode(fr.tx, sizeof(fr.tx), ESDR_LINK_BLOCK, fr.block_seq, blk,
 					     block_bytes(blk), NULL, 0);
 			if (fr.limited && fr.credit < n) {
 				return;
 			}
-			fr.tx_seq++;
+			fr.block_seq++;
 			fr.credit = fr.limited ? fr.credit - (uint32_t)n : 0U;
+			stats.usb_in_bytes += n;
+#if defined(CONFIG_APP_LINK_FAST)
+			if (fr.fast) {
+				/* By DMA, some 200 ns a byte: the UART's FIFO meanwhile keeps replies. */
+				static const uint8_t op = ESDR_LINK_FPGA_OP;
+
+				(void)esdr_fpga_write(fpga, &op, 1, fr.tx, n);
+				out.sent++;
+				stats.rx_blocks++;
+				return;
+			}
+#endif
 			fr.tx_len = (uint32_t)n;
 			fr.tx_off = 0;
-			stats.usb_in_bytes += n;
 		}
 		if (!link_writable()) {
 			return;
@@ -428,7 +459,8 @@ static void framed_now(const uint8_t *p, size_t n)
 			link_putc(fr.tx[fr.tx_off++]);
 		}
 	}
-	len = esdr_link_encode(fr.tx, sizeof(fr.tx), type, fr.tx_seq++, p, n, NULL, 0);
+	len = esdr_link_encode(fr.tx, sizeof(fr.tx), type,
+			       type == ESDR_LINK_BLOCK ? fr.block_seq++ : fr.ctl_seq++, p, n, NULL, 0);
 	for (size_t k = 0; k < len; k++) {
 		while (!link_writable()) {
 			if (k_uptime_get() > end) {
@@ -569,6 +601,7 @@ static APP_HOT void req_feed(uint8_t b)
 static void framed_off(void)
 {
 	fr.on = false;
+	fr.fast = false;
 	fr.limited = false;
 	fr.zeros = 0;
 	fr.tx_off = 0;
@@ -603,7 +636,11 @@ static void framed_frame(void)
 		fr.zeros = 0;
 		fr.credit = sys_le32_to_cpu(h.credit);
 		fr.limited = fr.credit != 0U;
-		fr.tx_seq = 0;
+#if defined(CONFIG_APP_LINK_FAST)
+		fr.fast = (h.flags & ESDR_LINK_HELLO_F_FAST) != 0U && fast_available();
+#endif
+		fr.block_seq = 0;
+		fr.ctl_seq = 0;
 		fr.tx_off = 0;
 		fr.tx_len = 0;
 		req.h.req = REQ_LINK_HELLO;
@@ -1477,11 +1514,12 @@ static void req_answer(void)
 	if (req.h.req == REQ_LINK_HELLO) {
 		const struct esdr_link_hello h = {
 			.version = ESDR_LINK_VERSION,
+			.flags = fr.fast ? ESDR_LINK_HELLO_F_FAST : 0U,
 			.max_frame = sys_cpu_to_le16((uint16_t)FRAME_RX_BYTES),
 			.credit = sys_cpu_to_le32(fr.credit),
 			.baud_max = sys_cpu_to_le32(LINK_BAUD_MAX),
 		};
-		size_t n = esdr_link_encode(fr.tx, sizeof(fr.tx), ESDR_LINK_HELLO, fr.tx_seq++, &h,
+		size_t n = esdr_link_encode(fr.tx, sizeof(fr.tx), ESDR_LINK_HELLO, fr.ctl_seq++, &h,
 					    sizeof(h), NULL, 0);
 
 		for (size_t k = 0; k < n; k++) {

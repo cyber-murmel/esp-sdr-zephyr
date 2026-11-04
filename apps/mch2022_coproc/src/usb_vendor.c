@@ -408,6 +408,11 @@ static int link_to_dev(const struct usb_setup_packet *setup, const struct net_bu
 	case COPROC_REQ_LINK_CLOSE:
 		bridge_link_open(false);
 		return 0;
+	case COPROC_REQ_FPGA_FASTLINK:
+		if (!bridge_link_is_open() && setup->wValue != 0U) {
+			return -EINVAL;
+		}
+		return bridge_fastlink((uint32_t)setup->wValue * 100000U);
 	case COPROC_REQ_RESET_MODE:
 		if (setup->wValue > COPROC_RESET_CIRCUIT) {
 			return -EINVAL;
@@ -437,7 +442,7 @@ static struct net_buf *link_to_host(struct vendor_if *v, const struct usb_setup_
 			.magic = sys_cpu_to_le32(COPROC_INFO_MAGIC),
 			.api_major = COPROC_API_MAJOR,
 			.api_minor = COPROC_API_MINOR,
-			.features = sys_cpu_to_le16(COPROC_F_LINK),
+			.features = sys_cpu_to_le16(COPROC_F_LINK | COPROC_F_FASTLINK),
 			.rosc_status = sys_cpu_to_le32(sysctl_rosc_status()),
 			.reset_reason = sys_cpu_to_le32(sysctl_reset_reason()),
 			.uptime_ms = sys_cpu_to_le32(k_uptime_get_32()),
@@ -505,6 +510,7 @@ static int vendor_control_to_dev(struct usbd_class_data *const c_data,
 			       ? link_to_dev(setup, buf) : -ENOTSUP;
 	}
 }
+
 
 static struct net_buf *vendor_control_to_host(struct usbd_class_data *const c_data,
 					      const struct usb_setup_packet *const setup)

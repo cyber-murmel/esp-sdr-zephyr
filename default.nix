@@ -228,16 +228,25 @@ let
     nativeBuildInputs = [ (pkgs.python3.withPackages (ps: [ ps.amaranth ])) ]
       ++ (with pkgs; [ yosys nextpnr icestorm ]);
     dontConfigure = true;
-    buildPhase = "python3 -m esdr_fpga.build top --out $TMPDIR/gateware";
+    buildPhase = ''
+      python3 -m esdr_fpga.build top --out $TMPDIR/gateware
+      python3 -m esdr_fpga.build link --out $TMPDIR/gateware
+    '';
     installPhase = ''
       install -Dm644 -t $out $TMPDIR/gateware/top/top.bin $TMPDIR/gateware/top/top.tim.json
+      install -Dm644 $TMPDIR/gateware/link/top.bin $out/link.bin
+      install -Dm644 $TMPDIR/gateware/link/top.tim.json $out/link.tim.json
     '';
   };
-  # The MCH2022 images that drive the FPGA (its dtsi in their overlay) embed the bitstream.
-  fpgaApps = [ "micropython" "fpga_demo" ];
+  # The MCH2022 images that drive the FPGA (its node in their overlay) embed a bitstream.
+  fpgaImages = {
+    micropython = "top.bin";
+    fpga_demo = "top.bin";
+    osmosdr_serial = "link.bin";
+  };
   imageArgs = img: img.extraArgs
-    ++ lib.optional (img.board == "mch2022" && lib.elem img.app fpgaApps)
-      "CONFIG_ESDR_FPGA_IMAGE=\"${gateware}/top.bin\"";
+    ++ lib.optional (img.board == "mch2022" && fpgaImages ? ${img.app})
+      "CONFIG_ESDR_FPGA_IMAGE=\"${gateware}/${fpgaImages.${img.app}}\"";
   excludedApps = map (app: lib.fileset.maybeMissing (./apps + "/${app}")) excludeApps;
 
   # The images twister builds, from the sample.yaml files alone (nix/images.py).

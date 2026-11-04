@@ -588,17 +588,25 @@ private:
 
 /*
  * The framed link (esp_sdr/esdr_link.h) through the MCH2022 badge's RP2040 running
- * apps/mch2022_coproc: its bulk interface 6, up to 5 Mbaud on the ESP32's UART. One reader thread
- * sorts the frames; blocks come by their length and go on padded to the size the callers expect.
+ * apps/mch2022_coproc: its bulk interface 6, blocks through the FPGA where its bitstream allows,
+ * else up to 5 Mbaud on the ESP32's UART. One reader thread sorts the frames; blocks come by their
+ * length and go on padded to the size the callers expect.
  */
 static constexpr uint16_t COPROC_VID = 0x16D0, COPROC_PID = 0x0F9A;
 static constexpr uint8_t COPROC_IF_LINK = 6, COPROC_EP_OUT = 0x07, COPROC_EP_IN = 0x87;
 /* esp_sdr/mch2022_coproc.h */
 static constexpr uint8_t COPROC_REQ_SET_BAUD = 0x10, COPROC_REQ_ESP32_RESET = 0x20,
-			 COPROC_REQ_LINK_OPEN = 0x30, COPROC_REQ_LINK_CLOSE = 0x31;
+			 COPROC_REQ_LINK_OPEN = 0x30, COPROC_REQ_LINK_CLOSE = 0x31,
+			 COPROC_REQ_FPGA_FASTLINK = 0x40;
 static constexpr uint32_t LINK_BOOT_BAUD = 2000000;
-/* Wire bytes the device may have on the way: what the RP2040's ring takes if USB stops. */
-static constexpr uint32_t LINK_WINDOW = 16384, LINK_CREDIT_STEP = 4096;
+/* The FPGA's fast line, in units of 100 kbaud. */
+static constexpr uint16_t LINK_FAST_RATE = 150;
+/*
+ * Wire bytes the device may have on the way: what the RP2040's ring takes if USB stops, on the UART;
+ * the FPGA's FIFO and the larger ring behind it, through the FPGA.
+ */
+static constexpr uint32_t LINK_WINDOW = 16384, LINK_WINDOW_FAST = ESDR_LINK_FPGA_FIFO,
+			  LINK_CREDIT_STEP = 4096;
 
 /* A badge with interface 6, of this serial if one is given. */
 static bool openCoproc(libusb_context *ctx, const std::string &wantSerial, libusb_device_handle **out,
@@ -649,7 +657,7 @@ static bool openCoproc(libusb_context *ctx, const std::string &wantSerial, libus
 
 class FramedLink : public Link {
 public:
-	FramedLink(const std::string &serial, unsigned long baud)
+	FramedLink(const std::string &serial, unsigned long baud, bool fast)
 	{
 		if (libusb_init(&ctx_) != 0) {
 			throw std::runtime_error("esdr: libusb_init failed");
@@ -663,6 +671,10 @@ public:
 
 		coproc(COPROC_REQ_SET_BAUD, 0, &rate, sizeof(rate));
 		coproc(COPROC_REQ_LINK_OPEN, 0, nullptr, 0);
+		if (fast) {
+			coproc(COPROC_REQ_FPGA_FASTLINK, LINK_FAST_RATE, nullptr, 0);
+		}
+		wantFast_ = fast;
 		std::this_thread::sleep_for(std::chrono::milliseconds(20));
 		if (!hello(3)) {
 			/* At another rate after a host that went away, or still booting: anew. */
@@ -673,7 +685,16 @@ public:
 				throw std::runtime_error("esdr: no answer from the ESP32");
 			}
 		}
-		if (baud != 0 && baud != LINK_BOOT_BAUD && !setBaud((uint32_t)baud)) {
+		if (fast && !fast_) {
+			/* No link bitstream on the FPGA: its pins back to its UART. */
+			coproc(COPROC_REQ_FPGA_FASTLINK, 0, nullptr, 0);
+		}
+		if (fast_) {
+			/* The UART only carries requests now. */
+			const uint32_t more = LINK_WINDOW_FAST - LINK_WINDOW;
+
+			sendFrame(ESDR_LINK_CREDIT, &more, sizeof(more), nullptr, 0);
+		} else if (baud != 0 && baud != LINK_BOOT_BAUD && !setBaud((uint32_t)baud)) {
 			SoapySDR_logf(SOAPY_SDR_WARNING, "esdr: staying at %u baud", baud_);
 		}
 	}
@@ -771,7 +792,9 @@ private:
 
 	bool hello(int tries)
 	{
-		const esdr_link_hello h{ESDR_LINK_VERSION, 0, 0, LINK_WINDOW, 0};
+		const esdr_link_hello h{ESDR_LINK_VERSION,
+					(uint8_t)(wantFast_ ? ESDR_LINK_HELLO_F_FAST : 0U), 0,
+					LINK_WINDOW, 0};
 		const uint8_t zero = 0;
 
 		for (int k = 0; k < tries; k++) {
@@ -798,6 +821,7 @@ private:
 		std::vector<uint8_t> rep;
 		uint32_t r = rate;
 
+		wantFast_ = false;
 		if (request(ESDR_REQ_SET_LINK_BAUD, 0, 0, &r, sizeof(r), rep) < 0) {
 			return false;
 		}
@@ -871,7 +895,10 @@ private:
 			}
 		} else if (f.type == ESDR_LINK_HELLO) {
 			std::lock_guard<std::mutex> g(cm_);
+			esdr_link_hello h{};
 
+			std::memcpy(&h, f.payload, std::min<size_t>(f.len, sizeof(h)));
+			fast_ = (h.flags & ESDR_LINK_HELLO_F_FAST) != 0U;
 			gotHello_ = true;
 			cv_.notify_all();
 		}
@@ -912,6 +939,8 @@ private:
 	std::mutex wm_, cm_, rxm_;
 	std::condition_variable cv_;
 	bool gotReply_ = false, gotHello_ = false;
+	/* Blocks through the FPGA: asked for, and what the device's hello said. */
+	bool wantFast_ = false, fast_ = false;
 	uint8_t wantReq_ = 0;
 	int16_t replyStatus_ = 0;
 	std::vector<uint8_t> reply_;
@@ -936,7 +965,8 @@ public:
 		} else if (args.count("badge")) {
 			link_ = std::make_unique<FramedLink>(
 				args.at("badge"),
-				args.count("baud") ? std::stoul(args.at("baud")) : 5000000UL);
+				args.count("baud") ? std::stoul(args.at("baud")) : 5000000UL,
+				!args.count("fast") || args.at("fast") != "0");
 			narrow_ = true;
 		} else {
 			link_ = std::make_unique<UsbLink>(args.count("serial") ? args.at("serial") : "");

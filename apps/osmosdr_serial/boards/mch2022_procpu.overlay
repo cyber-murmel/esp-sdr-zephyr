@@ -6,6 +6,8 @@
  * No console: the ROM's boot messages come at 115200 baud and the host skips them.
  */
 
+#include <freq.h>
+
 / {
 	chosen {
 		/delete-property/ zephyr,console;
@@ -16,4 +18,20 @@
 
 &uart0 {
 	current-speed = <2000000>;
+};
+
+/*
+ * The FPGA, for the framed link's blocks when its image has the link bitstream
+ * (CONFIG_ESDR_FPGA_IMAGE, gateware/esdr_fpga/link.py). The panel stays where the board has it.
+ */
+&spi3 {
+	cs-gpios = <&gpio1 0 GPIO_ACTIVE_LOW>, <&gpio0 27 GPIO_ACTIVE_LOW>;
+
+	fpga: fpga@1 {
+		compatible = "esdr,mch2022-fpga";
+		reg = <1>;
+		spi-max-frequency = <DT_FREQ_M(40)>;
+		mfd = <&rp2040>;
+		irq-gpios = <&gpio1 7 GPIO_ACTIVE_LOW>;		/* GPIO39 */
+	};
 };

@@ -11,8 +11,9 @@
  * badge's RP2040. A frame says what it is, how many came before it and whether it is whole, and a
  * lost byte costs one frame, not the stream's alignment.
  *
- * Before encoding: type, flags (0), sequence number (little endian, per direction), the payload,
- * CRC-32 (zlib's, little endian) over all of these. Then COBS, so that no zero byte is left, and a
+ * Before encoding: type, flags (0), sequence number (little endian; blocks and all other frames count
+ * apart, as they may take different ways), the payload, CRC-32 (zlib's, little endian) over all
+ * of these. Then COBS, so that no zero byte is left, and a
  * zero byte ends the frame. Empty frames (zeros in a row) mean nothing, except that
  * ESDR_LINK_FALLBACK_ZEROS of them, as a host of the older transport sends on opening, go back to
  * that transport.
@@ -58,16 +59,32 @@ enum esdr_link_type {
 	ESDR_LINK_BLOCK = 4,
 	/* Device to host: text, from a console. */
 	ESDR_LINK_TEXT = 5,
-	/* Host to device: uint32_t, wire bytes the device may send on top of what it may yet. */
+	/* Host to device: uint32_t, wire bytes of blocks the device may send on top of what it may yet. */
 	ESDR_LINK_CREDIT = 6,
 	/* Host to device: back to the older transport. */
 	ESDR_LINK_BYE = 7,
 };
 
+/*
+ * struct esdr_link_hello.flags. Host to device: the RP2040 reads the FPGA's fast line
+ * (COPROC_REQ_FPGA_FASTLINK), blocks may go that way. Device to host: they will.
+ */
+#define ESDR_LINK_HELLO_F_FAST 0x01U
+
+/*
+ * The MCH2022 badge's FPGA with the link bitstream (gateware/esdr_fpga/link.py): an SPI frame with
+ * this opcode holds link bytes, and bit 1 of its register CAPS says it is there.
+ */
+#define ESDR_LINK_FPGA_OP   0x20U
+#define ESDR_LINK_FPGA_CAPS 0x0002U
+/* The FPGA's FIFO, bytes: the host's credit stays below it. */
+#define ESDR_LINK_FPGA_FIFO 32768U
+
 /* ESDR_LINK_HELLO's payload. */
 struct esdr_link_hello {
 	uint8_t version;
-	uint8_t reserved;
+	/* ESDR_LINK_HELLO_F_* */
+	uint8_t flags;
 	/* Device to host: the longest frame it takes, encoded. */
 	uint16_t max_frame;
 	/*

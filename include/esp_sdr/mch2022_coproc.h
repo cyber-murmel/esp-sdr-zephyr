@@ -53,7 +53,10 @@ enum coproc_req {
 	COPROC_REQ_LINK_OPEN = 0x30,
 	/** OUT, no data: UART0 back. */
 	COPROC_REQ_LINK_CLOSE = 0x31,
-	/** OUT, no data: wValue 1 the FPGA's fast line into interface 6, 0 off. */
+	/**
+	 * OUT, no data: the FPGA's fast line into interface 6 at wValue times 100 kbaud, 0 off. Its UART
+	 * pins change hands meanwhile: the RP2040 reads one and holds the other as a ready line.
+	 */
 	COPROC_REQ_FPGA_FASTLINK = 0x40,
 	/** OUT, no data: how DTR and RTS reset the ESP32, wValue enum coproc_reset_mode. */
 	COPROC_REQ_RESET_MODE = 0x50,
@@ -115,6 +118,13 @@ struct coproc_stats {
 	uint64_t link_out, link_in;
 	/** Resets of the ESP32, and those a set reset lock made application resets. */
 	uint32_t esp32_resets, resets_locked;
+	/** The FPGA's fast line: bytes, bytes lost when its ring overran, times it was held back. */
+	uint64_t fast_rx;
+	uint32_t fast_overrun, fast_stalls;
+	/** The most bytes its ring has held: near the host's credit, USB or the host set the pace. */
+	uint32_t fast_peak;
+	/** Polls of the bridge (one a millisecond) that found a byte with a bad stop bit. */
+	uint32_t fast_framing;
 } __attribute__((packed));
 
 /**

@@ -94,7 +94,9 @@ def test_constants_match_the_header():
 class FakeBadge:
     """interface 6 and an osmosdr_serial behind it, as far as frames go."""
 
-    def __init__(self, answers_at=2000000, boots_at=None):
+    def __init__(self, answers_at=2000000, boots_at=None, has_fast=False):
+        self.has_fast = has_fast
+        self.fastlink = None
         self.baud = 2000000
         self.esp_baud = boots_at or 2000000
         self.answers = answers_at
@@ -113,6 +115,8 @@ class FakeBadge:
             self.baud = struct.unpack("<I", data)[0]
         elif req == es.COPROC_LINK_OPEN:
             self.link_open = True
+        elif req == es.COPROC_FPGA_FASTLINK:
+            self.fastlink = value
         elif req == es.COPROC_LINK_CLOSE:
             self.closed = True
         elif req == es.COPROC_ESP32_RESET:
@@ -134,8 +138,11 @@ class FakeBadge:
                 continue
             ftype, _, payload = es.link_decode(wire)
             if ftype == es.LINK_HELLO:
-                self.credit = es.LINK_HELLO_FMT.unpack(payload)[3]
-                self._say(es.LINK_HELLO, es.LINK_HELLO_FMT.pack(1, 0, 600, self.credit, 5000000))
+                hello = es.LINK_HELLO_FMT.unpack(payload)
+                self.credit = hello[3]
+                flags = hello[1] if self.has_fast else 0
+                self._say(es.LINK_HELLO,
+                          es.LINK_HELLO_FMT.pack(1, flags, 600, self.credit, 5000000))
             elif ftype == es.LINK_CREDIT:
                 self.credit += struct.unpack("<I", payload)[0]
             elif ftype == es.LINK_REQUEST:
@@ -159,8 +166,8 @@ class FakeBadge:
         return out
 
 
-def framed(badge, baud=2000000):
-    return es.EsdrFramed(badge, baud, sleep=lambda s: None)
+def framed(badge, baud=2000000, fast=False):
+    return es.EsdrFramed(badge, baud, sleep=lambda s: None, fast=fast)
 
 
 def test_opening_says_hello_with_the_credit():
@@ -225,6 +232,53 @@ def test_closing_goes_back_for_the_next_host():
     assert b.closed
 
 
+def test_blocks_through_the_fpga_where_it_can():
+    b = FakeBadge(has_fast=True)
+    d = framed(b, 5000000, fast=True)
+    assert d.fast
+    assert b.fastlink == es.LINK_FAST_RATE
+    # No need for the UART's top rate, and more credit for the deeper way.
+    assert b.esp_baud == es.LINK_BOOT_BAUD
+    assert b.credit == es.LINK_WINDOW_FAST
+
+
+def test_credit_stays_within_the_fpgas_fifo():
+    text = (Path(REPO) / "include/esp_sdr/esdr_link.h").read_text()
+    fifo = int(re.search(r"ESDR_LINK_FPGA_FIFO (\d+)U", text).group(1))
+    assert es.LINK_WINDOW_FAST <= fifo
+
+
+def test_an_fpga_without_the_bitstream_falls_back():
+    b = FakeBadge(has_fast=False)
+    d = framed(b, 5000000, fast=True)
+    assert not d.fast
+    assert b.fastlink == 0
+    assert b.esp_baud == 5000000
+
+
+def test_blocks_and_replies_count_apart():
+    b = FakeBadge()
+    d = framed(b)
+    body = es.BLK.pack(es.BLOCK_MAGIC, 0, 1, 5) + bytes(2)
+    b.to_host += es.link_encode(es.LINK_BLOCK, 0, body)
+    b.to_host += es.link_encode(es.LINK_REPLY, 1, es.HDR.pack(es.SER_MAGIC, 1, 0, 0, 0, 0))
+    b.to_host += es.link_encode(es.LINK_BLOCK, 1, body)
+    for _ in range(3):
+        d._next(0.5)
+    assert d.lost_frames == 0
+
+
+def test_gateware_constants_match_the_header():
+    text = (Path(REPO) / "include/esp_sdr/esdr_link.h").read_text()
+    link = (Path(REPO) / "gateware/esdr_fpga/link.py").read_text()
+    assert int(re.search(r"OP_LINK = (0x[0-9a-f]+)", link).group(1), 16) == int(
+        re.search(r"ESDR_LINK_FPGA_OP +(0x[0-9A-Fa-f]+)U", text).group(1), 16)
+    assert int(re.search(r"CAPS_LINK = 1 << (\d+)", link).group(1)) == 1
+    assert "ESDR_LINK_FPGA_CAPS 0x0002U" in text
+    words = int(re.search(r"FIFO_WORDS = (\d+)", link).group(1))
+    assert int(re.search(r"ESDR_LINK_FPGA_FIFO (\d+)U", text).group(1)) == 2 * words
+
+
 def test_blocks_come_as_they_are():
     b = FakeBadge()
     d = framed(b)
@@ -254,10 +308,11 @@ def test_a_broken_frame_costs_that_frame():
     b = FakeBadge()
     d = framed(b)
     body = es.BLK.pack(es.BLOCK_MAGIC, 0, 1, 5) + bytes(2)
-    good = es.link_encode(es.LINK_BLOCK, b.seq + 1, body)
+    b.to_host += es.link_encode(es.LINK_BLOCK, 0, body)
+    d._next(0.5)
+    good = es.link_encode(es.LINK_BLOCK, 1, body)
     b.to_host += good[:3] + good[4:]
-    b.seq += 1
-    b._say(es.LINK_BLOCK, body)
+    b.to_host += es.link_encode(es.LINK_BLOCK, 2, body)
     kind, h, _ = d._next(0.5)
     assert kind == "block"
     assert d.bad_frames == 1
