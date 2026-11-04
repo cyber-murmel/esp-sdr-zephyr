@@ -548,6 +548,12 @@ def test_chooser_is_sorted_with_40_ms(board):
     assert board.tb.samp_rate in rates
 
 
+def test_spectrums_chooser_is_sorted_with_40_ms():
+    export = (REPO / "apps/micropython/eggs/spectrum/spectrum.py").read_text()
+    assert "_samp_rate_options = [250000.0, 500000.0, 1000000.0, 2000000.0, 40000000.0]" in export
+    assert "_samp_rate_labels = ['250 kS/s', '500 kS/s', '1 MS/s', '2 MS/s', '40 MS/s']" in export
+
+
 def test_export_turns_the_grid_on(board):
     assert board.sink._grid is True
     assert "enable_grid(True)" in (EGG / "waterfall.py").read_text()

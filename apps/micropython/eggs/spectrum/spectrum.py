@@ -7,7 +7,7 @@
 # GNU Radio Python Flow Graph
 # Title: Spectrum
 # Author: esp-sdr
-# Description: Spectrum, waterfall and samples of 250 kHz to 2 MHz (a chooser, up to the board's top rate: 2 MS/s on the WHY2025 badge, 500 kS/s on the S3); the knob tunes from 1.8 to 2.8 GHz.
+# Description: Spectrum, waterfall and samples of 250 kHz to 2 MHz (a chooser, up to the board's top rate: 2 MS/s on the WHY2025 badge, 500 kS/s on the S3), or of 40 MHz from bursts; the knob tunes from 1.8 to 2.8 GHz.
 # GNU Radio version: 3.10.12.0
 
 from PyQt5 import Qt
@@ -73,9 +73,9 @@ class spectrum(gr.top_block, Qt.QWidget):
         ##################################################
 
         # Create the options list
-        self._samp_rate_options = [2000000.0, 1000000.0, 500000.0, 250000.0]
+        self._samp_rate_options = [250000.0, 500000.0, 1000000.0, 2000000.0, 40000000.0]
         # Create the labels list
-        self._samp_rate_labels = ['2 MS/s', '1 MS/s', '500 kS/s', '250 kS/s']
+        self._samp_rate_labels = ['250 kS/s', '500 kS/s', '1 MS/s', '2 MS/s', '40 MS/s']
         # Create the combo box
         self._samp_rate_tool_bar = Qt.QToolBar(self)
         self._samp_rate_tool_bar.addWidget(Qt.QLabel("Sample rate" + ": "))

@@ -6,7 +6,7 @@ options:
     cmake_opt: ''
     comment: ''
     copyright: ''
-    description: 'Spectrum, waterfall and samples of 250 kHz to 2 MHz (a chooser, up to the board''s top rate: 2 MS/s on the WHY2025 badge, 500 kS/s on the S3); the knob tunes from 1.8 to 2.8 GHz.'
+    description: 'Spectrum, waterfall and samples of 250 kHz to 2 MHz (a chooser, up to the board''s top rate: 2 MS/s on the WHY2025 badge, 500 kS/s on the S3), or of 40 MHz from bursts; the knob tunes from 1.8 to 2.8 GHz.'
     gen_cmake: 'On'
     gen_linking: dynamic
     generate_options: qt_gui
@@ -60,18 +60,18 @@ blocks:
     comment: ''
     gui_hint: ''
     label: Sample rate
-    label0: 2 MS/s
-    label1: 1 MS/s
-    label2: 500 kS/s
-    label3: 250 kS/s
-    label4: ''
+    label0: 250 kS/s
+    label1: 500 kS/s
+    label2: 1 MS/s
+    label3: 2 MS/s
+    label4: 40 MS/s
     labels: '[]'
-    num_opts: '4'
-    option0: 2e6
-    option1: 1e6
-    option2: 500e3
-    option3: 250e3
-    option4: '4'
+    num_opts: '5'
+    option0: 250e3
+    option1: 500e3
+    option2: 1e6
+    option3: 2e6
+    option4: 40e6
     options: '[0, 1, 2]'
     orient: Qt.QVBoxLayout
     type: real

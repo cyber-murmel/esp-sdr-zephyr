@@ -216,9 +216,9 @@ author). Run it again after changing the flowgraph; the revision goes up when th
 
 The menu lists:
 
-- the apps bundled with the firmware, ``eggs/``: Spectrum, Waterfall (250 kS/s to 2 MS/s,
-  gapless, 40 MS/s in bursts, or 80 MS/s: the bursts in the gapless stream where the radio has
-  it, else bursts),
+- the apps bundled with the firmware, ``eggs/``: Spectrum (250 kS/s to 2 MS/s, gapless, or
+  40 MS/s in bursts), Waterfall (the same, or 80 MS/s: the bursts in the gapless stream where
+  the radio has it, else bursts),
   Constellation,
   Receiver (tabs, radio buttons, a check box), Tone (transmits), Data link (two-way messages,
   `Data link`_) and, on the WHY2025 and MCH2022 badges, Bursts (80 MHz in channels, not a GRC
