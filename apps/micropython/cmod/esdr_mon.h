@@ -31,12 +31,6 @@ static inline void esdr_mon_advance(uint32_t n)
 	esdr_mon_total += n;
 }
 
-static inline void esdr_mon_put(int16_t i, int16_t q)
-{
-	*esdr_mon_slot(0) = (uint16_t)i | ((uint32_t)(uint16_t)q << 16);
-	esdr_mon_advance(1);
-}
-
 /* 8-bit pairs to 16-bit ones. */
 static inline void esdr_widen(int16_t *dst, const int8_t *src, uint32_t n)
 {

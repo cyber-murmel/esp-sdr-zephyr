@@ -52,7 +52,7 @@ int esdr_remote_rx_start(uint32_t rate, int16_t *buf, size_t cap, uint64_t count
  * As esdr_remote_rx_start(), in bursts of ESDR_BURST_MAX samples at the radio's native rate
  * @p mhz (contiguous within a burst only), kept at 1 / @p decim (1, or 2 through a half-band
  * filter), one after another until stopped or @p count. A display's run (no @p buf, no @p count)
- * takes a burst per read of the monitor: back to back they take two thirds of the CPU.
+ * takes a burst per read of the monitor: it has no use for more.
  */
 int esdr_remote_rx_start_burst(uint16_t mhz, unsigned int decim, int16_t *buf, size_t cap,
 			       uint64_t count);

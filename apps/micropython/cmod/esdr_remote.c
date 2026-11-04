@@ -32,6 +32,7 @@
 #include <hal/uart_ll.h>
 
 #include "esdr_defs.h"
+#include "esdr_hb.h"
 #include "esdr_link_host.h"
 #include "esdr_mon.h"
 #include "esdr_remote.h"
@@ -268,11 +269,10 @@ static struct {
 	uint64_t next_index;
 	struct esdr_remote_rx_stats st;
 	/* Bursts (esdr_remote_rx_start_burst()): the radio's native rate in MHz (0: a stream),
-	 * kept at 1 / decim; the half-band filter's last inputs and the input's parity. */
+	 * kept at 1 / decim through the half-band filter. */
 	uint16_t burst_mhz;
 	uint8_t decim;
-	int32_t hb_i[7], hb_q[7];
-	uint32_t hb_n;
+	struct esdr_hb hb;
 	/* The link's resyncs when the run started. */
 	uint32_t resyncs0;
 } rx;
@@ -287,36 +287,20 @@ static K_WORK_DEFINE(rx_done_work, rx_done_work_fn);
 /* The parser fills buffers under it; stop and start change them under it. */
 static K_MUTEX_DEFINE(rx_lock);
 
-/* One pair into the monitor (esdr_mon.c) and the buffer. */
-static void rx_store(int16_t i, int16_t q)
-{
-	uint32_t pair = (uint16_t)i | ((uint32_t)(uint16_t)q << 16);
-
-	esdr_mon_put(i, q);
-	if (rx.count != 0U && rx.st.samples >= rx.count) {
-		return;
-	}
-	if (rx.buf != NULL) {
-		uint64_t at = rx.wrap ? rx.st.samples % rx.cap : rx.st.samples;
-
-		if (at >= rx.cap) {
-			return;
-		}
-		memcpy(&rx.buf[2U * at], &pair, sizeof(pair));
-	}
-	rx.st.samples++;
-}
-
 /*
- * A stream block's @p n 8-bit pairs, as rx_store() one by one but in runs: into the buffer
- * (up to its wrap or its end), and the newest into the monitor. 2 MS/s over SDIO did not
- * fit one sample at a time.
+ * @p n pairs (int16 with @p wide, else int8) in runs: into the buffer (up to its wrap or its end,
+ * and up to the run's count), and the newest into the monitor (esdr_mon.c). 2 MS/s over SDIO did
+ * not fit one sample at a time.
  */
-static void rx_store_block(const int8_t *iq, uint32_t n)
+static void rx_store_block(const void *iq, uint32_t n, bool wide)
 {
 	uint32_t take = n;
 
-	esdr_mon_put_s8(iq, n);
+	if (wide) {
+		esdr_mon_put_s16(iq, n);
+	} else {
+		esdr_mon_put_s8(iq, n);
+	}
 
 	if (rx.count != 0U) {
 		take = (uint32_t)MIN((uint64_t)take, rx.count > rx.st.samples ?
@@ -334,7 +318,12 @@ static void rx_store_block(const int8_t *iq, uint32_t n)
 			return;
 		}
 		m = (uint32_t)MIN((uint64_t)(take - k), rx.cap - at);
-		esdr_widen(&rx.buf[2U * at], iq + 2U * k, m);
+		if (wide) {
+			memcpy(&rx.buf[2U * at], (const int16_t *)iq + 2U * k,
+			       m * 2U * sizeof(int16_t));
+		} else {
+			esdr_widen(&rx.buf[2U * at], (const int8_t *)iq + 2U * k, m);
+		}
 		rx.st.samples += m;
 		k += m;
 	}
@@ -353,34 +342,15 @@ static void on_burst_block(const struct esdr_block_hdr *h, const uint8_t *p, uin
 			rx.st.gaps++;
 		}
 		rx.have_index = true;
-		rx.hb_n = 0;
-		memset(rx.hb_i, 0, sizeof(rx.hb_i));
-		memset(rx.hb_q, 0, sizeof(rx.hb_q));
+		memset(&rx.hb, 0, sizeof(rx.hb));
 	}
-	for (uint32_t k = 0; k < n; k++) {
-		int32_t i, q;
+	if (rx.decim == 1U) {
+		rx_store_block(p, n, wide);
+	} else {
+		/* A pair per two inputs at most, of 2 bytes each at the narrowest. */
+		static int16_t out[ESDR_BLOCK_PAYLOAD / 2U + 2U];
 
-		if (wide) {
-			i = (int16_t)sys_get_le16(p + 4U * k);
-			q = (int16_t)sys_get_le16(p + 4U * k + 2U);
-		} else {
-			i = (int8_t)p[2U * k];
-			q = (int8_t)p[2U * k + 1U];
-		}
-		if (rx.decim == 1U) {
-			rx_store((int16_t)i, (int16_t)q);
-			continue;
-		}
-		memmove(&rx.hb_i[1], &rx.hb_i[0], 6U * sizeof(rx.hb_i[0]));
-		memmove(&rx.hb_q[1], &rx.hb_q[0], 6U * sizeof(rx.hb_q[0]));
-		rx.hb_i[0] = i;
-		rx.hb_q[0] = q;
-		if ((++rx.hb_n & 1U) != 0U || rx.hb_n < 7U) {
-			continue;
-		}
-		i = 16 * rx.hb_i[3] + 9 * (rx.hb_i[2] + rx.hb_i[4]) - (rx.hb_i[0] + rx.hb_i[6]);
-		q = 16 * rx.hb_q[3] + 9 * (rx.hb_q[2] + rx.hb_q[4]) - (rx.hb_q[0] + rx.hb_q[6]);
-		rx_store((int16_t)(i / 32), (int16_t)(q / 32));
+		rx_store_block(out, esdr_hb_block(&rx.hb, p, n, wide, out), true);
 	}
 }
 
@@ -675,7 +645,7 @@ static void on_block(const uint8_t *blk)
 	if ((sys_le16_to_cpu(h.flags) & (ESDR_BLK_GAP | ESDR_BLK_OVERFLOW)) != 0U) {
 		rx.st.overflows++;
 	}
-	rx_store_block(iq, n);
+	rx_store_block(iq, n, false);
 	if ((rx.count != 0U && rx.st.samples >= rx.count) ||
 	    (rx.buf != NULL && !rx.wrap && rx.st.samples >= rx.cap)) {
 		rx.active = false;

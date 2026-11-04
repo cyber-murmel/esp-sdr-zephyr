@@ -49,6 +49,24 @@ def wf_clib(tmp_path_factory):
     return lib
 
 
+@pytest.fixture(scope="session")
+def hb_clib(tmp_path_factory):
+    """A burst's half-band filter as the board runs it (apps/micropython/cmod/esdr_hb.c), built
+    once with the host compiler; None without a compiler."""
+    cc = shutil.which("cc") or shutil.which("gcc")
+    if cc is None:
+        return None
+    out = tmp_path_factory.mktemp("hb") / "libesdr_hb.so"
+    src = REPO / "apps/micropython/cmod/esdr_hb.c"
+    subprocess.run([cc, "-O2", "-Wall", "-Wextra", "-Werror", "-shared", "-fPIC", "-o", str(out),
+                    str(src)], check=True)
+    lib = ctypes.CDLL(str(out))
+    lib.esdr_hb_block.restype = ctypes.c_uint32
+    lib.esdr_hb_block.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32,
+                                  ctypes.c_bool, ctypes.c_void_p]
+    return lib
+
+
 class FskFrame(ctypes.Structure):
     """struct esdr_fsk_frame of apps/micropython/cmod/esdr_fsk.h."""
     _fields_ = [("len", ctypes.c_uint32), ("errors", ctypes.c_uint32), ("end", ctypes.c_uint32),
