@@ -104,9 +104,15 @@ struct esdr_link_frame {
 	size_t len;
 };
 
-/* CRC-32 (reflected 0xEDB88320, as zlib's) a nibble at a time: 16 words of table. */
+/*
+ * CRC-32 (reflected 0xEDB88320, as zlib's) a nibble at a time: 16 words of table. A user with
+ * a faster one defines ESDR_LINK_CRC_ADD(crc, p, n) first, with this function's arguments.
+ */
 static inline uint32_t esdr_link_crc_add(uint32_t crc, const uint8_t *p, size_t n)
 {
+#if defined(ESDR_LINK_CRC_ADD)
+	return ESDR_LINK_CRC_ADD(crc, p, n);
+#else
 	static const uint32_t table[16] = {
 		0x00000000U, 0x1DB71064U, 0x3B6E20C8U, 0x26D930ACU,
 		0x76DC4190U, 0x6B6B51F4U, 0x4DB26158U, 0x5005713CU,
@@ -120,6 +126,7 @@ static inline uint32_t esdr_link_crc_add(uint32_t crc, const uint8_t *p, size_t 
 		crc = (crc >> 4) ^ table[crc & 0xFU];
 	}
 	return crc;
+#endif
 }
 
 /* The encoder's state: where the current COBS block's code byte goes. */
@@ -142,23 +149,32 @@ static inline void esdr_link_cobs_start(struct esdr_link_cobs *c, uint8_t *out, 
 
 static inline void esdr_link_cobs_put(struct esdr_link_cobs *c, const uint8_t *p, size_t n)
 {
+	/* In locals: this runs over every byte of a block, some 2 MB/s on the MCH2022's ESP32. */
+	uint8_t *const out = c->out;
+	const size_t max = c->max;
+	size_t at = c->at, code_at = c->code_at;
+	uint8_t code = c->code;
+
 	while (n-- > 0U) {
 		const uint8_t b = *p++;
 
-		if (c->at >= c->max) {
+		if (at >= max) {
 			c->overflow = 1;
-			return;
+			break;
 		}
 		if (b != 0U) {
-			c->out[c->at++] = b;
-			c->code++;
+			out[at++] = b;
+			code++;
 		}
-		if (b == 0U || c->code == 0xFFU) {
-			c->out[c->code_at] = c->code;
-			c->code_at = c->at++;
-			c->code = 1U;
+		if (b == 0U || code == 0xFFU) {
+			out[code_at] = code;
+			code_at = at++;
+			code = 1U;
 		}
 	}
+	c->at = at;
+	c->code_at = code_at;
+	c->code = code;
 }
 
 /*
