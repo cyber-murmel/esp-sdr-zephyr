@@ -150,6 +150,14 @@ def rates(tb, s):
               "radio {} rows/s {:.1f} lines {} coarse {} samples {} title{}".format(
                   src._rate, 20000 / ms, len(s._lines),
                   sum(1 for x in s._lines if x & 0x8000), moved, s._notes))
+        if int(r) == 40000000:
+            # A display's bursts come per read: back to back they starved the display (3.6 rows/s).
+            bursts = moved / 8190
+            check("a burst per read at 40 MS/s", bursts <= 30, "{:.0f} in 20 rows".format(bursts))
+        # Where the picture sits on the colour scale: the middle and the top of a held spectrum.
+        held = sorted(maxhold(s, 10))
+        print("     levels: median {:.0f} dB, top {:.0f} dB, scale {:.0f} to {:.0f} dB".format(
+            held[len(held) // 2], held[-1], s._imin, s._imax))
     tb.set_samp_rate(2e6)
     pump(s, 2)
 

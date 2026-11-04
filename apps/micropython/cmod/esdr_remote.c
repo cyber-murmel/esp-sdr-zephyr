@@ -870,6 +870,12 @@ static void burst_fn(void *a, void *b, void *c)
 		while (rx.active && rx.burst_mhz != 0U) {
 			uint8_t le[4];
 
+			/* A display-only run: a burst per monitor read, no more. */
+			if (rx.buf == NULL && rx.count == 0U && !esdr_mon_read) {
+				k_msleep(2);
+				continue;
+			}
+			esdr_mon_read = false;
 			sys_put_le32(ESDR_BURST_MAX, le);
 			if (esdr_remote_request(ESDR_REQ_CAPTURE_BURST, rx.burst_mhz, le, sizeof(le),
 						NULL, 0) < 0) {
