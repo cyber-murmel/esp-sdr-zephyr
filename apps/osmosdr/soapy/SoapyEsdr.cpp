@@ -38,6 +38,7 @@
 #include <condition_variable>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -667,6 +668,7 @@ public:
 			throw std::runtime_error("esdr: no MCH2022 badge with interface 6");
 		}
 		reader_ = std::thread(&FramedLink::readLoop, this);
+		decoder_ = std::thread(&FramedLink::decodeLoop, this);
 		uint32_t rate = LINK_BOOT_BAUD;
 
 		coproc(COPROC_REQ_SET_BAUD, 0, &rate, sizeof(rate));
@@ -753,6 +755,10 @@ private:
 		stop_ = true;
 		if (reader_.joinable()) {
 			reader_.join();
+		}
+		rxqcv_.notify_all();
+		if (decoder_.joinable()) {
+			decoder_.join();
 		}
 		libusb_release_interface(h_, COPROC_IF_LINK);
 		libusb_close(h_);
@@ -904,24 +910,81 @@ private:
 		}
 	}
 
+	/*
+	 * Bulk IN by queued transfers, as UsbLink's: one read at a time leaves USB idle between
+	 * them, which at the stream's rate is a tenth of what it carries. What comes goes to
+	 * decodeLoop(): the credit it sends is a synchronous write, which a transfer's callback
+	 * must not do. The credit also bounds what can wait there.
+	 */
 	void readLoop()
 	{
-		std::vector<uint8_t> tmp(16384);
+		static constexpr int XFERS = 4;
+		static constexpr size_t XFER_BYTES = 16384;
+		std::vector<libusb_transfer *> xfers(XFERS);
+		std::vector<std::vector<uint8_t>> bufs(XFERS);
+
+		auto cb = [](libusb_transfer *t) {
+			auto *self = reinterpret_cast<FramedLink *>(t->user_data);
+
+			if (t->actual_length > 0) {
+				std::lock_guard<std::mutex> g(self->rxqm_);
+
+				self->rxq_.emplace_back(t->buffer, t->buffer + t->actual_length);
+				self->rxqcv_.notify_one();
+			}
+			if (self->stop_ || libusb_submit_transfer(t) != 0) {
+				self->pending_--;
+			}
+		};
+		pending_ = 0;
+		for (int k = 0; k < XFERS; k++) {
+			bufs[k].resize(XFER_BYTES);
+			xfers[k] = libusb_alloc_transfer(0);
+			libusb_fill_bulk_transfer(xfers[k], h_, COPROC_EP_IN, bufs[k].data(), (int)XFER_BYTES,
+						  cb, this, 0);
+			if (libusb_submit_transfer(xfers[k]) == 0) {
+				pending_++;
+			}
+		}
+		while (!stop_) {
+			timeval tv{0, 50000};
+
+			libusb_handle_events_timeout(ctx_, &tv);
+		}
+		for (int k = 0; k < XFERS; k++) {
+			libusb_cancel_transfer(xfers[k]);
+		}
+		/* Until every cancelled transfer has come back (at most a second). */
+		for (int tries = 0; tries < 50 && pending_ > 0; tries++) {
+			timeval tv{0, 20000};
+
+			libusb_handle_events_timeout(ctx_, &tv);
+		}
+		for (auto *x : xfers) {
+			libusb_free_transfer(x);
+		}
+	}
+
+	void decodeLoop()
+	{
 		std::vector<uint8_t> frame;
 
 		frame.reserve(ESDR_LINK_ENCODED_MAX(ESDR_BLOCK_BYTES));
-		while (!stop_) {
-			int got = 0;
-			int r = libusb_bulk_transfer(h_, COPROC_EP_IN, tmp.data(), (int)tmp.size(), &got,
-						     100);
+		for (;;) {
+			std::vector<uint8_t> chunk;
+			{
+				std::unique_lock<std::mutex> g(rxqm_);
 
-			if (r != 0 && r != LIBUSB_ERROR_TIMEOUT) {
-				std::this_thread::sleep_for(std::chrono::milliseconds(10));
-				continue;
+				rxqcv_.wait(g, [this] { return stop_ || !rxq_.empty(); });
+				if (rxq_.empty()) {
+					return;
+				}
+				chunk = std::move(rxq_.front());
+				rxq_.pop_front();
 			}
-			for (int k = 0; k < got; k++) {
-				if (tmp[k] != 0U) {
-					frame.push_back(tmp[k]);
+			for (const uint8_t b : chunk) {
+				if (b != 0U) {
+					frame.push_back(b);
 				} else if (!frame.empty()) {
 					onFrame(frame.data(), frame.size());
 					frame.clear();
@@ -933,8 +996,13 @@ private:
 	libusb_context *ctx_ = nullptr;
 	libusb_device_handle *h_ = nullptr;
 	std::string serial_;
-	std::thread reader_;
+	std::thread reader_, decoder_;
 	std::atomic<bool> stop_{false};
+	int pending_ = 0;
+	/* What the transfers brought, for decodeLoop(). */
+	std::deque<std::vector<uint8_t>> rxq_;
+	std::mutex rxqm_;
+	std::condition_variable rxqcv_;
 	/* Writes (frames stay whole), requests (one at a time), receive callback. */
 	std::mutex wm_, cm_, rxm_;
 	std::condition_variable cv_;
