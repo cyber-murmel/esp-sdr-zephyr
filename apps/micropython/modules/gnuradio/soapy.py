@@ -39,6 +39,11 @@ def _snap_rate(rate):
 
 _BURST = 16380
 
+# GRC's HackRF block sets its gains by these names. The board has one gain, so they add up; the
+# RF amp is on or off, +11 dB by the block's label. Any other name sets the one gain.
+_HACKRF_GAINS = ("AMP", "LNA", "VGA")
+_HACKRF_AMP = 11
+
 # Gapless displays: the radio may send this many bytes a second (some 1 M samples), its
 # threshold no lower than this over the quiet power (its servo raises it until the loudest
 # windows fit the budget); False once the radio refused the mode (a C6 built without it).
@@ -71,6 +76,7 @@ class source(gr.basic_block):
         self._rate = esdr.RATES[1]
         self._freq = 2.45e9
         self._gain = 40
+        self._hackrf = {}
         self._auto = False
         self._bw = 0
         self._buf = None
@@ -133,6 +139,13 @@ class source(gr.basic_block):
 
     def set_gain(self, channel, name_or_gain, gain=None):
         value = name_or_gain if gain is None else gain
+        if gain is not None and name_or_gain in _HACKRF_GAINS:
+            if name_or_gain == "AMP":
+                value = _HACKRF_AMP if value else 0
+            self._hackrf[name_or_gain] = float(value)
+            value = sum(self._hackrf.values())
+        else:
+            self._hackrf.clear()
         self._gain = int(max(0, min(esdr.rx_gain_max(), float(value))))
         # An export sets the mode, then the gain: under AGC the value waits for its turn.
         if not self._auto:

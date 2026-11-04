@@ -24,7 +24,8 @@ What runs:
        tuning), or at the native 80, 40 or 16 MS/s in bursts of 16380 samples, contiguous within
        a burst (wideband displays, short captures; 40 and 80 MS/s open the analog filters to
        +-18 MHz); other rates are rounded to the nearest; one RF gain index (any gain name sets
-       it, as the host plugin ``driver=esdr`` does)
+       it, as the host plugin ``driver=esdr`` does, except that GRC's HackRF block's ``AMP``,
+       ``LNA`` and ``VGA`` add up, the amp counting 11)
    * - ``soapy.sink`` (any ``driver=``)
      - the board's transmitter. A periodic signal (a ``sig_source_c`` tone that fits a loop
        within 1 Hz, a repeating vector or file of up to 16380 samples at the DAC rate) loops

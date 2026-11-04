@@ -682,6 +682,66 @@ def test_every_receive_app_starts_on_agc_and_takes_a_manual_gain(make_board, egg
     assert board.radio.gains[-1] == -1
 
 
+def hackrf_source(board):
+    from gnuradio import soapy
+
+    src = soapy.source("driver=hackrf")
+    src._live = True
+    return src
+
+
+def test_a_hackrf_blocks_gains_add_up(board):
+    # As GRC's block sets them at start: AMP, LNA, VGA. The last one used to win.
+    src = hackrf_source(board)
+    src.set_gain(0, "AMP", False)
+    src.set_gain(0, "LNA", 16)
+    src.set_gain(0, "VGA", 16)
+    assert src._gain == 32 and board.radio.gains[-1] == 32
+    # And as its callbacks change one of them.
+    src.set_gain(0, "AMP", True)
+    assert src._gain == 43
+    src.set_gain(0, "LNA", 0)
+    assert src._gain == 27 and board.radio.gains[-1] == 27
+    src.set_gain(0, "AMP", False)
+    assert src._gain == 16
+
+
+def test_a_hackrf_blocks_gains_stop_at_what_the_radio_has(board):
+    src = hackrf_source(board)
+    src.set_gain(0, "AMP", True)
+    src.set_gain(0, "LNA", 40)
+    src.set_gain(0, "VGA", 62)
+    assert src._gain == 79
+
+
+def test_other_gain_names_and_a_plain_gain_set_the_one_gain(board):
+    # README: any gain name sets it, as the host plugin driver=esdr does.
+    src = hackrf_source(board)
+    src.set_gain(0, "LNA", 16)
+    src.set_gain(0, "VGA", 16)
+    src.set_gain(0, "RF", 20)
+    assert src._gain == 20
+    # And the parts start over after it.
+    src.set_gain(0, "VGA", 5)
+    assert src._gain == 5
+    src.set_gain(0, "LNA", 16)
+    src.set_gain(0, 40)
+    assert src._gain == 40
+    src.set_gain(0, "LNA", 7)
+    assert src._gain == 7
+
+
+def test_the_transmit_side_keeps_its_rule(board):
+    # Adding up there could raise the output without anyone asking.
+    from gnuradio import soapy
+
+    board.radio.tx_gain_max = lambda: 9
+    sink = soapy.sink("driver=hackrf")
+    sink.set_gain(0, "AMP", True)
+    sink.set_gain(0, "VGA", 3)
+    assert sink._gain == 3
+
+
 def test_receiver_keeps_its_radio_buttons_and_check_box(make_board):
     board = make_board("receiver")
     from PyQt5 import Qt
