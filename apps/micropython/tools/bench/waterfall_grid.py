@@ -151,7 +151,7 @@ def rates(tb, s):
               "radio {} rows/s {:.1f} lines {} coarse {} samples {} title{}".format(
                   src._rate, 20000 / ms, len(s._lines),
                   sum(1 for x in s._lines if x & 0x8000), moved, s._notes))
-        if int(r) == 40000000:
+        if int(r) == 40000000 and not src._gapless:
             # A display's bursts come per read: back to back they starved the display (3.6 rows/s).
             bursts = moved / 8190
             check("a burst per read at 40 MS/s", bursts <= 30, "{:.0f} in 20 rows".format(bursts))
@@ -281,40 +281,52 @@ def maxhold(s, rows):
     return out
 
 
-def score(a, b, lag):
-    # Mean difference of a against b moved left by lag columns; the plot's edges are the filter's.
-    w = len(a)
-    margin = w // 10
-    n = t = 0
-    for c in range(margin, w - margin):
-        k = c + lag
-        if margin <= k < w - margin:
-            t += abs(a[c] - b[k])
-            n += 1
-    return t / n if n else 999.0
+def spans(s, held):
+    """What stands 10 dB over the plot's quiet part (a busy band lifts its median), in MHz by the
+    sink's own axis, as (width, lowest, highest), widest first. By the MHz, and a one-MHz hole does
+    not split a span: rows are spiky."""
+    w = s._w
+    n = s._span // 1000000
+    top = sorted(held)[w // 5] + 10.0
+    hot = bytearray(n)
+    for m in range(n):
+        part = held[m * w // n:(m + 1) * w // n]
+        hot[m] = sum(part) / len(part) > top
+    out = []
+    m = 0
+    while m < n:
+        if hot[m]:
+            e = m
+            while e + 1 < n and (hot[e + 1] or (e + 2 < n and hot[e + 2])):
+                e += 1
+            base = s._hz // 1000000 - n // 2
+            out.append((e + 1 - m, base + m, base + e + 1))
+            m = e
+        m += 1
+    out.sort(reverse=True)
+    return out
 
 
-def hold(tb, s):
-    """Anything on the air stays on its frequency. At 80 MS/s the rows are the channelizer's bursts
-    over flat noise, without the receiver's own shape: the max-hold after a 10 MHz retune should
-    match the one before it best 90 columns (at 720) to the left, and not where it was."""
-    tb.set_samp_rate(80e6)
+def hold(tb, s, rate, mhz):
+    """What is on the air stays on its frequency: something wide on the plot, at two tunes, read
+    through the sink's axis. Networks come and go, so any of them will do; a wrong axis would move
+    them all. Needs something in the band; says so if not."""
+    tb.set_samp_rate(rate)
     win = tb._freq_win
     i = win.index
-    pump(s, 10)
-    a = maxhold(s, 80)
-    win.set_index(i + 10)
-    pump(s, 10)
-    b = maxhold(s, 80)
+    found = []
+    for k in (0, mhz):
+        win.set_index(i + k)
+        pump(s, 10)
+        found.append(spans(s, maxhold(s, 50)))
     win.set_index(i)
-    want = -10 * s._w // 80
-    results = [(score(a, b, lag), lag) for lag in range(want - 40, 41, 2)]
-    results.sort()
-    print("     want lag {}; best {}".format(want, results[:4]))
-    print("     at the wanted lag {:.2f}, at lag 0 {:.2f}".format(score(a, b, want),
-                                                                   score(a, b, 0)))
-    print("     spread before {:.1f} dB, after {:.1f} dB".format(max(a) - min(a), max(b) - min(b)))
-    tb.set_samp_rate(2e6)
+    tag = "{} S/s, {} MHz apart".format(int(rate), mhz)
+    wide = [[f for f in fs if f[0] >= 5] for fs in found]
+    if not wide[0] or not wide[1]:
+        print("     {}: nothing wide on the air to check against: {}".format(tag, found))
+        return
+    same = [(a, b) for a in wide[0] for b in wide[1] if abs(a[1] + a[2] - b[1] - b[2]) <= 6]
+    check("{}: holds its frequency".format(tag), bool(same), str(same[0] if same else found))
 
 
 def run_all():
@@ -334,7 +346,8 @@ def run_all():
         gain(tb, s)
         spacing(tb, s)
         if HOLD:
-            hold(tb, s)
+            hold(tb, s, 80e6, 10)
+            hold(tb, s, 40e6, 5)
     except Exception as e:
         sys.print_exception(e)
         FAILED.append("exception")

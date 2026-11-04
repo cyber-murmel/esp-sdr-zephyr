@@ -40,9 +40,11 @@
  *                              its seq is after; trig: samples before the trigger
  *   trig_stats()               snapshots, broken (a block lost)
  *   gapless_start(ratio=8, level=0, pre=1, post=1, budget=2000000, gain_servo=False,
- *                 monitor=True, channels=0, open_db=6)
+ *                 monitor=True, channels=0, open_db=6, half=False)
  *                              P4: the whole 80 MHz without a gap (the C6's gapless
- *                              stream, its default build), the 10 us windows ratio times the
+ *                              stream, its default build), or with half 40 MHz at 40 MS/s
+ *                              (every other sample, an analog filter before it: +-25 MHz
+ *                              folds in 15 to 25 dB down), the 10 us windows ratio times the
  *                              quiet power (or past a fixed level) and pre / post of them
  *                              around, at most budget bytes a second; monitor: their samples to
  *                              rx_latest() (full scale 16384); channels (16, 20, 32, 40, 64,
@@ -61,7 +63,7 @@
  *                              (esdr_gl_spectrum(): dB of a full-scale carrier, the lowest
  *                              frequency first, 8 bins a channel) into out (float32, up to
  *                              CHAN_SPEC_MAX entries); 0 without a channelizer
- *   GAPLESS_RATE               80 MS/s
+ *   GAPLESS_RATE               80 MS/s; half of it with gapless_start(half=True)
  *   channelize(snap, nfft, mean=None, peak=None, image=None, lo=-100, hi=-20) -> frames
  *                              (esdr_chan.c)
  *   fb_image(fb, stride, x, y, w, h, image, cols, palette)   draws channelize()'s image
@@ -479,7 +481,7 @@ static mp_obj_t esdr_gapless_start_fn(size_t n_args, const mp_obj_t *pos, mp_map
 {
 	enum {
 		ARG_ratio, ARG_level, ARG_pre, ARG_post, ARG_budget, ARG_gain_servo, ARG_monitor,
-		ARG_channels, ARG_open_db
+		ARG_channels, ARG_open_db, ARG_half
 	};
 	static const mp_arg_t allowed[] = {
 		{MP_QSTR_ratio, MP_ARG_OBJ, {.u_obj = MP_OBJ_NULL}},
@@ -491,11 +493,13 @@ static mp_obj_t esdr_gapless_start_fn(size_t n_args, const mp_obj_t *pos, mp_map
 		{MP_QSTR_monitor, MP_ARG_BOOL, {.u_bool = true}},
 		{MP_QSTR_channels, MP_ARG_INT, {.u_int = 0}},
 		{MP_QSTR_open_db, MP_ARG_OBJ, {.u_obj = MP_OBJ_NULL}},
+		{MP_QSTR_half, MP_ARG_BOOL, {.u_bool = false}},
 	};
 	mp_arg_val_t args[MP_ARRAY_SIZE(allowed)];
 	struct esdr_gapless_cfg cfg;
 	float ratio = 8.0f, open_db = 6.0f;
 	mp_int_t level, pre, post, budget, channels;
+	bool half;
 	int ret;
 
 	mp_arg_parse_all(n_args, pos, kw, MP_ARRAY_SIZE(allowed), allowed, args);
@@ -510,6 +514,7 @@ static mp_obj_t esdr_gapless_start_fn(size_t n_args, const mp_obj_t *pos, mp_map
 	post = args[ARG_post].u_int;
 	budget = args[ARG_budget].u_int;
 	channels = args[ARG_channels].u_int;
+	half = args[ARG_half].u_bool;
 	if (!(ratio > 1.0625f) || ratio > 4000.0f || level < 0 || pre < 0 || pre > 4 || post < 0 ||
 	    post > 4 || budget < 0 || !(open_db > 0.0f)) {
 		mp_raise_ValueError(MP_ERROR_TEXT(
@@ -523,9 +528,11 @@ static mp_obj_t esdr_gapless_start_fn(size_t n_args, const mp_obj_t *pos, mp_map
 	cfg.level = sys_cpu_to_le32((uint32_t)level);
 	cfg.budget_bps = sys_cpu_to_le32((uint32_t)budget);
 	cfg.flags = sys_cpu_to_le16((args[ARG_gain_servo].u_bool ? ESDR_GAPLESS_F_GAIN_SERVO : 0U) |
-				    (level != 0 ? ESDR_GAPLESS_F_FIXED_THR : 0U));
+				    (level != 0 ? ESDR_GAPLESS_F_FIXED_THR : 0U) |
+				    (half ? ESDR_GAPLESS_F_HALF : 0U));
 	if (channels != 0) {
-		esdr_check(esdr_gl_start((unsigned int)channels, open_db));
+		esdr_check(esdr_gl_start((unsigned int)channels,
+					 ESDR_GAPLESS_RATE_HZ / (half ? 2U : 1U), open_db));
 	} else {
 		esdr_gl_stop();
 	}

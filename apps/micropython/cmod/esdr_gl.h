@@ -8,7 +8,7 @@
  * spectrum of the band made of the bursts alone.
  *
  * Channels are reported in display order, the lowest frequency first: entry i is channel
- * (i + M / 2) mod M, offset (i - M / 2) * 80 MHz / M from the centre. Powers are in dB of a
+ * (i + M / 2) mod M, offset (i - M / 2) * rate / M from the centre. Powers are in dB of a
  * full-scale carrier (512 raw units) at the channel's centre.
  */
 
@@ -21,11 +21,11 @@
 #define ESDR_GL_BURSTS 64U
 
 /*
- * Starts the channelizer on @p channels (16, 20, 32, 40, 64 or 80) with the detector opening at
- * @p open_db over a channel's floor; the radio's stream must be started too
- * (esdr_remote_gl_start()). 0, -EINVAL for an unsupported @p channels.
+ * Starts the channelizer on @p channels (16, 20, 32, 40, 64 or 80) of a stream at @p rate_hz with
+ * the detector opening at @p open_db over a channel's floor; the radio's stream must be started
+ * too (esdr_remote_gl_start()). 0, -EINVAL for an unsupported @p channels.
  */
-int esdr_gl_start(unsigned int channels, float open_db);
+int esdr_gl_start(unsigned int channels, uint32_t rate_hz, float open_db);
 /* Stops it (what it collected stays readable). */
 void esdr_gl_stop(void);
 unsigned int esdr_gl_channels(void);
@@ -53,10 +53,10 @@ unsigned int esdr_gl_bursts(struct esdr_gl_burst *out, unsigned int max);
 
 /*
  * A row of the bursts' spectrum since the last call to @p out, n = ESDR_GL_SPEC_BINS M bins,
- * dB of a full-scale carrier, the lowest frequency first: bin j at (j - n / 2) * 80 MHz / n
- * from the centre (250 kHz at M = 40). Each burst the detector found reads at its channel's
- * place in the band: the mean over its loud blocks of their 16-frame transforms (Hann), the
- * largest of the row's bursts per bin. The other bins read their channel's floor, a few dB
+ * dB of a full-scale carrier, the lowest frequency first: bin j at (j - n / 2) * rate / n
+ * from the centre (125 kHz a bin with 1 MHz channels). Each burst the detector found reads at
+ * its channel's place in the band: the mean over its loud blocks of their 16-frame transforms
+ * (Hann), the largest of the row's bursts per bin. The other bins read their channel's floor, a few dB
  * either side at random: the time the radio kept nothing and the channels without a burst
  * look quiet. Returns n, -ENODEV if the channelizer does not run, -EINVAL if @p max is short.
  * The first call starts the transforms; they stop a second after the last.

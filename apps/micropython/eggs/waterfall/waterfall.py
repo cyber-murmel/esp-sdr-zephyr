@@ -7,7 +7,7 @@
 # GNU Radio Python Flow Graph
 # Title: Waterfall
 # Author: esp-sdr
-# Description: A gapless waterfall of 250 kHz to 2 MHz (a chooser, up to the board's top rate: 2 MS/s on the WHY2025 badge, 500 kS/s on the S3), or of 80 MHz: without a gap where the radio streams it (the WHY2025 badge: the bursts its channelizer finds, each at its channel, over quiet noise), else from bursts at 80 MS/s, or of 40 MHz from bursts; the knob tunes from 1.8 to 2.8 GHz and sets the radio's gain (or leaves it to AGC) and the lower and upper levels of the colour scale (at 40 and 80 MHz the lower 3 dB lower, the upper 22 dB higher).
+# Description: A gapless waterfall of 250 kHz to 2 MHz (a chooser, up to the board's top rate: 2 MS/s on the WHY2025 badge, 500 kS/s on the S3), or of 40 or 80 MHz: without a gap where the radio streams it (the WHY2025 badge: the bursts its channelizer finds, each at its channel, over quiet noise), else from bursts; the knob tunes from 1.8 to 2.8 GHz and sets the radio's gain (or leaves it to AGC) and the lower and upper levels of the colour scale (at 40 and 80 MHz the lower 3 dB lower, the upper 22 dB higher).
 # GNU Radio version: 3.10.12.0
 
 from PyQt5 import Qt

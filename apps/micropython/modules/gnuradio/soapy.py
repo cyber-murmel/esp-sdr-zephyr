@@ -45,12 +45,14 @@ _BURST = 16380
 _GAPLESS_BUDGET = 2000000
 _GAPLESS_RATIO = 1.25
 # Channels of 1 MHz: spectrum rows of 125 kHz bins.
-_GAPLESS_CHANNELS = 80
+_GAPLESS_CHANNEL_HZ = 1000000
 _gapless_ok = [hasattr(esdr, "gapless_start")]
 
 
 def _gapless(rate):
-    return _gapless_ok[0] and rate == getattr(esdr, "GAPLESS_RATE", 0)
+    # The radio's gapless rate, or half of it: 40 MHz around the centre.
+    full = getattr(esdr, "GAPLESS_RATE", 0)
+    return _gapless_ok[0] and full > 0 and rate in (full, full // 2)
 
 
 class source(gr.basic_block):
@@ -161,17 +163,18 @@ class source(gr.basic_block):
 
     # -- runtime, called by gr.top_block --
     def _run_gapless(self):
-        """The whole 80 MHz without a gap into the monitor; False if the radio has no such mode."""
+        """The whole band without a gap into the monitor; False if the radio has no such mode."""
         esdr.channel_bw(2)
         self._centre = esdr.tune(self._freq, offset=False)
         esdr.rx_gain(-1 if self._auto else self._gain)
         try:
             esdr.gapless_start(ratio=_GAPLESS_RATIO, budget=_GAPLESS_BUDGET,
-                               gain_servo=self._auto, channels=_GAPLESS_CHANNELS)
+                               gain_servo=self._auto, channels=self._rate // _GAPLESS_CHANNEL_HZ,
+                               half=self._rate != esdr.GAPLESS_RATE)
         except OSError as e:
             if e.errno != errno.EOPNOTSUPP:
                 raise
-            print("soapy: the radio streams no gapless 80 MHz: bursts")
+            print("soapy: the radio streams no gapless band: bursts")
             _gapless_ok[0] = False
             return False
         self._gapless = True

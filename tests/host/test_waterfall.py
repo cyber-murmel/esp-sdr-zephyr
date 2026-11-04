@@ -6,6 +6,7 @@ the board's would: CPython's doubles would hide its 256 Hz steps at 2.4 GHz."""
 
 import array
 import ctypes
+import errno
 import importlib
 import random
 import struct
@@ -20,8 +21,9 @@ from conftest import REPO, load
 MODULES = REPO / "apps/micropython/modules"
 EGG = REPO / "apps/micropython/eggs/waterfall"
 CMOD = REPO / "apps/micropython/cmod"
+EGGS = REPO / "apps/micropython/eggs"
 OWN = ("gnuradio", "pmt", "PyQt5", "sip", "packaging", "esdr", "framebuf", "lvgl", "waterfall",
-       "dusk", "ltecal")
+       "spectrum", "constellation", "receiver", "dusk", "ltecal")
 
 grid = load("apps/micropython/modules/gnuradio/_wfgrid.py", "wfgrid_under_test")
 
@@ -377,6 +379,8 @@ class FakeRadio(types.ModuleType):
 
     RATES = (2000000, 1000000, 500000, 250000)
     BURST_RATES = (80000000, 40000000, 16000000)
+    MON_SAMPLES = 8192
+    FULL_SCALE = 16384
 
     def __init__(self, lib):
         super().__init__("esdr")
@@ -443,6 +447,34 @@ class FakeRadio(types.ModuleType):
                                  ctypes.byref(src))
 
 
+class GaplessRadio(FakeRadio):
+    """The WHY2025 badge's C6: the gapless stream, or a build that refuses it."""
+
+    GAPLESS_RATE = 80000000
+    CHAN_SPEC_MAX = 640
+
+    def __init__(self, lib):
+        super().__init__(lib)
+        self.runs = []
+        self.refuse = False
+
+    def gapless_start(self, **kw):
+        if self.refuse:
+            raise OSError(errno.EOPNOTSUPP, "no gapless mode")
+        self.runs.append(kw)
+
+    def gapless_stop(self):
+        pass
+
+    def chan_spectrum(self, out):
+        return 8 * self.runs[-1]["channels"]
+
+    def stretch(self, src, dst):
+        self.seq = (self.seq + 1) & 0x7F
+        for c in range(len(dst)):
+            dst[c] = 0x8000 | self.seq << 8 | c & 0xFF
+
+
 class FakeFrameBuffer:
     def __init__(self, buf, w, h, fmt):
         self.px = memoryview(buf).cast("H")
@@ -480,37 +512,46 @@ class FakeCanvas:
 
 
 @pytest.fixture
-def board(monkeypatch, clib):
+def make_board(monkeypatch, clib):
+    """The unmodified export of an egg on a fake radio."""
     saved = {k: v for k, v in sys.modules.items() if k.split(".")[0] in OWN}
     for k in saved:
         del sys.modules[k]
-    radio = FakeRadio(clib)
+    clock = [1000]
+    monkeypatch.setattr(time, "ticks_ms", lambda: clock[0], raising=False)
+    monkeypatch.setattr(time, "ticks_add", lambda a, b: a + b, raising=False)
+    monkeypatch.setattr(time, "ticks_diff", lambda a, b: a - b, raising=False)
+    monkeypatch.syspath_prepend(str(MODULES))
     framebuf = types.ModuleType("framebuf")
     framebuf.RGB565 = 1
     framebuf.FrameBuffer = FakeFrameBuffer
     lvgl = types.ModuleType("lvgl")
     lvgl.canvas = FakeCanvas
     lvgl.COLOR_FORMAT = types.SimpleNamespace(RGB565=1)
-    monkeypatch.setitem(sys.modules, "esdr", radio)
     monkeypatch.setitem(sys.modules, "framebuf", framebuf)
     monkeypatch.setitem(sys.modules, "lvgl", lvgl)
-    clock = [1000]
-    monkeypatch.setattr(time, "ticks_ms", lambda: clock[0], raising=False)
-    monkeypatch.setattr(time, "ticks_add", lambda a, b: a + b, raising=False)
-    monkeypatch.setattr(time, "ticks_diff", lambda a, b: a - b, raising=False)
-    monkeypatch.syspath_prepend(str(EGG))
-    monkeypatch.syspath_prepend(str(MODULES))
-    gui = importlib.import_module("gnuradio._gui")
-    gui._headless = True
-    mod = importlib.import_module("waterfall")
-    tb = mod.waterfall()
-    tb.soapy_plutosdr_source_0._live = True
-    sink = tb.qtgui_waterfall_sink_x_0
-    yield types.SimpleNamespace(tb=tb, sink=sink, radio=radio, clock=clock, gui=gui,
-                                qtgui=sys.modules["gnuradio.qtgui"])
+
+    def make(egg="waterfall", radio_type=FakeRadio):
+        radio = radio_type(clib)
+        monkeypatch.setitem(sys.modules, "esdr", radio)
+        monkeypatch.syspath_prepend(str(EGGS / egg))
+        gui = importlib.import_module("gnuradio._gui")
+        gui._headless = True
+        tb = getattr(importlib.import_module(egg), egg)()
+        tb.soapy_plutosdr_source_0._live = True
+        return types.SimpleNamespace(tb=tb, sink=tb.__dict__.get("qtgui_waterfall_sink_x_0"),
+                                     radio=radio, clock=clock, gui=gui,
+                                     qtgui=sys.modules["gnuradio.qtgui"])
+
+    yield make
     for k in [k for k in sys.modules if k.split(".")[0] in OWN]:
         del sys.modules[k]
     sys.modules.update(saved)
+
+
+@pytest.fixture
+def board(make_board):
+    return make_board()
 
 
 W, ROWS = 40, 30
@@ -600,7 +641,9 @@ def test_the_same_mode_again_does_not_restart_the_radio(board):
     assert board.radio.gains == []
 
 
-def test_gain_and_agc_share_a_row(board):
+@pytest.mark.parametrize("egg", ["waterfall"])
+def test_gain_and_agc_share_a_row(make_board, egg):
+    board = make_board(egg)
     from PyQt5 import Qt
 
     out = []
@@ -611,14 +654,53 @@ def test_gain_and_agc_share_a_row(board):
     assert gain[1] == agc[1] and gain[0] + gain[2] <= agc[0]
 
 
-def test_the_chooser_reaches_the_radio(board):
+@pytest.mark.parametrize("egg", ["waterfall"])
+def test_the_chooser_reaches_the_radio(make_board, egg):
     # The sink's axis alone would look right with the radio left at its old rate.
+    board = make_board(egg)
     src = board.tb.soapy_plutosdr_source_0
     for rate in board.tb._samp_rate_options:
         board.radio.started.clear()
         board.tb.set_samp_rate(rate)
         assert src._rate == int(rate)
         assert board.radio.started and board.radio.started[-1] == int(rate)
+
+
+def test_40_and_80_ms_run_the_gapless_stream(make_board):
+    board = make_board(radio_type=GaplessRadio)
+    tb, radio = board.tb, board.radio
+    tb.set_samp_rate(40e6)
+    assert radio.runs[-1]["half"] is True and radio.runs[-1]["channels"] == 40
+    assert radio.runs[-1]["gain_servo"] is True
+    tb.set_samp_rate(80e6)
+    assert radio.runs[-1]["half"] is False and radio.runs[-1]["channels"] == 80
+    tb.set_agc(False)
+    assert radio.runs[-1]["gain_servo"] is False and radio.gains[-1] == 48
+    runs = len(radio.runs)
+    tb.set_samp_rate(2e6)
+    assert radio.started[-1] == 2000000 and len(radio.runs) == runs
+
+
+def test_a_radio_without_the_stream_takes_bursts(make_board):
+    board = make_board(radio_type=GaplessRadio)
+    board.radio.refuse = True
+    board.tb.set_samp_rate(40e6)
+    assert board.radio.runs == [] and board.radio.started[-1] == 40000000
+
+
+def test_a_board_without_the_stream_takes_bursts_at_40_ms(board):
+    board.tb.set_samp_rate(40e6)
+    assert board.radio.started[-1] == 40000000
+
+
+def test_rows_at_40_ms_come_from_the_channelizer(make_board):
+    board = make_board(radio_type=GaplessRadio)
+    board.tb.set_samp_rate(40e6)
+    sink = place(board)
+    sink.enable_grid(False)
+    draw(board, 4)
+    assert picture(sink)[0] != [sink._palette[0]] * W
+    assert board.radio.total == 0
 
 
 def test_the_knob_reaches_the_radio(board):

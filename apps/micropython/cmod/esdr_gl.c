@@ -85,6 +85,7 @@ static struct {
 	struct esdr_detq det;
 	struct esdr_seg_track track;
 	unsigned int m;
+	uint32_t rate_hz;
 	bool run, have_ref;
 	uint32_t decided;
 	/* The first frame seen (bursts' start times count from it). */
@@ -294,10 +295,10 @@ static void spec_fold(unsigned int k)
 
 static void push_burst(unsigned int k, uint64_t from, uint64_t to, float peak)
 {
-	const float frame_s = (float)(gl.m / 2U) / (float)ESDR_GAPLESS_RATE_HZ;
+	const float frame_s = (float)(gl.m / 2U) / (float)gl.rate_hz;
 	const int off = (int)k - (k > gl.m / 2U ? (int)gl.m : 0);
 	struct esdr_gl_burst b = {
-		.offset_hz = (float)off * (float)ESDR_GAPLESS_RATE_HZ / (float)gl.m,
+		.offset_hz = (float)off * (float)gl.rate_hz / (float)gl.m,
 		.start_s = (float)(int64_t)(from - gl.m_ref) * frame_s,
 		.length_s = (float)(to - from) * frame_s,
 		.peak_db = db(peak),
@@ -450,7 +451,7 @@ static void gl_fn(void *a, void *b, void *c)
 	}
 }
 
-int esdr_gl_start(unsigned int channels, float open_db)
+int esdr_gl_start(unsigned int channels, uint32_t rate_hz, float open_db)
 {
 	const struct esdr_pfbq_cfg pc = {
 		.channels = (uint16_t)channels,
@@ -486,6 +487,7 @@ int esdr_gl_start(unsigned int channels, float open_db)
 	}
 	if (ret == 0) {
 		gl.m = channels;
+		gl.rate_hz = rate_hz;
 		gl.decided = 0;
 		gl.have_ref = false;
 		gl.have_next = false;
