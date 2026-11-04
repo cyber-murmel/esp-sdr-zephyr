@@ -249,6 +249,24 @@ int esdr_fpga_redraw(const struct device *dev, bool waterfall, bool spectrum)
 	return esdr_fpga_reg_write(dev, ESDR_FPGA_REG_DIRTY, &dirty, 1);
 }
 
+/* The LED breathes: the block's setup, then the colour, which starts it. */
+static int led_start(const struct device *dev)
+{
+	const uint16_t words[] = {
+		ESDR_FPGA_LED_SETUP,
+		ESDR_FPGA_LED_RUN | ESDR_FPGA_LED_PWRR | CONFIG_ESDR_FPGA_LED_RED,
+		ESDR_FPGA_LED_RUN | ESDR_FPGA_LED_PWRG | CONFIG_ESDR_FPGA_LED_GREEN,
+		ESDR_FPGA_LED_RUN | ESDR_FPGA_LED_PWRB | CONFIG_ESDR_FPGA_LED_BLUE,
+	};
+	int ret = 0;
+
+	/* A frame each: a frame's words go to consecutive addresses. */
+	for (size_t i = 0; i < ARRAY_SIZE(words) && ret == 0; i++) {
+		ret = esdr_fpga_reg_write(dev, ESDR_FPGA_REG_LED, &words[i], 1);
+	}
+	return ret;
+}
+
 static int esdr_fpga_init(const struct device *dev)
 {
 	const struct esdr_fpga_config *cfg = dev->config;
@@ -276,6 +294,9 @@ static int esdr_fpga_init(const struct device *dev)
 
 	if (ret == 0) {
 		ret = fpga_on(cfg->ice40);
+	}
+	if (ret == 0) {
+		ret = led_start(dev);
 	}
 	if (ret < 0) {
 		LOG_ERR("load of %zu bytes failed: %d", sizeof(image), ret);

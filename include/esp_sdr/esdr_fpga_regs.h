@@ -36,6 +36,13 @@
 #define ESDR_FPGA_SP_ON              0x0001U
 #define ESDR_FPGA_SP_CENTER          0x0002U
 
+/* Words of register LED: the block's setup at the gateware's 30 MHz, each colour's peak (or in a value), and running it. */
+#define ESDR_FPGA_LED_SETUP          0x08C1U, 0x09D4U, 0x0A01U, 0x0B01U, 0x05E7U, 0x06A7U
+#define ESDR_FPGA_LED_PWRR           0x0100U
+#define ESDR_FPGA_LED_PWRG           0x0200U
+#define ESDR_FPGA_LED_PWRB           0x0300U
+#define ESDR_FPGA_LED_RUN            0x1000U
+
 /* Registers. */
 #define ESDR_FPGA_ID                 0xE5DFU
 /* c, 16 bits: 0xE5DF */
@@ -77,6 +84,9 @@
 /* s, 1 bits: write: the spectrum columns written so far become the front bank (marks the
  * spectrum dirty) */
 #define ESDR_FPGA_REG_COL_COMMIT     0x001AU
+/* s, 13 bits: write: to the LED's SB_LEDDA_IP: bits 11:8 its register, 7:0 the value, b12 it
+ * runs */
+#define ESDR_FPGA_REG_LED            0x001BU
 /* w, 9 bits: waterfall: first native row (its column 0) */
 #define ESDR_FPGA_REG_WF_PAGE0       0x0028U
 /* w, 9 bits: waterfall: first native column (its row 0) */

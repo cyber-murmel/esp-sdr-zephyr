@@ -85,6 +85,10 @@ class Core(wiring.Component):
     lcd_mode: In(1)
     lcd_fmark: In(1)
 
+    # Register LED's writes.
+    led: Out(13)
+    led_stb: Out(1)
+
     # Debug: frames seen; the last frame's first two bytes and its length.
     dbg_frames: Out(16)
     dbg_last: Out(16)
@@ -166,6 +170,8 @@ class Core(wiring.Component):
         c = regs.control
         sp_flags = c["SP_FLAGS"]
         m.d.comb += [
+            self.led.eq(regs.strobe["LED"][0]),
+            self.led_stb.eq(regs.strobe["LED"][1]),
             rd.host_busy.eq(dbi.pending | dbi.hold),
             rd.te.eq(phy.te),
             rd.enable.eq(c["CTRL"][0] & phy.mode),

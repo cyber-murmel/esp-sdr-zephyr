@@ -87,12 +87,17 @@ spends about 0.7 ms of CPU per burst. The FFT, not the link, limits the throughp
 
 ## Fitting the UP5K
 
-The gateware fills 4960 of 5280 logic cells (all 4 SPRAMs, 18 of 30 block RAMs, 4 of 8
-multipliers) at 31 MHz. To fit, the FFT stops at 512 points (the screen has 320 columns), it
+The gateware fills 4982 of 5280 logic cells (all 4 SPRAMs, 18 of 30 block RAMs, 3 of 8
+multipliers) at 32 MHz. To fit, the FFT stops at 512 points (the screen has 320 columns), it
 halves every stage instead of keeping a block exponent, the trace has no fill or grid, and the
 test source (a tone generator) is gone: the ESP32 makes test samples. The UART probe line is a
 build variant (`debug`). New features need cells found first: `synth_ice40 -noflatten` with
 yosys `stat` shows them per module.
+
+The LED fades on the UP5K's hard PWM (`SB_LEDDA_IP`), which the driver sets up over one register
+at boot, in the colour and brightness of `CONFIG_ESDR_FPGA_LED_RED`, `_GREEN` and `_BLUE`. They
+stay out of the bitstream on purpose: this close to full, new constants alone moved the clock from
+32.1 to 28.75 MHz, which fails, and the seed moves it as far (29.2 to 32.25 MHz).
 
 Zephyr's `lattice,ice40-fpga` driver configures the FPGA, at 25 MHz, the configuration port's
 limit in the data sheet; frames run at 40 MHz. The board holds it in reset until a load

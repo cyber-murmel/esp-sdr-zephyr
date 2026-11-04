@@ -1,23 +1,23 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Bring-up image: PLL, a breathing LED and one UART line per second."""
+"""Bring-up image: PLL, a breathing LED and one UART line per second; the UART line alone is the
+debug variant's heartbeat."""
 
 from amaranth.hdl import Const, Elaboratable, Module, Mux, Signal
 from amaranth.lib import io
 
 from .crg import CRG
-from .prims import RgbDriver
+from .prims import LedBus, LedFade
 from .uart import UARTTx
 
 __all__ = ["Blinky"]
 
 
 class Blinky(Elaboratable):
-    def __init__(self, sys_clk_freq=30e6, baud=115200, crg=True, probes=(), uart=True):
+    def __init__(self, sys_clk_freq=30e6, baud=115200, crg=True, probes=(), led=True):
         self.sys_clk_freq = sys_clk_freq
         self.baud = baud
         self.crg = crg
-        # Without the UART report only the LED breathes.
-        self.uart = uart
+        self.led = led
         # 16-bit signals printed in hex after the seconds.
         self.probes = list(probes)
 
@@ -25,10 +25,11 @@ class Blinky(Elaboratable):
         m = Module()
         if self.crg:
             m.submodules.crg = CRG(self.sys_clk_freq)
-        m.submodules.rgb = rgb = RgbDriver()
-        if self.uart:
-            self.report(m, platform)
-        self.breathe(m, rgb)
+        if self.led:
+            m.submodules.led = led = LedBus()
+            m.submodules.fade = fade = LedFade(self.sys_clk_freq)
+            m.d.comb += [led.stb.eq(fade.stb), led.value.eq(fade.value)]
+        self.report(m, platform)
         return m
 
     def report(self, m, platform):
@@ -94,24 +95,3 @@ class Blinky(Elaboratable):
             uart = platform.request("uart", 0, dir={"tx": "-", "rx": "-"})
             m.submodules.uart_tx = uart_tx = io.Buffer("o", uart.tx)
             m.d.comb += uart_tx.o.eq(tx.tx)
-
-    def breathe(self, m, rgb):
-        if not self.uart:
-            # A dim green blink, about 1 Hz (the breathing ramp costs more logic).
-            count = Signal(25)
-            m.d.sync += [count.eq(count + 1), rgb.g.eq(count[24] & (count[:3] == 0))]
-            return
-        # Breathing green: 8-bit PWM against a triangle that ramps over about 2 s.
-        pwm = Signal(8)
-        level = Signal(9)
-        ramp_len = int(self.sys_clk_freq / 256)
-        ramp = Signal(range(ramp_len))
-        m.d.sync += pwm.eq(pwm + 1)
-        with m.If(ramp == 0):
-            m.d.sync += [level.eq(level + 1), ramp.eq(ramp_len - 1)]
-        with m.Else():
-            m.d.sync += ramp.eq(ramp - 1)
-        bright = Signal(8)
-        m.d.comb += bright.eq(level[:8] ^ level[8].replicate(8))
-        # Registered: the RGB driver sits in a far corner.
-        m.d.sync += rgb.g.eq(pwm < bright)

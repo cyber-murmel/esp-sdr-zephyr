@@ -16,9 +16,9 @@ from amaranth.lib.cdc import FFSynchronizer
 from amaranth.lib.wiring import In, Out
 
 from .crg import CRG
-from .prims import Spram
+from .prims import LedBus, Spram
 from .proto import Protocol
-from .regs import ID
+from .regs import ID, REGS
 from .uart import UARTTx
 
 __all__ = ["CAPS_LINK", "FIFO_WORDS", "LINK_REGS", "LinkCore", "LinkTop", "OP_LINK", "VERSION"]
@@ -42,6 +42,8 @@ LINK_REGS = {
     "LINK_LOST": 0x22,
     # Cycles (sync, over 256) the RP2040 held the sender back, low 16 bits.
     "LINK_HELD": 0x23,
+    # Write-only, as the renderer's.
+    "LED": REGS["LED"][0],
 }
 
 
@@ -54,6 +56,9 @@ class LinkCore(wiring.Component):
     ready: In(1)
     # To the RP2040.
     tx: Out(1, init=1)
+    # Register LED's writes.
+    led: Out(13)
+    led_stb: Out(1)
 
     def __init__(self, divisor=2):
         self.divisor = divisor
@@ -148,7 +153,11 @@ class LinkCore(wiring.Component):
         with m.If((out_bytes != 0) & ~ready):
             m.d.sync += held.eq(held + 1)
 
-        # Registers: the bus's read data comes the cycle after.
+        # Registers: the LED's writes, and the bus's read data comes the cycle after.
+        m.d.sync += [
+            self.led.eq(proto.bus.w_data),
+            self.led_stb.eq(proto.bus.w_stb & (proto.bus.addr == LINK_REGS["LED"])),
+        ]
         with m.If(proto.bus.r_stb):
             with m.Switch(proto.bus.addr):
                 with m.Case(LINK_REGS["ID"]):
@@ -181,6 +190,9 @@ class LinkTop(Elaboratable):
         m = Module()
         m.submodules.crg = CRG(self.sys_clk_freq)
         m.submodules.core = core = LinkCore(self.divisor)
+
+        m.submodules.led = led = LedBus()
+        m.d.comb += [led.stb.eq(core.led_stb), led.value.eq(core.led)]
 
         spi = platform.request("spi", 0, dir={"clk": "-", "copi": "-", "cipo": "-", "cs": "-"})
         m.submodules.sck_buf = sck_buf = io.Buffer("i", spi.clk)

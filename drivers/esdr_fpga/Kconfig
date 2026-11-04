@@ -38,6 +38,33 @@ config HEAP_MEM_POOL_ADD_SIZE_ESDR_FPGA
 	int
 	default 5120
 
+config ESDR_FPGA_LED_RED
+	int "LED: peak of red, in 256ths"
+	default 9
+	range 0 255
+	help
+	  The iCE40's RGB LED fades up and down, on the chip's hard PWM, whenever
+	  the gateware is loaded at boot. These three set the top of the fade: its
+	  colour by their ratio, its brightness by their size. All 0: it stays
+	  dark. Changing them does not change the bitstream.
+
+	  The LED's dies differ (listed at 460, 1300 and 130 mcd), so a colour
+	  takes its own ratio: Dusk's purple-24 is 37:8:96, its orange-72 52:13:2.
+
+config ESDR_FPGA_LED_GREEN
+	int "LED: peak of green, in 256ths"
+	default 2
+	range 0 255
+	help
+	  See ESDR_FPGA_LED_RED.
+
+config ESDR_FPGA_LED_BLUE
+	int "LED: peak of blue, in 256ths"
+	default 24
+	range 0 255
+	help
+	  See ESDR_FPGA_LED_RED.
+
 module = ESDR_FPGA
 module-str = esdr_fpga
 source "subsys/logging/Kconfig.template.log_config"

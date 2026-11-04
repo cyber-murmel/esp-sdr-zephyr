@@ -39,6 +39,8 @@ REGS = {
     "DIRTY":       (0x19, "s",   2, 0, "write 1 to redraw: b0 waterfall, b1 spectrum"),
     "COL_COMMIT":  (0x1A, "s",   1, 0, "write: the spectrum columns written so far become the "
                                         "front bank (marks the spectrum dirty)"),
+    "LED":         (0x1B, "s",  13, 0, "write: to the LED's SB_LEDDA_IP: bits 11:8 its register, "
+                                        "7:0 the value, b12 it runs"),
     "WF_PAGE0":    (0x28, "w",   9, 0, "waterfall: first native row (its column 0)"),
     "WF_COL0":     (0x29, "w",   9, 0, "waterfall: first native column (its row 0)"),
     "WF_W":        (0x2A, "w",   9, 0, "waterfall: columns (line length)"),
@@ -121,6 +123,7 @@ def header():
     from .core import AVG_LUT, COLUMNS, COLV, PALETTE, SCRATCH_RAM, WINDOW
     from .dsp import FMT_IQ8, FMT_IQ10P, FMT_IQ16, FMT_WORD32, F_RESYNC, OP_SAMPLES
     from .dbi import F_HOLD, F_NOCMD, OP_DBI
+    from .prims import LED_RUN, led_colour, led_setup
     from .proto import OP_READ, OP_WRITE
     from .render import PAL_BG, PAL_CENTER, PAL_TRACE, SP_CENTER, SP_ON
     from .waterfall import OP_WFLINE
@@ -167,6 +170,14 @@ def header():
         "/* SP_FLAGS */",
         define("ESDR_FPGA_SP_ON", SP_ON),
         define("ESDR_FPGA_SP_CENTER", SP_CENTER),
+        "",
+        "/* Words of register LED: the block's setup at the gateware's 30 MHz, each colour's peak "
+        "(or in a value), and running it. */",
+        "#define ESDR_FPGA_LED_SETUP          " + ", ".join(f"0x{w:04X}U" for w in led_setup()),
+        define("ESDR_FPGA_LED_PWRR", led_colour(0, 0, 0)[0]),
+        define("ESDR_FPGA_LED_PWRG", led_colour(0, 0, 0)[1]),
+        define("ESDR_FPGA_LED_PWRB", led_colour(0, 0, 0)[2]),
+        define("ESDR_FPGA_LED_RUN", LED_RUN),
         "",
         "/* Registers. */",
         define("ESDR_FPGA_ID", ID),

@@ -7,6 +7,7 @@ from amaranth.lib import io
 from .blinky import Blinky
 from .core import Core
 from .crg import CRG
+from .prims import LedBus
 
 __all__ = ["Top"]
 
@@ -25,9 +26,15 @@ class Top(Elaboratable):
         m.submodules.crg = CRG(self.sys_clk_freq)
         m.submodules.core = core = Core(build=self.build, debug=self.debug)
 
-        # Heartbeat on the LED and the FPGA UART (no CRG of its own here).
-        m.submodules.heartbeat = Blinky(self.sys_clk_freq, crg=False, uart=self.debug,
-                                        probes=[core.dbg_frames, core.dbg_last, core.dbg_len])
+        # The LED, which the host sets up over its register.
+        m.submodules.led = led = LedBus()
+        m.d.comb += [led.stb.eq(core.led_stb), led.value.eq(core.led)]
+
+        # A heartbeat with probes on the FPGA UART (no CRG of its own here).
+        if self.debug:
+            m.submodules.heartbeat = Blinky(self.sys_clk_freq, crg=False, led=False,
+                                            probes=[core.dbg_frames, core.dbg_last,
+                                                    core.dbg_len])
 
         spi = platform.request("spi", 0, dir={"clk": "-", "copi": "-", "cipo": "-", "cs": "-"})
         m.submodules.sck_buf = sck_buf = io.Buffer("i", spi.clk)

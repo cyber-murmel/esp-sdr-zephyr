@@ -3,7 +3,60 @@
 
 from amaranth.hdl import Cat, ClockSignal, Elaboratable, Instance, Module, Signal
 
-__all__ = ["RgbDriver", "Spram"]
+__all__ = ["LED_RUN", "LedBus", "LedFade", "RgbDriver", "Spram", "led_colour", "led_setup"]
+
+# Register LED's word: bits 11:8 a register of SB_LEDDA_IP, the UP5K's hard PWM (Lattice TN1288,
+# appendix D), 7:0 its value. LED_RUN, with any write, sets whether the block runs (LEDDEXE).
+LED_RUN = 1 << 12
+
+_LEDD_CR0 = 0b1000
+_LEDD_BR = 0b1001
+_LEDD_ONR = 0b1010
+_LEDD_OFR = 0b1011
+_LEDD_BCRR = 0b0101
+_LEDD_BCFR = 0b0110
+_LEDD_PWRR = 0b0001
+_LEDD_PWRG = 0b0010
+_LEDD_PWRB = 0b0011
+
+# CR0: on, 250 Hz flick rate; its low two bits are the prescaler's high ones.
+_CR0_EN = 0x80
+_CR0_FR250 = 0x40
+# BCRR, BCFR: breathe on, the first for both ramps, every colour taking the same time.
+_BC_EN = 0x80
+_BC_BOTH = 0x40
+_BC_MODULATE = 0x20
+# Each hold, in the block's steps of 32 ms: the shortest, so that it fades without a plateau.
+_HOLD = 1
+
+
+def _word(addr, data):
+    return addr << 8 | data
+
+
+def led_setup(sys_clk_freq=30e6, ramp_ms=1024):
+    """The words that make the block breathe, the colour aside: ramps of ramp_ms, in steps of
+    128 ms. Its timing comes from a 64 kHz tick, from clocks of 4 to 64 MHz."""
+    if not 4e6 <= sys_clk_freq <= 64e6:
+        raise ValueError(f"no LED driver at {sys_clk_freq} Hz")
+    rate = round(ramp_ms / 128) - 1
+    if not 1 <= rate <= 15:
+        raise ValueError(f"no ramp of {ramp_ms} ms")
+    prescale = round(sys_clk_freq / 64e3 - 1)
+    breathe = _BC_EN | _BC_MODULATE | rate
+    return [
+        _word(_LEDD_CR0, _CR0_EN | _CR0_FR250 | prescale >> 8),
+        _word(_LEDD_BR, prescale & 0xFF),
+        _word(_LEDD_ONR, _HOLD),
+        _word(_LEDD_OFR, _HOLD),
+        _word(_LEDD_BCRR, breathe | _BC_BOTH),
+        _word(_LEDD_BCFR, breathe),
+    ]
+
+
+def led_colour(r, g, b):
+    """The words that set each colour's peak, in 256ths of full."""
+    return [_word(_LEDD_PWRR, r), _word(_LEDD_PWRG, g), _word(_LEDD_PWRB, b)]
 
 
 class RgbDriver(Elaboratable):
@@ -29,6 +82,58 @@ class RgbDriver(Elaboratable):
             i_RGB0PWM=self.g, i_RGB1PWM=self.r, i_RGB2PWM=self.b,
             io_RGB0=pins.g.io, io_RGB1=pins.r.io, io_RGB2=pins.b.io,
         )
+        return m
+
+
+class LedBus(Elaboratable):
+    """The LED: SB_LEDDA_IP into RgbDriver, written a word at a time (LED_RUN and led_setup())."""
+
+    def __init__(self):
+        self.stb = Signal()
+        self.value = Signal(13)
+        self.run = Signal()
+
+    def elaborate(self, platform):
+        m = Module()
+        with m.If(self.stb):
+            m.d.sync += self.run.eq(self.value[12])
+        m.submodules.rgb = rgb = RgbDriver()
+        if platform is None:
+            return m
+        m.submodules.ledda = Instance(
+            "SB_LEDDA_IP",
+            i_LEDDCLK=ClockSignal("sync"),
+            i_LEDDCS=self.stb, i_LEDDDEN=self.stb,
+            i_LEDDADDR3=self.value[11], i_LEDDADDR2=self.value[10],
+            i_LEDDADDR1=self.value[9], i_LEDDADDR0=self.value[8],
+            i_LEDDDAT7=self.value[7], i_LEDDDAT6=self.value[6],
+            i_LEDDDAT5=self.value[5], i_LEDDDAT4=self.value[4],
+            i_LEDDDAT3=self.value[3], i_LEDDDAT2=self.value[2],
+            i_LEDDDAT1=self.value[1], i_LEDDDAT0=self.value[0],
+            i_LEDDEXE=self.run,
+            o_PWMOUT0=rgb.r, o_PWMOUT1=rgb.g, o_PWMOUT2=rgb.b,
+        )
+        return m
+
+
+class LedFade(Elaboratable):
+    """A breathing LED with no host to set it up: writes a LedBus once after reset."""
+
+    def __init__(self, sys_clk_freq=30e6, colour=(0, 32, 0)):
+        self.words = led_setup(sys_clk_freq) + [w | LED_RUN for w in led_colour(*colour)]
+        self.stb = Signal()
+        self.value = Signal(13)
+
+    def elaborate(self, platform):
+        m = Module()
+        step = Signal(range(len(self.words) + 1))
+        m.d.comb += self.stb.eq(step != len(self.words))
+        with m.If(self.stb):
+            m.d.sync += step.eq(step + 1)
+        with m.Switch(step):
+            for i, word in enumerate(self.words):
+                with m.Case(i):
+                    m.d.comb += self.value.eq(word)
         return m
 
 
