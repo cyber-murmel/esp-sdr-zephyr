@@ -81,6 +81,22 @@ length?"):
   dump engine's four-slot mode, and a follow mode that parks the channel mode on the busiest
   channel for whole long frames.
 
+**The threshold servo's limits** (Kconfig, 2026-11-04): `CONFIG_ESP_SDR_GAPLESS_THR_LINK_PCT`, how
+full the link may get (95 %), and `CONFIG_ESP_SDR_GAPLESS_THR_LOST_PCT`, the share of the samples
+kept that the CPU may lose in a period before the threshold rises 2 dB. That share used to be
+none: a single lost sample raised it, so the CPU's limit held the threshold long before the link's.
+At 5 %, against none (four 20 s surveys each, taking turns):
+
+| | Samples kept | Abandoned | Bluetooth LE packets |
+|---|---|---|---|
+| 80 MS/s, none | 21.3 M | 0.98 % | 0 |
+| 80 MS/s, 5 % | 37.4 M | 1.11 % | 0 |
+| 40 MS/s, none | 42.0 M | 0.14 % | 237 (185 to 285) |
+| 40 MS/s, 5 % | 46.1 M | 0.17 % | 289 (254 to 319) |
+
+The link still carries only 34 % and 42 % of its budget: it does not limit, the 95 % is never
+reached.
+
 **Width sorting** (the user's choice for the C6, `esp_sdr_gapless_sort.h`): the C6 judges each
 chunk of kept samples (a window's length) by its correlations 4, 6 and 10 samples apart against
 its power above the noise, at 50 points; all three below a half means a band wider than some

@@ -105,6 +105,28 @@ config ESP_SDR_GAPLESS_STAGE_KB
 	  lower ones) add 2 x 64 KiB once their canaries hold. What the CPU
 	  can copy per unit, not this size, bounds a whole burst.
 
+config ESP_SDR_GAPLESS_THR_LINK_PCT
+	int "Threshold servo: how full the link may get, percent"
+	depends on ESP_SDR_GAPLESS
+	default 95
+	range 50 100
+	help
+	  What is kept past this share of the link's budget raises the
+	  threshold by 1 dB a period, and less than 5 points below it lowers
+	  the threshold by 0.5 dB. The gain servo keeps its own headroom. A
+	  host's headroom in ESDR_REQ_SET_GAPLESS replaces this for the run.
+
+config ESP_SDR_GAPLESS_THR_LOST_PCT
+	int "Threshold servo: samples it lets the CPU lose, percent"
+	depends on ESP_SDR_GAPLESS
+	default 5
+	range 0 50
+	help
+	  A period in which the CPU abandoned more than this share of the
+	  samples kept raises the threshold by 2 dB. 0: any lost sample does,
+	  which keeps some 40 % fewer samples at 80 MS/s (doc/pcap.md). Past
+	  the link's budget it rises by 2 dB whatever this says.
+
 config ESP_SDR_DIAG
 	bool "Gapless receive through the modem diagnostic bus (ESP32-C5)"
 	depends on SOC_SERIES_ESP32C5 && ESP_SDR_PACED

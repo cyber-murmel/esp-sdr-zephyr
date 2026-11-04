@@ -180,7 +180,10 @@ struct esp_sdr_gapless_cfg {
 	 * between (100 - headroom_hi) and (100 - headroom_lo) percent of it. 0: no servo.
 	 */
 	uint32_t budget_bps;
-	/** Headroom band in percent, for both servos (0, 0: 5 and 10). */
+	/**
+	 * Headroom band in percent, for both servos (0, 0: the gain servo 5 and 10, the threshold
+	 * servo from CONFIG_ESP_SDR_GAPLESS_THR_LINK_PCT, by default the same).
+	 */
 	uint8_t headroom_lo, headroom_hi;
 	/** Step the receive gain to keep the peaks in the headroom band. */
 	bool gain_servo;
