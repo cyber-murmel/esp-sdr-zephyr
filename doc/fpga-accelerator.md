@@ -82,8 +82,8 @@ Measured on the badge (N = 512, 30 MHz):
 | radio bursts of 16380 at 40 MS/s, WORD32 | 73 per second: capture 0.43 ms, send 13.3 ms |
 | the same, IQ10P / IQ8 | 102 / 127 per second (packing 1.1 / 0.8 ms) |
 
-With interrupt-driven SPI (`CONFIG_SPI_ESP32_INTERRUPT`, which the driver implies) the ESP32
-spends about 0.7 ms of CPU per burst. The FFT, not the link, limits the throughput.
+With interrupt-driven SPI (`CONFIG_SPI_ESP32_INTERRUPT`, which the driver implies) the CPU is
+free while a frame goes out. The FFT, not the link, limits the throughput.
 
 ## Fitting the UP5K
 

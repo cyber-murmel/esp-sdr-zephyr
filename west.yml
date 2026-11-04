@@ -38,7 +38,7 @@ manifest:
     # p4-function-ev-board, p4-smp, zsdr).
     - name: zephyr
       remote: cyber-murmel
-      revision: 673de1d17fde621c3af4d9d749871bf4fa00d6d6 # zsdr
+      revision: 5a4d213a6c36df41d6b23079fd30088add25f857 # zsdr
       path: modules/zephyr
       import:
         name-allowlist:
