@@ -2,7 +2,7 @@
 """qtgui for GRC Qt GUI exports on the board. freq_sink, waterfall_sink and time_sink draw
 on the board's display (_gui.py); the other sinks accept their samples and draw nothing.
 Range and RangeWidget become variables the encoder changes. Line colours, labels and other
-styling calls are accepted and ignored, grids except a waterfall's. While the radio streams
+styling calls are accepted and ignored, grids except a waterfall's and a frequency sink's. While the radio streams
 gapless with the channelizer (soapy.source at 80 and 40 MS/s), the spectrum sinks draw the bursts
 it found, each at its channel, over quiet noise (esdr.chan_spectrum()), instead of the latest
 samples' spectrum."""
@@ -157,14 +157,26 @@ def _composed(cols):
     return True
 
 
+def _fft_points(size):
+    # The power of two at or above size, 16 to 4096.
+    n = 16
+    while n < int(size) and n < 4096:
+        n *= 2
+    return n
+
+
+def _pair(fine, coarse, unit):
+    # " 100k/500kHz", one value with one level, "" with none.
+    parts = [_gui.eng(v) for v in (fine, coarse) if v]
+    return " " + "/".join(parts) + unit if parts else ""
+
+
 class _spectrum(_sink):
+    """A sink of the radio's spectrum: its axis, its frequency lines and its FFT."""
+
     def __init__(self, name, kind, size, wintype, fc, bw, title):
         super().__init__(name, kind, title)
-        # The power of two at or above size, 16 to 4096.
-        n = 16
-        while n < int(size) and n < 4096:
-            n *= 2
-        self._size = n
+        self._size = _fft_points(size)
         self._win = int(wintype)
         self._fc = float(fc)
         self._bw = float(bw)
@@ -172,23 +184,60 @@ class _spectrum(_sink):
         self._src = bytearray(4 * self._size)
         self._state = array.array("f", [0.0] * self._size)
         self._cols = array.array("f", [0.0] * _gui.W)
+        # What the export asks for, integers before a float can round them; what the plot shows.
+        self._hz = int(fc)
+        self._asked = max(1, int(bw))
+        self._span = self._asked
+        self._dirty = True
+        self._grid = False
+        self._spacing = (None, None)
+        self._lines = array.array("H")
+        self._notes = ""
 
     def _columns(self, w):
         self._cols = array.array("f", [0.0] * w)
+        self._dirty = True
+
+    def enable_grid(self, on=True):
+        self._grid = bool(on)
+        self._dirty = True
 
     def set_frequency_range(self, fc, bw):
+        # An export calls this before it tunes, and RangeWidget.set_index() takes any exception
+        # for a refused tune and tries other values: this only notes the request, the next
+        # _draw() applies the last one, which is the one the radio took.
         self._fc = float(fc)
         self._bw = float(bw)
+        self._hz = int(fc)
+        self._asked = max(1, int(bw))
+        self._dirty = True
         if self._fpga:
             self._head()
             self._canvas.invalidate()
             _fpga.configure()
-        elif self._h:
-            self._setup()
-            self._canvas.invalidate()
 
     def set_fft_size(self, n):
-        pass
+        """GRC has no callback for it: a flowgraph's Python Snippet connects a chooser here. At the
+        rates the channelizer draws (esdr.chan_spectrum()) its bins set the resolution instead."""
+        n = _fft_points(n)
+        if n != self._size:
+            self._size = n
+            self._src = bytearray(4 * n)
+            self._state = array.array("f", [0.0] * n)
+            self._dirty = True
+            if self._fpga:
+                _fpga.configure()
+
+    def _freq_grid(self):
+        # The rows are the radio's: its rate, which can be below the one asked for (a chooser's
+        # 2 MS/s on the S3 runs at 500 kS/s), sets the axis and the lines. (fine, coarse) in Hz.
+        self._span = soapy.radio_rate() or self._asked
+        fine = coarse = 0
+        if self._grid:
+            fine, coarse = _wfgrid.freq_levels(self._spacing[0], self._spacing[1], self._span,
+                                               self._w)
+        self._lines = _wfgrid.lines(self._hz, self._span, self._w, self._size, fine, coarse)
+        return fine, coarse
 
     def set_fft_average(self, a):
         self._avg = float(a)
@@ -196,7 +245,8 @@ class _spectrum(_sink):
             _fpga.configure()
 
     def _label(self):
-        return "{} {}".format(self._title, _gui.eng(self._fc, "Hz"))
+        return "{} {}{}".format(self._title, _gui.eng(self._fc, "Hz"),
+                                "" if self._fpga else self._notes)
 
     def _spectrum(self):
         """The columns of the latest spectrum; how many samples have come in all, or None for a
@@ -223,29 +273,46 @@ class freq_sink_c(_spectrum):
         if self._fpga:
             _fpga.configure()
 
+    def set_grid_spacing(self, freq_fine=None, freq_coarse=None):
+        """As waterfall_sink_c's, for frequency: its lines fall on the same frequencies."""
+        self._spacing = (_wfgrid.spacing(freq_fine), _wfgrid.spacing(freq_coarse))
+        self._dirty = True
+
+    def _apply(self):
+        self._dirty = False
+        fine, coarse = self._freq_grid()
+        self._notes = _pair(fine, coarse, "Hz")
+        self._head()
+
+    def _paint_grid(self, x, y, w, h):
+        fb = self._fbo
+        for line in self._lines:
+            fb.vline(x + (line & ~_wfgrid.COARSE), y, h,
+                     _gui.DIM if line & _wfgrid.COARSE else _gui.FAINT)
+        # Fine lines every 10 dB where they fit, coarse ones every 20.
+        range_db = self._ymax - self._ymin
+        for step, colour in ((10.0, _gui.FAINT), (20.0, _gui.DIM)):
+            if step * (h - 1) < _wfgrid.MIN_PX * range_db:
+                continue
+            level = step * int(self._ymin / step)
+            while level < self._ymax:
+                if level > self._ymin:
+                    fb.hline(x, y + h - 1 - int((level - self._ymin) * (h - 1) / range_db), w, colour)
+                level += step
+
     def _draw(self):
         if self._fpga:
             _fpga.feed()
             return
+        if self._dirty:
+            self._apply()
         self._spectrum()
         fb, buf = self._fbo, self._buf
         x, y, w, h = self._plot()
         fb.fill_rect(x, y, w, h, _gui.BG)
-        # A grid line every 20 dB.
-        step = 20.0
-        level = step * int(self._ymin / step)
-        while level < self._ymax:
-            if level > self._ymin:
-                fb.hline(x, y + h - 1 - int((level - self._ymin) * (h - 1) / (self._ymax - self._ymin)), w, _gui.DIM)
-            level += step
-        fb.vline(x + w // 2, y, h, _gui.DIM)
+        if self._grid:
+            self._paint_grid(x, y, w, h)
         esdr.fb_trace(buf, self._w, x, y, w, h, self._cols, self._ymin, self._ymax, _gui.TRACE[0])
-
-
-def _pair(fine, coarse, unit):
-    # "100k/500kHz", one value with one level, "" with none.
-    parts = [_gui.eng(v) for v in (fine, coarse) if v]
-    return "/".join(parts) + unit if parts else ""
 
 
 class waterfall_sink_c(_spectrum):
@@ -271,25 +338,13 @@ class waterfall_sink_c(_spectrum):
         self._rhead = 0
         self._col0 = None
         self._marks = None
-        self._lines = array.array("H")
         self._last = 0
-        # What the export asks for, integers before a float can round them; what is drawn.
-        self._hz = int(fc)
-        self._asked = max(1, int(bw))
-        self._span = self._asked
         self._drawn = (self._hz, self._span)
         self._anchor = self._hz
         self._view = 0
-        self._dirty = True
-        self._grid = False
         self._spacing = (None, None, None, None)
-        self._notes = ""
         self._time = _wfgrid.TimeMarks()
         self._settle = _wfgrid.Settle()
-
-    def enable_grid(self, on=True):
-        self._grid = bool(on)
-        self._dirty = True
 
     def set_grid_spacing(self, freq_fine=None, freq_coarse=None, time_fine=None, time_coarse=None):
         """Not in GNU Radio, GRC never calls it: the grid's fine and coarse lines, in Hz and in
@@ -312,23 +367,6 @@ class waterfall_sink_c(_spectrum):
         self._palette = dusk.heat(gamma=float(gamma))
         if self._fpga:
             _fpga.configure()
-
-    def set_frequency_range(self, fc, bw):
-        # An export calls this before it tunes, and RangeWidget.set_index() takes any exception
-        # for a refused tune and tries other values: this only notes the request, the next
-        # _draw() applies the last one, which is the one the radio took.
-        self._fc = float(fc)
-        self._bw = float(bw)
-        self._hz = int(fc)
-        self._asked = max(1, int(bw))
-        self._dirty = True
-        if self._fpga:
-            self._head()
-            self._canvas.invalidate()
-            _fpga.configure()
-
-    def _label(self):
-        return super()._label() + ("" if self._fpga else self._notes)
 
     def _make(self, parent, x, y, w, h):
         super()._make(parent, x, y, w, h)
@@ -367,9 +405,7 @@ class waterfall_sink_c(_spectrum):
 
     def _apply(self):
         self._dirty = False
-        # The rows are the radio's: its rate, which can be below the one asked for (a chooser's
-        # 2 MS/s on the S3 runs at 500 kS/s), sets the axis and the grid.
-        self._span = soapy.radio_rate() or self._asked
+        ff, fc = self._freq_grid()
         wanted = (self._hz, self._span)
         if self._span != self._drawn[1]:
             self._forget()
@@ -378,16 +414,13 @@ class waterfall_sink_c(_spectrum):
             self._drawn = wanted
             self._settle.retuned()
         self._view = _wfgrid.view(self._hz, self._anchor, self._w, self._span)
-        ff = fc = tf = tc = 0
+        tf = tc = 0
         if self._grid:
-            ff, fc = _wfgrid.freq_levels(self._spacing[0], self._spacing[1], self._span, self._w)
             tf, tc = _wfgrid.time_levels(self._spacing[2], self._spacing[3], self._rows,
                                          self._update)
-        self._lines = _wfgrid.lines(self._hz, self._span, self._w, self._size, ff, fc)
         if self._time.set(tf, tc):
             self._marks = bytearray(self._rows)
-        self._notes = "".join(" " + t for t in (_pair(ff, fc, "Hz"),
-                                                _pair(tf / 1000, tc / 1000, "s")) if t)
+        self._notes = _pair(ff, fc, "Hz") + _pair(tf / 1000, tc / 1000, "s")
         self._head()
 
     def _compose(self):

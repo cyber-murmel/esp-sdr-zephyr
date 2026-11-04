@@ -7,12 +7,13 @@
 # GNU Radio Python Flow Graph
 # Title: Constellation
 # Author: esp-sdr
-# Description: The received samples as a constellation, next to their spectrum, at 250 kS/s; the knob tunes from 1.8 to 2.8 GHz and sets the radio's gain (or leaves it to AGC).
+# Description: The received samples as a constellation, next to their spectrum, at 250 kS/s; the knob tunes from 1.8 to 2.8 GHz and sets the radio's gain (or leaves it to AGC) and the FFT size.
 # GNU Radio version: 3.10.12.0
 
 from PyQt5 import Qt
 from gnuradio import qtgui
 from PyQt5 import QtCore
+from PyQt5.QtCore import QObject, pyqtSlot
 from gnuradio import gr
 from gnuradio.filter import firdes
 from gnuradio.fft import window
@@ -27,6 +28,13 @@ import sip
 import threading
 
 
+def snipfcn_fft_reaches_the_sinks(self):
+    for sink in (self.qtgui_freq_sink_x_0,):
+        self._fft_combo_box.currentIndexChanged.connect(lambda i, s=sink: s.set_fft_size(self._fft_options[i]))
+
+
+def snippets_main_after_init(tb):
+    snipfcn_fft_reaches_the_sinks(tb)
 
 class constellation(gr.top_block, Qt.QWidget):
 
@@ -67,6 +75,7 @@ class constellation(gr.top_block, Qt.QWidget):
         self.samp_rate = samp_rate = 250e3
         self.gain = gain = 48
         self.freq = freq = 2.44e9
+        self.fft = fft = 1024
         self.agc = agc = True
 
         ##################################################
@@ -84,6 +93,26 @@ class constellation(gr.top_block, Qt.QWidget):
         self._freq_win = qtgui.RangeWidget(self._freq_range, self.set_freq, "Frequency", "counter_slider", float, QtCore.Qt.Horizontal)
         self.top_grid_layout.addWidget(self._freq_win, 0, 0, 1, 2)
         for r in range(0, 1):
+            self.top_grid_layout.setRowStretch(r, 1)
+        for c in range(0, 2):
+            self.top_grid_layout.setColumnStretch(c, 1)
+        # Create the options list
+        self._fft_options = [256, 512, 1024, 2048, 4096]
+        # Create the labels list
+        self._fft_labels = ['256', '512', '1024', '2048', '4096']
+        # Create the combo box
+        self._fft_tool_bar = Qt.QToolBar(self)
+        self._fft_tool_bar.addWidget(Qt.QLabel("FFT" + ": "))
+        self._fft_combo_box = Qt.QComboBox()
+        self._fft_tool_bar.addWidget(self._fft_combo_box)
+        for _label in self._fft_labels: self._fft_combo_box.addItem(_label)
+        self._fft_callback = lambda i: Qt.QMetaObject.invokeMethod(self._fft_combo_box, "setCurrentIndex", Qt.Q_ARG("int", self._fft_options.index(i)))
+        self._fft_callback(self.fft)
+        self._fft_combo_box.currentIndexChanged.connect(
+            lambda i: self.set_fft(self._fft_options[i]))
+        # Create the radio buttons
+        self.top_grid_layout.addWidget(self._fft_tool_bar, 2, 0, 1, 2)
+        for r in range(2, 3):
             self.top_grid_layout.setRowStretch(r, 1)
         for c in range(0, 2):
             self.top_grid_layout.setColumnStretch(c, 1)
@@ -112,7 +141,7 @@ class constellation(gr.top_block, Qt.QWidget):
         self.soapy_plutosdr_source_0.set_frequency(0, freq)
         self.soapy_plutosdr_source_0.set_gain(0, min(max(gain, 0.0), 73.0))
         self.qtgui_freq_sink_x_0 = qtgui.freq_sink_c(
-            1024, #size
+            fft, #size
             window.WIN_BLACKMAN_hARRIS, #wintype
             freq, #fc
             samp_rate, #bw
@@ -125,7 +154,7 @@ class constellation(gr.top_block, Qt.QWidget):
         self.qtgui_freq_sink_x_0.set_y_label('Relative Gain', 'dB')
         self.qtgui_freq_sink_x_0.set_trigger_mode(qtgui.TRIG_MODE_FREE, 0.0, 0, "")
         self.qtgui_freq_sink_x_0.enable_autoscale(False)
-        self.qtgui_freq_sink_x_0.enable_grid(False)
+        self.qtgui_freq_sink_x_0.enable_grid(True)
         self.qtgui_freq_sink_x_0.set_fft_average(1.0)
         self.qtgui_freq_sink_x_0.enable_axis_labels(True)
         self.qtgui_freq_sink_x_0.enable_control_panel(False)
@@ -152,8 +181,8 @@ class constellation(gr.top_block, Qt.QWidget):
             self.qtgui_freq_sink_x_0.set_line_alpha(i, alphas[i])
 
         self._qtgui_freq_sink_x_0_win = sip.wrapinstance(self.qtgui_freq_sink_x_0.qwidget(), Qt.QWidget)
-        self.top_grid_layout.addWidget(self._qtgui_freq_sink_x_0_win, 2, 1, 1, 1)
-        for r in range(2, 3):
+        self.top_grid_layout.addWidget(self._qtgui_freq_sink_x_0_win, 3, 1, 1, 1)
+        for r in range(3, 4):
             self.top_grid_layout.setRowStretch(r, 1)
         for c in range(1, 2):
             self.top_grid_layout.setColumnStretch(c, 1)
@@ -197,8 +226,8 @@ class constellation(gr.top_block, Qt.QWidget):
             self.qtgui_const_sink_x_0.set_line_alpha(i, alphas[i])
 
         self._qtgui_const_sink_x_0_win = sip.wrapinstance(self.qtgui_const_sink_x_0.qwidget(), Qt.QWidget)
-        self.top_grid_layout.addWidget(self._qtgui_const_sink_x_0_win, 2, 0, 1, 1)
-        for r in range(2, 3):
+        self.top_grid_layout.addWidget(self._qtgui_const_sink_x_0_win, 3, 0, 1, 1)
+        for r in range(3, 4):
             self.top_grid_layout.setRowStretch(r, 1)
         for c in range(0, 1):
             self.top_grid_layout.setColumnStretch(c, 1)
@@ -242,6 +271,13 @@ class constellation(gr.top_block, Qt.QWidget):
         self.qtgui_freq_sink_x_0.set_frequency_range(self.freq, self.samp_rate)
         self.soapy_plutosdr_source_0.set_frequency(0, self.freq)
 
+    def get_fft(self):
+        return self.fft
+
+    def set_fft(self, fft):
+        self.fft = fft
+        self._fft_callback(self.fft)
+
     def get_agc(self):
         return self.agc
 
@@ -258,7 +294,7 @@ def main(top_block_cls=constellation, options=None):
     qapp = Qt.QApplication(sys.argv)
 
     tb = top_block_cls()
-
+    snippets_main_after_init(tb)
     tb.start()
     tb.flowgraph_started.set()
 

@@ -6,7 +6,7 @@ options:
     cmake_opt: ''
     comment: ''
     copyright: ''
-    description: Waterfall and spectrum on one tab, the radio's gain and AGC on the other,
+    description: Waterfall and spectrum on one tab, the radio's gain, AGC and the FFT size on the other,
       at 125 kS/s; the knob tunes from 1.8 to 2.8 GHz.
     gen_cmake: 'On'
     gen_linking: dynamic
@@ -102,6 +102,36 @@ blocks:
     coordinate: [544, 4.0]
     rotation: 0
     state: enabled
+- name: fft
+  id: variable_qtgui_chooser
+  parameters:
+    comment: ''
+    gui_hint: 'tabs@1: 1,0,1,2'
+    label: FFT
+    label0: '256'
+    label1: '512'
+    label2: '1024'
+    label3: '2048'
+    label4: '4096'
+    labels: '[]'
+    num_opts: '5'
+    option0: '256'
+    option1: '512'
+    option2: '1024'
+    option3: '2048'
+    option4: '4096'
+    options: '[0, 1, 2]'
+    orient: Qt.QVBoxLayout
+    type: int
+    value: '1024'
+    widget: combo_box
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [992, 4.0]
+    rotation: 0
+    state: enabled
 - name: samp_rate
   id: variable
   parameters:
@@ -146,9 +176,9 @@ blocks:
     comment: ''
     ctrlpanel: 'False'
     fc: freq
-    fftsize: '1024'
+    fftsize: fft
     freqhalf: 'True'
-    grid: 'False'
+    grid: 'True'
     gui_hint: 'tabs@0: 0,1,1,1'
     label: Relative Gain
     label1: ''
@@ -224,11 +254,11 @@ blocks:
     color9: '0'
     comment: ''
     fc: freq
-    fftsize: '1024'
+    fftsize: fft
     freqhalf: 'True'
     grid: 'True'
     gui_hint: 'tabs@0: 0,0,1,1'
-    int_max: '-40'
+    int_max: '-60'
     int_min: '-90'
     label1: ''
     label10: ''
@@ -310,6 +340,22 @@ blocks:
     bus_source: false
     bus_structure: null
     coordinate: [272, 4.0]
+    rotation: 0
+    state: enabled
+- name: fft_reaches_the_sinks
+  id: snippet
+  parameters:
+    alias: ''
+    code: "for sink in (self.qtgui_waterfall_sink_x_0, self.qtgui_freq_sink_x_0):\n    self._fft_combo_box.currentIndexChanged.connect(lambda\
+      \ i, s=sink: s.set_fft_size(self._fft_options[i]))"
+    comment: GRC has no callback for FFT size.
+    priority: '0'
+    section: main_after_init
+  states:
+    bus_sink: false
+    bus_source: false
+    bus_structure: null
+    coordinate: [992, 164.0]
     rotation: 0
     state: enabled
 

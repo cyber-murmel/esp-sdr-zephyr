@@ -61,8 +61,14 @@ What runs:
        spaced to suit the radio's real rate and the plot, and named on its title row;
        frequency lines sit at multiples of their spacing, time lines scroll with their rows.
        ``waterfall_sink_c.set_grid_spacing(freq_fine, freq_coarse, time_fine, time_coarse)``
-       (Hz and seconds, not in GNU Radio; ``None``: automatic, 0: off) sets them. The MCH2022
-       badge's FPGA draws its waterfall without a grid
+       (Hz and seconds, not in GNU Radio; ``None``: automatic, 0: off) sets them. A frequency
+       plot follows the same switch: the same frequency lines (``freq_sink_c.set_grid_spacing(
+       freq_fine, freq_coarse)``) and lines every 10 and 20 dB where they fit, none when it is
+       off. The MCH2022 badge's FPGA draws its plots without these. ``set_fft_size()`` changes
+       a sink's FFT while it runs: GRC has no callback for it, so a flowgraph's FFT chooser
+       needs a Python Snippet to connect the two (``eggs/waterfall/waterfall.grc``). Where the
+       channelizer draws the rows (40 and 80 MS/s, gapless) its 125 kHz bins set the
+       resolution instead
    * - QT GUI Range, Chooser (combo box and radio buttons), Check Box, Push Button, Label,
        Entry (shown, not editable)
      - LVGL widgets; the rotary encoder moves between them (turn), its switch edits or

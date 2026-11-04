@@ -387,7 +387,7 @@ class FakeRadio(types.ModuleType):
         self.lib = lib
         self.seq = 0
         self.total = 0
-        self.advance = 1000
+        self.advance = 5000
         self.top = None
         self.tuned = []
         self.gains = []
@@ -430,6 +430,9 @@ class FakeRadio(types.ModuleType):
         self.seq = (self.seq + 1) & 0x7F
         for c in range(len(cols)):
             cols[c] = 0x8000 | self.seq << 8 | c & 0xFF
+
+    def fb_trace(self, fb, stride, x, y, w, h, values, vmin, vmax, colour):
+        pass
 
     def fb_wf_row(self, fb, stride, x, y, w, h, values, vmin, vmax, palette):
         px = memoryview(fb).cast("H")
@@ -496,6 +499,9 @@ class FakeFrameBuffer:
     def hline(self, x, y, w, colour):
         self.fill_rect(x, y, w, 1, colour)
 
+    def vline(self, x, y, h, colour):
+        self.fill_rect(x, y, 1, h, colour)
+
 
 class FakeCanvas:
     def __init__(self, parent):
@@ -537,7 +543,10 @@ def make_board(monkeypatch, clib):
         monkeypatch.syspath_prepend(str(EGGS / egg))
         gui = importlib.import_module("gnuradio._gui")
         gui._headless = True
-        tb = getattr(importlib.import_module(egg), egg)()
+        mod = importlib.import_module(egg)
+        tb = getattr(mod, egg)()
+        # As main() does: a flowgraph's Python Snippets.
+        getattr(mod, "snippets_main_after_init", lambda tb: None)(tb)
         tb.soapy_plutosdr_source_0._live = True
         return types.SimpleNamespace(tb=tb, sink=tb.__dict__.get("qtgui_waterfall_sink_x_0"),
                                      radio=radio, clock=clock, gui=gui,
@@ -604,12 +613,22 @@ def test_every_waterfall_has_its_grid_on(make_board, egg):
     assert make_board(egg).sink._grid is True
 
 
+@pytest.mark.parametrize("egg", ["waterfall", "spectrum", "receiver"])
+def test_narrow_rates_share_a_colour_scale(make_board, egg):
+    # Just above the noise of a 1024-point FFT on AGC, and just above the usual top signal.
+    board = make_board(egg)
+    assert (board.sink._imin, board.sink._imax) == (-90.0, -60.0)
+
+
 @pytest.mark.parametrize("egg", ["waterfall", "spectrum"])
 def test_wide_rates_share_a_colour_scale(make_board, egg):
     board = make_board(egg)
+    # The channelizer's rows on AGC: quiet channels near -72 dB, signals up to about -22.
     for rate in (40e6, 80e6):
         board.tb.set_samp_rate(rate)
-        assert (board.sink._imin, board.sink._imax) == (-80.0, -35.0)
+        assert (board.sink._imin, board.sink._imax) == (-65.0, -20.0)
+    board.tb.set_samp_rate(2e6)
+    assert (board.sink._imin, board.sink._imax) == (-90.0, -60.0)
 
 
 class SlowRadio(FakeRadio):
@@ -811,6 +830,111 @@ def test_the_transmit_side_keeps_its_rule(board):
     assert sink._gain == 3
 
 
+FFT_SINKS = [("waterfall", ["qtgui_waterfall_sink_x_0"]),
+             ("spectrum", ["qtgui_waterfall_sink_x_0", "qtgui_freq_sink_x_0"]),
+             ("receiver", ["qtgui_waterfall_sink_x_0", "qtgui_freq_sink_x_0"]),
+             ("constellation", ["qtgui_freq_sink_x_0"])]
+
+
+@pytest.mark.parametrize("egg, names", FFT_SINKS)
+def test_the_fft_chooser_reaches_every_spectrum_sink(make_board, egg, names):
+    # GRC has no callback for FFT size: only the flowgraph's Python Snippet connects it.
+    tb = make_board(egg).tb
+    sinks = [getattr(tb, n) for n in names]
+    assert tb._fft_options == [256, 512, 1024, 2048, 4096]
+    assert [s._size for s in sinks] == [1024] * len(sinks)
+    for n in tb._fft_options:
+        tb._fft_combo_box.setCurrentIndex(tb._fft_options.index(n))
+        assert [s._size for s in sinks] == [n] * len(sinks)
+        assert all(len(s._src) == 4 * n and len(s._state) == n for s in sinks)
+
+
+def test_a_new_fft_size_keeps_the_rows(board):
+    sink = settled(board, grid_on=True)
+    ring = bytes(sink._img)
+    sink.set_fft_size(256)
+    assert sink._dirty and bytes(sink._img) == ring
+
+
+def freq_board(make_board, egg="spectrum", w=320, rows=40):
+    board = make_board(egg)
+    sink = board.tb.qtgui_freq_sink_x_0
+    sink._make(None, 0, 0, w, rows + board.gui.LABEL)
+    return board, sink
+
+
+def test_a_frequency_plot_follows_the_grid_switch(make_board):
+    board, sink = freq_board(make_board)
+    gui = board.gui
+    assert sink._grid is True
+    board.tb.set_samp_rate(2e6)
+    draw_freq(board, sink)
+    assert len(sink._lines) > 0
+    plot = picture(sink)
+    coarse = [x & ~grid.COARSE for x in sink._lines if x & grid.COARSE]
+    fine = [x for x in sink._lines if not x & grid.COARSE]
+    assert all(row[coarse[0]] == gui.DIM or row[coarse[0]] == gui.FAINT for row in plot)
+    assert plot[0][fine[0]] in (gui.FAINT, gui.DIM)
+    # 20 dB across the plot's rows.
+    assert sum(1 for row in plot if row.count(gui.DIM) > 200) >= 3
+    sink.enable_grid(False)
+    draw_freq(board, sink)
+    assert len(sink._lines) == 0 and sink._notes == ""
+    assert all(p == gui.BG for row in picture(sink) for p in row)
+
+
+def draw_freq(board, sink, n=1):
+    for _ in range(n):
+        board.clock[0] += 50
+        sink._draw()
+
+
+def test_a_frequency_plots_lines_are_the_waterfalls(make_board):
+    board, freq = freq_board(make_board)
+    wf = board.tb.qtgui_waterfall_sink_x_0
+    wf._make(None, 0, 0, 320, 40 + board.gui.LABEL)
+    for rate, hz in ((2e6, 2.44e9), (500e3, 2.45e9)):
+        board.tb.set_samp_rate(rate)
+        board.tb.set_freq(hz)
+        draw_freq(board, freq)
+        draw_freq(board, wf)
+        assert len(freq._lines) > 0 and list(freq._lines) == list(wf._lines)
+    assert freq._notes and wf._notes.startswith(freq._notes)
+
+
+def test_a_frequency_plots_lines_stay_on_their_frequency(make_board):
+    board, sink = freq_board(make_board, w=720)
+    board.tb.set_samp_rate(2e6)
+    draw_freq(board, sink)
+    before = [x & ~grid.COARSE for x in sink._lines]
+    board.tb.set_freq(board.tb.freq + 100e3)  # 36 columns
+    draw_freq(board, sink)
+    after = [x & ~grid.COARSE for x in sink._lines]
+    assert [x - 36 for x in before if x >= 36] == [x for x in after if x <= before[-1] - 36]
+
+
+def test_a_frequency_plot_takes_a_retune_without_its_canvas(make_board):
+    board, sink = freq_board(make_board)
+
+    class Gone(FakeCanvas):
+        def invalidate(self):
+            raise RuntimeError("Referenced object was deleted!")
+
+    sink._canvas = Gone(None)
+    sink.set_frequency_range(2.5e9, 2e6)
+    assert sink._dirty
+
+
+def test_a_frequency_plots_fine_db_lines_leave_a_short_plot(make_board):
+    board, sink = freq_board(make_board, rows=30)
+    board.tb.set_samp_rate(2e6)
+    sink.set_y_axis(-120, 0)
+    draw_freq(board, sink)
+    gui = board.gui
+    # 10 dB is 2 rows of 30: only the 20 dB ones, which are 4 rows and too few as well: none.
+    assert all(row.count(gui.FAINT) < 100 for row in picture(sink))
+
+
 def test_receiver_keeps_its_radio_buttons_and_check_box(make_board):
     board = make_board("receiver")
     from PyQt5 import Qt
@@ -962,7 +1086,7 @@ def test_rows_after_a_retune_wait_for_new_samples(board):
     board.tb.set_freq(board.tb.freq + 1e6)
     draw(board, 3)
     assert all(picture(sink)[r] == [fill] * W for r in range(3))
-    board.radio.advance = 1000
+    board.radio.advance = 5000
     draw(board)
     assert picture(sink)[0] != [fill] * W
 
@@ -1103,3 +1227,6 @@ def test_the_fpga_path_is_untouched(board, monkeypatch):
     assert sink._notes == ""
     sink.enable_grid(True)
     assert sink._img is None
+    calls.clear()
+    sink.set_fft_size(512)
+    assert calls == ["configure"]

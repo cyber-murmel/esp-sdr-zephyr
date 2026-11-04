@@ -191,6 +191,25 @@ def gain(tb, s):
     pump(s, 2)
 
 
+def fft(tb, s):
+    """The FFT chooser, as the knob sets it, reaches the sink (a Python Snippet; GRC has no callback
+    for it), and what each size costs and shows, at a rate that uses it."""
+    tb.set_samp_rate(2e6)
+    pump(s, 4)
+    check("the scale's defaults", (s._imin, s._imax) == (-90.0, -60.0))
+    for n in tb._fft_options:
+        tb._fft_combo_box.setCurrentIndex(tb._fft_options.index(n))
+        pump(s, 4)
+        t0 = time.ticks_ms()
+        pump(s, 15)
+        ms = time.ticks_diff(time.ticks_ms(), t0)
+        c = sorted(s._cols)
+        check("FFT {}".format(n), s._size == n, "{:.1f} rows/s, noise {:.0f} dB, top {:.0f} dB".format(
+            15000 / ms, c[len(c) // 2], c[-1]))
+    tb._fft_combo_box.setCurrentIndex(tb._fft_options.index(1024))
+    pump(s, 2)
+
+
 def spacing(tb, s):
     s.set_grid_spacing(100e3, 1e6, 0.5, 2)
     pump(s, 2)
@@ -344,6 +363,7 @@ def run_all():
             cost_at(tb, s, rate)
         tb.set_samp_rate(2e6)
         gain(tb, s)
+        fft(tb, s)
         spacing(tb, s)
         if HOLD:
             hold(tb, s, 80e6, 10)

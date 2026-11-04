@@ -32,7 +32,8 @@ def rgb(r, g, b):
     return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
 
 
-# Dusk's colours (dusk.py): text, dimmed text, grid lines, traces, the waterfalls' heat scale.
+# Dusk's colours (dusk.py): text, dimmed text, grid lines, fine ones, traces, the waterfalls' heat
+# scale.
 # The scale's gamma: a linear one spends most of the colours on the noise; at 2 the lower half
 # of the intensity range stays in the dark purples and the signals above it light up
 # (waterfall_sink_c.set_gamma() changes a sink's own).
@@ -40,6 +41,7 @@ BG = dusk.rgb565(dusk.BG)
 FG = dusk.rgb565(dusk.TEXT)
 MUTED = dusk.rgb565(dusk.MUTED)
 DIM = dusk.rgb565(dusk.LINE)
+FAINT = dusk.rgb565(dusk.SURFACE)
 TRACE = tuple(dusk.rgb565(c) for c in dusk.TRACES)
 GAMMA = 2.0
 PALETTE = dusk.heat(gamma=GAMMA)
