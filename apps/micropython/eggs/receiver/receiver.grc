@@ -6,7 +6,7 @@ options:
     cmake_opt: ''
     comment: ''
     copyright: ''
-    description: Waterfall and spectrum on one tab, LNA gain and RF amp on the other,
+    description: Waterfall and spectrum on one tab, the radio's gain and AGC on the other,
       at 125 kS/s; the knob tunes from 1.8 to 2.8 GHz.
     gen_cmake: 'On'
     gen_linking: dynamic
@@ -34,16 +34,16 @@ options:
     state: enabled
 
 blocks:
-- name: amp_en
+- name: agc
   id: variable_qtgui_check_box
   parameters:
     comment: ''
     'false': 'False'
     gui_hint: 'tabs@1: 0,1,1,1'
-    label: RF amp
+    label: AGC
     'true': 'True'
     type: bool
-    value: 'False'
+    value: 'True'
   states:
     bus_sink: false
     bus_source: false
@@ -72,28 +72,28 @@ blocks:
     coordinate: [408, 4.0]
     rotation: 0
     state: enabled
-- name: lna
+- name: gain
   id: variable_qtgui_chooser
   parameters:
     comment: ''
     gui_hint: 'tabs@1: 0,0,1,1'
-    label: LNA gain
-    label0: 0 dB
-    label1: 16 dB
-    label2: 32 dB
+    label: Gain
+    label0: '16'
+    label1: '32'
+    label2: '48'
     label3: ''
     label4: ''
     labels: '[]'
     num_opts: '3'
-    option0: '0'
-    option1: '16'
-    option2: '32'
+    option0: '16'
+    option1: '32'
+    option2: '48'
     option3: '3'
     option4: '4'
     options: '[0, 1, 2]'
     orient: Qt.QVBoxLayout
     type: int
-    value: '16'
+    value: '48'
     widget: radio_buttons
   states:
     bus_sink: false
@@ -256,22 +256,21 @@ blocks:
     coordinate: [344, 308.0]
     rotation: 0
     state: enabled
-- name: soapy_hackrf_source_0
-  id: soapy_hackrf_source
+- name: soapy_plutosdr_source_0
+  id: soapy_plutosdr_source
   parameters:
     affinity: ''
+    agc: agc
     alias: ''
-    amp: amp_en
     bandwidth: '0'
     center_freq: freq
     comment: ''
     dev_args: ''
-    gain: lna
+    gain: gain
     maxoutbuf: '0'
     minoutbuf: '0'
     samp_rate: samp_rate
     type: fc32
-    vga: '16'
   states:
     bus_sink: false
     bus_source: false
@@ -315,8 +314,8 @@ blocks:
     state: enabled
 
 connections:
-- [soapy_hackrf_source_0, '0', qtgui_freq_sink_x_0, '0']
-- [soapy_hackrf_source_0, '0', qtgui_waterfall_sink_x_0, '0']
+- [soapy_plutosdr_source_0, '0', qtgui_freq_sink_x_0, '0']
+- [soapy_plutosdr_source_0, '0', qtgui_waterfall_sink_x_0, '0']
 
 metadata:
   file_format: 1

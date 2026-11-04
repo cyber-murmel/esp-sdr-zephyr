@@ -1,7 +1,7 @@
 {
   "name": "Constellation",
-  "description": "The received samples as a constellation, next to their spectrum, at 250 kS/s; the knob tunes from 1.8 to 2.8 GHz.",
+  "description": "The received samples as a constellation, next to their spectrum, at 250 kS/s; the knob tunes from 1.8 to 2.8 GHz and sets the radio's gain (or leaves it to AGC).",
   "category": "receive",
   "author": "esp-sdr",
-  "revision": 3
+  "revision": 4
 }

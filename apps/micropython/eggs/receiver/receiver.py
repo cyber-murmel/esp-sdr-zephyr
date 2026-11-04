@@ -7,7 +7,7 @@
 # GNU Radio Python Flow Graph
 # Title: Receiver
 # Author: esp-sdr
-# Description: Waterfall and spectrum on one tab, LNA gain and RF amp on the other, at 125 kS/s; the knob tunes from 1.8 to 2.8 GHz.
+# Description: Waterfall and spectrum on one tab, the radio's gain and AGC on the other, at 125 kS/s; the knob tunes from 1.8 to 2.8 GHz.
 # GNU Radio version: 3.10.12.0
 
 from PyQt5 import Qt
@@ -66,9 +66,9 @@ class receiver(gr.top_block, Qt.QWidget):
         # Variables
         ##################################################
         self.samp_rate = samp_rate = 125000
-        self.lna = lna = 16
+        self.gain = gain = 48
         self.freq = freq = 2.44e9
-        self.amp_en = amp_en = False
+        self.agc = agc = True
 
         ##################################################
         # Blocks
@@ -91,30 +91,30 @@ class receiver(gr.top_block, Qt.QWidget):
         for c in range(0, 2):
             self.top_grid_layout.setColumnStretch(c, 1)
         # Create the options list
-        self._lna_options = [0, 16, 32]
+        self._gain_options = [16, 32, 48]
         # Create the labels list
-        self._lna_labels = ['0 dB', '16 dB', '32 dB']
+        self._gain_labels = ['16', '32', '48']
         # Create the combo box
         # Create the radio buttons
-        self._lna_group_box = Qt.QGroupBox("LNA gain" + ": ")
-        self._lna_box = Qt.QVBoxLayout()
+        self._gain_group_box = Qt.QGroupBox("Gain" + ": ")
+        self._gain_box = Qt.QVBoxLayout()
         class variable_chooser_button_group(Qt.QButtonGroup):
             def __init__(self, parent=None):
                 Qt.QButtonGroup.__init__(self, parent)
             @pyqtSlot(int)
             def updateButtonChecked(self, button_id):
                 self.button(button_id).setChecked(True)
-        self._lna_button_group = variable_chooser_button_group()
-        self._lna_group_box.setLayout(self._lna_box)
-        for i, _label in enumerate(self._lna_labels):
+        self._gain_button_group = variable_chooser_button_group()
+        self._gain_group_box.setLayout(self._gain_box)
+        for i, _label in enumerate(self._gain_labels):
             radio_button = Qt.QRadioButton(_label)
-            self._lna_box.addWidget(radio_button)
-            self._lna_button_group.addButton(radio_button, i)
-        self._lna_callback = lambda i: Qt.QMetaObject.invokeMethod(self._lna_button_group, "updateButtonChecked", Qt.Q_ARG("int", self._lna_options.index(i)))
-        self._lna_callback(self.lna)
-        self._lna_button_group.buttonClicked[int].connect(
-            lambda i: self.set_lna(self._lna_options[i]))
-        self.tabs_grid_layout_1.addWidget(self._lna_group_box, 0, 0, 1, 1)
+            self._gain_box.addWidget(radio_button)
+            self._gain_button_group.addButton(radio_button, i)
+        self._gain_callback = lambda i: Qt.QMetaObject.invokeMethod(self._gain_button_group, "updateButtonChecked", Qt.Q_ARG("int", self._gain_options.index(i)))
+        self._gain_callback(self.gain)
+        self._gain_button_group.buttonClicked[int].connect(
+            lambda i: self.set_gain(self._gain_options[i]))
+        self.tabs_grid_layout_1.addWidget(self._gain_group_box, 0, 0, 1, 1)
         for r in range(0, 1):
             self.tabs_grid_layout_1.setRowStretch(r, 1)
         for c in range(0, 1):
@@ -126,31 +126,30 @@ class receiver(gr.top_block, Qt.QWidget):
             self.top_grid_layout.setRowStretch(r, 1)
         for c in range(0, 2):
             self.top_grid_layout.setColumnStretch(c, 1)
-        _amp_en_check_box = Qt.QCheckBox("RF amp")
-        self._amp_en_choices = {True: True, False: False}
-        self._amp_en_choices_inv = dict((v,k) for k,v in self._amp_en_choices.items())
-        self._amp_en_callback = lambda i: Qt.QMetaObject.invokeMethod(_amp_en_check_box, "setChecked", Qt.Q_ARG("bool", self._amp_en_choices_inv[i]))
-        self._amp_en_callback(self.amp_en)
-        _amp_en_check_box.stateChanged.connect(lambda i: self.set_amp_en(self._amp_en_choices[bool(i)]))
-        self.tabs_grid_layout_1.addWidget(_amp_en_check_box, 0, 1, 1, 1)
+        _agc_check_box = Qt.QCheckBox("AGC")
+        self._agc_choices = {True: True, False: False}
+        self._agc_choices_inv = dict((v,k) for k,v in self._agc_choices.items())
+        self._agc_callback = lambda i: Qt.QMetaObject.invokeMethod(_agc_check_box, "setChecked", Qt.Q_ARG("bool", self._agc_choices_inv[i]))
+        self._agc_callback(self.agc)
+        _agc_check_box.stateChanged.connect(lambda i: self.set_agc(self._agc_choices[bool(i)]))
+        self.tabs_grid_layout_1.addWidget(_agc_check_box, 0, 1, 1, 1)
         for r in range(0, 1):
             self.tabs_grid_layout_1.setRowStretch(r, 1)
         for c in range(1, 2):
             self.tabs_grid_layout_1.setColumnStretch(c, 1)
-        self.soapy_hackrf_source_0 = None
-        dev = 'driver=hackrf'
+        self.soapy_plutosdr_source_0 = None
+        dev = 'driver=plutosdr'
         stream_args = ''
         tune_args = ['']
         settings = ['']
 
-        self.soapy_hackrf_source_0 = soapy.source(dev, "fc32", 1, '',
+        self.soapy_plutosdr_source_0 = soapy.source(dev, "fc32", 1, '',
                                   stream_args, tune_args, settings)
-        self.soapy_hackrf_source_0.set_sample_rate(0, samp_rate)
-        self.soapy_hackrf_source_0.set_bandwidth(0, 0)
-        self.soapy_hackrf_source_0.set_frequency(0, freq)
-        self.soapy_hackrf_source_0.set_gain(0, 'AMP', amp_en)
-        self.soapy_hackrf_source_0.set_gain(0, 'LNA', min(max(lna, 0.0), 40.0))
-        self.soapy_hackrf_source_0.set_gain(0, 'VGA', min(max(16, 0.0), 62.0))
+        self.soapy_plutosdr_source_0.set_sample_rate(0, samp_rate)
+        self.soapy_plutosdr_source_0.set_bandwidth(0, 0)
+        self.soapy_plutosdr_source_0.set_gain_mode(0, agc)
+        self.soapy_plutosdr_source_0.set_frequency(0, freq)
+        self.soapy_plutosdr_source_0.set_gain(0, min(max(gain, 0.0), 73.0))
         self.qtgui_waterfall_sink_x_0 = qtgui.waterfall_sink_c(
             1024, #size
             window.WIN_BLACKMAN_hARRIS, #wintype
@@ -241,8 +240,8 @@ class receiver(gr.top_block, Qt.QWidget):
         ##################################################
         # Connections
         ##################################################
-        self.connect((self.soapy_hackrf_source_0, 0), (self.qtgui_freq_sink_x_0, 0))
-        self.connect((self.soapy_hackrf_source_0, 0), (self.qtgui_waterfall_sink_x_0, 0))
+        self.connect((self.soapy_plutosdr_source_0, 0), (self.qtgui_freq_sink_x_0, 0))
+        self.connect((self.soapy_plutosdr_source_0, 0), (self.qtgui_waterfall_sink_x_0, 0))
 
 
     def closeEvent(self, event):
@@ -260,15 +259,15 @@ class receiver(gr.top_block, Qt.QWidget):
         self.samp_rate = samp_rate
         self.qtgui_freq_sink_x_0.set_frequency_range(self.freq, self.samp_rate)
         self.qtgui_waterfall_sink_x_0.set_frequency_range(self.freq, self.samp_rate)
-        self.soapy_hackrf_source_0.set_sample_rate(0, self.samp_rate)
+        self.soapy_plutosdr_source_0.set_sample_rate(0, self.samp_rate)
 
-    def get_lna(self):
-        return self.lna
+    def get_gain(self):
+        return self.gain
 
-    def set_lna(self, lna):
-        self.lna = lna
-        self._lna_callback(self.lna)
-        self.soapy_hackrf_source_0.set_gain(0, 'LNA', min(max(self.lna, 0.0), 40.0))
+    def set_gain(self, gain):
+        self.gain = gain
+        self._gain_callback(self.gain)
+        self.soapy_plutosdr_source_0.set_gain(0, min(max(self.gain, 0.0), 73.0))
 
     def get_freq(self):
         return self.freq
@@ -277,15 +276,15 @@ class receiver(gr.top_block, Qt.QWidget):
         self.freq = freq
         self.qtgui_freq_sink_x_0.set_frequency_range(self.freq, self.samp_rate)
         self.qtgui_waterfall_sink_x_0.set_frequency_range(self.freq, self.samp_rate)
-        self.soapy_hackrf_source_0.set_frequency(0, self.freq)
+        self.soapy_plutosdr_source_0.set_frequency(0, self.freq)
 
-    def get_amp_en(self):
-        return self.amp_en
+    def get_agc(self):
+        return self.agc
 
-    def set_amp_en(self, amp_en):
-        self.amp_en = amp_en
-        self._amp_en_callback(self.amp_en)
-        self.soapy_hackrf_source_0.set_gain(0, 'AMP', self.amp_en)
+    def set_agc(self, agc):
+        self.agc = agc
+        self._agc_callback(self.agc)
+        self.soapy_plutosdr_source_0.set_gain_mode(0, self.agc)
 
 
 

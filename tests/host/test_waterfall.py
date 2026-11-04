@@ -641,7 +641,7 @@ def test_the_same_mode_again_does_not_restart_the_radio(board):
     assert board.radio.gains == []
 
 
-@pytest.mark.parametrize("egg", ["waterfall"])
+@pytest.mark.parametrize("egg", ["waterfall", "spectrum", "constellation"])
 def test_gain_and_agc_share_a_row(make_board, egg):
     board = make_board(egg)
     from PyQt5 import Qt
@@ -654,7 +654,7 @@ def test_gain_and_agc_share_a_row(make_board, egg):
     assert gain[1] == agc[1] and gain[0] + gain[2] <= agc[0]
 
 
-@pytest.mark.parametrize("egg", ["waterfall"])
+@pytest.mark.parametrize("egg", ["waterfall", "spectrum"])
 def test_the_chooser_reaches_the_radio(make_board, egg):
     # The sink's axis alone would look right with the radio left at its old rate.
     board = make_board(egg)
@@ -664,6 +664,31 @@ def test_the_chooser_reaches_the_radio(make_board, egg):
         board.tb.set_samp_rate(rate)
         assert src._rate == int(rate)
         assert board.radio.started and board.radio.started[-1] == int(rate)
+
+
+@pytest.mark.parametrize("egg", ["waterfall", "spectrum", "constellation", "receiver"])
+def test_every_receive_app_starts_on_agc_and_takes_a_manual_gain(make_board, egg):
+    # They all sat at gain 16 of 79: the hackrf block's VGA, the last gain set.
+    board = make_board(egg)
+    tb, src = board.tb, board.tb.soapy_plutosdr_source_0
+    assert tb.agc is True and src._auto is True and src._gain == 48
+    src._changed()
+    assert board.radio.gains[-1] == -1
+    tb.set_agc(False)
+    assert board.radio.gains[-1] == 48
+    tb.set_gain(32)
+    assert board.radio.gains[-1] == 32
+    tb.set_agc(True)
+    assert board.radio.gains[-1] == -1
+
+
+def test_receiver_keeps_its_radio_buttons_and_check_box(make_board):
+    board = make_board("receiver")
+    from PyQt5 import Qt
+
+    assert board.tb._gain_options == [16, 32, 48]
+    assert isinstance(board.tb._gain_group_box, Qt.QGroupBox)
+    assert "RF amp" not in (EGGS / "receiver/receiver.py").read_text()
 
 
 def test_40_and_80_ms_run_the_gapless_stream(make_board):
