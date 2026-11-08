@@ -1,0 +1,16 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * The protocol on UART0, the DevKitC's USB-UART bridge ("COM"/"UART" port),
+ * at the viewer's default 2 MBaud.
+ */
+
+/ {
+	chosen {
+		esp-sdr,websdr-uart = &uart0;
+	};
+};
+
+&uart0 {
+	current-speed = <2000000>;
+};

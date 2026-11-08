@@ -1,0 +1,24 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * -DFILE_SUFFIX=usb: the protocol on USB-Serial-JTAG, the board's native "USB"
+ * port. It is also the chosen console, with Zephyr's output off: on the C5 and C6,
+ * USB-Serial-JTAG passed no data unless it was the console.
+ */
+
+/ {
+	chosen {
+		esp-sdr,websdr-uart = &usb_serial;
+		zephyr,console = &usb_serial;
+		zephyr,shell-uart = &usb_serial;
+	};
+};
+
+&usb_serial {
+	status = "okay";
+};
+
+/* Not needed here, and not every C5 module has it. */
+&psram0 {
+	status = "disabled";
+};

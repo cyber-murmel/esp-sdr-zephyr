@@ -1,0 +1,26 @@
+sample:
+  name: ESP-SDR websdr
+  description: ESP-WebSDR's burst serial protocol on the ESP32-S3/C5/C6 Wi-Fi receiver
+common:
+  tags: esp-sdr
+  # The protocol owns the serial port: no console harness.
+  build_only: true
+  platform_allow:
+    - esp32s3_devkitc/esp32s3/procpu
+    - xiao_esp32s3/esp32s3/procpu
+    - esp32c5_devkitc/esp32c5/hpcore
+    - esp32c6_devkitc/esp32c6/hpcore
+  integration_platforms:
+    - esp32s3_devkitc/esp32s3/procpu
+    - xiao_esp32s3/esp32s3/procpu
+    - esp32c5_devkitc/esp32c5/hpcore
+    - esp32c6_devkitc/esp32c6/hpcore
+tests:
+  sample.esp_sdr.websdr: {}
+  sample.esp_sdr.websdr.usb:
+    platform_allow:
+      - esp32s3_devkitc/esp32s3/procpu
+      - esp32c5_devkitc/esp32c5/hpcore
+      - esp32c6_devkitc/esp32c6/hpcore
+    extra_args:
+      - FILE_SUFFIX=usb
