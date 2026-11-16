@@ -1527,6 +1527,8 @@ HOT static void ring_loop(void)
 	atomic_set(&now_ref.seq, 0);
 	REG_WRITE(DUMP_CTRL_REG, 0);
 	REG_WRITE(SENSITIVE_INTERNAL_SRAM_USAGE_3_REG, saved);
+	/* No more bursts: an arm during the drain below would outlive the run. */
+	atomic_set(&active, 0);
 	if (atomic_get(&burst_state) != BURST_IDLE) {
 		bst.cancelled++;
 		atomic_set(&burst_state, BURST_IDLE);
@@ -1566,6 +1568,11 @@ int esp_sdr_ring_run(const struct esp_sdr_ring_cfg *cfg, struct esp_sdr_ring_sta
 	rs.nbanks = (cfg->spare_bank || cfg->spare_bank_app) ? RING_BANKS - 1U : RING_BANKS;
 	rs.burst_ok = cfg->spare_bank && !cfg->spare_bank_app;
 	memset(&bst, 0, sizeof(bst));
+	/* An arm that slipped in as the previous run ended carries its pair numbers. */
+	if (atomic_get(&burst_state) != BURST_IDLE) {
+		bst.cancelled++;
+		atomic_set(&burst_state, BURST_IDLE);
+	}
 	rs.gen_cost = 2000U;
 	rs.cfg = cfg;
 	rs.st = stats;
