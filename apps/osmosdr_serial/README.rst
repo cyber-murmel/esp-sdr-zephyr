@@ -167,7 +167,10 @@ window's power and DC (the DC left in and reported) into ``ESDR_BLK_SEG`` blocks
 ``ESDR_GAPLESS_F_HALF``), across the runs a request or a ring error restarts. Two servos keep 5 to
 10 % headroom (``ESDR_REQ_SET_GAPLESS``): the threshold rises and falls so that what is kept fills
 the link's budget short of it, and with automatic gain the receive gain steps so that the loudest
-windows' peaks stay short of full scale. Bursts are kept whole or not at all: a window is admitted
+windows' peaks stay short of full scale. The threshold servo's limits are Kconfig options:
+``CONFIG_ESP_SDR_GAPLESS_THR_LINK_PCT``, how full the link may get (95 %), and
+``CONFIG_ESP_SDR_GAPLESS_THR_LOST_PCT``, the share of the kept samples the CPU may lose in a period
+before the threshold rises (5 %). Bursts are kept whole or not at all: a window is admitted
 only with room for it in the staging it can reach (block 3 and the smaller half), a burst starts
 only with an eighth of that free, and one cut for want of room drops its rest until a quiet window
 (or, in a band that never rests, until as many samples as that staging holds have gone by and an

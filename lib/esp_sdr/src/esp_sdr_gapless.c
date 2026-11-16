@@ -28,6 +28,7 @@
 #include <esp_sdr/esp_sdr_rx.h>
 
 #define ESP_SDR_SORT_INLINE static ALWAYS_INLINE
+#include "esp_sdr_gapless_servo.h"
 #include "esp_sdr_gapless_sort.h"
 #include "esp_sdr_mark.h"
 #include "esp_sdr_priv.h"
@@ -111,7 +112,8 @@ BUILD_ASSERT(2U * PREPOST_MAX + 2U <= WIN_HIST);
 /*
  * Threshold servo: every SERVO_UNITS units (2.5 ms) the bytes kept are held against the
  * budget; the threshold over the baseline steps in Q8: +1 dB (323 / 256), +2 dB (406 / 256)
- * when over the budget or when samples were lost, -0.5 dB (241 / 256).
+ * when over the budget or when more samples were lost than
+ * CONFIG_ESP_SDR_GAPLESS_THR_LOST_PCT allows, -0.5 dB (241 / 256).
  */
 #define SERVO_UNITS   16U
 #define THR_UP        323U
@@ -634,7 +636,8 @@ static ESP_SDR_GAPLESS_HOT void baseline_update(uint32_t pw)
 /* Once per unit of @p count samples: the threshold against the link's budget. */
 static ESP_SDR_GAPLESS_HOT void thr_servo(uint32_t count, uint32_t lo, uint32_t hi)
 {
-	uint32_t budget, bytes;
+	enum thr_step step;
+	uint32_t budget, kept, bytes, lost;
 
 	rs.servo_pairs += count;
 	if (++rs.servo_units < SERVO_UNITS) {
@@ -642,9 +645,11 @@ static ESP_SDR_GAPLESS_HOT void thr_servo(uint32_t count, uint32_t lo, uint32_t 
 	}
 	/* budget_bps * pairs / 80e6 in 32 bits: (bytes per ms) * (pairs per 80) / 1000. */
 	budget = (rs.cfg->budget_bps / 1000U) * (uint32_t)(rs.servo_pairs / rs.pairs_us) / 1000U;
+	kept = (uint32_t)MIN(rs.servo_bytes, UINT32_MAX / 100U);
 	/* Width records went out in place of samples counted when their windows were kept. */
 	bytes = (uint32_t)MIN(rs.servo_bytes - MIN(rs.servo_saved, rs.servo_bytes),
 			      UINT32_MAX / 100U);
+	lost = (uint32_t)MIN(rs.servo_lost * 2U, UINT32_MAX / 100U);
 	/*
 	 * Over the budget or losing samples: up fast; past the low headroom: up; below the high
 	 * headroom: down. Windows dropped for want of room in staging do not count: a burst longer
@@ -652,11 +657,13 @@ static ESP_SDR_GAPLESS_HOT void thr_servo(uint32_t count, uint32_t lo, uint32_t 
 	 * only push it up for the rests. (Holding it while staging drops windows was tried: it rose
 	 * further and decoded a third fewer Bluetooth LE packets at 40 MS/s.)
 	 */
-	if (rs.servo_lost > 0U || bytes > budget) {
+	step = thr_servo_step(kept, bytes, lost, budget, lo, hi,
+			      CONFIG_ESP_SDR_GAPLESS_THR_LOST_PCT);
+	if (step == THR_STEP_UP_FAST) {
 		rs.thr_q8 = (uint32_t)MIN((uint64_t)rs.thr_q8 * THR_UP_FAST >> 8, THR_MAX_Q8);
-	} else if (bytes * 100U > budget * (100U - lo)) {
+	} else if (step == THR_STEP_UP) {
 		rs.thr_q8 = (uint32_t)MIN((uint64_t)rs.thr_q8 * THR_UP >> 8, THR_MAX_Q8);
-	} else if (bytes * 100U < budget * (100U - hi)) {
+	} else if (step == THR_STEP_DOWN) {
 		rs.thr_q8 = MAX((uint32_t)((uint64_t)rs.thr_q8 * THR_DOWN >> 8), rs.thr_floor_q8);
 	}
 	rs.servo_units = 0;
@@ -1423,7 +1430,7 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 					    struct esp_sdr_gapless_stats *stats)
 {
 	uint32_t start_probe[2], end_probe[2];
-	uint32_t usage, saved, ctrl1, lo, hi, rate;
+	uint32_t usage, saved, ctrl1, lo, hi, thr_lo, thr_hi, rate;
 	uint32_t epoch, w0, expected, wi = 0, written = 0, t_win, t_restart, t_unit, t_service;
 	uint64_t base;
 	unsigned int b = 0, key;
@@ -1444,8 +1451,13 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 	    (uintptr_t)__esp_sdr_bank_start != DUMP_BANK0_ADDR + DUMP_BANK_SIZE) {
 		return -EINVAL;
 	}
-	lo = cfg->headroom_lo != 0U || cfg->headroom_hi != 0U ? cfg->headroom_lo : 5U;
-	hi = cfg->headroom_lo != 0U || cfg->headroom_hi != 0U ? cfg->headroom_hi : 10U;
+	/* A band the host asks for holds for both servos; without one each has its own. */
+	const bool band = cfg->headroom_lo != 0U || cfg->headroom_hi != 0U;
+
+	lo = band ? cfg->headroom_lo : 5U;
+	hi = band ? cfg->headroom_hi : 10U;
+	thr_lo = band ? cfg->headroom_lo : 100U - CONFIG_ESP_SDR_GAPLESS_THR_LINK_PCT;
+	thr_hi = band ? cfg->headroom_hi : thr_lo + 5U;
 	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
 	(void)esp_sdr_rx_gain_refresh();
 	run_init(cfg, sink, lo, hi);
@@ -1665,7 +1677,7 @@ ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cf
 		rs.st.units++;
 		rs.st.pairs += count;
 		if (cfg->budget_bps != 0U) {
-			thr_servo(count, lo, hi);
+			thr_servo(count, thr_lo, thr_hi);
 		}
 		if (cfg->gain_servo) {
 			gain_servo();
