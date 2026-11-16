@@ -50,6 +50,38 @@ def hb_clib(tmp_path_factory):
     return lib
 
 
+@pytest.fixture(scope="session", params=["int32", "int16"])
+def scan_clib(request, tmp_path_factory):
+    """The Scan app's measurement as the boards run it (apps/micropython/cmod/esdr_scan.c), built
+    once each way with the host compiler: the int32 FFT (the P4, the S31), and the S3's 16-bit
+    one with esp-dsp's kernel in C; None without a compiler. lib.kind tells which."""
+    cc = shutil.which("cc") or shutil.which("gcc")
+    if cc is None:
+        return None
+    out = tmp_path_factory.mktemp("scan") / "libesdr_scan_{}.so".format(request.param)
+    src = REPO / "apps/micropython/cmod/esdr_scan.c"
+    defs = ["-DESDR_SCAN_FFT16", "-DESDR_SCAN_FFT16_MODEL"] if request.param == "int16" else []
+    subprocess.run([cc, "-O2", "-Wall", "-Wextra", "-Werror", "-shared", "-fPIC", *defs, "-o",
+                    str(out), str(src), "-lm"], check=True)
+    lib = ctypes.CDLL(str(out))
+    lib.kind = request.param
+    lib.esdr_scan_init.restype = None
+    lib.esdr_scan_init.argtypes = [ctypes.c_void_p]
+    lib.esdr_scan_spectrum.restype = ctypes.c_uint32
+    lib.esdr_scan_spectrum.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32,
+                                       ctypes.c_uint32, ctypes.c_void_p, ctypes.c_void_p,
+                                       ctypes.c_void_p]
+    lib.esdr_scan_fold.restype = ctypes.c_int
+    lib.esdr_scan_fold.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+                                   ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p,
+                                   ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+                                   ctypes.c_uint32, ctypes.c_float, ctypes.c_float,
+                                   ctypes.c_void_p, ctypes.c_void_p]
+    lib.esdr_scan_q8.restype = None
+    lib.esdr_scan_q8.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32]
+    return lib
+
+
 class FskFrame(ctypes.Structure):
     """struct esdr_fsk_frame of apps/micropython/cmod/esdr_fsk.h."""
     _fields_ = [("len", ctypes.c_uint32), ("errors", ctypes.c_uint32), ("end", ctypes.c_uint32),
