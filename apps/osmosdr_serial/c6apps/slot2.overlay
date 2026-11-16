@@ -1,0 +1,9 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+
+#include "slots.dtsi"
+
+/ {
+	chosen {
+		zephyr,code-partition = &slot2_partition;
+	};
+};

@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+source "share/sysbuild/Kconfig"
+
+config ESDR_C6_APPS
+	bool "The ESP32-C6's other apps in the flash, this one the default"
+	depends on BOOTLOADER_MCUBOOT
+	help
+	  MCUboot and five complete images, each in its own slot: this app, which
+	  a power-on starts, then capture, rfprobe, wpan and zstack, one of which
+	  "west dfu --c6-run" starts until the next power-on (c6apps/,
+	  lib/boot_select).

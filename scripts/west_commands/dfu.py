@@ -15,10 +15,17 @@ import glob
 import os
 import re
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
 from west.commands import WestCommand
+
+# The WHY2025 badge's C6 with its apps in the flash: in the order of lib/boot_select's slots, and the
+# flash sector that asks for one of them until the next power-on.
+C6_APPS = ("osmosdr_serial", "capture", "rfprobe", "wpan", "zstack")
+C6_REQUEST_ADDR = 0x1f000
+C6_REQUEST_MAGIC = b"ESDRBOOT"
 
 # vid:pid of a running app (the Ubertooth app presents the Ubertooth One's IDs) and of DFU mode.
 APP_IDS = ("2fe3:0005", "1d50:6002")
@@ -140,6 +147,12 @@ class Dfu(WestCommand):
                             "(esdr.request, ESDR_REQ_FW_*)")
         p.add_argument("--c6-time", type=int, default=30,
                        help="seconds the P4 leaves J8 to the C6 (default 30)")
+        p.add_argument("--c6-run", choices=C6_APPS, metavar="APP",
+                       help="on the WHY2025 badge's C6 with its apps in the flash (apps/"
+                            "osmosdr_serial/c6apps), start this one until the next power-on, "
+                            "which comes back to the SDR, as osmosdr_serial here does. Its "
+                            "console is on J8 for --c6-time seconds. One of "
+                            f"{', '.join(C6_APPS)}")
         p.add_argument("--dfu-board", action="store_true",
                        help="if --serial is not on USB, update the one board found in DFU "
                             "mode (one an earlier try left there; it has no serial to check)")
@@ -327,6 +340,10 @@ class Dfu(WestCommand):
             self.die(f"{sn}: the C6's USB-Serial-JTAG did not appear on J8")
         self.inf(f"{sn}: J8 to the C6 ({usj[0]}), {args.c6_time} s")
         start = time.time()
+        if args.c6_run:
+            self.c6_request(sn, usj[0], args.c6_run)
+            self.inf(f"{sn}: {args.c6_run} starts on the C6, on J8 for {args.c6_time} s")
+            return
         r = subprocess.run(["west", "flash", "-d", args.build_dir, "--esp-device", usj[0]],
                            capture_output=True, text=True)
         if r.returncode != 0:
@@ -336,6 +353,18 @@ class Dfu(WestCommand):
                              args.c6_time - (time.time() - start) + 30):
             self.die(f"{sn}: the P4 did not take J8 back")
         self.inf(f"{sn}: J8 back to the P4")
+
+    def c6_request(self, sn, usj, app):
+        """Ask MCUboot on the C6 for this app from now on, and reset it."""
+        request = C6_REQUEST_MAGIC + bytes([C6_APPS.index(app)])
+        with tempfile.NamedTemporaryFile(suffix=".bin") as f:
+            f.write(request)
+            f.flush()
+            r = subprocess.run(["esptool", "--port", usj, "--before", "default-reset", "--after",
+                                "hard-reset", "write-flash", hex(C6_REQUEST_ADDR), f.name],
+                               capture_output=True, text=True)
+        if r.returncode != 0:
+            self.die(f"{sn}: esptool failed:\n{(r.stdout + r.stderr).strip()[-600:]}")
 
     def find_board(self, args):
         boards = usb_boards()
@@ -392,7 +421,7 @@ class Dfu(WestCommand):
         return True
 
     def do_run(self, args, unknown):
-        if args.c6:
+        if args.c6 or args.c6_run:
             self.c6_flash(args)
             return
         if args.esptool:

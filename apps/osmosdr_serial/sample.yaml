@@ -32,6 +32,16 @@ tests:
     extra_args:
       - EXTRA_CONF_FILE=uart.conf
     build_only: true
+  # The WHY2025 badge's C6 with its other apps in the flash, this one the default (c6apps/).
+  sample.esp_sdr.osmosdr_serial.c6apps:
+    sysbuild: true
+    platform_allow:
+      - why2025_badge/esp32c6/hpcore
+    integration_platforms:
+      - why2025_badge/esp32c6/hpcore
+    extra_args:
+      - SB_EXTRA_CONF_FILE=c6apps/sysbuild.conf
+    build_only: true
   # Receive from the C5's diagnostic-bus ring instead of the CPU-paced IQ estimator
   # (diag.conf); exercised by tests/regression/stream_gapless.
   sample.esp_sdr.osmosdr_serial.diag:

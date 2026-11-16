@@ -1,0 +1,85 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * The C6's 8 MB flash with five complete images of up to 1 MiB, for MCUboot and for each of them.
+ * The last sector of sys_partition holds the request for another image (lib/boot_select). The
+ * partitions after the slots stay where the board's table has them.
+ */
+
+&flash0 {
+	/delete-node/ partitions;
+};
+
+&flash0 {
+	partitions {
+		ranges;
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		boot_partition: partition@0 {
+			compatible = "zephyr,mapped-partition";
+			label = "mcuboot";
+			reg = <0x0 DT_SIZE_K(64)>;
+		};
+
+		sys_partition: partition@10000 {
+			compatible = "zephyr,mapped-partition";
+			label = "sys";
+			reg = <0x10000 DT_SIZE_K(64)>;
+		};
+
+		slot0_partition: partition@20000 {
+			compatible = "zephyr,mapped-partition";
+			label = "image-0";
+			reg = <0x20000 DT_SIZE_M(1)>;
+		};
+
+		slot1_partition: partition@120000 {
+			compatible = "zephyr,mapped-partition";
+			label = "image-1";
+			reg = <0x120000 DT_SIZE_M(1)>;
+		};
+
+		slot2_partition: partition@220000 {
+			compatible = "zephyr,mapped-partition";
+			label = "image-2";
+			reg = <0x220000 DT_SIZE_M(1)>;
+		};
+
+		slot3_partition: partition@320000 {
+			compatible = "zephyr,mapped-partition";
+			label = "image-3";
+			reg = <0x320000 DT_SIZE_M(1)>;
+		};
+
+		slot4_partition: partition@420000 {
+			compatible = "zephyr,mapped-partition";
+			label = "image-4";
+			reg = <0x420000 DT_SIZE_M(1)>;
+		};
+
+		slot0_lpcore_partition: partition@7a0000 {
+			compatible = "zephyr,mapped-partition";
+			label = "image-0-lpcore";
+			reg = <0x7a0000 DT_SIZE_K(32)>;
+		};
+
+		slot1_lpcore_partition: partition@7a8000 {
+			compatible = "zephyr,mapped-partition";
+			label = "image-1-lpcore";
+			reg = <0x7a8000 DT_SIZE_K(32)>;
+		};
+
+		storage_partition: partition@7b0000 {
+			compatible = "zephyr,mapped-partition";
+			label = "storage";
+			reg = <0x7b0000 DT_SIZE_K(192)>;
+		};
+
+		coredump_partition: partition@7ff000 {
+			compatible = "zephyr,mapped-partition";
+			label = "coredump";
+			reg = <0x7ff000 DT_SIZE_K(4)>;
+		};
+	};
+};

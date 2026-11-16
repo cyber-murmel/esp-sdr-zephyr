@@ -212,6 +212,27 @@ Building and flashing
    west build -b why2025_badge/esp32c6/hpcore esp-sdr-zephyr/apps/osmosdr_serial
    west flash --esp-device /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_<mac>-if00
 
+The C6's other apps in the flash
+================================
+
+The WHY2025 badge's C6 can hold its other apps next to this one, as complete images under MCUboot:
+this app in the first slot, then ``capture``, ``rfprobe``, ``wpan`` and ``zstack``, up to 1 MiB each
+(``c6apps/``). A power-on starts this app, so the P4 has its radio. The C6 has no PSRAM for
+extensions, so this replaces :ref:`multiapp <esp_sdr_multiapp>` on it (``doc/multiapp.md``).
+
+.. code-block:: console
+
+   west build --sysbuild -b why2025_badge/esp32c6/hpcore -d build-c6 \
+       esp-sdr-zephyr/apps/osmosdr_serial -- -DSB_EXTRA_CONF_FILE=c6apps/sysbuild.conf
+   west dfu --c6 -d build-c6 --c6-time 120
+   west dfu --c6-run wpan --c6-time 300       # its console on J8 for 300 s
+   west dfu --c6-run osmosdr_serial           # back to the SDR
+
+An app chosen this way stays through resets, since a terminal opening its console resets the chip,
+and a power-on or ``--c6-run osmosdr_serial`` ends it. MCUboot validates the image first
+(``lib/boot_select``): one that is missing or damaged boots this app instead. While another app
+runs, the P4's ``esdr.init()`` still returns, and the P4 has no radio.
+
 The board configs select the U.FL connector. The C5 has the same IQ estimator (0x24 lower) and
 its TX DC value register at 0x600a0c08, where bit 26 enables the injection. Opening the port does not reset the board as long as the host leaves
 DTR and RTS alone (the host tool and the SoapySDR module open it raw); tools that toggle them
