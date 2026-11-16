@@ -1,0 +1,7 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * The XIAO ESP32S3's display, knob and SD card: drivers only in the micropython extension.
+ */
+
+#include "../../micropython/boards/xiao_esp32s3_periph.dtsi"

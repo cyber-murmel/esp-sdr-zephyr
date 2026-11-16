@@ -1,0 +1,7 @@
+{
+  global:
+    multiapp_info;
+    multiapp_init_table;
+  local:
+    *;
+};

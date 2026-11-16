@@ -3,8 +3,8 @@
  *
  * The apps as files: <name>.llext on the FAT volume (partition "fat", disk
  * "FLASH"). The host reads it only at boot, before USB and before an app:
- * the FATFS object, the flash disk cache and the drive's SCSI buffer are in
- * bank 0, which an app's ring overwrites. Reads go in chunks below a sector,
+ * the FATFS object is in bank 0, which an app's ring overwrites. Reads go in
+ * chunks below a sector,
  * so the flash driver never gets a PSRAM buffer. A boot without an app lends
  * the volume to the PC as a USB drive; the DFU target "fat" writes it whole
  * (mkfat.py, west dfu --storage).
@@ -25,7 +25,7 @@
 #include <zephyr/usb/class/usbd_msc.h>
 #include <zephyr/usb/usbd.h>
 
-#include <esp_attr.h>
+#include <esp_sdr/esp_sdr_place.h>
 
 #include "app_usb.h"
 #include "apps.h"
@@ -49,7 +49,7 @@ static int drive_ret = -EAGAIN;
 static ssize_t file_size[MAX_APPS];
 static bool file_same[MAX_APPS];
 
-static EXT_RAM_BSS_ATTR uint8_t chunk[READ_CHUNK];
+static ESP_SDR_DATA(BULK, chunk) uint8_t chunk[READ_CHUNK];
 
 static void file_path(char *path, size_t len, const char *name)
 {
@@ -109,8 +109,15 @@ int multiapp_drive_scan(void)
 			file_size[i] = ret;
 			continue;
 		}
-		file_size[i] = read_file(&f, NULL, app->size, app->elf,
-					 app->elf != NULL ? &file_same[i] : NULL);
+		if (app->elf != NULL) {
+			file_size[i] = read_file(&f, NULL, app->size, app->elf, &file_same[i]);
+		} else {
+			/* Nothing to compare it with, and it may be big: no reading it each boot. */
+			struct fs_dirent entry;
+
+			ret = fs_stat(path, &entry);
+			file_size[i] = ret == 0 ? (ssize_t)entry.size : ret;
+		}
 		(void)fs_close(&f);
 	}
 	(void)fs_unmount(&fat_mount);
@@ -138,7 +145,22 @@ int multiapp_drive_file(const char *name, ssize_t *size, bool *same)
 	return -ENOENT;
 }
 
-USBD_DEFINE_MSC_LUN(fat, "FLASH", "ESP-SDR", "multiapp", "1.0");
+/*
+ * The USB drives, in a host section whatever the boot runs. In a boot without an app the volume itself,
+ * and the SD card's LUN has no medium. MicroPython registers disks of its own that hide a volume while
+ * the board writes it (its src/usb_disks.c), and these point at them from the start of its boot.
+ */
+static char usb_flash_disk[8] = "FLASH";
+
+USBD_DEFINE_MSC_LUN(a_fat, usb_flash_disk, "ESP-SDR", "multiapp", "1.0");
+#if DT_NODE_EXISTS(DT_NODELABEL(sd_fs))
+USBD_DEFINE_MSC_LUN(b_sd, "USD", "ESP-SDR", "SD card", "1.0");
+#endif
+
+void multiapp_drive_app_disks(void)
+{
+	strcpy(usb_flash_disk, "UFLASH");
+}
 
 int multiapp_drive_export(void)
 {

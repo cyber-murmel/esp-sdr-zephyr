@@ -145,6 +145,28 @@ The capture and DAC playback use the Wi-Fi MAC's undocumented dump engine
   banks 0 to 2 and proves continuity with sentinel windows: the switch must
   come within 2000 pairs (125 us at 16 MS/s) of its threshold, and a bank
   must be filtered before the engine comes round to it again.
+- **The S3's radio runs without the Wi-Fi driver too.**
+  `CONFIG_ESP_SDR_PHY_ONLY` brings the PHY up as on the C6 below, with the
+  S3's Wi-Fi clock enable for the modem clock and `CONFIG_ESP_PHY_ENABLE_USB`:
+  the USB controller runs from the PLL the PHY calibrates. Unlike the C6, the
+  level does not drop: the noise floor is the same with and without the driver
+  (within 0.7 dB), on the AGC (about -33 dBFS in `wpan measure`) and at a
+  forced gain (about -55). Against the same builds with the driver on an S3
+  devkit: `apps/osmosdr` 250 kS/s without overflows, filter cycles and 1.25 M
+  samples transmitted the same, `apps/wpan` frames and ACKs both ways the same.
+  The DRAM image ends 30 KB lower (`osmosdr` 31.8 KB below bank 0 against 1.7,
+  `wpan` 23 KB against 56 B, both before shrinking the heap) and the signed
+  image is about 300 KB smaller. The kernel heap peaks at 2184 bytes in
+  `osmosdr` (about 12 KB with the driver). `apps/multiapp` and `apps/ubertooth`
+  select it on the S3 (Ubertooth followed connections with the same stream
+  loss either way); the other standalone S3 apps keep the driver.
+- **The S3's ROM calls PHY code, also with the cache off.** The ROM's analog
+  I2C goes through a table the PHY blob patches, to `ram_chip_i2c_readReg` in
+  the blob's `.iram1`, and `esp_restart_noos()` reaches it through
+  `rtc_clk_cpu_set_to_default_config()` with the cache disabled. Blob `IRAM_ATTR`
+  code in PSRAM ended a reboot with the radio up in an illegal instruction, then
+  a double exception, then reset reason 16: so `IRAM_ATTR` really has to mean
+  internal RAM, in a loaded module as well.
 - **The C6's gapless ring needs the radio without the Wi-Fi driver.** The C6
   engine takes a whole 128 KiB block, and the rotation needs two (blocks 1
   and 2): a Wi-Fi image fills blocks 0 and 1. `CONFIG_ESP_SDR_PHY_ONLY` brings
@@ -839,6 +861,6 @@ looked at: at a pixel clock of 500 kHz the CPU can follow PCLK and compare all 3
 - **A reset with no crash record** (`multiapp crash`, `link status`) is the TG0
   watchdog's first stage: a CPU wedged with interrupts masked.
 - **Stacks.** With `CONFIG_INIT_STACKS`, `kernel thread stacks` after
-  exercising every path; a measured peak up to 80 % of the size is enough
+  exercising every path; a measured peak up to 85 % of the size is enough
   margin. An overflowing shell stack shows as 100 % on the logging stack below
   it. Xtensa frame sizes are in the disassembly as `entry a1, N`.

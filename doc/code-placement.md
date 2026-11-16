@@ -72,7 +72,8 @@ or section named anywhere else.
 ## Regions
 
 Each region expands to the attribute such code or data carried before, so the default rules keep
-every section name.
+every section name, and multiapp's extension builds (`multiapp/ext.h`) still turn them into the
+loader's sections.
 
 | Region | Expands to | Where it is |
 | --- | --- | --- |
@@ -108,7 +109,8 @@ lower level's pin back. Both can be narrowed:
 
 - to a scope, the compile definition `ESP_SDR_PLACE_SCOPE` of an app's sources
   (`target_compile_definitions(app PRIVATE ESP_SDR_PLACE_SCOPE=ubertooth)`):
-  `ESP_SDR_PLACE_<scope>_<cat>`, `ESP_SDR_PIN_CODE_<scope>_<fn>`;
+  `ESP_SDR_PLACE_<scope>_<cat>`, `ESP_SDR_PIN_CODE_<scope>_<fn>`. multiapp builds each extension
+  with its name as the scope and its `place.h` includes the apps', so each keeps its rules;
 - to a file that defines `ESP_SDR_PLACE_FILE` ahead of its tags (static names repeat across
   files): `ESP_SDR_PIN_DATA_<file>_<name>`.
 
@@ -217,3 +219,10 @@ Every list is an A/B on the board.
 3. Measure on the board against the image before, interleaved and repeated (the app's own figure:
    stream loss, skipped frames, cycles per sample), and the cache counters.
 4. Keep the change only if it is no worse within the spread.
+
+## multiapp extensions
+
+The categories reach an extension's sections through `multiapp/ext.h`: `ESP_SDR_IRAM` lands in
+`.module_fast`, PSRAM and the rest in the loader's heaps, the high region's buffers and stacks in
+the host's area. A hot block inside an extension is out of scope: the loader places modules at load
+time, and `sdr` and `ieee154` build without `-ffunction-sections`.

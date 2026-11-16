@@ -10,8 +10,8 @@ Overview
 
 One image that runs the other apps as Zephyr loadable extensions (llext,
 ``doc/multiapp.md``), with the USB classes they need living in the image
-itself. ``capture``, ``rfprobe``, ``wpan``, ``stream``, ``osmosdr`` and
-``link`` run as extensions, built from their own sources and loaded from their
+itself. ``capture``, ``rfprobe``, ``wpan``, ``stream``, ``osmosdr``, ``link`` and
+``micropython`` run as extensions, built from their own sources and loaded from their
 files on a FAT volume in the flash, with copies built into the image as the
 fallback; ``hello`` (``ext/hello.c``) is the loader check (``hello atomic``
 tests atomics in PSRAM from both CPUs).
@@ -81,7 +81,7 @@ The upper 4 MB of the flash hold a FAT volume with one ``<name>.llext`` per
 app (``src/drive.c``). Every boot reads it before USB starts: ``multiapp list``
 shows each app's file next to the built-in copy (``differs`` when they are
 not the same), and the boot's app is loaded from its file when the file is
-good, else from the built-in copy. "Good" is checked before llext sees the
+good, else from the built-in copy, if it has one. "Good" is checked before llext sees the
 file, from a trailer the build appends (``apptrail.py``): size, CRC-32, the
 stack the app needs, and the host's build id (``buildid.py``), so only files
 from the same build load. ``CONFIG_MULTIAPP_EMBEDDED=n`` drops the built-in
@@ -111,10 +111,81 @@ own ``CONFIG_APP_*`` values (``appconfig.py``), ``USB`` the classes it needs,
 The host needs the app's other Kconfig options; a missing function fails the
 host's link.
 
+A module is code other extensions call, with no ``main()``, loaded before them:
+
+.. code-block:: cmake
+
+   multiapp_module(hellofast INTERNAL SOURCES ${CMAKE_CURRENT_LIST_DIR}/ext/hellofast.c)
+   multiapp_module(hellolib REQUIRES hellofast SOURCES ${CMAKE_CURRENT_LIST_DIR}/ext/hellolib.c)
+   multiapp_extension(hello REQUIRES hellolib SOURCES ${CMAKE_CURRENT_LIST_DIR}/ext/hello.c)
+
+``INTERNAL`` places it as a standalone image would: its ``IRAM_ATTR`` code, data
+and bss in internal RAM (``CONFIG_MULTIAPP_MODULE_HEAP_SIZE``), the rest of its code
+and its read-only data in PSRAM. ``HIGH_BSS`` puts its bss in the high region
+(``CONFIG_MULTIAPP_MODULE_HIGH_HEAP_SIZE``). ``DEVICES`` says it defines Zephyr
+devices, which the host initializes as it loads the module and an app finds with
+``device_get_binding()``. ``multiapp info`` shows each module's place and addresses
+and how much of those heaps is used. A module that does not load keeps the app from
+starting: the boot comes up as a boot without an app, with the drive.
+
+The radio is modules too: ``phy``, ``sdr`` and ``ieee154``. Only the boots whose app
+names them load them, so a boot without an app brings no radio up.
+
+The stock Wi-Fi driver is the module ``wifi``, built by ``wifi.cmake``, and has no
+built-in copy (``FILE_ONLY``), so its file must be on the volume:
+
+.. code-block:: console
+
+   uart:~$ multiapp run wifitest
+   uart:~$ wifi scan
+   uart:~$ wifi connect <ssid> [psk]
+   uart:~$ wifi status
+   uart:~$ net ping <address>
+
+``wifi connect`` returns once DHCP has an address. After an abrupt reset the access
+point may still have the board associated, and the first attempt fails: try again.
+
+MicroPython is the app ``micropython``, built by ``micropython.cmake``, also with no
+built-in copy. It takes the CDC-ACM port from the shell for the boot, so the port is its
+REPL, and the host's commands go through ``esdr.shell()``:
+
+.. code-block:: console
+
+   uart:~$ multiapp run micropython
+   >>> import esdr
+   >>> print(esdr.shell("multiapp info"))
+   >>> esdr.shell("multiapp run wpan")
+
+``machine.reset()`` also leaves it, for a boot without an app or, with the autostart, a new start. ``west dfu`` works from the
+REPL as from the shell. ``/FLASH:`` is the FAT volume, so a script there sits next to the
+apps' files, and ``west dfu --storage`` replaces the whole volume, scripts included. The
+Python heap is the PSRAM the boot leaves free, about 4.7 MB.
+
+On the XIAO it has the display, LVGL, the knob and the SD card, all of them in its file: the
+launcher comes up on the panel as in the standalone app. ``/SD:`` is the card, and the PC sees
+two drives, the volume and the card, of which a boot without an app offers only the volume. A
+restart comes up without an app, with the panel dark: ``multiapp run micropython`` starts it, or
+``CONFIG_MULTIAPP_AUTOSTART`` at every boot, which the Communicator sets. It
+reads the same board fragment as the standalone app (``apps/micropython/boards``). On the Communicator
+it has the display and the keyboard, and no SD card. A board without a display builds it headless, with
+``manifest_headless.py``. SD writes have not been checked on
+this image for want of a working card (``doc/multiapp.md``).
+
+``KCONFIG`` gives a module Kconfig values the host lacks: a second Kconfig pass with
+that fragment on top of the host's, whose differences it compiles with
+(``extconfig.py``). A symbol that differs and is not listed in ``KCONFIG_OWN`` or
+``KCONFIG_DROP`` fails the build, so module and host cannot disagree unnoticed.
+
 Testing
 *******
 
 ``sample.esp_sdr.multiapp.hil`` checks a board on the desk: the image and its
 volume go on with ``scripts/twister-flash.py``, the board boots into ``hello``
-from its file, and ``pytest/test_multiapp.py`` checks the files, the boot and
-hello's commands (``doc/testing.md``).
+from its file, and ``pytest/test_multiapp.py`` checks the files, the boot,
+hello's commands and, through ``CONFIG_MULTIAPP_MODULE_TESTS``, calls across
+modules in PSRAM and internal RAM, a device in a module, and calls into the PHY's
+blobs as a module (``doc/testing.md``). ``sample.esp_sdr.multiapp.wifi.hil`` boots
+into ``wifitest`` and scans, so it needs an access point in range.
+``sample.esp_sdr.multiapp.micropython.hil`` boots into ``micropython`` from its file and checks it through
+its REPL (``pytest/test_micropython.py``): the modules it loaded, its heap, the volume, a gapless ring, a
+soft reset and, on a board with a display, a GUI app drawing with the ring gapless.

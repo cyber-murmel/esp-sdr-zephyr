@@ -60,9 +60,9 @@ def test_parse_kconfig(tmp_path):
     k, _, _ = setup(tmp_path)
     opts = appconfig.parse_kconfig(k)
     assert list(opts) == ["APP_RATE", "APP_FAST", "APP_EXTRA", "APP_NAME"]
-    assert opts["APP_RATE"] == {"type": "int", "default": "1000", "depends": None, "select": []}
+    assert opts["APP_RATE"] == {"type": "int", "default": "1000", "depends": [], "select": []}
     assert opts["APP_FAST"]["select"] == ["HOST_THING"]
-    assert opts["APP_EXTRA"]["depends"] == "APP_FAST"
+    assert opts["APP_EXTRA"]["depends"] == ["APP_FAST"]
 
 
 def test_parse_conf(tmp_path):
@@ -100,7 +100,21 @@ def test_select_needs_host(tmp_path, run_main):
         generate(tmp_path, run_main, host="CONFIG_HOST_THING=n\n")
 
 
-@pytest.mark.parametrize("line", ["\tdefault 5 if FOO", "\tdepends on A && B", "\timply X"])
+def test_depends_conjunction(tmp_path, run_main):
+    """depends on A && B, and a second depends line, all of them: an app and a host symbol."""
+    kconfig = KCONFIG.replace("\tdepends on APP_FAST\n",
+                              "\tdepends on APP_FAST && HOST_DISPLAY\n\tdepends on HOST_THING\n")
+    k, _, _ = setup(tmp_path, kconfig=kconfig)
+    assert appconfig.parse_kconfig(k)["APP_EXTRA"]["depends"] == ["APP_FAST", "HOST_DISPLAY",
+                                                                  "HOST_THING"]
+    host = "CONFIG_HOST_THING=y\nCONFIG_HOST_DISPLAY=y\n"
+    on = generate(tmp_path, run_main, kconfig=kconfig, host=host, confs=("CONFIG_APP_EXTRA=y\n",))
+    assert "#define CONFIG_APP_EXTRA 1" in on
+    off = generate(tmp_path, run_main, kconfig=kconfig, confs=("CONFIG_APP_EXTRA=y\n",))
+    assert not any(l.startswith("#define CONFIG_APP_EXTRA") for l in off)
+
+
+@pytest.mark.parametrize("line", ["\tdefault 5 if FOO", "\tdepends on A || B", "\timply X"])
 def test_unsupported(tmp_path, line):
     k, _, _ = setup(tmp_path, kconfig=f"config APP_X\n\tint \"x\"\n{line}\n")
     with pytest.raises(SystemExit):

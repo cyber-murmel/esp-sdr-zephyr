@@ -1,0 +1,7 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * The Hackaday Communicator's display and keyboard: drivers only in the micropython extension.
+ */
+
+#include "../../micropython/boards/communicator_badge_periph.dtsi"

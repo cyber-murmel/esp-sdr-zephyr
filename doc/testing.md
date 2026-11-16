@@ -221,6 +221,18 @@ west twister -T apps/multiapp -s sample.esp_sdr.multiapp.hil --device-testing \
 About a minute, flashing included. It leaves the test image on the board: `west dfu` and
 `west dfu --storage` of a normal multiapp build afterwards.
 
+`sample.esp_sdr.multiapp.wifi.hil` is the same with `wifitest` as the autostart app
+(`apps/multiapp/hil-wifi.conf`, `pytest/test_wifi.py`): the Wi-Fi module loads from its file, on the
+host's interface, and `wifi scan` lists access points, so it needs one in range.
+
+`sample.esp_sdr.multiapp.micropython.hil` has `micropython` as the autostart app
+(`apps/multiapp/hil-micropython.conf`, `pytest/test_micropython.py`). It has no built-in copy, and it takes
+the CDC-ACM port for its REPL, so the test works through that REPL and reaches the host's commands
+with `esdr.shell()`: it boots from its file with only `phy` and `sdr`, USB on CPU 0, a heap of the spare PSRAM,
+a file written and read back on `/FLASH:`, a ring at 250 kS/s with 0 gaps, a soft reset that keeps the heap, and
+no crash. On a board with a display it also runs `spectrum` from the launcher and checks that it draws with the
+ring gapless.
+
 ## Regression tests (two boards)
 
 Three scenarios, all pytest through twister's multi-board harness, each with its own pair of

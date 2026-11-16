@@ -22,6 +22,28 @@ tests:
     harness: pytest
     harness_config:
       pytest_dut_scope: module
+      pytest_root:
+        - pytest/test_multiapp.py
     extra_args:
       - multiapp_EXTRA_CONF_FILE=hil.conf
+    timeout: 600
+  # The same, booting into wifitest (pytest/test_wifi.py). Needs an access point in range.
+  sample.esp_sdr.multiapp.wifi.hil:
+    harness: pytest
+    harness_config:
+      pytest_dut_scope: module
+      pytest_root:
+        - pytest/test_wifi.py
+    extra_args:
+      - multiapp_EXTRA_CONF_FILE=hil-wifi.conf
+    timeout: 600
+  # The same, booting into micropython (pytest/test_micropython.py), which then has the REPL.
+  sample.esp_sdr.multiapp.micropython.hil:
+    harness: pytest
+    harness_config:
+      pytest_dut_scope: module
+      pytest_root:
+        - pytest/test_micropython.py
+    extra_args:
+      - multiapp_EXTRA_CONF_FILE=hil-micropython.conf
     timeout: 600

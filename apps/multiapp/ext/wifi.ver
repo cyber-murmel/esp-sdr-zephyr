@@ -1,0 +1,9 @@
+/* What the host looks up in the wifi module; the rest the linker drops. Apps reach Wi-Fi through
+ * the host's net_mgmt. */
+{
+	global:
+		multiapp_init_table;
+		multiapp_module_up;
+	local:
+		*;
+};

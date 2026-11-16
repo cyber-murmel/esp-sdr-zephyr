@@ -4,13 +4,34 @@ mainmenu "multiapp: one firmware that runs the others"
 
 config MULTIAPP_INSTR_HEAP_KB
 	int "Extension code heap in PSRAM, KiB"
-	default 256
+	default 1344
 
 config MULTIAPP_DATA_HEAP_KB
 	int "Extension data heap in PSRAM, KiB"
-	default 512
+	default 1024
 	help
 	  The extensions' data, read-only data and bss, and llext's metadata.
+
+config MULTIAPP_MODULE_HEAP_SIZE
+	int "Internal RAM for the modules that run from it, bytes"
+	default 31744
+	help
+	  IRAM_ATTR code, data and bss of the modules built INTERNAL: below ring
+	  bank 0 (src/apps.c), where a size that does not fit fails the host's
+	  link. wpan's boot needs the most, about 25.5 KB.
+
+config MULTIAPP_MODULE_HIGH_HEAP_SIZE
+	int "Bytes of the high region for a module's bss"
+	default 14528
+	help
+	  The rest of the high region next to the area, for the bss of a module
+	  built INTERNAL HIGH_BSS. A size that does not fit fails the host's link.
+
+config MULTIAPP_MODULE_TESTS
+	bool "The module loader's test modules"
+	help
+	  hello also needs hellolib in PSRAM, which needs hellofast in internal
+	  RAM: the commands "hello mod" and "hello phy".
 
 config MULTIAPP_STACK_SIZE
 	int "Largest stack of an app's main() thread"
@@ -18,6 +39,45 @@ config MULTIAPP_STACK_SIZE
 	help
 	  One stack in PSRAM for every app's main(); an app that asks for more
 	  (multiapp_extension() STACK) is refused.
+
+# A default, not an assignment: the wifi module's Kconfig pass turns on what this depends on being off.
+config ESP_SDR_PHY_ONLY
+	default y
+
+config MULTIAPP_WIFI
+	bool "The stock Wi-Fi driver as a module"
+	depends on DT_HAS_ESPRESSIF_ESP32_WIFI_ENABLED
+	depends on ZEPHYR_HAL_ESPRESSIF_MODULE_BLOBS
+	select WIFI
+	select WIFI_USE_NATIVE_NETWORKING
+	select NET_L2_WIFI_MGMT
+	select NET_L2_ETHERNET_MGMT
+	select THREAD_CUSTOM_DATA
+	select EVENTS
+	select THREAD_STACK_INFO
+	help
+	  The driver and its blobs are a module, wifi.llext on the volume, which
+	  only the boots of an app that needs it load. The host has its
+	  network interface (src/wifi_netif.c), down in every other boot, and
+	  what the driver needs from the kernel and the network stack.
+
+config MULTIAPP_MICROPYTHON
+	bool "MicroPython as an app"
+	depends on ZEPHYR_MICROPYTHON_MODULE
+	help
+	  The port, its C modules and frozen Python are one extension,
+	  micropython.llext on the volume (micropython.cmake). The host keeps
+	  what they need from the kernel, /FLASH: and the USB device; "multiapp
+	  run micropython" reboots into its REPL on the CDC-ACM port.
+
+config MULTIAPP_MICROPYTHON_GUI
+	bool "MicroPython with a display"
+	depends on MULTIAPP_MICROPYTHON
+	help
+	  Its extension also builds LVGL and the drivers of the board's display,
+	  input devices and SD card, and freezes the launcher's apps. The
+	  devicetree must have the board's peripherals; the host has no driver
+	  for them.
 
 config MULTIAPP_EMBEDDED
 	bool "Apps built into the image too"
@@ -28,13 +88,13 @@ config MULTIAPP_EMBEDDED
 
 config MULTIAPP_FILE_MAX_KB
 	int "Largest app file, KiB"
-	default 192
+	default 2048
 	help
 	  The PSRAM buffer a boot reads the app's file into before loading it.
 
 config MULTIAPP_AREA_SIZE
 	int "Bytes of internal RAM the apps share, one per boot"
-	default 24576
+	default 24128
 	help
 	  In the high region: the buffers an app defines with
 	  ESP_SDR_HIGH_BUF_DEFINE() and ESP_SDR_HIGH_STACK_DEFINE() (osmosdr's

@@ -16,6 +16,12 @@
 
 #include <esp_sdr/esp_sdr.h>
 
+#include <esp_phy_init.h>
+
+#if defined(CONFIG_MULTIAPP_MODULE_TESTS)
+#include "hellomod.h"
+#endif
+
 static const char greeting[] = "hello from an extension";
 static int constructed;
 
@@ -91,8 +97,42 @@ static int cmd_atomic(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+#if defined(CONFIG_MULTIAPP_MODULE_TESTS)
+/* Calls into hellolib (PSRAM), which calls hellofast (internal RAM), and where each runs. */
+static int cmd_mod(const struct shell *sh, size_t argc, char **argv)
+{
+	const uint32_t rounds = 100000;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	shell_print(sh, "mod: fast code %p data %p value %d, lib code %p, chain %d",
+		    (void *)hellofast_twice, (void *)&hellofast_value, hellofast_value,
+		    (void *)hellolib_chain, hellolib_chain(5));
+	shell_print(sh, "mod: loop cycles fast %u, lib %u", hellofast_loop(rounds),
+		    hellolib_loop(rounds));
+	shell_print(sh, "mod: device %s, %d inits",
+		    device_get_binding("hellolib") != NULL ? "found" : "missing",
+		    hellolib_dev_inits());
+	return 0;
+}
+#endif
+
+/* A call into the PHY's blob, a module. */
+static int cmd_phy(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	shell_print(sh, "phy: blob code %p, version %s", (void *)get_phy_version_str,
+		    get_phy_version_str());
+	return 0;
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(hello_cmds,
 	SHELL_CMD(atomic, NULL, "atomic increments from both CPUs", cmd_atomic),
+#if defined(CONFIG_MULTIAPP_MODULE_TESTS)
+	SHELL_CMD(mod, NULL, "calls across modules, PSRAM and internal RAM", cmd_mod),
+#endif
+	SHELL_CMD(phy, NULL, "a call into the PHY's blob as a module", cmd_phy),
 	SHELL_SUBCMD_SET_END);
 SHELL_CMD_ARG_REGISTER(hello, &hello_cmds, "[n]: the loader check", cmd_hello, 1, 1);
 

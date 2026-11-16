@@ -57,6 +57,30 @@ struct multiapp_host_object {
 #define MULTIAPP_HOST_POOL 1U
 /* Internal RAM in the area (ESP_SDR_HIGH_BUF_DEFINE()): arg = size, alignment. */
 #define MULTIAPP_HOST_AREA 2U
+/* A buffer in PSRAM (ESP_SDR_PSRAM_BUF_DEFINE()): arg = size, alignment. */
+#define MULTIAPP_HOST_PSRAM 3U
+
+/* A module's devices and SYS_INIT entries (ext/module_devices.c), which the host runs. */
+struct init_entry;
+
+struct multiapp_init_table {
+	const struct init_entry *start;
+	const struct init_entry *end;
+};
+
+/*
+ * Hand the host's Wi-Fi interface to @p dev, the wifi module's device (src/wifi_netif.c), and bring
+ * it up. 0 or a negative errno.
+ */
+int multiapp_wifi_bind(const struct device *dev);
+
+/*
+ * For an app that wants all the PSRAM it can get: what nothing in this boot uses once the app runs,
+ * from the end of what the linker placed to the top, with the shared heap only the wifi module
+ * allocates from (so not in a boot that has it) and the buffer that held the app's file. Returns
+ * the start and sets @p size.
+ */
+void *multiapp_psram_spare(size_t *size);
 
 /*
  * Make @p root, a root command of the loaded app, reachable from the host's

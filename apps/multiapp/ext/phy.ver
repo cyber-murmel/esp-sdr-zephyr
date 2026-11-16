@@ -1,0 +1,23 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * What the PHY module (the PHY and RF test blobs and the HAL's glue) exports. The linker keeps
+ * only what these reach (--gc-sections): the blobs hold test code that calls functions the host
+ * does not have. A symbol missing here fails the host's link, through exports.py.
+ */
+{
+	global:
+		esp_phy_enable;
+		esp_wifi_bt_power_domain_on;
+		force_rx_gain;
+		force_tx_gain;
+		force_txon_mode;
+		get_phy_version_str;
+		phy_wifi_enable_set;
+		rom_pbus_xpd_tx_on;
+		set_chanfreq;
+		set_rf_freq_offset;
+		stop_tx_tone;
+	local:
+		*;
+};

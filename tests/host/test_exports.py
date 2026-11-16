@@ -39,11 +39,30 @@ def lib(tmp_path):
     return out
 
 
-def generate(tmp_path, run_main, lib, area=4096):
+def generate(tmp_path, run_main, *libs, area=4096, modules=()):
     files = {k: tmp_path / f"{k}.c" for k in ("exports", "logs", "objects")}
+    module_args = [arg for name in modules for arg in ("--module", name)]
     run_main(exports, "--exports", files["exports"], "--logs", files["logs"],
-             "--objects", files["objects"], "--area-size", area, lib)
+             "--objects", files["objects"], "--area-size", area, *module_args, *libs)
     return {k: p.read_text() for k, p in files.items()}
+
+
+@pytest.fixture
+def two_libs(tmp_path):
+    """An app importing mod_call and k_yield, and a module defining mod_call."""
+    cc = shutil.which("cc") or shutil.which("gcc")
+    if cc is None:
+        pytest.skip("no host C compiler")
+    built = []
+    for name, code in (("app", "extern int mod_call(void); extern void k_yield(void);"
+                               "int app_main(void) { k_yield(); return mod_call(); }"),
+                       ("mod", "extern void k_sleep(void); int mod_call(void) { k_sleep(); return 1; }")):
+        src = tmp_path / f"{name}.c"
+        src.write_text(code)
+        out = tmp_path / f"lib{name}_ext_llext_lib.so"
+        subprocess.run([cc, "-shared", "-fPIC", "-o", out, src], check=True)
+        built.append(out)
+    return built
 
 
 def test_imports_and_objects(lib):
@@ -72,6 +91,32 @@ def test_generated_files(tmp_path, run_main, lib):
 def test_area_too_small(tmp_path, run_main, lib):
     with pytest.raises(SystemExit):
         generate(tmp_path, run_main, lib, area=1000)
+
+
+def test_defines(two_libs):
+    assert "mod_call" in exports.defines(two_libs[1])
+    assert "mod_call" not in exports.defines(two_libs[0])
+
+
+def test_module_symbols_are_not_the_hosts(tmp_path, run_main, two_libs):
+    # Named as a module, what it defines comes from it; what it imports still from the host.
+    out = generate(tmp_path, run_main, *two_libs, modules=("mod",))["exports"]
+    assert '__asm__("mod_call")' not in out
+    assert '__asm__("k_yield")' in out and '__asm__("k_sleep")' in out
+
+
+def test_app_symbols_stay_private(tmp_path, run_main, two_libs):
+    # Not a module: another extension's import of the name is still the host's to provide.
+    out = generate(tmp_path, run_main, *two_libs)["exports"]
+    assert '__asm__("mod_call")' in out
+
+
+def test_psram_object(tmp_path, run_main, lib, monkeypatch):
+    monkeypatch.setattr(exports, "host_objects",
+                        lambda path: iter([("demo_ring", 3, [4096, 4, 0])]))
+    out = generate(tmp_path, run_main, lib)
+    assert "EXT_RAM_BSS_ATTR uint8_t demo_ring[4096] __aligned(4);" in out["objects"]
+    assert "EXPORT_GROUP_SYMBOL(MULTIAPP, demo_ring);" in out["objects"]
 
 
 def test_unknown_kind(tmp_path, run_main, lib, monkeypatch):

@@ -17,6 +17,7 @@
 #include <zephyr/llext/llext.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/shell/shell.h>
+#include <zephyr/shell/shell_uart.h>
 #include <zephyr/sys/crc.h>
 #include <zephyr/sys/reboot.h>
 #include <zephyr/usb/usbd.h>
@@ -24,8 +25,10 @@
 #include <esp_attr.h>
 #include <esp_rom_sys.h>
 #include <rom/cache.h>
+#include <soc/soc.h>
 
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_place.h>
 #if defined(CONFIG_ESP_SDR_IEEE802154)
 #include <esp_sdr/ieee154_esp_sdr.h>
 #endif
@@ -44,27 +47,74 @@ LOG_MODULE_REGISTER(multiapp, LOG_LEVEL_INF);
 #define IBUS_DBUS_OFFSET 0x06000000
 
 #define ROOTS_MAX       4
+#define MODULES_MAX     8
 #define REQUEST_MAGIC   0x6d617070U /* "mapp" */
 #define TRIED_MAGIC     0x74726964U /* "trid": the boot that tried it has started */
 #define REBOOT_DELAY_MS 100
 
-static EXT_RAM_BSS_ATTR uint8_t instr_heap[KB(CONFIG_MULTIAPP_INSTR_HEAP_KB)] __aligned(64);
-static EXT_RAM_BSS_ATTR uint8_t data_heap[KB(CONFIG_MULTIAPP_DATA_HEAP_KB)] __aligned(64);
+/* No init: at boot, zeroing what llext zeroes as needed would cost every boot its time. */
+static ESP_SDR_DATA_F(BULK, instr_heap, NOINIT) uint8_t
+	instr_heap[KB(CONFIG_MULTIAPP_INSTR_HEAP_KB)] __aligned(64);
+static ESP_SDR_DATA_F(BULK, data_heap, NOINIT) uint8_t
+	data_heap[KB(CONFIG_MULTIAPP_DATA_HEAP_KB)] __aligned(64);
+
+/*
+ * For the modules placed as a standalone image: their IRAM_ATTR code at the instruction
+ * bus alias of its data bus address, as for PSRAM. The rest stays in the default heaps.
+ */
+static uint8_t module_heap_mem[CONFIG_MULTIAPP_MODULE_HEAP_SIZE]
+	ESP_SDR_DATA_F(STATE, module_heap_mem, NOINIT) __aligned(16);
+static struct k_heap module_heap;
+/* What the high region has left: for the bss of the module that fills the ring's banks. */
+static uint8_t module_high_mem[CONFIG_MULTIAPP_MODULE_HIGH_HEAP_SIZE] __aligned(16)
+	ESP_SDR_DATA_F(STATE, module_high_mem, NOINIT);
+static struct k_heap module_high_heap;
+
+static const struct llext_region_heap region_heaps[][LLEXT_MEM_COUNT] = {
+	[MULTIAPP_PLACE_INTERNAL] = {
+		[LLEXT_MEM_TEXT_ALT] = {&module_heap, SOC_I_D_OFFSET},
+		[LLEXT_MEM_DATA] = {&module_heap, 0},
+		[LLEXT_MEM_BSS] = {&module_heap, 0},
+	},
+	[MULTIAPP_PLACE_INTERNAL_HIGH_BSS] = {
+		[LLEXT_MEM_TEXT_ALT] = {&module_heap, SOC_I_D_OFFSET},
+		[LLEXT_MEM_DATA] = {&module_heap, 0},
+		[LLEXT_MEM_BSS] = {&module_high_heap, 0},
+	},
+};
+
+/* The modules this boot has loaded, in the order they came. */
+static struct {
+	const struct multiapp_embedded *def;
+	struct llext *ext;
+	const char *source;
+} modules[MODULES_MAX];
+static size_t module_count;
 
 /* PSRAM like the app's data: internal RAM is kept for the dump banks. */
-static Z_KERNEL_STACK_DEFINE_IN(app_stack, CONFIG_MULTIAPP_STACK_SIZE, EXT_RAM_BSS_ATTR);
+static Z_KERNEL_STACK_DEFINE_IN(app_stack, CONFIG_MULTIAPP_STACK_SIZE,
+				ESP_SDR_DATA_F(STACK, app_stack, NOINIT));
 static struct k_thread app_thread;
 
-static EXT_RAM_BSS_ATTR struct llext_buf_loader loader;
+static ESP_SDR_DATA(BULK, loader) struct llext_buf_loader loader;
 static struct llext *loaded;
 static const struct multiapp_info *loaded_info;
 static const char *loaded_source; /* "file" or "built-in" */
+/* The app's main() waits for multiapp_usb_up(). */
+static bool main_held;
 
 /* What this host's apps carry in their trailers (buildid.py). */
 static const uint8_t build_id[] = MULTIAPP_BUILD_ID;
 
-/* The app's file, read whole before llext sees it (drive.c). */
-static EXT_RAM_BSS_ATTR uint8_t file_buf[KB(CONFIG_MULTIAPP_FILE_MAX_KB)] __aligned(4);
+/*
+ * The app's file, read whole before llext sees it (drive.c): the top of PSRAM, above the shared
+ * heap the linker reserves (multiapp_bank0.ld checks there is room), so that it is one block with
+ * what multiapp_psram_spare() hands out.
+ */
+extern char _ext_ram_start[], _ext_ram_heap_start[];
+#define FILE_BUF_SIZE KB(CONFIG_MULTIAPP_FILE_MAX_KB)
+#define PSRAM_TOP     ((uintptr_t)_ext_ram_start + CONFIG_ESP_SPIRAM_SIZE)
+#define FILE_BUF      ((uint8_t *)(PSRAM_TOP - FILE_BUF_SIZE))
 static const struct shell_static_entry *roots[ROOTS_MAX];
 static size_t root_count;
 
@@ -81,10 +131,12 @@ enum boot_step {
 	STEP_CONSTRUCTORS,
 	STEP_MAIN,
 	STEP_RUNNING,
+	/* It did not load and said so, as with a file from another build: safe to try again. */
+	STEP_REFUSED,
 };
 
 static const char *const step_names[] = {"requested", "loading", "constructors", "main",
-					 "running"};
+					 "running", "refused"};
 
 /* What the previous boot left: the request it tried and the step it reached. */
 static char tried_name[sizeof(request.name)];
@@ -95,12 +147,15 @@ static bool tried;
 static char boot_name[sizeof(request.name)];
 static uint32_t usb_profile;
 static int boot_ret;
+/* How long it took: the modules it needs, with the radio coming up, then the app itself. */
+static uint32_t modules_ms, app_ms;
 
 /*
  * Internal RAM for one user per boot: the boot's app if it has buffers there
  * (ESP_SDR_HIGH_BUF_DEFINE(), exports.py), else the 802.15.4 driver.
  */
-uint8_t multiapp_area[CONFIG_MULTIAPP_AREA_SIZE] __aligned(16) ESP_SDR_HIGH_RAM;
+uint8_t multiapp_area[CONFIG_MULTIAPP_AREA_SIZE] __aligned(16)
+	ESP_SDR_DATA_F(STATE, multiapp_area, NOINIT);
 static const struct multiapp_embedded *area_app;
 
 #if defined(CONFIG_ESP_SDR_IEEE802154_HIGH_RAM_APP)
@@ -112,6 +167,8 @@ void *ieee154_esp_sdr_high_ram(size_t size)
 	return multiapp_area;
 }
 #endif
+
+extern int do_device_init(const struct device *dev);
 
 /* Before the devices: the area's user and the USB profile follow the boot's app. */
 static int boot_pick(void)
@@ -133,7 +190,7 @@ static int boot_pick(void)
 		boot_name[sizeof(boot_name) - 1] = '\0';
 	} else if (!(tried && tried_step < STEP_RUNNING &&
 		     strcmp(tried_name, CONFIG_MULTIAPP_AUTOSTART) == 0)) {
-		/* Tried like a request, so one that never gets running is skipped once. */
+		/* Tried like a request, so one that died before running is skipped once. */
 		strncpy(boot_name, CONFIG_MULTIAPP_AUTOSTART, sizeof(boot_name) - 1);
 		if (boot_name[0] != '\0') {
 			request.magic = TRIED_MAGIC;
@@ -150,6 +207,8 @@ SYS_INIT(boot_pick, PRE_KERNEL_1, 0);
 
 static int heaps_init(void)
 {
+	k_heap_init(&module_heap, module_heap_mem, sizeof(module_heap_mem));
+	k_heap_init(&module_high_heap, module_high_mem, sizeof(module_high_mem));
 	return llext_heap_init_harvard_exec(instr_heap, sizeof(instr_heap), data_heap,
 					    sizeof(data_heap), IBUS_DBUS_OFFSET);
 }
@@ -259,62 +318,212 @@ static int check_trailer(const char *name, const char *source, const uint8_t *da
 	return 0;
 }
 
-int multiapp_start(const char *name)
+/* Read one extension, from its file if the volume has a good one, and load it. */
+static int load_extension(const struct multiapp_embedded *app, struct llext **ext,
+			  const char **source, uint32_t *stack_need)
 {
 	struct llext_load_param param = LLEXT_LOAD_PARAM_DEFAULT;
-	const struct multiapp_embedded *app = multiapp_embedded_find(name);
-	const struct multiapp_info *info;
 	const uint8_t *data;
-	int (*entry)(void);
-	size_t stack, elf_size;
-	uint32_t stack_need;
+	size_t elf_size;
 	ssize_t n;
 	int ret;
 
-	if (app == NULL) {
-		return -ENOENT;
-	}
-	if (loaded != NULL) {
-		return -EBUSY;
-	}
-	boot_step(STEP_LOADING);
-	/* Its file if the volume has a good one, else the built-in copy. */
-	n = multiapp_drive_status() == 0 ? multiapp_drive_read(name, file_buf, sizeof(file_buf))
+	n = multiapp_drive_status() == 0 ? multiapp_drive_read(app->name, FILE_BUF, FILE_BUF_SIZE)
 					 : multiapp_drive_status();
-	if (n >= 0 && check_trailer(name, "file", file_buf, n, &elf_size, &stack_need) == 0) {
-		data = file_buf;
-		loaded_source = "file";
+	if (n >= 0 && check_trailer(app->name, "file", FILE_BUF, n, &elf_size, stack_need) == 0) {
+		data = FILE_BUF;
+		*source = "file";
 	} else if (app->elf != NULL &&
-		   check_trailer(name, "built-in", app->elf, app->size, &elf_size, &stack_need) == 0) {
+		   check_trailer(app->name, "built-in", app->elf, app->size, &elf_size,
+				 stack_need) == 0) {
 		if (n != -ENOENT && n != -ENODEV) {
-			LOG_WRN("%s: the file is not usable (%d), the built-in copy runs", name,
-				(int)n);
+			LOG_WRN("%s: the file is not usable (%d), the built-in copy runs",
+				app->name, (int)n);
 		}
 		data = app->elf;
-		loaded_source = "built-in";
+		*source = "built-in";
 	} else {
-		LOG_ERR("%s: no usable file (%d)%s", name, (int)n,
+		LOG_ERR("%s: no usable file (%d)%s", app->name, (int)n,
 			app->elf != NULL ? " or built-in copy" : "");
 		return n < 0 ? (int)n : -ENOEXEC;
 	}
-	stack = K_THREAD_STACK_SIZEOF(app_stack);
-	if (stack_need > stack) {
-		LOG_ERR("%s: needs a %u byte stack, the host has %zu (CONFIG_MULTIAPP_STACK_SIZE)",
-			name, stack_need, stack);
-		return -ENOMEM;
+	if (app->place != MULTIAPP_PLACE_PSRAM) {
+		param.region_heaps = region_heaps[app->place];
+		param.text_alt_section = ".module_fast";
 	}
 	/*
 	 * Temporary, so llext copies every region: in place, it would not relocate
 	 * .got.loc, as .rela.dyn names no target section.
 	 */
 	loader = (struct llext_buf_loader)LLEXT_TEMPORARY_BUF_LOADER(data, elf_size);
-	ret = llext_load(&loader.loader, app->name, &loaded, &param);
+	ret = llext_load(&loader.loader, app->name, ext, &param);
 	if (ret != 0) {
-		LOG_ERR("%s: load failed (%d)", name, ret);
+		LOG_ERR("%s: load failed (%d)", app->name, ret);
+		*ext = NULL;
+		return ret;
+	}
+	sync_text(*ext);
+	return 0;
+}
+
+/* What a module's devices and SYS_INIT entries do at boot (ext/module_devices.c). */
+static int module_init_table(const struct multiapp_embedded *def, struct llext *ext)
+{
+	const struct multiapp_init_table *table;
+	int result = 0;
+
+	if (!def->devices) {
+		return 0;
+	}
+	/* Without this check, a lost table leaves devices that never initialized. */
+	table = llext_find_sym(&ext->exp_tab, "multiapp_init_table");
+	if (table == NULL || table->start == table->end) {
+		LOG_ERR("%s: no init table", def->name);
+		return -ENOENT;
+	}
+	for (const struct init_entry *entry = table->start; entry < table->end; entry++) {
+		int ret = entry->dev != NULL ? do_device_init(entry->dev) : entry->init_fn();
+
+		if (ret != 0) {
+			LOG_ERR("%s: init failed (%d)", def->name, ret);
+			result = result != 0 ? result : ret;
+		}
+	}
+	return result;
+}
+
+static const struct device *table_find(const struct llext *ext, const char *name)
+{
+	const struct multiapp_init_table *table =
+		llext_find_sym(&ext->exp_tab, "multiapp_init_table");
+
+	if (table == NULL) {
+		return NULL;
+	}
+	for (const struct init_entry *entry = table->start; entry < table->end; entry++) {
+		if (entry->dev != NULL && strcmp(entry->dev->name, name) == 0) {
+			return entry->dev;
+		}
+	}
+	return NULL;
+}
+
+/* A device of a loaded module or app, which the kernel's own lookup cannot see. */
+const struct device *multiapp_device_get_binding(const char *name)
+{
+	const struct device *dev = loaded != NULL ? table_find(loaded, name) : NULL;
+
+	for (size_t i = 0; dev == NULL && i < module_count; i++) {
+		dev = table_find(modules[i].ext, name);
+	}
+	if (dev != NULL) {
+		return device_is_ready(dev) ? dev : NULL;
+	}
+	return device_get_binding(name);
+}
+
+/* The modules @p app needs, each after those it needs itself, up and running. */
+static int load_modules(const struct multiapp_embedded *app)
+{
+	for (const char *const *req = app->requires; *req != NULL; req++) {
+		const struct multiapp_embedded *def = multiapp_embedded_find(*req);
+		bool have = false;
+		uint32_t stack_need;
+		int ret;
+
+		for (size_t i = 0; i < module_count; i++) {
+			have = have || modules[i].def == def;
+		}
+		if (have) {
+			continue;
+		}
+		if (def == NULL || !def->module) {
+			LOG_ERR("%s: no module %s", app->name, *req);
+			return -ENOENT;
+		}
+		ret = load_modules(def);
+		if (ret != 0) {
+			return ret;
+		}
+		if (module_count == ARRAY_SIZE(modules)) {
+			LOG_ERR("%s: more than %d modules", app->name, MODULES_MAX);
+			return -ENOMEM;
+		}
+		ret = load_extension(def, &modules[module_count].ext,
+				     &modules[module_count].source, &stack_need);
+		if (ret != 0) {
+			return ret;
+		}
+		struct llext *ext = modules[module_count].ext;
+		int (*up)(void);
+
+		modules[module_count].def = def;
+		module_count++;
+		ret = llext_bringup(ext);
+		if (ret != 0) {
+			LOG_ERR("%s: constructors failed (%d)", def->name, ret);
+			return ret;
+		}
+		ret = module_init_table(def, ext);
+		if (ret != 0) {
+			return ret;
+		}
+		up = llext_find_sym(&ext->exp_tab, "multiapp_module_up");
+		if (up != NULL) {
+			ret = up();
+			if (ret != 0) {
+				LOG_ERR("%s: up failed (%d)", def->name, ret);
+				return ret;
+			}
+		}
+	}
+	return 0;
+}
+
+/* The shell gives up the CDC-ACM port. USB has not started, so nobody is talking to it. */
+static int console_take(void)
+{
+	const struct shell *sh = shell_backend_uart_get_ptr();
+
+	shell_uninit(sh, NULL);
+	return k_thread_join(sh->thread, K_SECONDS(1));
+}
+
+int multiapp_start(const char *name)
+{
+	const struct multiapp_embedded *app = multiapp_embedded_find(name);
+	const struct multiapp_info *info;
+	int (*entry)(void);
+	size_t stack;
+	uint32_t stack_need, started;
+	int ret;
+
+	if (app == NULL || app->module) {
+		return -ENOENT;
+	}
+	if (loaded != NULL) {
+		return -EBUSY;
+	}
+	boot_step(STEP_LOADING);
+	started = k_uptime_get_32();
+	ret = load_modules(app);
+	if (ret != 0) {
+		return ret;
+	}
+	modules_ms = k_uptime_get_32() - started;
+	started = k_uptime_get_32();
+	ret = load_extension(app, &loaded, &loaded_source, &stack_need);
+	if (ret != 0) {
 		loaded = NULL;
 		return ret;
 	}
-	sync_text(loaded);
+	stack = K_THREAD_STACK_SIZEOF(app_stack);
+	if (stack_need > stack) {
+		LOG_ERR("%s: needs a %u byte stack, the host has %zu (CONFIG_MULTIAPP_STACK_SIZE)",
+			name, stack_need, stack);
+		ret = -ENOMEM;
+		goto unload;
+	}
 	info = llext_find_sym(&loaded->exp_tab, "multiapp_info");
 	if (info == NULL || info->abi != MULTIAPP_ABI) {
 		LOG_ERR("%s: built for ABI %d, the host has %u", name,
@@ -328,6 +537,13 @@ int multiapp_start(const char *name)
 		ret = -ENOEXEC;
 		goto unload;
 	}
+	if (app->console) {
+		ret = console_take();
+		if (ret != 0) {
+			LOG_ERR("%s: the shell keeps the console (%d)", name, ret);
+			goto unload;
+		}
+	}
 	loaded_info = info;
 	boot_step(STEP_CONSTRUCTORS);
 	ret = llext_bringup(loaded);
@@ -335,13 +551,17 @@ int multiapp_start(const char *name)
 		LOG_ERR("%s: constructors failed (%d)", name, ret);
 		goto unload;
 	}
+	/* A device that fails stays not ready, as in a standalone image: the app can still run. */
+	(void)module_init_table(app, loaded);
+	app_ms = k_uptime_get_32() - started;
 	LOG_INF("%s (%s): %zu bytes of code at %p, starting main()", name, loaded_source,
 		loaded->mem_size[LLEXT_MEM_TEXT],
 		(void *)((uintptr_t)loaded->mem[LLEXT_MEM_TEXT] + IBUS_DBUS_OFFSET));
 	boot_step(STEP_MAIN);
 	k_thread_create(&app_thread, app_stack, stack, app_main, entry, NULL, NULL,
-			CONFIG_MAIN_THREAD_PRIORITY, 0, K_NO_WAIT);
+			CONFIG_MAIN_THREAD_PRIORITY, 0, app->console ? K_FOREVER : K_NO_WAIT);
 	k_thread_name_set(&app_thread, info->name);
+	main_held = app->console;
 	return 0;
 
 unload:
@@ -386,10 +606,17 @@ int multiapp_request(const char *name)
 	if (app == NULL) {
 		return -ENOENT;
 	}
-	if (loaded == NULL && app->usb == usb_profile && (!app->area || area_app == app)) {
+	if (app->module) {
+		return -EINVAL;
+	}
+	if (loaded == NULL && app->usb == usb_profile && (!app->area || area_app == app) &&
+	    !app->console) {
 		return multiapp_start(name);
 	}
-	/* An app cannot stop, USB enumerates once and the area has one user per boot. */
+	/*
+	 * An app cannot stop, USB enumerates once, the area has one user per boot, and the shell
+	 * this runs on gives up the port before an app that wants it starts.
+	 */
 	request.magic = REQUEST_MAGIC;
 	strncpy(request.name, name, sizeof(request.name) - 1);
 	request.name[sizeof(request.name) - 1] = '\0';
@@ -406,13 +633,30 @@ bool multiapp_boot(void)
 	}
 	ret = multiapp_start(boot_name);
 	if (ret != 0) {
+		boot_step(STEP_REFUSED);
 		LOG_ERR("%s: not started (%d)", boot_name, ret);
 		/* USB has not started: it comes up without the app's classes, with the drive. */
 		usb_profile = MULTIAPP_USB_MSC;
+	} else if ((usb_profile & MULTIAPP_USB_MSC) != 0U) {
+		multiapp_drive_app_disks();
 	}
 	/* Before the shell is open: "multiapp info" tells. */
 	boot_ret = ret;
 	return ret == 0;
+}
+
+void multiapp_usb_up(void)
+{
+	if (main_held) {
+		main_held = false;
+		k_thread_start(&app_thread);
+	}
+}
+
+void *multiapp_psram_spare(size_t *size)
+{
+	*size = PSRAM_TOP - (uintptr_t)_ext_ram_heap_start;
+	return _ext_ram_heap_start;
 }
 
 void *multiapp_app_fn(const char *name)
@@ -420,11 +664,13 @@ void *multiapp_app_fn(const char *name)
 	return loaded != NULL ? (void *)llext_find_sym(&loaded->exp_tab, name) : NULL;
 }
 
-/* The host main()'s stack use, measured as it returns. */
+/* The host main()'s stack use, measured as it returns, and the CPU that started USB. */
 static size_t main_used, main_size;
+static int main_cpu = -1;
 
 void multiapp_note_main_stack(void)
 {
+	main_cpu = arch_curr_cpu()->id;
 #if defined(CONFIG_INIT_STACKS) && defined(CONFIG_THREAD_STACK_INFO)
 	size_t unused;
 
@@ -510,6 +756,9 @@ PROXY(wpan);
 PROXY(sdr);
 PROXY(link);
 PROXY(ofdm);
+#if defined(CONFIG_MULTIAPP_WIFI)
+PROXY(wifi);
+#endif
 
 static int cmd_list(const struct shell *sh, size_t argc, char **argv)
 {
@@ -533,7 +782,8 @@ static int cmd_list(const struct shell *sh, size_t argc, char **argv)
 		if (app->elf != NULL) {
 			(void)snprintf(built_in, sizeof(built_in), "%6zu bytes", app->size);
 		}
-		shell_print(sh, "%-12s %s%s%s", app->name, built_in, file,
+		shell_print(sh, "%-12s %s%s%s%s", app->name, built_in, file,
+			    app->module ? ", module" : "",
 			    loaded_info != NULL && strcmp(loaded_info->name, app->name) == 0
 				    ? ", running"
 				    : "");
@@ -551,6 +801,8 @@ static int cmd_run(const struct shell *sh, size_t argc, char **argv)
 	ARG_UNUSED(argc);
 	if (ret == -ENOENT) {
 		shell_error(sh, "%s: no such app (multiapp list)", argv[1]);
+	} else if (ret == -EINVAL) {
+		shell_error(sh, "%s: a module, it loads with the apps that need it", argv[1]);
 	} else if (ret == 1) {
 		shell_print(sh, "%s: rebooting into it%s", argv[1],
 			    (usb_profile & MULTIAPP_USB_MSC) != 0U
@@ -572,12 +824,42 @@ static int cmd_info(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "host %s, build %02x%02x%02x%02x", APP_VERSION_STRING, build_id[0],
 		    build_id[1], build_id[2], build_id[3]);
 	if (main_size != 0U) {
-		shell_print(sh, "host main: %zu of %zu bytes of stack used", main_used, main_size);
+		shell_print(sh, "host main: %zu of %zu bytes of stack used, USB started on CPU %d",
+			    main_used, main_size, main_cpu);
 	}
 	if (boot_name[0] != '\0') {
-		shell_print(sh, "boot: %s, start %d, USB profile 0x%x", boot_name, boot_ret,
-			    usb_profile);
+		shell_print(sh, "boot: %s, start %d, USB profile 0x%x, modules %u ms, app %u ms",
+			    boot_name, boot_ret, usb_profile, modules_ms, app_ms);
 	}
+	for (size_t i = 0; i < module_count; i++) {
+		const struct llext *ext = modules[i].ext;
+
+		shell_print(sh, "module %s (%s): text %zu at %p, fast %zu at %p, data %zu at %p, "
+			    "bss %zu at %p, rodata %zu",
+			    modules[i].def->name, modules[i].source,
+			    ext->mem_size[LLEXT_MEM_TEXT],
+			    (void *)((uintptr_t)ext->mem[LLEXT_MEM_TEXT] +
+				     ext->mem_exec_offset[LLEXT_MEM_TEXT]),
+			    ext->mem_size[LLEXT_MEM_TEXT_ALT],
+			    (void *)((uintptr_t)ext->mem[LLEXT_MEM_TEXT_ALT] +
+				     ext->mem_exec_offset[LLEXT_MEM_TEXT_ALT]),
+			    ext->mem_size[LLEXT_MEM_DATA], ext->mem[LLEXT_MEM_DATA],
+			    ext->mem_size[LLEXT_MEM_BSS], ext->mem[LLEXT_MEM_BSS],
+			    ext->mem_size[LLEXT_MEM_RODATA]);
+	}
+#if defined(CONFIG_SYS_HEAP_RUNTIME_STATS)
+	struct sys_memory_stats heap_stats;
+
+	if (sys_heap_runtime_stats_get(&module_heap.heap, &heap_stats) == 0) {
+		shell_print(sh, "module heap: %zu of %zu bytes used", heap_stats.allocated_bytes,
+			    heap_stats.allocated_bytes + heap_stats.free_bytes);
+	}
+	if (sys_heap_runtime_stats_get(&module_high_heap.heap, &heap_stats) == 0) {
+		shell_print(sh, "module high heap: %zu of %zu bytes used",
+			    heap_stats.allocated_bytes,
+			    heap_stats.allocated_bytes + heap_stats.free_bytes);
+	}
+#endif
 	if (loaded == NULL) {
 		shell_print(sh, "no app loaded");
 		return 0;

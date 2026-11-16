@@ -20,9 +20,6 @@ EXEMPT = {
     # They try the loader with IRAM_ATTR code itself.
     "apps/multiapp/ext/hello.c",
     "apps/multiapp/ext/hellofast.c",
-    # multiapp's loader and drive still place their buffers themselves.
-    "apps/multiapp/src/apps.c",
-    "apps/multiapp/src/drive.c",
 }
 # Unit tests build for the host (native_sim), where no region exists.
 EXEMPT_DIRS = ("tests/unit/",)
