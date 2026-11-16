@@ -212,6 +212,9 @@ Building and flashing
    west build -b why2025_badge/esp32c6/hpcore esp-sdr-zephyr/apps/osmosdr_serial
    west flash --esp-device /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_<mac>-if00
 
+The WHY2025 badge's C6 reaches its USB port only while the P4 hands it over: ``west dfu --c6``
+with ``apps/micropython`` on the P4, or as ``apps/osmosdr_bridge`` describes.
+
 The C6's other apps in the flash
 ================================
 
@@ -224,7 +227,7 @@ extensions, so this replaces :ref:`multiapp <esp_sdr_multiapp>` on it (``doc/mul
 
    west build --sysbuild -b why2025_badge/esp32c6/hpcore -d build-c6 \
        esp-sdr-zephyr/apps/osmosdr_serial -- -DSB_EXTRA_CONF_FILE=c6apps/sysbuild.conf
-   west dfu --c6 -d build-c6 --c6-time 120
+   west dfu --c6 -d build-c6 --c6-time 120    # with apps/micropython on the P4
    west dfu --c6-run wpan --c6-time 300       # its console on J8 for 300 s
    west dfu --c6-run osmosdr_serial           # back to the SDR
 

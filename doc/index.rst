@@ -34,6 +34,7 @@ The API reference of the library is generated with Doxygen:
    apps/rfprobe
    apps/ubertooth
    apps/multiapp
+   apps/micropython
    apps/chancap
    apps/mch2022_coproc
 

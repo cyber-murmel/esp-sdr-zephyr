@@ -113,7 +113,7 @@ little endian:
      - wValue 0: a measured crystal error (``struct esdr_cal_meas``), a point of the
        temperature model; 1: a constant in ppb (4 bytes signed); 2: none; 3: a whole record
        (``struct esdr_cal_rec``, as ``GET_CAL`` gave it). Applied from the next tuning, stored
-       where the device has a store. The serial transport takes it;
+       where the device has a store. The serial transport and the MicroPython radios take it;
        this app answers ``GET_CAL`` only
    * - ``GET_RATES`` (0x1c, in)
      - the receive rates in Hz, 4 bytes each, fastest first, the reply's length giving their

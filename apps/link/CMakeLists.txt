@@ -14,6 +14,6 @@ target_compile_definitions(app PRIVATE ESP_SDR_PLACE_SCOPE=link)
 target_compile_definitions(app PRIVATE QAM_SPS=${CONFIG_APP_SPS})
 
 if(CONFIG_APP_OFDM_ESP_DSP)
-  link_esp_dsp_fft(esp_dsp_fft)
+  esp_dsp_s3_fft(esp_dsp_fft)
   target_sources(app PRIVATE ${esp_dsp_fft})
 endif()

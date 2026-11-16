@@ -117,7 +117,7 @@ Lookup: the file's pin, the scope's pin, the pin, the scope's rule, the rule.
 The SoC headers hold the categories as the code was placed before them. Where a function or buffer
 sat elsewhere than its category says, a pin marked "as before" keeps it there: the receive sinks
 that run per sample from flash, the transmit DAC's player, Ubertooth's per-poll chain in IRAM, the
-link's OFDM, QAM and BCH split. Each such pin is a candidate for a
+link's OFDM, QAM and BCH split, MicroPython's PSRAM stacks. Each such pin is a candidate for a
 measured change.
 
 ## Proving that nothing moved

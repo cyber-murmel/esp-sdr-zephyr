@@ -33,6 +33,23 @@ def run_main(monkeypatch):
 
 
 @pytest.fixture(scope="session")
+def wf_clib(tmp_path_factory):
+    """The waterfall's picture as the board draws it (apps/micropython/cmod/esdr_wf.c), built once
+    with the host compiler; None without a compiler."""
+    cc = shutil.which("cc") or shutil.which("gcc")
+    if cc is None:
+        return None
+    out = tmp_path_factory.mktemp("wf") / "libesdr_wf.so"
+    src = REPO / "apps/micropython/cmod/esdr_wf.c"
+    subprocess.run([cc, "-O2", "-Wall", "-Wextra", "-Werror", "-shared", "-fPIC", "-o", str(out),
+                    str(src)], check=True)
+    lib = ctypes.CDLL(str(out))
+    lib.esdr_wf_compose.restype = None
+    lib.esdr_wf_compose.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p]
+    return lib
+
+
+@pytest.fixture(scope="session")
 def hb_clib(tmp_path_factory):
     """A burst's half-band filter as the board runs it (apps/micropython/cmod/esdr_hb.c), built
     once with the host compiler; None without a compiler."""

@@ -71,7 +71,7 @@ RF out`"]
   not touch samples until `esp_sdr_rx_capture_iq()` reads that bank after the burst completes,
   or `esp_sdr_rx_capture_decimated()` / `_folded()` (`CONFIG_ESP_SDR_RX_DECIM`), selected per burst
   by `rx_mode`. `esp_sdr_rx_capture_with()` hands the raw words to the caller's function, still
-  under the lock.
+  under the lock (the S31 MicroPython's stream decimator).
 - TX: the network thread writes samples into a PSRAM ring (`esp_sdr_tx_dac.c`). The leading
   filler stages each block's input in internal RAM, interpolates it (S3 vector unit, or the C
   fallback split across both cores) into the idle one of two 64 KiB dump banks, and flips the

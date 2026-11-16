@@ -1,0 +1,36 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * The XIAO ESP32S3 with the peripherals of xiao_esp32s3_periph.dtsi, plus the internal FAT volume
+ * "FLASH".
+ */
+
+#include "xiao_esp32s3_periph.dtsi"
+
+/ {
+	chosen {
+		zephyr,console = &cdc_acm_uart0;
+		zephyr,shell-uart = &cdc_acm_uart0;
+	};
+
+	/* The scripts' volume, block device "FLASH" (as in apps/multiapp). */
+	fat_disk: fat_disk {
+		compatible = "zephyr,flash-disk";
+		partition = <&fat_partition>;
+		disk-name = "FLASH";
+		cache-size = <4096>;
+	};
+};
+
+zephyr_udc0: &usb_otg {
+	status = "okay";
+
+	/* The REPL's console while OTG owns the USB port. */
+	cdc_acm_uart0: cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+		label = "ESP-SDR MicroPython REPL";
+	};
+};
+
+/* 1792 KiB slots and the FAT volume in the upper 4 MB. */
+#include "partitions.dtsi"

@@ -1,0 +1,881 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * The esdr module: the radio for the gnuradio shim, and the board.
+ *
+ *   init()                     radio up, engine thread started (Wi-Fi must have started)
+ *   tune(hz, offset=True)      LO as whole MHz plus a kHz PLL offset; with offset the LO sits
+ *                              4 MHz below and the ring mixes the band down. Returns the
+ *                              centre actually tuned (within 500 Hz). One retune (3 to 4 ms)
+ *                              where the kHz stay, two where they change.
+ *   rx_gain([index])           set (-1: automatic) or read the receive gain index
+ *   rx_gain_max()
+ *   rx_bandwidth(hz)           receive filter, 0: the PHY's own setting
+ *   RATES                      the continuous rates, 16 MS/s / 32 .. 1024
+ *   PACKET_RATES, PACKET_FULL_SCALE
+ *                              4 and 2 MS/s where the firmware has the ring's decimation by 4:
+ *                              every 4th pair of the 16 MS/s ring, no filter (what folds in is
+ *                              noise and signals 4 MHz apart), at 2 MS/s two of them averaged;
+ *                              for packet captures (eggs/pcap); full scale 8192; offset=True
+ *                              only
+ *   BURST_RATES                80, 40, 16 MS/s: rx_start() takes single-bank bursts at
+ *                              these, contiguous within a burst only (16380 samples)
+ *   rx_start(rate, buf=None, count=0, offset=True, monitor=False, wrap=False)
+ *                              capture into buf (int16 I, Q interleaved) or only count;
+ *                              count 0: until rx_stop() or the buffer is full; monitor
+ *                              keeps the latest samples for rx_latest() (displays); wrap:
+ *                              buf is a ring, sample k at k % its length, until rx_stop()
+ *   rx_wait([timeout_ms]) -> done, rx_stop(), rx_busy(), rx_stats() -> dict
+ *                              samples, runs, errors, gaps, gap_samples, last_status,
+ *                              last_detail; the ring run's units, abandoned, lost_pairs,
+ *                              late_max, slice_max, stalls, cycles_x100 (esdr_rx.h)
+ *   rx_count() -> int          samples the capture has stored so far
+ *   fsk_rx_init(), fsk_rx(), fsk_rx_reset(), fsk_rx_state(), fsk_mod()
+ *                              the packet modem (esdr_link.c)
+ *   pcap_new(), pcap_tune(), pcap_feed(), pcap_flush(), pcap_stats(), pcapng_head(),
+ *   pcapng_epb()               the Pcap app's packet capture and pcapng (esdr_pcap.c), with
+ *                              PACKET_RATES only
+ *   sc16_to_fc32(src, dst, scale)  int16 pairs to float32 pairs times scale
+ *   tx_start(rate, hz, gain, buf=None, repeat=False, count=0, scale=1.0, gen=None) -> centre
+ *                              transmit buf (int16 I, Q) or the generator gen = (wave, cycles
+ *                              per sample, amp, dc_i, dc_q) at rate (divides 40 MS/s)
+ *   tx_loop(rate, hz, gain, buf=None, interp=1, scale=1.0, gen=None) -> centre
+ *                              loop one period of gen or buf at the DAC rate (40 or 80 MS/s)
+ *   tx_period(cycles) -> (k, n)  the loop's whole cycles k in n samples
+ *   channel_bw(mode)           PHY channel bandwidth for the next tuning: 0 20 MHz, 2 40 MHz
+ *   tx_lpf(a, b)               transmit low-pass codes, 0 widest, -1 the PHY's
+ *   tx_gen(...), tx_scale(s)   change the generator or the buffer scale while transmitting
+ *   tx_wait([timeout_ms]) -> done, tx_stop(), tx_busy(), tx_stats() -> dict, tx_gain_max()
+ *   fc32_to_sc16(src, dst, scale)  float32 pairs times scale to clipped int16 pairs
+ *   shell(cmd) -> str          a Zephyr shell command (usj, mcuboot confirm, ...)
+ *   stretch(src, dst)          src's floats over dst's entries (screen columns)
+ *   scan_hop(src, segs, recent, maxh, avg, floor, alpha, rise=1.0, corr=None, frames=0,
+ *            clip_max=-1) -> (clipped, peak_max, floor_mean)
+ *                              the Scan app's hop: a burst's spectrum (frames of 256,
+ *                              Blackman-Harris, fixed point, esdr_scan.c) folded into the
+ *                              panorama's arrays along segs (esdr_gui.c)
+ *   scan_start(src, frames=0) -> bool, scan_wait(src=None)
+ *                              src's spectrum on the second CPU while the first tunes on
+ *                              (scan_hop() of the same src folds it; False: no second CPU,
+ *                              scan_hop() makes it); wait until the worker is done with src
+ *                              (any, without one) before capturing into it again. A
+ *                              continuous capture on the second CPU holds it until it stops
+ *   scan_q8(src, dst)          dB floats to bytes in 0.5 dB steps (a history row)
+ *   RADIO                      "esp32s3"
+ *   claim(mnt), release(mnt)   take a volume ("/FLASH:", "/SD:") from the USB host for
+ *                              writing, give it back (src/usb_disks.h)
+ *   sd_info() -> dict           what the SD stack negotiated with the card (ENODEV: no slot)
+ *   display_size() -> (w, h)    the display LVGL draws on, (0, 0) without one
+ *   reset_reason() -> str      why the chip last started (power-on, brownout, watchdogs)
+ *   crash() -> dict or None    what ended the previous boot (fatal error, watchdog, double
+ *                              exception)
+ *   next_app([path]) -> str    the app main.py starts after the next soft reset (launcher.py);
+ *                              without an argument returns it and forgets it
+ *   home() -> bool             whether the knob was held for the launcher since the last call
+ *   shift() -> bool            whether a keyboard's Shift key is held (no keyboard: never)
+ */
+
+#include <errno.h>
+#include <math.h>
+#include <string.h>
+
+#include <zephyr/devicetree.h>
+#include <zephyr/input/input.h>
+#include <zephyr/kernel.h>
+#include <zephyr/sys/atomic.h>
+#include <zephyr/sys/reboot.h>
+
+#include <esp_system.h>
+#include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_place.h>
+#include <esp_sdr/esp_sdr_ring.h>
+#include <esp_sdr/esp_sdr_rx.h>
+
+#ifdef CONFIG_LVGL
+#include <lvgl.h>
+#endif
+
+#include "py/cstack.h"
+#include "py/gc.h"
+#include "py/mphal.h"
+#include "py/nlr.h"
+#include "py/obj.h"
+#include "py/runtime.h"
+#include "shared/runtime/interrupt_char.h"
+
+#include "esdr_board.h"
+#include "esdr_defs.h"
+#include "esdr_gui.h"
+#ifdef CONFIG_ESP_SDR_RING_BOX4
+#include "esdr_pcap.h"
+#endif
+#include "usb_disks.h"
+#include "esdr_rx.h"
+#include "esdr_tx.h"
+
+#define OFFSET_HZ (ESP_SDR_RING_RATE_HZ / 4U)
+
+/* The capture buffer, kept alive while the engine writes into it. */
+MP_REGISTER_ROOT_POINTER(mp_obj_t esdr_rx_buf);
+/* The transmit buffer, read by the feeder thread while it plays. */
+MP_REGISTER_ROOT_POINTER(mp_obj_t esdr_tx_buf);
+
+/*
+ * ---- heap, added at every (soft) start ----
+ *
+ * The port's own heap (MICROPY_HEAP_SIZE) is a token: DRAM ends at the ring banks. The next
+ * blocks are internal RAM above the capture bank, the bulk is PSRAM. LVGL allocates from this
+ * heap too (CONFIG_LV_Z_MEM_POOL_MICROPYTHON), its state hangs off a GC root.
+ */
+
+#define FAST_HEAP_SIZE 3072
+
+ESP_SDR_BUF_DEFINE(STATE, uint8_t, fast_heap, [FAST_HEAP_SIZE], 16, NOINIT);
+static ESP_SDR_DATA(BULK, psram_heap) uint8_t
+	psram_heap[CONFIG_APP_MP_PSRAM_HEAP_KB * 1024] __aligned(16);
+
+void esdr_port_init(void)
+{
+	/* The port sized its stack check for the main thread; MicroPython runs in its own (boot.c). */
+	const struct k_thread *self = k_current_get();
+
+	mp_cstack_init_with_top((void *)(self->stack_info.start + self->stack_info.size),
+				self->stack_info.size);
+	gc_add(fast_heap, fast_heap + sizeof(fast_heap));
+	gc_add(psram_heap, psram_heap + sizeof(psram_heap));
+	MP_STATE_PORT(esdr_rx_buf) = MP_OBJ_NULL;
+	MP_STATE_PORT(esdr_tx_buf) = MP_OBJ_NULL;
+	esdr_board_init();
+}
+
+void esdr_port_deinit(void)
+{
+	/* The heap goes next: nothing may write into it any more. */
+#if defined(CONFIG_ESP_SDR_RING_BOX4) && defined(CONFIG_ESP_SDR_RING_STAGE)
+	esdr_pcap_deinit();
+#endif
+	esdr_rx_stop();
+	(void)esdr_rx_wait(-1);
+	MP_STATE_PORT(esdr_rx_buf) = MP_OBJ_NULL;
+	/* After the capture: a ring run on CPU 1 holds the Scan app's worker until it stops. */
+	esdr_scan_deinit();
+	esdr_tx_loop_stop();
+	esdr_tx_stop();
+	(void)esdr_tx_wait(3000);
+	MP_STATE_PORT(esdr_tx_buf) = MP_OBJ_NULL;
+	/* An app that ends leaves the radio as esdr.init() found it: the next starts afresh. */
+	(void)esp_sdr_reset_settings();
+#ifdef CONFIG_LVGL
+	/*
+	 * LVGL's state, displays and draw buffers included, was in the heap, which the port has
+	 * swept already (lv_deinit() would walk freed blocks). Forget it: the binding's roots and
+	 * flags reset, the next import and ZDD.init() build LVGL afresh.
+	 */
+	mp_lv_deinit_gc();
+#endif
+}
+
+/* ---- helpers ---- */
+
+static void check_idle(void)
+{
+	if (esdr_rx_busy() || esdr_tx_busy()) {
+		mp_raise_OSError(EBUSY);
+	}
+}
+
+/*
+ * PACKET_RATES: the ring's every 4th pair (ESP_SDR_RING_DECIM_BOX4, esdr_rx.c subsamples), and
+ * those averaged in pairs (ESDR_RX_DECIM_HALF4).
+ */
+#ifdef CONFIG_ESP_SDR_RING_BOX4
+#define PACKET_RATE_HZ (ESP_SDR_RING_RATE_HZ / ESP_SDR_RING_DECIM_BOX4)
+#define PACKET_HALF_HZ (ESP_SDR_RING_RATE_HZ / ESDR_RX_DECIM_HALF4)
+#endif
+
+/* The native rate (enum esp_sdr_rate) of a BURST_RATES entry, else -1. */
+static int rate_native(mp_obj_t rate_in)
+{
+	static const int natives[] = {ESP_SDR_RATE_80MSPS, ESP_SDR_RATE_40MSPS, ESP_SDR_RATE_16MSPS};
+	mp_float_t rate = mp_obj_get_float(rate_in);
+
+	for (size_t k = 0; k < ARRAY_SIZE(natives); k++) {
+		if (fabsf((float)rate - (float)esp_sdr_rx_rate_hz(natives[k])) < 0.5f) {
+			return natives[k];
+		}
+	}
+	return -1;
+}
+
+static unsigned int rate_decim(mp_obj_t rate_in)
+{
+	mp_float_t rate = mp_obj_get_float(rate_in);
+
+	for (unsigned int d = ESP_SDR_RING_DECIM_MIN; d <= ESP_SDR_RING_DECIM_MAX; d *= 2U) {
+		if (fabsf((float)rate - (float)(ESP_SDR_RING_RATE_HZ / d)) < 0.5f) {
+			return d;
+		}
+	}
+#ifdef PACKET_RATE_HZ
+	if (fabsf((float)rate - (float)PACKET_RATE_HZ) < 0.5f) {
+		return ESP_SDR_RING_DECIM_BOX4;
+	}
+	if (fabsf((float)rate - (float)PACKET_HALF_HZ) < 0.5f) {
+		return ESDR_RX_DECIM_HALF4;
+	}
+#endif
+	mp_raise_ValueError(MP_ERROR_TEXT("rate not in esdr.RATES"));
+}
+
+/* ---- radio ---- */
+
+static mp_obj_t esdr_init(void)
+{
+	esdr_check(esdr_rx_init());
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(esdr_init_obj, esdr_init);
+
+static mp_obj_t esdr_tune(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args)
+{
+	enum { ARG_hz, ARG_offset };
+	static const mp_arg_t allowed[] = {
+		{MP_QSTR_hz, MP_ARG_REQUIRED | MP_ARG_OBJ, {.u_obj = MP_OBJ_NULL}},
+		{MP_QSTR_offset, MP_ARG_BOOL, {.u_bool = true}},
+	};
+	mp_arg_val_t args[MP_ARRAY_SIZE(allowed)];
+
+	mp_arg_parse_all(n_args, pos_args, kw_args, MP_ARRAY_SIZE(allowed), allowed, args);
+	check_idle();
+
+	double hz = mp_obj_get_float(args[ARG_hz].u_obj);
+	double lo = hz - (args[ARG_offset].u_bool ? (double)OFFSET_HZ : 0.0);
+
+	if (lo < ESP_SDR_FREQ_MIN_MHZ * 1e6 - 0.5e6 || lo > ESP_SDR_FREQ_MAX_MHZ * 1e6 + 0.5e6) {
+		mp_raise_ValueError(MP_ERROR_TEXT("frequency out of range"));
+	}
+
+	uint32_t mhz;
+	int32_t khz;
+
+	esdr_split_hz(lo, &mhz, &khz);
+
+	esdr_check(esp_sdr_set_freq(mhz));
+	/* The offset rides along with the new MHz: a second retune (3 ms) only when it changes. */
+	if (khz != esp_sdr_get_freq_offset()) {
+		esdr_check(esp_sdr_set_freq_offset(khz));
+	}
+	return mp_obj_new_float((mp_float_t)((double)mhz * 1e6 + (double)khz * 1e3 +
+					     (args[ARG_offset].u_bool ? (double)OFFSET_HZ : 0.0)));
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(esdr_tune_obj, 1, esdr_tune);
+
+static mp_obj_t esdr_rx_gain(size_t n_args, const mp_obj_t *args)
+{
+	if (n_args == 0) {
+		return mp_obj_new_int(esp_sdr_rx_get_gain());
+	}
+	check_idle();
+	mp_int_t index = mp_obj_get_int(args[0]);
+
+	esdr_check(esp_sdr_rx_set_gain(index < 0 ? ESP_SDR_RX_GAIN_AUTO : (int)index));
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_rx_gain_obj, 0, 1, esdr_rx_gain);
+
+static mp_obj_t esdr_rx_gain_max(void)
+{
+	return mp_obj_new_int(esp_sdr_rx_gain_max());
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(esdr_rx_gain_max_obj, esdr_rx_gain_max);
+
+static mp_obj_t esdr_rx_bandwidth(mp_obj_t hz_in)
+{
+	mp_float_t hz = mp_obj_get_float(hz_in);
+
+	check_idle();
+	if (hz <= 0) {
+		esdr_check(esp_sdr_rx_set_lpf(ESP_SDR_RX_LPF_AUTO));
+	} else {
+		uint32_t lo, hi;
+		uint32_t mhz = (uint32_t)ceilf((float)hz / 1e6f);
+
+		esp_sdr_rx_bandwidth_range(&lo, &hi);
+		esdr_check(esp_sdr_rx_set_bandwidth(CLAMP(mhz, lo, hi)));
+	}
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(esdr_rx_bandwidth_obj, esdr_rx_bandwidth);
+
+/* ---- receive ---- */
+
+static mp_obj_t esdr_rx_start_fn(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args)
+{
+	enum { ARG_rate, ARG_buf, ARG_count, ARG_offset, ARG_monitor, ARG_wrap };
+	static const mp_arg_t allowed[] = {
+		{MP_QSTR_rate, MP_ARG_REQUIRED | MP_ARG_OBJ, {.u_obj = MP_OBJ_NULL}},
+		{MP_QSTR_buf, MP_ARG_OBJ, {.u_obj = mp_const_none}},
+		{MP_QSTR_count, MP_ARG_INT, {.u_int = 0}},
+		{MP_QSTR_offset, MP_ARG_KW_ONLY | MP_ARG_BOOL, {.u_bool = true}},
+		{MP_QSTR_monitor, MP_ARG_KW_ONLY | MP_ARG_BOOL, {.u_bool = false}},
+		{MP_QSTR_wrap, MP_ARG_KW_ONLY | MP_ARG_BOOL, {.u_bool = false}},
+	};
+	mp_arg_val_t args[MP_ARRAY_SIZE(allowed)];
+	int16_t *buf = NULL;
+	size_t cap = 0;
+
+	mp_arg_parse_all(n_args, pos_args, kw_args, MP_ARRAY_SIZE(allowed), allowed, args);
+	int native = rate_native(args[ARG_rate].u_obj);
+	unsigned int decim = native >= 0 ? 0U : rate_decim(args[ARG_rate].u_obj);
+
+	if (args[ARG_count].u_int < 0) {
+		mp_raise_ValueError(MP_ERROR_TEXT("count < 0"));
+	}
+	if (args[ARG_buf].u_obj != mp_const_none) {
+		mp_buffer_info_t bi;
+
+		mp_get_buffer_raise(args[ARG_buf].u_obj, &bi, MP_BUFFER_WRITE);
+		if (((uintptr_t)bi.buf & 1U) != 0U || bi.len < 4) {
+			mp_raise_ValueError(MP_ERROR_TEXT("buf: 16-bit aligned, one sample at least"));
+		}
+		buf = bi.buf;
+		cap = bi.len / 4U;
+	}
+	if (esdr_tx_busy()) {
+		mp_raise_OSError(EBUSY);
+	}
+	if (native >= 0) {
+		if (args[ARG_wrap].u_bool) {
+			mp_raise_ValueError(MP_ERROR_TEXT("wrap: the continuous rates only"));
+		}
+		esdr_check(esdr_rx_start_burst(native, buf, cap, (uint64_t)args[ARG_count].u_int,
+					       args[ARG_monitor].u_bool));
+		MP_STATE_PORT(esdr_rx_buf) = args[ARG_buf].u_obj;
+		return mp_const_none;
+	}
+	if ((decim == ESP_SDR_RING_DECIM_BOX4 || decim == ESDR_RX_DECIM_HALF4) &&
+	    !args[ARG_offset].u_bool) {
+		mp_raise_ValueError(MP_ERROR_TEXT("PACKET_RATES: offset=True only"));
+	}
+	esdr_check(esdr_rx_start(decim, args[ARG_offset].u_bool, buf, cap,
+				 (uint64_t)args[ARG_count].u_int, args[ARG_monitor].u_bool,
+				 args[ARG_wrap].u_bool));
+	MP_STATE_PORT(esdr_rx_buf) = args[ARG_buf].u_obj;
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(esdr_rx_start_obj, 1, esdr_rx_start_fn);
+
+static mp_obj_t esdr_rx_stop_fn(void)
+{
+	esdr_rx_stop();
+	(void)esdr_rx_wait(-1);
+	MP_STATE_PORT(esdr_rx_buf) = MP_OBJ_NULL;
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(esdr_rx_stop_obj, esdr_rx_stop_fn);
+
+static mp_obj_t esdr_rx_count_fn(void)
+{
+	return mp_obj_new_int_from_ull(esdr_rx_count());
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(esdr_rx_count_obj, esdr_rx_count_fn);
+
+static mp_obj_t esdr_rx_busy_fn(void)
+{
+	return mp_obj_new_bool(esdr_rx_busy());
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(esdr_rx_busy_obj, esdr_rx_busy_fn);
+
+/* Waits in short slices so that Ctrl-C and scheduled callbacks run; on an exception the
+ * capture is stopped before it propagates. */
+static mp_obj_t esdr_rx_wait_fn(size_t n_args, const mp_obj_t *args)
+{
+	mp_int_t timeout = n_args > 0 ? mp_obj_get_int(args[0]) : -1;
+	mp_uint_t t0 = mp_hal_ticks_ms();
+	bool done = false;
+	nlr_buf_t nlr;
+
+	if (nlr_push(&nlr) == 0) {
+		for (;;) {
+			/* Woken as the capture ends; no later than the timeout. */
+			mp_int_t left = timeout - (mp_int_t)(mp_hal_ticks_ms() - t0);
+
+			done = esdr_rx_wait(timeout < 0 ? 20 : CLAMP(left, 0, 20));
+			if (done || (timeout >= 0 && mp_hal_ticks_ms() - t0 >= (mp_uint_t)timeout)) {
+				break;
+			}
+			mp_handle_pending(true);
+		}
+		nlr_pop();
+	} else {
+		esdr_rx_stop();
+		(void)esdr_rx_wait(-1);
+		MP_STATE_PORT(esdr_rx_buf) = MP_OBJ_NULL;
+		nlr_jump(nlr.ret_val);
+	}
+	if (done) {
+		MP_STATE_PORT(esdr_rx_buf) = MP_OBJ_NULL;
+	}
+	return mp_obj_new_bool(done);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_rx_wait_obj, 0, 1, esdr_rx_wait_fn);
+
+static mp_obj_t esdr_rx_stats_fn(void)
+{
+	struct esdr_rx_stats s;
+	mp_obj_t d = mp_obj_new_dict(14);
+
+	esdr_rx_get_stats(&s);
+#define PUT(name, val) mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_##name), (val))
+	PUT(samples, mp_obj_new_int_from_ull(s.samples));
+	PUT(runs, mp_obj_new_int_from_uint(s.runs));
+	PUT(errors, mp_obj_new_int_from_uint(s.errors));
+	PUT(gaps, mp_obj_new_int_from_uint(s.gaps));
+	PUT(gap_samples, mp_obj_new_int_from_ull(s.gap_samples));
+	PUT(last_status, mp_obj_new_int(s.last_status));
+	PUT(last_detail, mp_obj_new_int_from_uint(s.last_detail));
+	PUT(units, mp_obj_new_int_from_uint(s.units));
+	PUT(abandoned, mp_obj_new_int_from_uint(s.abandoned));
+	PUT(lost_pairs, mp_obj_new_int_from_uint(s.lost_pairs));
+	PUT(late_max, mp_obj_new_int_from_uint(s.late_max));
+	PUT(slice_max, mp_obj_new_int_from_uint(s.slice_max));
+	PUT(stalls, mp_obj_new_int_from_uint(s.stalls));
+	PUT(cycles_x100, mp_obj_new_int_from_uint(s.cycles_x100));
+#undef PUT
+	return d;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(esdr_rx_stats_obj, esdr_rx_stats_fn);
+
+/* ---- transmit ---- */
+
+/* tx_start(rate, hz, gain, buf=None, repeat=False, count=0, scale=1.0, gen=None) -> centre
+ * Transmits from the generator gen = (wave, cycles per sample, amp, dc_i, dc_q), or plays buf
+ * (int16 I, Q). rate divides 40 MS/s. The centre is within 500 Hz of hz. */
+static mp_obj_t esdr_tx_start_fn(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args)
+{
+	enum { ARG_rate, ARG_hz, ARG_gain, ARG_buf, ARG_repeat, ARG_count, ARG_scale, ARG_gen };
+	static const mp_arg_t allowed[] = {
+		{MP_QSTR_rate, MP_ARG_REQUIRED | MP_ARG_INT, {.u_int = 0}},
+		{MP_QSTR_hz, MP_ARG_REQUIRED | MP_ARG_OBJ, {.u_obj = MP_OBJ_NULL}},
+		{MP_QSTR_gain, MP_ARG_REQUIRED | MP_ARG_INT, {.u_int = 0}},
+		{MP_QSTR_buf, MP_ARG_OBJ, {.u_obj = mp_const_none}},
+		{MP_QSTR_repeat, MP_ARG_BOOL, {.u_bool = false}},
+		{MP_QSTR_count, MP_ARG_INT, {.u_int = 0}},
+		{MP_QSTR_scale, MP_ARG_OBJ, {.u_obj = mp_const_none}},
+		{MP_QSTR_gen, MP_ARG_OBJ, {.u_obj = mp_const_none}},
+	};
+	mp_arg_val_t args[MP_ARRAY_SIZE(allowed)];
+	struct esdr_gen g = {ESDR_WAVE_COS, 0.0f, 0.0f, 0.0f, 0.0f};
+	const int16_t *buf = NULL;
+	size_t len = 0;
+
+	mp_arg_parse_all(n_args, pos_args, kw_args, MP_ARRAY_SIZE(allowed), allowed, args);
+	mp_int_t rate = args[ARG_rate].u_int;
+
+	if (rate < 2 || 40000000 % rate != 0 || 40000000 / rate < 2) {
+		mp_raise_ValueError(MP_ERROR_TEXT("rate: a divisor of 40 MS/s, at most 20 MS/s"));
+	}
+	if (args[ARG_count].u_int < 0) {
+		mp_raise_ValueError(MP_ERROR_TEXT("count < 0"));
+	}
+	double hz = mp_obj_get_float(args[ARG_hz].u_obj);
+
+	if (hz < ESP_SDR_FREQ_MIN_MHZ * 1e6 - 0.5e6 || hz > ESP_SDR_FREQ_MAX_MHZ * 1e6 + 0.5e6) {
+		mp_raise_ValueError(MP_ERROR_TEXT("frequency out of range"));
+	}
+	if (args[ARG_buf].u_obj != mp_const_none) {
+		mp_buffer_info_t bi;
+
+		mp_get_buffer_raise(args[ARG_buf].u_obj, &bi, MP_BUFFER_READ);
+		if (((uintptr_t)bi.buf & 1U) != 0U || bi.len < 4) {
+			mp_raise_ValueError(MP_ERROR_TEXT("buf: 16-bit aligned, one sample at least"));
+		}
+		buf = bi.buf;
+		len = bi.len / 4U;
+	} else if (args[ARG_gen].u_obj != mp_const_none) {
+		esdr_gen_from(&g, args[ARG_gen].u_obj);
+	}
+	uint32_t mhz;
+	int32_t khz;
+	float scale = args[ARG_scale].u_obj == mp_const_none ? 1.0f
+							      : (float)mp_obj_get_float(args[ARG_scale].u_obj);
+
+	esdr_split_hz(hz, &mhz, &khz);
+	if (esdr_rx_busy()) {
+		mp_raise_OSError(EBUSY);
+	}
+	esdr_check(esdr_tx_start(mhz, khz, (uint32_t)rate, args[ARG_gain].u_int, buf, len,
+				 args[ARG_repeat].u_bool, &g, scale,
+				 (uint64_t)args[ARG_count].u_int));
+	MP_STATE_PORT(esdr_tx_buf) = args[ARG_buf].u_obj;
+	return mp_obj_new_float((mp_float_t)((double)mhz * 1e6 + (double)khz * 1e3));
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(esdr_tx_start_obj, 3, esdr_tx_start_fn);
+
+/* channel_bw(mode): the PHY's channel bandwidth mode for the next tuning, 0 (20 MHz, the
+ * receiver's characterized setting) to 2 (40 MHz: the analog filters pass about +-18 MHz). */
+static mp_obj_t esdr_channel_bw_fn(mp_obj_t mode_in)
+{
+	check_idle();
+	esdr_check(esp_sdr_set_channel_bw((unsigned int)mp_obj_get_int(mode_in)));
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(esdr_channel_bw_obj, esdr_channel_bw_fn);
+
+/* tx_lpf(a, b): the transmit low-pass codes (experimental), 0 the widest, -1 the PHY's. */
+static mp_obj_t esdr_tx_lpf_fn(mp_obj_t a_in, mp_obj_t b_in)
+{
+	check_idle();
+	esdr_check(esp_sdr_tx_set_lpf(mp_obj_get_int(a_in), mp_obj_get_int(b_in)));
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_2(esdr_tx_lpf_obj, esdr_tx_lpf_fn);
+
+/* tx_loop(rate, hz, gain, buf=None, interp=1, scale=1.0, gen=None) -> centre
+ * Loop playback at the DAC rate (40 or 80 MS/s): one period of the generator gen (cycles per
+ * DAC sample) or buf (int16 I, Q) interpolated by interp, until tx_stop(). */
+static mp_obj_t esdr_tx_loop_fn(size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args)
+{
+	enum { ARG_rate, ARG_hz, ARG_gain, ARG_buf, ARG_interp, ARG_scale, ARG_gen };
+	static const mp_arg_t allowed[] = {
+		{MP_QSTR_rate, MP_ARG_REQUIRED | MP_ARG_INT, {.u_int = 0}},
+		{MP_QSTR_hz, MP_ARG_REQUIRED | MP_ARG_OBJ, {.u_obj = MP_OBJ_NULL}},
+		{MP_QSTR_gain, MP_ARG_REQUIRED | MP_ARG_INT, {.u_int = 0}},
+		{MP_QSTR_buf, MP_ARG_OBJ, {.u_obj = mp_const_none}},
+		{MP_QSTR_interp, MP_ARG_INT, {.u_int = 1}},
+		{MP_QSTR_scale, MP_ARG_OBJ, {.u_obj = mp_const_none}},
+		{MP_QSTR_gen, MP_ARG_OBJ, {.u_obj = mp_const_none}},
+	};
+	mp_arg_val_t args[MP_ARRAY_SIZE(allowed)];
+	struct esdr_gen g = {ESDR_WAVE_COS, 0.0f, 0.0f, 0.0f, 0.0f};
+	const int16_t *buf = NULL;
+	size_t len = 0;
+
+	mp_arg_parse_all(n_args, pos_args, kw_args, MP_ARRAY_SIZE(allowed), allowed, args);
+	mp_int_t rate = args[ARG_rate].u_int;
+
+	if (rate != 40000000 && rate != 80000000) {
+		mp_raise_ValueError(MP_ERROR_TEXT("rate: 40 or 80 MS/s"));
+	}
+	double hz = mp_obj_get_float(args[ARG_hz].u_obj);
+
+	if (hz < ESP_SDR_FREQ_MIN_MHZ * 1e6 - 0.5e6 || hz > ESP_SDR_FREQ_MAX_MHZ * 1e6 + 0.5e6) {
+		mp_raise_ValueError(MP_ERROR_TEXT("frequency out of range"));
+	}
+	if (args[ARG_buf].u_obj != mp_const_none) {
+		mp_buffer_info_t bi;
+
+		mp_get_buffer_raise(args[ARG_buf].u_obj, &bi, MP_BUFFER_READ);
+		if (((uintptr_t)bi.buf & 1U) != 0U || bi.len < 4) {
+			mp_raise_ValueError(MP_ERROR_TEXT("buf: 16-bit aligned, one sample at least"));
+		}
+		buf = bi.buf;
+		len = bi.len / 4U;
+	} else if (args[ARG_gen].u_obj != mp_const_none) {
+		esdr_gen_from(&g, args[ARG_gen].u_obj);
+	}
+	uint32_t mhz;
+	int32_t khz;
+	float scale = args[ARG_scale].u_obj == mp_const_none ? 1.0f
+							      : (float)mp_obj_get_float(args[ARG_scale].u_obj);
+
+	esdr_split_hz(hz, &mhz, &khz);
+	esdr_check(esdr_tx_loop_start(mhz, khz, (uint32_t)rate, args[ARG_gain].u_int, buf, len,
+				      (uint32_t)args[ARG_interp].u_int, &g, scale));
+	MP_STATE_PORT(esdr_tx_buf) = args[ARG_buf].u_obj;
+	return mp_obj_new_float((mp_float_t)((double)mhz * 1e6 + (double)khz * 1e3));
+}
+static MP_DEFINE_CONST_FUN_OBJ_KW(esdr_tx_loop_obj, 3, esdr_tx_loop_fn);
+
+/* tx_period(cycles) -> (k, n): the loop's k whole cycles in n samples for cycles per sample. */
+static mp_obj_t esdr_tx_period_fn(mp_obj_t cycles_in)
+{
+	int32_t k;
+	uint32_t n;
+	mp_obj_t t[2];
+
+	esdr_tx_period((float)mp_obj_get_float(cycles_in), &k, &n);
+	t[0] = mp_obj_new_int(k);
+	t[1] = mp_obj_new_int_from_uint(n);
+	return mp_obj_new_tuple(2, t);
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(esdr_tx_period_obj, esdr_tx_period_fn);
+
+/* tx_gen(wave, cycles, amp, dc_i, dc_q): the generator's new settings, also while running. */
+static mp_obj_t esdr_tx_gen_fn(size_t n_args, const mp_obj_t *args)
+{
+	struct esdr_gen g;
+	mp_obj_t t = mp_obj_new_tuple(n_args, args);
+
+	esdr_gen_from(&g, t);
+	esdr_tx_set_gen(&g);
+	if (esdr_tx_looping()) {
+		esdr_check(esdr_tx_loop_update());
+	}
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_tx_gen_obj, 5, 5, esdr_tx_gen_fn);
+
+static mp_obj_t esdr_tx_scale_fn(mp_obj_t scale_in)
+{
+	esdr_tx_set_scale((float)mp_obj_get_float(scale_in));
+	if (esdr_tx_looping()) {
+		esdr_check(esdr_tx_loop_update());
+	}
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(esdr_tx_scale_obj, esdr_tx_scale_fn);
+
+static mp_obj_t esdr_tx_stop_fn(void)
+{
+	esdr_tx_loop_stop();
+	esdr_tx_stop();
+	if (!esdr_tx_wait(3000)) {
+		mp_raise_OSError(ETIMEDOUT);
+	}
+	MP_STATE_PORT(esdr_tx_buf) = MP_OBJ_NULL;
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(esdr_tx_stop_obj, esdr_tx_stop_fn);
+
+static mp_obj_t esdr_tx_busy_fn(void)
+{
+	return mp_obj_new_bool(esdr_tx_busy());
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(esdr_tx_busy_obj, esdr_tx_busy_fn);
+
+/* As rx_wait(): in short slices, stopping the transmission on an exception. */
+static mp_obj_t esdr_tx_wait_fn(size_t n_args, const mp_obj_t *args)
+{
+	mp_int_t timeout = n_args > 0 ? mp_obj_get_int(args[0]) : -1;
+	mp_uint_t t0 = mp_hal_ticks_ms();
+	bool done = false;
+	nlr_buf_t nlr;
+
+	if (nlr_push(&nlr) == 0) {
+		for (;;) {
+			done = esdr_tx_wait(20);
+			if (done || (timeout >= 0 && mp_hal_ticks_ms() - t0 >= (mp_uint_t)timeout)) {
+				break;
+			}
+			mp_handle_pending(true);
+		}
+		nlr_pop();
+	} else {
+		esdr_tx_stop();
+		(void)esdr_tx_wait(-1);
+		MP_STATE_PORT(esdr_tx_buf) = MP_OBJ_NULL;
+		nlr_jump(nlr.ret_val);
+	}
+	if (done) {
+		MP_STATE_PORT(esdr_tx_buf) = MP_OBJ_NULL;
+	}
+	return mp_obj_new_bool(done);
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_tx_wait_obj, 0, 1, esdr_tx_wait_fn);
+
+static mp_obj_t esdr_tx_stats_fn(void)
+{
+	struct esdr_tx_stats s;
+	mp_obj_t d = mp_obj_new_dict(18);
+
+	esdr_tx_get_stats(&s);
+#define PUT(name, val) mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_##name), (val))
+	PUT(fed, mp_obj_new_int_from_ull(s.fed));
+	PUT(played, mp_obj_new_int_from_ull(s.played));
+	PUT(dropped, mp_obj_new_int_from_ull(s.dropped));
+	PUT(underruns, mp_obj_new_int_from_uint(s.underruns));
+	PUT(restarts, mp_obj_new_int_from_uint(s.restarts));
+	PUT(queued, mp_obj_new_int_from_uint(s.queued));
+	PUT(last_error, mp_obj_new_int(s.last_error));
+	PUT(errors, mp_obj_new_int_from_uint(s.errors));
+	PUT(switches, mp_obj_new_int_from_uint(s.switches));
+	PUT(fill_us_max, mp_obj_new_int_from_uint(s.fill_us_max));
+	PUT(wake_late_us_max, mp_obj_new_int_from_uint(s.wake_late_us_max));
+	PUT(idle_us_max, mp_obj_new_int_from_uint(s.idle_us_max));
+	PUT(switch_us_max, mp_obj_new_int_from_uint(s.switch_us_max));
+	PUT(slack_us_min, mp_obj_new_int(s.slack_us_min));
+	PUT(start_margin_us, mp_obj_new_int(s.start_margin_us));
+	PUT(simd, mp_obj_new_bool(s.simd));
+#undef PUT
+	return d;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(esdr_tx_stats_obj, esdr_tx_stats_fn);
+
+static mp_obj_t esdr_tx_gain_max_fn(void)
+{
+	return mp_obj_new_int(esp_sdr_tx_gain_max());
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(esdr_tx_gain_max_obj, esdr_tx_gain_max_fn);
+
+/* ---- board ---- */
+
+/* claim(mnt), release(mnt): take a volume ("/FLASH:", "/SD:") from the USB host before
+ * writing it, give it back once the files are closed (src/usb_disks.h). */
+static mp_obj_t esdr_claim(mp_obj_t mnt_in)
+{
+	esdr_check(usb_disk_claim(mp_obj_str_get_str(mnt_in)));
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(esdr_claim_obj, esdr_claim);
+
+static mp_obj_t esdr_release(mp_obj_t mnt_in)
+{
+	esdr_check(usb_disk_release(mp_obj_str_get_str(mnt_in)));
+	return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_1(esdr_release_obj, esdr_release);
+
+/* sd_info() -> dict: what the SD stack negotiated with the card (diagnostics). The sdmmc disk
+ * driver's data starts with its struct sd_card (drivers/disk/sdmmc_subsys.c). Boards without
+ * a card slot raise ENODEV. */
+#if DT_NODE_EXISTS(DT_NODELABEL(sd_spi))
+#include <zephyr/sd/sd.h>
+
+#define SD_DISK_NODE DT_CHILD(DT_NODELABEL(sd_spi), mmc)
+
+static mp_obj_t esdr_sd_info(void)
+{
+	const struct device *dev = DEVICE_DT_GET(SD_DISK_NODE);
+	const struct sd_card *c = dev->data;
+	mp_obj_t d = mp_obj_new_dict(10);
+
+#define PUT(name, val) mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_##name), (val))
+	PUT(high_capacity, mp_obj_new_bool((c->flags & SD_HIGH_CAPACITY_FLAG) != 0U));
+	PUT(type, mp_obj_new_int(c->type));
+	PUT(status, mp_obj_new_int(c->status));
+	PUT(sd_version, mp_obj_new_int(c->sd_version));
+	PUT(card_speed, mp_obj_new_int(c->card_speed));
+	PUT(ocr, mp_obj_new_int_from_uint(c->ocr));
+	PUT(block_size, mp_obj_new_int(c->block_size));
+	PUT(block_count, mp_obj_new_int_from_uint(c->block_count));
+	PUT(clock_hz, mp_obj_new_int_from_uint(c->bus_io.clock));
+	PUT(flags, mp_obj_new_int(c->flags));
+#undef PUT
+	return d;
+}
+#else
+static mp_obj_t esdr_sd_info(void)
+{
+	mp_raise_OSError(ENODEV);
+}
+#endif
+static MP_DEFINE_CONST_FUN_OBJ_0(esdr_sd_info_obj, esdr_sd_info);
+
+/* esdr_link.c */
+extern const mp_obj_fun_builtin_fixed_t esdr_fsk_rx_reset_obj, esdr_fsk_rx_state_obj;
+extern const mp_obj_fun_builtin_var_t esdr_fsk_rx_init_obj, esdr_fsk_rx_obj, esdr_fsk_mod_obj;
+
+/* esdr_gui.c */
+extern const mp_obj_fun_builtin_fixed_t esdr_rx_latest_obj, esdr_iq_cols_obj, esdr_stretch_obj,
+	esdr_scan_q8_obj;
+extern const mp_obj_fun_builtin_var_t esdr_psd_obj, esdr_fb_trace_obj, esdr_fb_wf_row_obj,
+	esdr_fb_scroll_obj, esdr_fb_wf_compose_obj, esdr_fb_points_obj, esdr_scan_hop_obj,
+	esdr_scan_start_obj, esdr_scan_wait_obj;
+
+#ifdef PACKET_RATE_HZ
+static const mp_rom_obj_tuple_t esdr_packet_rates_obj = {
+	{&mp_type_tuple}, 2, {MP_ROM_INT(PACKET_RATE_HZ), MP_ROM_INT(PACKET_HALF_HZ)}};
+#else
+static const mp_rom_obj_tuple_t esdr_packet_rates_obj = {{&mp_type_tuple}, 0, {}};
+#endif
+
+static const mp_rom_obj_tuple_t esdr_burst_rates_obj = {
+	{&mp_type_tuple},
+	3,
+	{
+		MP_ROM_INT(80000000),
+		MP_ROM_INT(40000000),
+		MP_ROM_INT(16000000),
+	},
+};
+
+static const mp_rom_obj_tuple_t esdr_rates_obj = {
+	{&mp_type_tuple},
+	6,
+	{
+		MP_ROM_INT(ESP_SDR_RING_RATE_HZ / 32U),
+		MP_ROM_INT(ESP_SDR_RING_RATE_HZ / 64U),
+		MP_ROM_INT(ESP_SDR_RING_RATE_HZ / 128U),
+		MP_ROM_INT(ESP_SDR_RING_RATE_HZ / 256U),
+		MP_ROM_INT(ESP_SDR_RING_RATE_HZ / 512U),
+		MP_ROM_INT(ESP_SDR_RING_RATE_HZ / 1024U),
+	},
+};
+
+static const mp_rom_map_elem_t esdr_globals_table[] = {
+	{MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_esdr)},
+	{MP_ROM_QSTR(MP_QSTR_init), MP_ROM_PTR(&esdr_init_obj)},
+	{MP_ROM_QSTR(MP_QSTR_tune), MP_ROM_PTR(&esdr_tune_obj)},
+	{MP_ROM_QSTR(MP_QSTR_tx_start), MP_ROM_PTR(&esdr_tx_start_obj)},
+	/* Plays sample buffers (an app's "needs"). */
+	{MP_ROM_QSTR(MP_QSTR_TX_BUFFERS), MP_ROM_INT(1)},
+	{MP_ROM_QSTR(MP_QSTR_tx_gen), MP_ROM_PTR(&esdr_tx_gen_obj)},
+	{MP_ROM_QSTR(MP_QSTR_tx_loop), MP_ROM_PTR(&esdr_tx_loop_obj)},
+	{MP_ROM_QSTR(MP_QSTR_channel_bw), MP_ROM_PTR(&esdr_channel_bw_obj)},
+	{MP_ROM_QSTR(MP_QSTR_tx_lpf), MP_ROM_PTR(&esdr_tx_lpf_obj)},
+	{MP_ROM_QSTR(MP_QSTR_tx_period), MP_ROM_PTR(&esdr_tx_period_obj)},
+	{MP_ROM_QSTR(MP_QSTR_tx_scale), MP_ROM_PTR(&esdr_tx_scale_obj)},
+	{MP_ROM_QSTR(MP_QSTR_tx_stop), MP_ROM_PTR(&esdr_tx_stop_obj)},
+	{MP_ROM_QSTR(MP_QSTR_tx_busy), MP_ROM_PTR(&esdr_tx_busy_obj)},
+	{MP_ROM_QSTR(MP_QSTR_tx_wait), MP_ROM_PTR(&esdr_tx_wait_obj)},
+	{MP_ROM_QSTR(MP_QSTR_tx_stats), MP_ROM_PTR(&esdr_tx_stats_obj)},
+	{MP_ROM_QSTR(MP_QSTR_tx_gain_max), MP_ROM_PTR(&esdr_tx_gain_max_obj)},
+	{MP_ROM_QSTR(MP_QSTR_fc32_to_sc16), MP_ROM_PTR(&esdr_fc32_to_sc16_obj)},
+	{MP_ROM_QSTR(MP_QSTR_rx_gain), MP_ROM_PTR(&esdr_rx_gain_obj)},
+	{MP_ROM_QSTR(MP_QSTR_rx_gain_max), MP_ROM_PTR(&esdr_rx_gain_max_obj)},
+	{MP_ROM_QSTR(MP_QSTR_rx_bandwidth), MP_ROM_PTR(&esdr_rx_bandwidth_obj)},
+	{MP_ROM_QSTR(MP_QSTR_rx_start), MP_ROM_PTR(&esdr_rx_start_obj)},
+	{MP_ROM_QSTR(MP_QSTR_rx_stop), MP_ROM_PTR(&esdr_rx_stop_obj)},
+	{MP_ROM_QSTR(MP_QSTR_rx_busy), MP_ROM_PTR(&esdr_rx_busy_obj)},
+	{MP_ROM_QSTR(MP_QSTR_rx_count), MP_ROM_PTR(&esdr_rx_count_obj)},
+	{MP_ROM_QSTR(MP_QSTR_fsk_rx_init), MP_ROM_PTR(&esdr_fsk_rx_init_obj)},
+	{MP_ROM_QSTR(MP_QSTR_fsk_rx), MP_ROM_PTR(&esdr_fsk_rx_obj)},
+	{MP_ROM_QSTR(MP_QSTR_fsk_rx_reset), MP_ROM_PTR(&esdr_fsk_rx_reset_obj)},
+	{MP_ROM_QSTR(MP_QSTR_fsk_rx_state), MP_ROM_PTR(&esdr_fsk_rx_state_obj)},
+	{MP_ROM_QSTR(MP_QSTR_fsk_mod), MP_ROM_PTR(&esdr_fsk_mod_obj)},
+#ifdef CONFIG_ESP_SDR_RING_BOX4
+	ESDR_PCAP_GLOBALS
+#endif
+	{MP_ROM_QSTR(MP_QSTR_rx_wait), MP_ROM_PTR(&esdr_rx_wait_obj)},
+	{MP_ROM_QSTR(MP_QSTR_rx_stats), MP_ROM_PTR(&esdr_rx_stats_obj)},
+	{MP_ROM_QSTR(MP_QSTR_sc16_to_fc32), MP_ROM_PTR(&esdr_sc16_to_fc32_obj)},
+	{MP_ROM_QSTR(MP_QSTR_shell), MP_ROM_PTR(&esdr_shell_obj)},
+	{MP_ROM_QSTR(MP_QSTR_crash), MP_ROM_PTR(&esdr_crash_obj)},
+	{MP_ROM_QSTR(MP_QSTR_reset_reason), MP_ROM_PTR(&esdr_reset_reason_obj)},
+	{MP_ROM_QSTR(MP_QSTR_next_app), MP_ROM_PTR(&esdr_next_app_obj)},
+	{MP_ROM_QSTR(MP_QSTR_home), MP_ROM_PTR(&esdr_home_obj)},
+	{MP_ROM_QSTR(MP_QSTR_shift), MP_ROM_PTR(&esdr_shift_obj)},
+	{MP_ROM_QSTR(MP_QSTR_sd_info), MP_ROM_PTR(&esdr_sd_info_obj)},
+	{MP_ROM_QSTR(MP_QSTR_display_size), MP_ROM_PTR(&esdr_display_size_obj)},
+	{MP_ROM_QSTR(MP_QSTR_claim), MP_ROM_PTR(&esdr_claim_obj)},
+	{MP_ROM_QSTR(MP_QSTR_release), MP_ROM_PTR(&esdr_release_obj)},
+	{MP_ROM_QSTR(MP_QSTR_rx_latest), MP_ROM_PTR(&esdr_rx_latest_obj)},
+	{MP_ROM_QSTR(MP_QSTR_psd), MP_ROM_PTR(&esdr_psd_obj)},
+	{MP_ROM_QSTR(MP_QSTR_stretch), MP_ROM_PTR(&esdr_stretch_obj)},
+	{MP_ROM_QSTR(MP_QSTR_scan_hop), MP_ROM_PTR(&esdr_scan_hop_obj)},
+	{MP_ROM_QSTR(MP_QSTR_scan_q8), MP_ROM_PTR(&esdr_scan_q8_obj)},
+	{MP_ROM_QSTR(MP_QSTR_scan_start), MP_ROM_PTR(&esdr_scan_start_obj)},
+	{MP_ROM_QSTR(MP_QSTR_scan_wait), MP_ROM_PTR(&esdr_scan_wait_obj)},
+	{MP_ROM_QSTR(MP_QSTR_RADIO), MP_ROM_QSTR(MP_QSTR_esp32s3)},
+	{MP_ROM_QSTR(MP_QSTR_iq_cols), MP_ROM_PTR(&esdr_iq_cols_obj)},
+	{MP_ROM_QSTR(MP_QSTR_fb_trace), MP_ROM_PTR(&esdr_fb_trace_obj)},
+	{MP_ROM_QSTR(MP_QSTR_fb_wf_row), MP_ROM_PTR(&esdr_fb_wf_row_obj)},
+	{MP_ROM_QSTR(MP_QSTR_fb_scroll), MP_ROM_PTR(&esdr_fb_scroll_obj)},
+	{MP_ROM_QSTR(MP_QSTR_fb_wf_compose), MP_ROM_PTR(&esdr_fb_wf_compose_obj)},
+	{MP_ROM_QSTR(MP_QSTR_fb_points), MP_ROM_PTR(&esdr_fb_points_obj)},
+	{MP_ROM_QSTR(MP_QSTR_RATES), MP_ROM_PTR(&esdr_rates_obj)},
+	{MP_ROM_QSTR(MP_QSTR_BURST_RATES), MP_ROM_PTR(&esdr_burst_rates_obj)},
+	{MP_ROM_QSTR(MP_QSTR_PACKET_RATES), MP_ROM_PTR(&esdr_packet_rates_obj)},
+	{MP_ROM_QSTR(MP_QSTR_PACKET_FULL_SCALE), MP_ROM_INT(ESP_SDR_RING_BOX4_FULL_SCALE)},
+	{MP_ROM_QSTR(MP_QSTR_FULL_SCALE), MP_ROM_INT(ESP_SDR_RING_FULL_SCALE)},
+	{MP_ROM_QSTR(MP_QSTR_MON_SAMPLES), MP_ROM_INT(ESDR_MON_SAMPLES)},
+};
+static MP_DEFINE_CONST_DICT(esdr_globals, esdr_globals_table);
+
+const mp_obj_module_t esdr_module = {
+	.base = {&mp_type_module},
+	.globals = (mp_obj_dict_t *)&esdr_globals,
+};
+
+MP_REGISTER_MODULE(MP_QSTR_esdr, esdr_module);

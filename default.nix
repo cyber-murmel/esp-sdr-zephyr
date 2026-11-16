@@ -287,6 +287,7 @@ let
   };
   # The MCH2022 images that drive the FPGA (its node in their overlay) embed a bitstream.
   fpgaImages = {
+    micropython = "top.bin";
     fpga_demo = "top.bin";
     osmosdr_serial = "link.bin";
   };
@@ -393,9 +394,34 @@ let
     dontFixup = true;
   };
 
-  mkImage = img: pkgs.stdenvNoCC.mkDerivation (env // {
+  # MicroPython's cross compiler for the frozen modules, from the pinned MicroPython: the port's
+  # build would make it inside the read-only project; MICROPY_MPYCROSS points it here instead.
+  micropythonProject = lib.findFirst (p: p.name == "micropython") null lock.manifest.projects;
+  mpy-cross = pkgs.stdenv.mkDerivation {
+    name = "mpy-cross-${builtins.substring 0 12 micropythonProject.revision}";
+    src = fetchProject micropythonProject;
+    nativeBuildInputs = [ pkgs.python3 ];
+    dontConfigure = true;
+    buildPhase = "make -C mpy-cross -j$NIX_BUILD_CORES";
+    installPhase = "install -Dm755 mpy-cross/build/mpy-cross $out/bin/mpy-cross";
+  };
+
+  # LVGL's gen_json.py (the MicroPython binding) copies LVGL's sources with their modes and then
+  # cannot delete the read-only copy: MicroPython images build with a writable copy of LVGL.
+  lvglPath = projectPath (lib.findFirst (p: p.name == "lvgl") null lock.manifest.projects);
+  writableLvgl = img: lib.optionalString (img.app == "micropython") ''
+    cp -r --no-preserve=mode ${westWorkspace}/${lvglPath} $TMPDIR/lvgl
+    modules=$(west list -f '{abspath}' | sed "s|^${westWorkspace}/${lvglPath}\$|$TMPDIR/lvgl|" | paste -sd';')
+  '';
+  lvglArg = img: lib.optionalString (img.app == "micropython") "\"-DZEPHYR_MODULES=$modules\"";
+
+  mkImage = img: pkgs.stdenvNoCC.mkDerivation (env // lib.optionalAttrs (img.app == "micropython") {
+    MICROPY_MPYCROSS = "${mpy-cross}/bin/mpy-cross";
+  } // {
     name = "esp-sdr-${img.board}-${img.name}-${version}";
-    nativeBuildInputs = build ++ [ pkgs.gitMinimal ];
+    # A host compiler for MicroPython images: LVGL's gen_json.py preprocesses lvgl.h with gcc and
+    # writes an empty description without one, so the binding's callbacks lose their user_data.
+    nativeBuildInputs = build ++ [ pkgs.gitMinimal ] ++ lib.optional (img.app == "micropython") pkgs.gcc;
     buildCommand = ''
       export HOME=$TMPDIR
       # Zephyr's caches, which it would otherwise put into ZEPHYR_BASE.
@@ -403,9 +429,10 @@ let
       # West finds its projects (and so west build) by git, in a store path someone else owns.
       git config --global safe.directory '*'
       cd ${westWorkspace}/${selfPath}
+      ${writableLvgl img}
       west build -d $TMPDIR/build -b ${img.platform} ${lib.optionalString img.sysbuild "--sysbuild"} \
         apps/${img.app} -o=-j$NIX_BUILD_CORES \
-        -- ${lib.escapeShellArgs (map (arg: "-D${arg}") (imageArgs img))}
+        -- ${lib.escapeShellArgs (map (arg: "-D${arg}") (imageArgs img))} ${lvglArg img}
       python3 ${./nix/collect.py} $TMPDIR/build ${img.app} ${img.chip} $out/${img.board}/${img.name}
     '';
   });

@@ -1,0 +1,113 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * WHY2025 badge, ESP32-P4: the board's 720x720 display and keyboard; the REPL on CDC-ACM and DFU
+ * on USB-C port J8 (OTG HS), which cmod/esdr_usb.c can hand to the ESP32-C6 for a while; boot
+ * messages on the CH340 (UART0); the radio is the badge's ESP32-C6.
+ */
+
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+#include <zephyr/dt-bindings/lvgl/lvgl.h>
+#include <zephyr/dt-bindings/pinctrl/esp32p4-pinctrl.h>
+
+/ {
+	chosen {
+		zephyr,console = &cdc_acm_uart0;
+		zephyr,shell-uart = &cdc_acm_uart0;
+		/*
+		 * The radio: the C6's osmosdr_serial (cmod/esdr_remote.c) over SDIO (its default on
+		 * this board). For the UART link instead (a C6 image built with
+		 * -DEXTRA_CONF_FILE=uart.conf): esdr,link-uart = &uart1.
+		 */
+		esdr,link-sdio = &sdhc1;
+	};
+
+	/* GPIO2 hands USB-C port J8 to the ESP32-C6 (cmod/esdr_usb.c). */
+	zephyr,user {
+		usb-mux-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
+	};
+
+	/* The FAT volume "FLASH", mounted at /FLASH:, and the SD card at /SD:. */
+	fat_disk: fat_disk {
+		compatible = "zephyr,flash-disk";
+		partition = <&fat_partition>;
+		disk-name = "FLASH";
+		cache-size = <4096>;
+	};
+
+	fstab {
+		compatible = "zephyr,fstab";
+
+		flash_fs: flash_fs {
+			compatible = "zephyr,fstab,fatfs";
+			mount-point = "/FLASH:";
+			disk-access;
+		};
+
+		/* The microSD card on the compute module (sdhc0), if one mounts; never formatted
+		 * (esdr_board.c sets FS_MOUNT_FLAG_NO_FORMAT).
+		 */
+		sd_fs: sd_fs {
+			compatible = "zephyr,fstab,fatfs";
+			mount-point = "/SD:";
+			disk-access;
+		};
+	};
+};
+
+/*
+ * The keyboard drives LVGL as the knob does: up and down move the focus, left and right
+ * change the focused value, Enter selects, Esc goes back (held 1.5 s: the launcher).
+ */
+&lvgl_keypad {
+	input-codes = <INPUT_KEY_UP INPUT_KEY_DOWN INPUT_KEY_LEFT INPUT_KEY_RIGHT
+		       INPUT_KEY_ENTER INPUT_KEY_ESC INPUT_KEY_BACKSPACE INPUT_KEY_TAB>;
+	lvgl-codes = <LV_KEY_PREV LV_KEY_NEXT LV_KEY_LEFT LV_KEY_RIGHT
+		      LV_KEY_ENTER LV_KEY_ESC LV_KEY_BACKSPACE LV_KEY_NEXT>;
+};
+
+/* The ESP32-C6 runs the radio firmware, not esp-hosted, whose driver would reset it. */
+&esp_hosted_mcu {
+	status = "disabled";
+};
+
+zephyr_udc0: &usb_otg {
+	status = "okay";
+	/*
+	 * An IN endpoint is bulk capable only with a FIFO of a whole high-speed packet (512 bytes,
+	 * 128 words). The SoC gives that to one, which CDC-ACM's notification endpoint takes
+	 * first: its bulk IN endpoint needs a second.
+	 */
+	g-tx-fifo-size = <128 128 64 64 64 64 64>;
+
+	/* The REPL's console. */
+	cdc_acm_uart0: cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+		label = "ESP-SDR MicroPython REPL";
+	};
+};
+
+#include "partitions_p4.dtsi"
+
+/*
+ * The link to the C6 (its UART0) at 5 Mbaud, 40 MHz / 8 on both chips. CTS on GPIO14, the C6's
+ * RTS (its GPIO0): the C6 holds the P4's transmitter while its transmit ring is full.
+ */
+&pinctrl {
+	uart1_link: uart1_link {
+		group1 {
+			pinmux = <UART1_TX_GPIO16>;
+			output-high;
+		};
+
+		group2 {
+			pinmux = <UART1_RX_GPIO15>, <UART1_CTS_GPIO14>;
+			bias-pull-up;
+		};
+	};
+};
+
+&uart1 {
+	current-speed = <5000000>;
+	pinctrl-0 = <&uart1_link>;
+};

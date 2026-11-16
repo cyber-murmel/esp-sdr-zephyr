@@ -1,0 +1,40 @@
+sample:
+  name: ESP-SDR MicroPython
+  description: >-
+    MicroPython as the main program: on the XIAO ESP32S3 and the Communicator with the display,
+    REPL on the USB CDC-ACM port; headless on the ESP32-C5-Zero, the bench's coordinator, REPL
+    on USB-Serial-JTAG; on the WHY2025 badge's ESP32-P4 (the radio its ESP32-C6, REPL on
+    CDC-ACM), the MCH2022 badge's ESP32 and the VIEWE board's ESP32-S31 (REPL on the console UART)
+common:
+  tags: esp-sdr
+  build_only: true
+tests:
+  sample.esp_sdr.micropython:
+    sysbuild: true
+    platform_allow:
+      - xiao_esp32s3/esp32s3/procpu
+      - communicator_badge/esp32s3/procpu
+    integration_platforms:
+      - xiao_esp32s3/esp32s3/procpu
+  sample.esp_sdr.micropython.c5:
+    platform_allow:
+      - waveshare_esp32c5_zero/esp32c5/hpcore
+    integration_platforms:
+      - waveshare_esp32c5_zero/esp32c5/hpcore
+  sample.esp_sdr.micropython.p4:
+    platform_allow:
+      - why2025_badge/esp32p4/hpcore
+      - esp32p4_function_ev_board/esp32p4/hpcore
+    integration_platforms:
+      - why2025_badge/esp32p4/hpcore
+      - esp32p4_function_ev_board/esp32p4/hpcore
+  sample.esp_sdr.micropython.s31:
+    platform_allow:
+      - ues31s043h800v480c_u/esp32s31/hpcore
+    integration_platforms:
+      - ues31s043h800v480c_u/esp32s31/hpcore
+  sample.esp_sdr.micropython.mch2022:
+    platform_allow:
+      - mch2022/esp32/procpu
+    integration_platforms:
+      - mch2022/esp32/procpu

@@ -25,8 +25,8 @@ manifest:
     # CoreBoard, 200 and 250 MHz PSRAM) and the VIEWE 4.3 inch board with its
     # LCD-CAM RGB panel, the CDC-NCM NTB aggregation the USB stream relies
     # on, the llext and Xtensa changes apps/multiapp needs (doc/multiapp.md,
-    # "Zephyr changes"), LVGL allocating from the MicroPython heap,
-    # the options that make the USB stack and DWC2
+    # "Zephyr changes"), LVGL allocating from the MicroPython heap
+    # (apps/micropython), the options that make the USB stack and DWC2
     # threads preemptible (apps/chancap), application code in the S3's flash
     # text and perf on Xtensa, the Hackaday Communicator, WHY2025 and MCH2022
     # badges with their NV3007, ST7703, TCA8418 and RP2040 coprocessor
@@ -81,7 +81,7 @@ manifest:
       revision: 3c8ac0fdfec83740b783e200862c8d0c056de0ad
       path: modules/lib/esp-dsp
     # MicroPython as a Zephyr module: CONFIG_MICROPYTHON builds its Zephyr port as the
-    # micropython library, which provides main(). The mp-lvgl branch, as
+    # micropython library, which provides main() (apps/micropython). The mp-lvgl branch, as
     # cyber-murmel/mp-lvgl-example pins it (1.30.0-preview).
     - name: micropython
       remote: cyber-murmel

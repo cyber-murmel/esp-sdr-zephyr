@@ -74,6 +74,7 @@ Contents
        - ``ubertooth``: Ubertooth One device firmware for the upstream host tools
        - ``multiapp``: one firmware that runs the others
          (`doc/multiapp.md <doc/multiapp.md>`__)
+       - ``micropython``: MicroPython REPL on USB, toward GNU Radio flowgraphs
        - ``chancap``: one capture per packet per channel of a grid, as
          VITA 49.2 over USB (`doc/chancap.md <doc/chancap.md>`__)
        - ``common``: USB with DFU, watchdogs, crash records
@@ -145,9 +146,11 @@ The library
   40 MS/s through the modem diagnostic bus (``esp_sdr_diag16.h``,
   ``CONFIG_ESP_SDR_DIAG16``) or, without pads and beside a panel, through the
   dump engine turned between two TCM groups at 20 MS/s
-  (``esp_sdr_dumpring.h``), and
+  (``esp_sdr_dumpring.h``), a carrier from the PHY's tone generator,
+  CPU-paced transmit (``esp_sdr_paced.h``, DAC writes up to 1 MHz), and
   waveform loops through its DAC engine at 80, 40 or 20 MS/s while the CPU
-  runs on (``esp_sdr_replay.h``), without the Wi-Fi driver; ``capture``, ``rfprobe`` and ``osmosdr_hs`` run on them.
+  runs on (``esp_sdr_replay.h``), without the Wi-Fi driver; ``capture``, ``rfprobe`` and ``osmosdr_hs`` run on them,
+  ``micropython`` on the VIEWE board's display.
 - **Tuning:** 100 to 6000 MHz in the API, but the PLL locks over a
   chip-specific range (about 1.8 to 2.8 GHz on the S3); below 2210 MHz
   through the 5/6 divider (2.2 to 2.9 GHz on the S31, which has none).
@@ -216,8 +219,13 @@ Dependencies
   VITA 49.2
 - `esp-sdr <https://github.com/ESPARGOS/esp-sdr>`__ (upstream,
   unmodified): receiver helper headers
-- `esp-dsp <https://github.com/espressif/esp-dsp>`__: the FFT for
-  ``apps/link`` OFDM
+- `esp-dsp <https://github.com/espressif/esp-dsp>`__: the ESP32-S3 FFT kernels for
+  ``apps/link`` OFDM, the MicroPython app's Scan (``apps/common/esp_dsp.cmake``) and
+  ``apps/ubertooth``'s spectrum analyser
+- `MicroPython <https://github.com/cyber-murmel/micropython/tree/mp-lvgl>`__ (the
+  ``mp-lvgl`` branch, a Zephyr module) and micropython-lib, LVGL with
+  `lv_binding_micropython <https://github.com/cyber-murmel/lv_binding_micropython>`__
+  and pycparser: ``apps/micropython``
 
 License
 -------

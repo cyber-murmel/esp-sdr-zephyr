@@ -379,12 +379,12 @@ XIAO ESP32-C6 on the other end of a 30 dB coax attenuator.
 
 ## ESP32-S31
 
-The VIEWE board is at the end of this section. Measured on one ESP32-S31-Function-CoreBoard-1 (ESP32-S31 rev v0.0, 40 MHz crystal, 16 MB flash,
-16 MB octal PSRAM, PCB antenna), board `esp32s31_function_coreboard/esp32s31/hpcore`, single core
-(Zephyr holds CPU1 in reset), simple boot. Receive, a carrier, the CPU-paced transmit and the DAC engine's replay. The method is ESPARGOS esp-sdr's S31
-firmware at 9b61e7465, where noted otherwise it differs from it. Its PHY offsets belong to
-esp-phy-lib b88e4b76e090, the blob this repo fetches. The `lib/esp_sdr` code is `esp_sdr_s31.c`,
-`esp_sdr_diag16.c` and `esp_sdr_replay.c`.
+The VIEWE board is at the end of this section. Measured on one ESP32-S31-Function-CoreBoard-1 (ESP32-S31 rev
+v0.0, 40 MHz crystal, 16 MB flash, 16 MB octal PSRAM, PCB antenna), board
+`esp32s31_function_coreboard/esp32s31/hpcore`, single core (Zephyr holds CPU1 in reset unless the image has
+`CONFIG_SMP`), simple boot. Receive, a carrier, the CPU-paced transmit and the DAC engine's replay. The method is ESPARGOS esp-sdr's S31 firmware at 9b61e7465, where
+noted otherwise it differs from it. Its PHY offsets belong to esp-phy-lib b88e4b76e090, the blob this repo
+fetches. The `lib/esp_sdr` code is `esp_sdr_s31.c`, `esp_sdr_diag16.c` and `esp_sdr_replay.c`.
 
 - **`0x20104ddc` bit 4 turns the receiver on.** Without it the ADC gives only its own noise, rms 1
   to 2 counts at any gain, and nothing else looks wrong: the PHY calibrates, the AGC register
@@ -392,12 +392,14 @@ esp-phy-lib b88e4b76e090, the blob this repo fetches. The `lib/esp_sdr` code is 
   Wi-Fi driver's start does; without the driver it must be set. librftest's `mac_init()` does, among
   much that the receive path does not need (the last thing it writes, `0x20104c5c`, takes the signal
   away again). Do not call `rftest_init()`: it stops the system timer under Zephyr.
-- **Bursts:** the engine stays in its circular mode and a burst stops before it wraps: the finite
-  mode writes at TCM offset 0, over the image (`esp_sdr_rx_api` checks the code's CRC around bursts).
-  It owns the TCM's whole upper 128 KiB group while it writes, ROM data at the top included: hence
-  interrupts off, code and stack below the group, no ROM or PHY calls, up to 4.2 ms at 4 MS/s. No done
-  flag: the write index counts. The first 256 samples are the engine settling. Rates: rate field 0, 1,
-  3, 5, 7, 9 for 80, 40, 20, 10, 8, 4 MS/s, whose durations match to the microsecond.
+- **Bursts:** the engine stays in its circular mode and a burst stops before it wraps: the finite mode writes
+  at TCM offset 0, over the image (`esp_sdr_rx_api` checks the code's CRC around bursts). It owns the TCM's
+  whole upper 128 KiB group while it writes, ROM data at the top included: hence interrupts off, code and
+  stack below the group, no ROM or PHY calls, up to 4.2 ms at 4 MS/s. With `CONFIG_SMP` the other core waits
+  meanwhile in its stall interrupt, which spins in IRAM with its interrupts off: `soc_mp_pause_others()` comes
+  first, with this core's interrupts still open, since the other core may hold the pause for a flash write and
+  have to park this one. No done flag: the write index counts. The first 256 samples are the engine settling.
+  Rates: rate field 0, 1, 3, 5, 7, 9 for 80, 40, 20, 10, 8, 4 MS/s, whose durations match to the microsecond.
 - **Tuning:** 2200 to some 2900 MHz; no divided LO, so `-ERANGE` below. A retune rebuilds the gain
   tables at the LO, keeping the IQ correction from startup, whose loopback would transmit. The
   crystal's harmonics land within a few kHz of where they belong from 2280 to 2800 MHz.
@@ -509,6 +511,10 @@ esp-phy-lib b88e4b76e090, the blob this repo fetches. The `lib/esp_sdr` code is 
     -20 dBc (-41 at 16000). Full scale is 16384 (256 DAC counts); the library maps 32767 to 511.
   - Pacing the TX DC store from the CPU is the only way found: ETM has no task that writes a
     register value.
+  - The panel takes interrupts locked for a burst's length: 50 bursts of 50 ms beside the
+    waterfall app left no underrun, and the stream it shows went on after each. Its frame
+    counter (an interrupt) misses the VSYNCs meanwhile, about 1.9 of the 2.9 a burst spans; the
+    DMA keeps scanning out the picture (MicroPython, `tmp/s31/tx/mp9.py` in the workspace).
 - **Transmit, replay: a DAC reader at `0x2010900c`** (`esp_sdr_replay_*()`), the dump block's
   third word as the C5's trigger. No vendor code, ROM or upstream program writes it (upstream only
   clears bit 31 before receive), so all of this is measured on the VIEWE board: a scratch probe,
@@ -561,10 +567,11 @@ looked at: at a pixel clock of 500 kHz the CPU can follow PCLK and compare all 3
   200 MHz. With the controller first, the FIFO fills in the first blanking and all of these are exact.
 - **The underrun interrupt fires per pixel**, 190000 a second with PSRAM at 40 MHz under load, which took 19 %
   of a copy's speed. It stays off until the restart.
-- **PSRAM:** at 200 MHz the CPU reads 81 MB/s through the cache and copies 42.8 MB/s within PSRAM, with the
-  panel taking its 50 MB/s and no underrun; at 40 MHz 18.6 and 7.8 MB/s, an underrun in every frame. The
-  tuning runs with the cache off, so its DQS scheme must be in RAM (`mspi_timing_by_dqs` in the linker
-  script): out of it the boot hangs at "Enter psram timing tuning".
+- **PSRAM:** at 250 MHz, the board's clock, the CPU reads 90 MB/s through the cache, writes back 69.5 and
+  copies 53 MB/s within PSRAM, with the panel taking its 50 MB/s and no underrun; at 200 MHz 82, 60 and 45
+  MB/s; at 40 MHz 18.6 MB/s read and 7.8 copied, an underrun in every frame. The flash reads 28 MB/s in QIO at
+  80 MHz, 16 in DIO. The tuning runs with the cache off, so its DQS scheme must be in RAM
+  (`mspi_timing_by_dqs` in the linker script): out of it the boot hangs at "Enter psram timing tuning".
 - **Pads for the ring:** GPIO 41 is not bonded. The library's defaults are the RS485 transceiver, the touch
   controller and the ADC keys here, and with GPIO 47 and 48 (the amplifier's enable, the codec's MCLK) Q's top
   two bits come out late, 1.6 % of them wrong and no clean phase found. GPIO 2 to 17, the panel's data lines,
@@ -602,9 +609,10 @@ looked at: at a pixel clock of 500 kHz the CPU can follow PCLK and compare all 3
 
   From PLL_F160M the fractional divider's pattern adds weaker lines every 5 MHz (2355 MHz: -68); from the APLL
   there are none. Under the AGC, PLL_F160M's 2350 MHz line read -37, the APLL's window -58. The lines at 2400
-  and 2600 MHz (-46 to -52 and -57) do not follow the pixel clock and drop 10 to 12 dB when the panel's DMA
-  stops: likely the PSRAM's 200 MHz under the panel's reads. 2400 MHz is also the crystal's 60th harmonic, -55
-  with the panel stopped.
+  and 2600 MHz (-46 to -52 and -57), with the PSRAM at 200 MHz, do not follow the pixel clock and drop 10 to
+  12 dB when the panel's DMA stops: the PSRAM's bus clock under the panel's reads. With the PSRAM at 250 MHz
+  they move to its multiples, 2250, 2500 and 2750 MHz (table below). 2400 MHz is also the crystal's 60th
+  harmonic, -55 with the panel stopped.
 
   The panel's 22 pads run at the weakest drive (`drive-strength = <5>` in the board's pinctrl), the picture
   unchanged. Measured from PLL_F160M, three interleaved rounds each:
@@ -621,7 +629,37 @@ looked at: at a pixel clock of 500 kHz the CPU can follow PCLK and compare all 3
 
   Stopping the controller for every burst, at a frame's start, and restarting it after gave back up to 3.5 dB
   of floor (0 to 3.5 between 2337 and 2687 MHz) and took 2400 and 2600 MHz down 6 to 7 dB, but the panel
-  glitched and faded in and out while it ran: not usable. `apps/osmosdr_hs` has no panel running.
+  glitched and faded in and out while it ran: not usable. What `apps/micropython` does instead: a burst with a
+  multiple of the PSRAM's clock (`CONFIG_SPIRAM_SPEED`) in or near its band, or in its image, waits for the
+  panel's vertical blanking (`display_esp32_lcd_rgb_wait_blanking()`, just before the capture in
+  `cmod/esdr_local.c`). The board's vertical
+  back porch is 32 lines, the vendor's 8: with the VSYNC pulse, 1.18 ms from the wait's return to the first line,
+  room for a burst at 20 MS/s; the panel runs at 58.5 Hz. The panel's DMA is idle there; its clocks are not:
+
+  With the PSRAM at 200 MHz:
+
+  | dBFS, gain 48 | Bursts anywhere | In the blanking |
+  |---|---|---|
+  | 2400 MHz, the line's bin | -48 to -56 | -54 to -57, the chip's own line |
+  | 2600 MHz, the line's bin | -56 to -60 | -64 to -80, varying between runs |
+  | 2800 MHz, the line's bin | -56 to -66 | -69 to -71 |
+  | 2200 MHz, in a 20 MS/s burst at 2205 | -46 to -47 | -72 to -75 |
+  | Floor between lines, 250 kHz | -63 to -67 | the same, within 1 dB |
+
+  With the PSRAM at 250 MHz, each line 5 MHz from the centre of a 20 MS/s burst, the floor 3 MHz from the line
+  in brackets:
+
+  | dBFS, gain 48 | Bursts anywhere | In the blanking |
+  |---|---|---|
+  | 2250 MHz | -50.9 (-68) | -77.7 (-76) |
+  | 2500 MHz | -59.9 (-75) | -72.7 (-80) |
+  | 2750 MHz | -63.5 (-76) | -75.6 (-83) |
+  | 2200, 2600, 2800 MHz | -69, -65, -75 | -67, -68, -74: no longer the panel's |
+  | 2400 MHz | -53 | -54, the chip's own line |
+
+  Near those lines that takes one burst a frame: at 250 kS/s 177 reads in 3 s against 1063 (with the PSRAM at
+  250 MHz 176 at 2500 MHz, 1075 to 1079 at 2337 and 2600 MHz); elsewhere bursts run as before.
+  `esdr.panel_quiet(False)` turns it off until the next app. `apps/osmosdr_hs` has no panel running.
 
 ## CPU and toolchain
 
@@ -710,7 +748,7 @@ looked at: at a pixel clock of 500 kHz the CPU can follow PCLK and compare all 3
   releases the stall first (`soc/espressif/esp32p4/hw_init.c`). On the WHY2025
   badge, with an MCUboot without the first two steps the first reboot of an SMP
   image wedged the chip (USB stayed enumerated, nothing answered); without the
-  release, a single-core image hung early after an SMP
+  release, a single-core image (MicroPython) hung early after an SMP
   image's reboot, before its USB came up, while a cold boot was fine.
 - **The ESP32-P4's memcpy, memmove and memset are ROM routines** (the
   `esp32p4.rom.libc*.ld` scripts) at some 5.5 cycles a byte. Moving the
@@ -719,7 +757,9 @@ looked at: at a pixel clock of 500 kHz the CPU can follow PCLK and compare all 3
 - **The ESP32-P4's float registers are not switched by default.** Zephyr's
   SoC defconfig turns `CONFIG_FPU` on without `CONFIG_FPU_SHARING`, so a
   thread that preempts another in float code leaves its own register values
-  behind. `apps/osmosdr_bridge` sets `CONFIG_FPU_SHARING=y`; the lazy switch works
+  behind. In `apps/micropython` the channelizer thread (above MicroPython)
+  made `esdr.fb_wf_row()` see a valid range as `vmax <= vmin` after seconds
+  to minutes. Both P4 apps set `CONFIG_FPU_SHARING=y`; the lazy switch works
   on the v1.0 silicon (Zephyr decodes the trapping instruction from `mtval`,
   which the P4 fills, so ESP-IDF's FPU reason CSR erratum does not matter).
 - **The in-order P4 core waits on float results.** An independent `fmul.s`
@@ -761,9 +801,18 @@ looked at: at a pixel clock of 500 kHz the CPU can follow PCLK and compare all 3
   shorted to ground while pressing reset. A sysbuild `west flash` over its
   USB-Serial-JTAG does work for the first install, before an app owns OTG.
 - On the WHY2025 badge the ESP32-C6 (`why2025_badge/esp32c6/hpcore`) reaches
-  USB-C port J8 only while the ESP32-P4 drives its GPIO2 high: run a P4 image
-  built with `CONFIG_WHY2025_BADGE_USB_TO_C6=y` and without esp-hosted (which
-  resets the C6), then flash the C6 over J8 with `west flash`. The C6 also
+  USB-C port J8 only while the ESP32-P4 drives its GPIO2 high. With
+  `apps/micropython` on the P4, `west dfu --c6` hands the port over for a
+  while (`esdr.usb_to_c6()`) and flashes the C6; otherwise run a P4 image built
+  with `CONFIG_WHY2025_BADGE_USB_TO_C6=y` and without esp-hosted (which resets
+  the C6), then flash the C6 over J8 with `west flash`.
+- The WHY2025 badge's ESP32-P4 (v1.0) runs its XTX XT25F128 flash in DIO mode,
+  where IO2 and IO3 are WP# and HOLD#. The Espressif HAL cleared the SPI1
+  control register before erases and status reads, which drove both low: the
+  flash ignored the erase and reported idle, so erases "succeeded" in under a
+  millisecond and changed nothing, while page programs worked. Fixed in the
+  HAL (esp_hal_mspi: esp32p4: keep the flash line levels when clearing ctrl);
+  without it no DFU image ever reaches the update slot intact. The C6 also
   drives both backlights: its images hold them on, the P4 cannot.
 - The WHY2025 badge's LoRa module is an Ai-Thinker Ra-01SH (SX1262), not the
   Ra-01H (SX1276) its schematic names: an SX1276 driver reads a constant 0xA2
@@ -774,6 +823,8 @@ looked at: at a pixel clock of 500 kHz the CPU can follow PCLK and compare all 3
   each command's busy time and polls the IRQ status. Zephyr's `lora/send` and
   `lora/receive` samples run between it and the Communicator in both
   directions (-78 and -87 dBm at a metre, 8 dB SNR).
+- MicroPython on an S3 hands the port to the USB-Serial-JTAG with
+  `esdr.shell("usj")`, as the shell apps' `usj` does.
 
 ## Debugging
 

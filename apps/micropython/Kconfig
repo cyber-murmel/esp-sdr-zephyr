@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+mainmenu "ESP-SDR MicroPython"
+
+# The MicroPython symbols (CONFIG_MICROPYTHON, CONFIG_MICROPY_*) are the module's
+# (modules/micropython/zephyr/Kconfig); these are the app's.
+menu "ESP-SDR MicroPython"
+
+config APP_EGGS
+	string "Bundled apps"
+	default ""
+	help
+	  The apps (folders of eggs/) the board's frozen manifest has, comma
+	  separated; empty: all of them. The launcher's index lists these.
+
+config APP_MP_STACK_SIZE
+	int "MicroPython thread stack, bytes"
+	default 16384
+	help
+	  In the SRAM above the ring banks (ESP_SDR_HIGH_RAM, about 38 KiB,
+	  shared with the ring, the DAC stream and their threads).
+	  Bounds the recursion depth, about 300 bytes per Python call. A
+	  GUI export with LVGL peaked at 11.9 KiB.
+
+config APP_HOME_CODE
+	int "Key that goes home when held"
+	default 1
+	help
+	  On boards whose keys drive LVGL as a keypad: the input code (Zephyr
+	  input-event-codes.h) that, held 1.5 s, ends the running app and
+	  shows the launcher. 1 is INPUT_KEY_ESC.
+
+config APP_CONSOLE_REMOTE
+	bool "The display and touch screen over the console"
+	depends on UART_CONSOLE_DEBUG_SERVER_HOOKS && DISPLAY
+	help
+	  Commands on the console UART, apart from what MicroPython reads, for
+	  tools/screen.py: a screenshot, a finger on the touch screen, a key,
+	  also while an app runs (src/console_remote.c).
+
+config APP_PROF
+	bool "Sampling profiler (esdr.prof_start())"
+	depends on RISCV
+	help
+	  esdr.prof_start(), prof_stop() and prof_read(): at every kernel tick
+	  the PC CPU 0 was interrupted at, and its return address, go to a
+	  buffer of 32768 samples in PSRAM, kept over soft resets, so that a
+	  run started in the REPL covers an app the launcher starts.
+	  tools/prof.py reads the samples and counts them by function and,
+	  for the top ones, by caller.
+
+config APP_MP_PSRAM_HEAP_KB
+	int "Python heap in PSRAM, KiB"
+	default 5120
+	help
+	  Added to the internal heap at every start. Captures (file_sink) are
+	  buffered here; the rest of the 8 MiB PSRAM is the Wi-Fi heap and the
+	  transmit ring.
+
+endmenu # ESP-SDR MicroPython
+
+rsource "../common/Kconfig"
+
+# USB device identity (VID, PID, strings) for the sample USB helper.
+source "samples/subsys/usb/common/Kconfig.sample_usbd"
+
+source "Kconfig.zephyr"

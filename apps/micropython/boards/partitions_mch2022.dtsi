@@ -1,0 +1,22 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * The MCH2022 badge's flash: the application in the lower 8 MB (Espressif's 8 MB table: MCUboot
+ * at 0x1000 and two 3840 KiB slots), the upper 8 MB the FAT volume.
+ */
+
+&flash0 {
+	/delete-node/ partitions;
+};
+
+#include <espressif/partitions_0x1000_default_8M.dtsi>
+
+&flash0 {
+	partitions {
+		fat_partition: partition@800000 {
+			compatible = "zephyr,mapped-partition";
+			label = "fat";
+			reg = <0x800000 DT_SIZE_M(8)>;
+		};
+	};
+};

@@ -10,12 +10,13 @@ it on a chip with the radio, the library applies it to every tuning, and with
 `CONFIG_ESP_SDR_CALSTORE` it is kept in Zephyr settings and applied at every start. With the die
 temperature sensor (`CONFIG_ESP_SDR_TEMP`) each measurement records the temperature, and
 calibrations at several temperatures make a model the correction follows. A radio behind a link
-(the WHY2025 badge's ESP32-C6) is told the result over the protocol (`ESDR_REQ_SET_CAL`).
+(the WHY2025 badge's ESP32-C6) is measured by its host (the badge's ESP32-P4, `ltecal`) and told
+the result over the protocol (`ESDR_REQ_SET_CAL`).
 
 ## The measurement
 
 `include/esp_sdr/esp_sdr_lte.h` does the signal processing on a capture of about 2 MS/s
-(header only, plain C, also used on the host and in `tests/unit/lte`):
+(header only, plain C, also used on the host, on the P4 and in `tests/unit/lte`):
 
 1. **PSS search.** The three primary synchronization sequences (Zadoff-Chu roots 25, 29, 34 on
    62 subcarriers either side of DC) are correlated with the capture at carrier offsets in
@@ -88,18 +89,23 @@ needs about 9 KiB of stack (rfprobe's shell thread peaks at 11.6 KiB of its 16 K
 | ESP32-C5 | 4 MS/s, CIC by 2 | as the S3 at 2048 points, longer at 4096 | as the S3; the C5-Zero's SRAM has no room, rfprobe leaves it out there |
 | ESP32-C6 | 80 MS/s, CIC by 40 | 0.2 ms: about 1.3 % of captures | 1024 points static, above the capture bank |
 
-The C6 captures 80 MS/s bursts only, so it needs many more captures.
+The C6 captures 80 MS/s bursts only, so it needs many more captures; on the WHY2025 badge its
+stream (2 MS/s through the P4) is the source, and the P4 does the measuring (below).
 
 ## Storage
 
 `esp_sdr_cal_load()`, `esp_sdr_cal_save()` and `esp_sdr_cal_clear()` keep one record under the
 settings key `esp_sdr/cal`: the correction, how it was measured (cell, carrier, estimates,
 spread, temperature) and up to eight temperature points. The app picks the settings backend.
-`apps/common/calstore.conf` sets the file backend at `/FLASH:/settings`, on a FAT volume named
-`FLASH`; `apps/common/calstore.overlay` puts that volume on the storage partition for apps
-that have none (automounted, formatted on first mount). `esp_sdr_init()`
+`apps/common/calstore.conf` sets the file backend at `/FLASH:/settings`, the FAT volume name
+the MicroPython platforms use; `apps/common/calstore.overlay` puts that volume on the storage
+partition for apps that have none (automounted, formatted on first mount). `esp_sdr_init()`
 applies the stored record before it first tunes. `esp_sdr_get_freq_corr_model()` is the record
 in force.
+
+The WHY2025 badge's C6 has no room for a store (its image fills SRAM block 0 beside the
+gapless ring), so the badge's record lives on the P4 (`/FLASH:/esdr_cal.bin`) and goes to the
+C6 again whenever an app starts the radio (`ltecal.restore()` from the GNU Radio shim).
 
 ## Temperature
 
@@ -146,12 +152,27 @@ on a chip with the radio):
 | `GET_CAL` (0x19) | `struct esdr_cal`: the correction in force, the LO residual, the temperature, the record behind it with its points, whether it is stored |
 | `SET_CAL` (0x1a) | wValue 0: a measured error (`struct esdr_cal_meas`) as a point; 1: a constant; 2: none; 3: a whole record (`struct esdr_cal_rec`). Applied from the next tuning, stored where the device can (`last_store` tells) |
 
-They are separate from `SET_FREQ_CORR`, the host's own correction on top. osmosdr_serial takes
-all of them; the S3 osmosdr app answers `GET_CAL` only (a `SET_CAL` would have to wait for its
-worker thread). On the serial link every request stops a running stream for a moment, so read
-them between runs. Hosts: `esdr_usb temp | cal | cal-set -p ppb | cal-clear`, `esdr_serial.py
-PORT cal [--set PPB | --clear]`, SoapySDR sensors `temperature`, `corr_ppb` and `lo_residual_hz`
-(`SoapySDRUtil --probe` lists them).
+They are separate from `SET_FREQ_CORR`, the host's own correction on top. osmosdr_serial and
+the MicroPython radios take all of them; the S3 osmosdr app answers `GET_CAL` only (a `SET_CAL`
+would have to wait for its worker thread). On the serial link every request stops a running
+stream for a moment, so read them between runs. Hosts: `esdr_usb temp | cal | cal-set -p ppb |
+cal-clear`, `esdr_serial.py PORT cal [--set PPB | --clear]`, SoapySDR sensors `temperature`,
+`corr_ppb` and `lo_residual_hz` (`SoapySDRUtil --probe` lists them).
+
+### The WHY2025 badge
+
+The P4 has the C6's 2 MS/s stream and the estimator (`esdr.lte_detect()`, `cmod/esdr_lte.c`,
+its work memory comes from the Python heap, which is PSRAM, so a transform's size decides the
+time: 4096 points, three windows, 128 KiB, take about 7 s a 20 ms capture at the +-520 kHz
+`ltecal` searches, against 25 s for one 16384-point window and 0.1 s on the host; 2048
+points picked a wrong cell on the 23 Oct capture). The frozen `ltecal` module does what the
+library's run does: `ltecal.calibrate()` surveys the band, captures 20 ms at the strongest
+places until a cell decodes, collects estimates (each from `esdr.radio_state()['centre']`, the
+LO with its residual, and `GET_CAL`'s correction in force), and hands the median with the
+temperature to the C6 (`SET_CAL` 0), then keeps the record in `/FLASH:/esdr_cal.bin`.
+`ltecal.show()`, `set_ppb()`, `clear()`, `measure(mhz)` and `survey()` are the parts. The
+C6 keeps the calibration for its session; `ltecal.restore()` sends the file's record (`SET_CAL`
+3) and runs whenever an app starts the radio.
 
 ## Bench results
 
@@ -168,5 +189,5 @@ PORT cal [--set PPB | --clear]`, SoapySDR sensors `temperature`, `corr_ppb` and 
   by +-80. Coherence 0.90 to 0.96, all 80 reference symbols used. The first capture decodes
   only with all six candidates tried (its true PSS point ranked sixth).
 - At two other spots the same badge received the band 1 carriers' power but no PSS stood out,
-  or the band was flat (every MHz within 2 dB of the median): check reception first (with a
-  capture) when a run finds no cell.
+  or the band was flat (every MHz within 2 dB of the median): check reception first (`esdr`
+  waterfall, `ltecal.survey()`, or a capture) when a run finds no cell.

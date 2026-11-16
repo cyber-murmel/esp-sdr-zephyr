@@ -28,20 +28,5 @@ set_source_files_properties(${LINK_SRC_DIR}/qam.c ${LINK_SRC_DIR}/ofdm.c PROPERT
 set_source_files_properties(${LINK_SRC_DIR}/rs.c ${LINK_SRC_DIR}/bch.c ${LINK_SRC_DIR}/hamming.c
   PROPERTIES COMPILE_OPTIONS -O3)
 
-# Only the ESP32-S3 float FFT kernel of esp-dsp, for CONFIG_APP_OFDM_ESP_DSP: its IDF scaffolding
-# stays out. Sets out_var to the kernel's files.
-function(link_esp_dsp_fft out_var)
-  set(dir "${WEST_TOPDIR}/modules/lib/esp-dsp")
-  set(files "${dir}/modules/fft/float/dsps_fft2r_fc32_aes3_.S"
-            "${dir}/modules/fft/fixed/dsps_fft2r_sc16_aes3.S")
-  foreach(f ${files})
-    if(NOT EXISTS "${f}")
-      message(FATAL_ERROR "esp-dsp not found at ${dir} (west project esp-dsp)")
-    endif()
-  endforeach()
-  # Its platform header enables the S3 kernel by the IDF target macro.
-  set_source_files_properties(${files} PROPERTIES
-    COMPILE_DEFINITIONS CONFIG_IDF_TARGET_ESP32S3=1
-    INCLUDE_DIRECTORIES "${dir}/modules/fft/include")
-  set(${out_var} ${files} PARENT_SCOPE)
-endfunction()
+# esp-dsp's S3 FFT kernels, for CONFIG_APP_OFDM_ESP_DSP: esp_dsp_s3_fft().
+include(${CMAKE_CURRENT_LIST_DIR}/../common/esp_dsp.cmake)

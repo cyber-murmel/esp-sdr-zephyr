@@ -34,7 +34,7 @@ def test_table(tmp_path, run_main, capsys):
     ]
     # Sources no unit test compiles are listed apart, the measured ones are not.
     assert "firmware C sources that no unit test compiles" in out
-    assert "- `apps/multiapp/ext/hello.c`" in out
+    assert "- `apps/micropython/cmod/modesdr.c`" in out
     assert "tools/" not in out.split("<details>")[1]
     assert "- `lib/esp_sdr/src/esp_sdr_rx.c`" in out
     assert "- `apps/link/src/rs.c`" not in out
