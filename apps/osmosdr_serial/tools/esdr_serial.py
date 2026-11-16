@@ -2,11 +2,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Host side of the osmosdr serial transport (esdr_proto.h): requests, receive, transmit.
 
-    esdr_serial.py PORT info
+    esdr_serial.py [--baud B] PORT info
     esdr_serial.py PORT rx [--rate HZ] [--seconds S] [--bits 8|16] [--freq HZ] [--out FILE.npy]
     esdr_serial.py PORT tx [--rate HZ] [--seconds S] [--tone HZ] [--freq HZ] [--gain STEP]
 
-The port is opened raw, without touching DTR/RTS: that would reset the board.
+The port is opened raw, without touching DTR/RTS: that would reset the board. --baud sets
+the line rate where it matters (a UART behind a USB bridge, as the MCH2022 badge's RP2040, which
+passes it on); USB-Serial-JTAG ignores it.
 """
 
 import argparse
@@ -39,11 +41,13 @@ STATS_NAMES = ("rx_samples rx_overflow_samples rx_ring_lost_pairs rx_restart_sam
 
 
 class Esdr:
-    def __init__(self, port):
+    def __init__(self, port, baud=None):
         self.fd = os.open(port, os.O_RDWR | os.O_NOCTTY)
         a = termios.tcgetattr(self.fd)
         a[0] = a[1] = a[3] = 0
         a[2] = (a[2] | termios.CLOCAL | termios.CREAD) & ~termios.HUPCL
+        if baud:
+            a[4] = a[5] = getattr(termios, "B{}".format(baud))
         a[6][termios.VMIN], a[6][termios.VTIME] = 0, 1
         termios.tcsetattr(self.fd, termios.TCSANOW, a)
         termios.tcflush(self.fd, termios.TCIOFLUSH)
@@ -202,6 +206,7 @@ def cmd_tx(d, a):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--baud", type=int, help="line rate (a UART behind a USB bridge)")
     ap.add_argument("port")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("info")
@@ -218,7 +223,7 @@ def main():
             p.add_argument("--tone", type=float, default=50000)
             p.add_argument("--gain", type=int, default=8)
     a = ap.parse_args()
-    d = Esdr(a.port)
+    d = Esdr(a.port, a.baud)
     try:
         if a.cmd == "info":
             for k, v in d.info().items():

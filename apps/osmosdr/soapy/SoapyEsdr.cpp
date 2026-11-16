@@ -341,10 +341,27 @@ private:
  * The serial transport: request frames and their replies, receive blocks in
  * between (esdr_proto.h). One reader thread sorts what arrives. The port is
  * opened raw without touching DTR/RTS: on USB-Serial-JTAG that resets the chip.
+ * A line rate (baud=) matters behind a USB bridge (the MCH2022 badge's RP2040
+ * passes it on to the ESP32's UART); USB-Serial-JTAG ignores it.
  */
+static speed_t baudSpeed(unsigned long baud)
+{
+	switch (baud) {
+	case 115200: return B115200;
+	case 230400: return B230400;
+	case 460800: return B460800;
+	case 921600: return B921600;
+	case 1000000: return B1000000;
+	case 1500000: return B1500000;
+	case 2000000: return B2000000;
+	case 3000000: return B3000000;
+	default: throw std::runtime_error("esdr: baud " + std::to_string(baud) + " not supported");
+	}
+}
+
 class SerialLink : public Link {
 public:
-	explicit SerialLink(const std::string &port) : port_(port)
+	explicit SerialLink(const std::string &port, unsigned long baud = 0) : port_(port)
 	{
 		fd_ = ::open(port.c_str(), O_RDWR | O_NOCTTY);
 		if (fd_ < 0) {
@@ -358,6 +375,9 @@ public:
 		a.c_cflag &= ~HUPCL;
 		a.c_cc[VMIN] = 0;
 		a.c_cc[VTIME] = 1;
+		if (baud != 0) {
+			cfsetspeed(&a, baudSpeed(baud));
+		}
 		tcsetattr(fd_, TCSANOW, &a);
 		tcflush(fd_, TCIOFLUSH);
 		/*
@@ -569,7 +589,9 @@ public:
 	explicit SoapyEsdr(const SoapySDR::Kwargs &args)
 	{
 		if (args.count("port")) {
-			link_ = std::make_unique<SerialLink>(args.at("port"));
+			link_ = std::make_unique<SerialLink>(
+				args.at("port"),
+				args.count("baud") ? std::stoul(args.at("baud")) : 0UL);
 			/* About 500 kB/s each way: 250 kS/s fits as 8-bit items only. */
 			narrow_ = true;
 		} else {

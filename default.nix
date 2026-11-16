@@ -75,6 +75,7 @@ let
 
   zephyr-sdk = zephyr-nix.sdk.override {
     targets = [
+      "xtensa-espressif_esp32_zephyr-elf"
       "xtensa-espressif_esp32s3_zephyr-elf"
       "riscv64-zephyr-elf"
     ];
