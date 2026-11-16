@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """west dfu: update a running esp-sdr board over USB DFU and confirm the image.
 
-The apps in this repository expose DFU (runtime 2fe3:0005, DFU mode
-2fe3:ffff) and an MCUboot shell on their CDC-ACM port. This command detaches
+The apps in this repository expose DFU (runtime 2fe3:0005, or 1d50:6002 for
+the Ubertooth app, DFU mode 2fe3:ffff) and an MCUboot shell on their CDC-ACM port (MicroPython
+its REPL, which reaches the shell through esdr.shell()). This command detaches
 the board into DFU mode, downloads the signed image into the secondary slot,
 waits until the board has left USB and come back running the new image (on
 trial), checks that its shell still answers after a settle time, and only
@@ -19,9 +20,9 @@ from pathlib import Path
 
 from west.commands import WestCommand
 
-VID = "2fe3"
-PID_APP = "0005"
-PID_DFU = "ffff"
+# vid:pid of a running app (the Ubertooth app presents the Ubertooth One's IDs) and of DFU mode.
+APP_IDS = ("2fe3:0005", "1d50:6002")
+DFU_ID = "2fe3:ffff"
 USB = Path("/sys/bus/usb/devices")
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
@@ -36,45 +37,67 @@ def usb_boards():
         if ":" in d.name or not (d / "idVendor").exists():
             continue
         try:
-            if (d / "idVendor").read_text().strip() != VID:
-                continue
-            pid = (d / "idProduct").read_text().strip()
+            ident = f"{(d / 'idVendor').read_text().strip()}:{(d / 'idProduct').read_text().strip()}"
             serial = (d / "serial").read_text().strip() if (d / "serial").exists() else ""
         except OSError:
             continue
-        if pid in (PID_APP, PID_DFU):
-            boards[serial or f"dfu@{d.name}"] = (d.name, pid)
+        if ident in APP_IDS or ident == DFU_ID:
+            boards[serial or f"dfu@{d.name}"] = (d.name, ident)
     return boards
 
 
-def port_pid(port):
+def port_id(port):
+    """vid:pid of the device on a USB port, or None."""
     try:
-        return (USB / port / "idProduct").read_text().strip()
+        return f"{(USB / port / 'idVendor').read_text().strip()}:{(USB / port / 'idProduct').read_text().strip()}"
     except OSError:
         return None
 
 
 def shell_tty(serial):
-    links = glob.glob(f"/dev/serial/by-id/usb-Zephyr_Project_ESP-SDR*_{serial}-if00")
+    # The CDC-ACM interface is 0 in most apps, behind the vendor interface in others.
+    links = glob.glob(f"/dev/serial/by-id/usb-Zephyr_Project_ESP-SDR*_{serial}-if0[0-9]")
     return links[0] if links else None
 
 
 class Shell:
+    """The board's Zephyr shell on its CDC-ACM port, or MicroPython's REPL there (apps/micropython),
+    whose esdr.shell() runs the same commands: the running Python app is interrupted, and the
+    launcher starts again (a soft reset) when the shell is closed."""
+
     def __init__(self, path):
         import serial
 
-        self.s = serial.Serial(path, 115200, timeout=0.2)
-        time.sleep(0.3)
-        self.s.read(65536)
+        # A port that just enumerated can be busy for a few seconds (a modem probe on the host).
+        for attempt in range(5):
+            try:
+                self.s = serial.Serial(path, 115200, timeout=0.2)
+                time.sleep(0.3)
+                self.s.read(65536)
+                break
+            except serial.SerialException:
+                if attempt == 4:
+                    raise
+                time.sleep(2)
+        self.s.write(b"\x03\r\n")
+        self.repl = ">>>" in self.read(0.5)
 
-    def cmd(self, line, wait=1.0):
-        self.s.write((line + "\r\n").encode())
+    def read(self, wait):
         end, out = time.time() + wait, b""
         while time.time() < end:
             out += self.s.read(4096)
         return ANSI.sub("", out.decode(errors="replace"))
 
+    def cmd(self, line, wait=1.0):
+        if self.repl:
+            line = f"import esdr; print(esdr.shell({line!r}))"
+        self.s.write((line + "\r\n").encode())
+        return self.read(wait)
+
     def close(self):
+        if self.repl:
+            self.s.write(b"\x04")
+            time.sleep(0.2)
         self.s.close()
 
     def app_list(self):
@@ -108,6 +131,15 @@ class Dfu(WestCommand):
                        help="write MCUboot and the image (and with --storage the FAT "
                             "volume) with esptool over the USB-Serial-JTAG, which the "
                             "running app hands over (its usj command): no button, no DFU")
+        p.add_argument("--c6", action="store_true",
+                       help="update a P4 board's ESP32-C6 with the build directory's image "
+                            "through the P4's REPL (apps/micropython): on the WHY2025 badge "
+                            "the P4 hands USB-C J8 to the C6's USB-Serial-JTAG for --c6-time "
+                            "seconds and west flash writes it; on the "
+                            "ESP32-P4-Function-EV-Board the image goes over SDIO "
+                            "(esdr.request, ESDR_REQ_FW_*)")
+        p.add_argument("--c6-time", type=int, default=30,
+                       help="seconds the P4 leaves J8 to the C6 (default 30)")
         p.add_argument("--dfu-board", action="store_true",
                        help="if --serial is not on USB, update the one board found in DFU "
                             "mode (one an earlier try left there; it has no serial to check)")
@@ -161,7 +193,14 @@ class Dfu(WestCommand):
         mcuboot = b / "mcuboot" / "zephyr" / "zephyr.bin"
         if not mcuboot.exists():
             self.die(f"no {mcuboot}: --esptool needs a sysbuild with MCUboot")
-        parts = [("0x0", mcuboot), ("0x20000", self.find_image(args))]
+        image = self.find_image(args)
+        # The padded image with its confirmed trailer (CONFIG_MCUBOOT_GENERATE_CONFIRMED_IMAGE,
+        # apps/common/Kconfig): written plain, the slot keeps an earlier image's trailer, which
+        # MCUboot reads as bad magic, and the confirm below fails.
+        confirmed = image.with_name("zephyr.signed.confirmed.bin")
+        if not args.image and confirmed.exists():
+            image = confirmed
+        parts = [("0x0", mcuboot), ("0x20000", image)]
         if args.storage is not None:
             parts.append(("0x400000", self.find_storage(args)))
         # A stale update request in the update slot would make MCUboot swap the new image out.
@@ -205,6 +244,99 @@ class Dfu(WestCommand):
         self.inf(f"{sn}: written with esptool{'' if args.no_confirm else ' and confirmed'}\n"
                  f"{out.strip()}")
 
+    def c6_link_flash(self, args, sn, sh):
+        """A C6 that the ESP-IDF bootloader starts (the EV board's): the image over SDIO.
+
+        The REPL runs in raw mode: each chunk goes as one line of base64 to a helper that hands
+        it to esdr.request(ESDR_REQ_FW_WRITE); the C6 writes its other OTA partition, checks the
+        CRC and restarts into it.
+        """
+        import base64
+        import binascii
+
+        image = Path(args.build_dir) / "zephyr" / "zephyr.bin"
+        if not image.is_file():
+            sh.close()
+            self.die(f"{image}: no such image (a build for the C6, not sysbuild)")
+        data = image.read_bytes()
+        data += b"\xff" * (-len(data) % 4)
+        chunk = 508
+
+        def raw(code, wait=5.0):
+            # In slices: the port's console ring (512 bytes) drops what a whole high-speed
+            # packet brings while it still holds input.
+            text = code.encode() + b"\x04"
+            for i in range(0, len(text), 256):
+                sh.s.write(text[i:i + 256])
+                sh.s.flush()
+                time.sleep(0.002)
+            end, out = time.time() + wait, b""
+            while time.time() < end and out.count(b"\x04") < 2:
+                out += sh.s.read(4096)
+            ok, _, rest = out.partition(b"OK")
+            res, _, err = rest.partition(b"\x04")
+            if b"\x04" not in rest or err.strip(b"\x04>"):
+                sh.close()
+                self.die(f"{sn}: {code.splitlines()[0][:40]}: {(err or out).decode(errors='replace')}")
+            return res.decode(errors="replace")
+
+        sh.s.write(b"\r\x01")
+        time.sleep(0.3)
+        sh.s.read(65536)
+        raw("import esdr, struct, binascii\n"
+            "def w(o, d):\n"
+            " esdr.request(0x16, data=struct.pack('<I', o) + binascii.a2b_base64(d))\n")
+        raw(f"esdr.request(0x15, data=struct.pack('<I', {len(data)}))")
+        start = time.time()
+        for off in range(0, len(data), chunk):
+            raw(f"w({off},'{base64.b64encode(data[off:off + chunk]).decode()}')")
+            if off // chunk % 200 == 0:
+                self.inf(f"{sn}: {off + chunk}/{len(data)}")
+        raw(f"esdr.request(0x17, data=struct.pack('<I', {binascii.crc32(data)}))")
+        sh.s.write(b"\x02")
+        sh.close()
+        self.inf(f"{sn}: C6 written in {time.time() - start:.0f} s ({len(data)} bytes), "
+                 "it restarts into the new image")
+
+    def c6_flash(self, args):
+        """A P4 board's C6 through the P4: over SDIO where the REPL can, else (the WHY2025
+        badge) J8 to the C6, west flash, J8 back."""
+        sn, _ = self.find_board(args)
+        before = set(glob.glob("/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*"))
+        sh = Shell(shell_tty(sn))
+        if not sh.repl:
+            sh.close()
+            self.die(f"{sn}: no MicroPython REPL (--c6 needs apps/micropython on the P4)")
+        # The answer spelled so that the echoed line does not contain it.
+        sh.s.write(b"import esdr; print('SD' + 'IO' if hasattr(esdr, 'request') and "
+                   b"not hasattr(esdr, 'usb_to_c6') else 'J' + '8')\r\n")
+        if "SDIO" in sh.read(1.0):
+            self.c6_link_flash(args, sn, sh)
+            return
+        # The P4 leaves USB as it hands J8 over: no answer to wait for.
+        sh.s.write(f"import esdr; esdr.usb_to_c6({args.c6_time})\r\n".encode())
+        time.sleep(0.5)
+        try:
+            sh.s.close()
+        except Exception:  # serial.SerialException: the port is gone already
+            pass
+        usj = []
+        if not self.wait_for(lambda: usj.extend(set(glob.glob(
+                "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_*")) - before)
+                or usj, 15):
+            self.die(f"{sn}: the C6's USB-Serial-JTAG did not appear on J8")
+        self.inf(f"{sn}: J8 to the C6 ({usj[0]}), {args.c6_time} s")
+        start = time.time()
+        r = subprocess.run(["west", "flash", "-d", args.build_dir, "--esp-device", usj[0]],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            self.die(f"{sn}: west flash failed:\n{(r.stdout + r.stderr).strip()[-600:]}")
+        self.inf(f"{sn}: C6 written in {time.time() - start:.0f} s, waiting for the P4")
+        if not self.wait_for(lambda: shell_tty(sn) is not None,
+                             args.c6_time - (time.time() - start) + 30):
+            self.die(f"{sn}: the P4 did not take J8 back")
+        self.inf(f"{sn}: J8 back to the P4")
+
     def find_board(self, args):
         boards = usb_boards()
         in_dfu = [k for k in boards if k.startswith("dfu@")]
@@ -245,12 +377,12 @@ class Dfu(WestCommand):
             return None
 
     def download(self, sn, port, image, alt="slot1_image"):
-        if port_pid(port) != PID_DFU:
-            self.dfu_util(["-S", sn, "-d", f"{VID}:{port_pid(port) or PID_APP}", "-e"], 15)
-        if not self.wait_for(lambda: port_pid(port) == PID_DFU, 15):
+        if port_id(port) != DFU_ID:
+            self.dfu_util(["-S", sn, "-d", port_id(port) or APP_IDS[0], "-e"], 15)
+        if not self.wait_for(lambda: port_id(port) == DFU_ID, 15):
             self.wrn(f"{sn}: no DFU mode")
             return False
-        r = self.dfu_util(["-d", f"{VID}:{PID_DFU}", "-p", port, "-a", alt, "-D",
+        r = self.dfu_util(["-d", DFU_ID, "-p", port, "-a", alt, "-D",
                            str(image)], 120)
         if r is None:
             return False
@@ -260,6 +392,9 @@ class Dfu(WestCommand):
         return True
 
     def do_run(self, args, unknown):
+        if args.c6:
+            self.c6_flash(args)
+            return
         if args.esptool:
             sn, _ = self.find_board(args)
             self.esptool_flash(args, sn)
@@ -271,13 +406,17 @@ class Dfu(WestCommand):
 
         for attempt in range(1, args.tries + 1):
             if not self.download(sn, port, image, "fat" if storage else "slot1_image"):
+                # dfu-util can get LIBUSB_ERROR_BUSY just after the board enters DFU mode, when
+                # fwupd's DFU plugin probes a new device. Tries in quick succession then all
+                # fail, which leaves the board in DFU mode.
+                time.sleep(2.0)
                 continue
             self.inf(f"{sn}: downloaded (try {attempt}), waiting for the swap")
             # Leave USB first: the old image's shell link can outlive the download.
-            if not self.wait_for(lambda: port_pid(port) != PID_DFU, 30):
+            if not self.wait_for(lambda: port_id(port) != DFU_ID, 30):
                 self.wrn(f"{sn}: did not reset after the download")
                 continue
-            if not self.wait_for(lambda: port_pid(port) == PID_APP and shell_tty(sn), 90):
+            if not self.wait_for(lambda: port_id(port) in APP_IDS and shell_tty(sn), 90):
                 self.wrn(f"{sn}: did not come back")
                 continue
             break
@@ -314,7 +453,7 @@ class Dfu(WestCommand):
         time.sleep(args.settle)
         tty = shell_tty(sn)
         alive = ""
-        if tty and port_pid(port) == PID_APP:
+        if tty and port_id(port) in APP_IDS:
             try:
                 sh = Shell(tty)
                 alive = sh.cmd("kernel uptime")

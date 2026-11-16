@@ -2,6 +2,12 @@
 #
 # USB start, DFU and the trial watchdog (common/src/app_usb.c).
 
+# zephyr.signed.confirmed.bin: the image padded to its slot, ending in a confirmed trailer, for
+# esptool (west dfu --esptool). Written plain, the slot keeps whatever trailer an earlier image
+# left, which MCUboot then reads as bad magic: the image boots, but cannot be confirmed.
+config MCUBOOT_GENERATE_CONFIRMED_IMAGE
+	default y if BOOTLOADER_MCUBOOT
+
 config APP_USB_START_DELAY_MS
 	int "Delay before USB OTG takes the PHY from USB-Serial-JTAG"
 	default 0

@@ -5,7 +5,8 @@
     collect.py BUILD_DIR APP CHIP OUT_DIR
 
 Per image (MCUboot and the app with sysbuild, the app alone without):
-<image>.elf, <image>.bin, <image>.signed.bin (the USB DFU image) and
+<image>.elf, <image>.bin, <image>.signed.bin (the USB DFU image),
+<image>.signed.confirmed.bin (padded, confirmed: what the merged image takes) and
 <image>.config. multiapp adds its FAT volume and the llext files. All of them
 at their flash offsets (from the runners' --esp-app-address) go into
 flash_args, for "esptool --chip CHIP write-flash @flash_args" in OUT_DIR, and
@@ -50,6 +51,11 @@ def main():
         if (zephyr / "zephyr.signed.bin").exists():
             image = f"{name}.signed.bin"
             shutil.copy(zephyr / "zephyr.signed.bin", out / image)
+        # The merged image takes the padded one with a confirmed trailer where there is one
+        # (CONFIG_MCUBOOT_GENERATE_CONFIRMED_IMAGE): written that way the image is not on trial.
+        if (zephyr / "zephyr.signed.confirmed.bin").exists():
+            image = f"{name}.signed.confirmed.bin"
+            shutil.copy(zephyr / "zephyr.signed.confirmed.bin", out / image)
         segments.append((runner_args(zephyr)["esp-app-address"], image))
 
     fat = dirs[app] / "multiapp_fat.img"

@@ -65,14 +65,15 @@ jobs:
           west build -d build --sysbuild -b xiao_esp32s3/esp32s3/procpu esp-sdr-zephyr/apps/multiapp
 
       # The same offsets and flash settings as west dfu --esptool. The gaps are 0xff, so the
-      # update slot is erased too.
+      # update slot is erased too; the image is the padded, confirmed one (its trailer marks it
+      # confirmed: an erased trailer would leave it on trial, reset by the trial watchdog).
       - name: Merge the image
         run: |
           image=esp-sdr-multiapp-$GITHUB_REF_NAME-xiao_esp32s3.bin
           esptool --chip esp32s3 merge-bin -o $image \
             --flash-mode dio --flash-freq 80m --flash-size 8MB \
             0x0 build/mcuboot/zephyr/zephyr.bin \
-            0x20000 build/multiapp/zephyr/zephyr.signed.bin \
+            0x20000 build/multiapp/zephyr/zephyr.signed.confirmed.bin \
             0x400000 build/multiapp/multiapp_fat.img
           echo "IMAGE=$image" >> "$GITHUB_ENV"
 
