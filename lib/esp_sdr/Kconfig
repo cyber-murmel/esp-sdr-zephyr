@@ -181,6 +181,25 @@ config ESP_SDR_REPLAY
 	  0x2F040000, which the image must then end below (shared with the
 	  DIAG16 ring).
 
+config ESP_SDR_DUMPRING
+	bool "Gapless receive through the dump engine alone (ESP32-S31)"
+	depends on SOC_SERIES_ESP32S31
+	help
+	  esp_sdr_dumpring_run(): continuous 10+10 bit I/Q at 20 MS/s or a
+	  lower capture rate, without pads or the diagnostic bus: the dump
+	  engine writes without a stop, the CPU moves it between TCM group 2
+	  and the capture bank's group and reads the one it is not writing.
+	  The image must end below group 2. While group 3 (the ROM data's) is
+	  the engine's, a few microseconds a unit, the other core waits.
+
+config ESP_SDR_S31_GROUP2
+	bool
+	default y if ESP_SDR_REPLAY || ESP_SDR_DUMPRING
+	depends on SOC_SERIES_ESP32S31
+	help
+	  TCM group 2 (0x2F040000, 128 KiB) reserved for the engine: the image
+	  ends below it.
+
 config ESP_SDR_BANK1
 	bool "Reserve a second dump bank"
 	depends on SOC_SERIES_ESP32S3

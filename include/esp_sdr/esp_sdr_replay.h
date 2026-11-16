@@ -20,8 +20,10 @@
  *   emit_dma()).
  * - ESP32-S31: the TCM's group at 0x2F040000 (128 KiB), which the image must
  *   end below (the linker checks), at 80, 40 or 20 MS/s, up to 32768 words.
- *   Captures and the ring give -EBUSY while it plays. Measured, as no vendor
- *   code programs this engine: doc/hardware-quirks.md.
+ *   Captures and the ring give -EBUSY while it plays. Captures land in the
+ *   same group (as on the C5, the bank): write the buffer after the last
+ *   capture before the start. Measured, as no vendor code programs this
+ *   engine: doc/hardware-quirks.md.
  */
 
 #ifndef ESP_SDR_ESP_SDR_REPLAY_H_

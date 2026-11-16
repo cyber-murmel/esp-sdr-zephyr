@@ -565,8 +565,18 @@ void regi2c_exit_critical(void);
 extern uint32_t __esp_sdr_bank_start[];
 /* Second bank, only linked with CONFIG_ESP_SDR_BANK1 (esp_sdr_bank_s3.ld). */
 extern uint32_t __esp_sdr_bank1_start[];
-/* The S31's DAC group, only linked with CONFIG_ESP_SDR_REPLAY (esp_sdr_bank_s31.ld). */
-extern uint32_t __esp_sdr_dac_start[];
+/* The S31's TCM group 2, only linked with CONFIG_ESP_SDR_S31_GROUP2 (esp_sdr_bank_s31.ld). */
+extern uint32_t __esp_sdr_group2_start[];
+/*
+ * Where an S31 burst lands (its first DUMP_FIRST_WORD words the engine settling): group 2 where
+ * the image leaves it, which holds neither the image nor the ROM's data, so the other core runs
+ * on while the engine writes it; else the capture bank, in the ROM data's group.
+ */
+#if defined(CONFIG_ESP_SDR_S31_GROUP2)
+#define ESP_SDR_S31_BURST_BANK __esp_sdr_group2_start
+#else
+#define ESP_SDR_S31_BURST_BANK __esp_sdr_bank_start
+#endif
 
 /* Radio state, guarded by esp_sdr_lock (esp_sdr.c). */
 extern struct k_mutex esp_sdr_lock;
@@ -602,7 +612,12 @@ int esp_sdr_s31_gain_get(void);
 void esp_sdr_s31_rx_on(void);
 /* The ADC's noise alone, at any gain, or the antenna again. */
 void esp_sdr_s31_rx_mute(bool mute);
-int esp_sdr_s31_capture(enum esp_sdr_rate rate, size_t count, uint32_t *elapsed_us);
+/*
+ * A burst into ESP_SDR_S31_BURST_BANK; hook (or NULL) runs during it in group 2, else before it.
+ * past: the words the engine wrote after the burst before it stopped.
+ */
+int esp_sdr_s31_capture(enum esp_sdr_rate rate, size_t count, void (*hook)(void *user),
+			void *user, uint32_t *elapsed_us, uint32_t *past);
 /* The dump engine running for the diagnostic bus (esp_sdr_diag16.c). */
 void esp_sdr_s31_diag_start(void);
 void esp_sdr_s31_diag_stop(void);
@@ -618,6 +633,16 @@ int esp_sdr_s31_dc_calibrate(esp_sdr_s31_dc_measure_t measure, void *user,
 int esp_sdr_s31_dac_start(unsigned int rate_code, uint32_t ctrl, uint32_t *t0);
 void esp_sdr_s31_dac_stop(void);
 bool esp_sdr_s31_dac_busy(void);
+/*
+ * The dump ring (esp_sdr_dumpring.c), lock held: the writer circular over the first words of the
+ * owned group, group 2 first; captures, a replay and the bus's ring give -EBUSY meanwhile. The
+ * other core parked and this one's interrupts off while group 3, the ROM data's, is the engine's.
+ */
+int esp_sdr_s31_ring_start(unsigned int rate_code, uint32_t words);
+void esp_sdr_s31_ring_stop(void);
+bool esp_sdr_s31_ring_busy(void);
+unsigned int esp_sdr_s31_group_take(void);
+void esp_sdr_s31_group_give(unsigned int key);
 #endif
 /* Back to the resting RX-ready state after a tuning change; lock held. */
 int esp_sdr_retune(void);

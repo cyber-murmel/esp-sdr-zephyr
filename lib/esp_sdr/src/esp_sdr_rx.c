@@ -22,6 +22,13 @@
 
 #include "esp_sdr_priv.h"
 
+/* A burst's words, past the engine's settling ones. */
+#if defined(CONFIG_SOC_SERIES_ESP32S31)
+#define BURST_WORDS (ESP_SDR_S31_BURST_BANK + DUMP_FIRST_WORD)
+#else
+#define BURST_WORDS (__esp_sdr_bank_start + DUMP_FIRST_WORD)
+#endif
+
 LOG_MODULE_DECLARE(esp_sdr, CONFIG_ESP_SDR_LOG_LEVEL);
 
 static int lpf_code = ESP_SDR_RX_LPF_AUTO;
@@ -374,17 +381,18 @@ void esp_sdr_rx_set_capture_hook(void (*fn)(void *user), void *user)
 static int capture_locked(enum esp_sdr_rate rate, size_t count, volatile uint32_t *words,
 			  uint32_t usage, uint32_t *elapsed_us, uint64_t *t0)
 {
+	uint32_t past = 0U;
 	int ret;
 
 	ARG_UNUSED(words);
 	ARG_UNUSED(usage);
 
-	if (capture_hook != NULL) {
-		capture_hook(capture_hook_user);
-	}
-	ret = esp_sdr_s31_capture(rate, count, elapsed_us);
-	/* The samples returned are the burst's last: the first of them, not the engine's start. */
-	*t0 = k_cycle_get_64() - (uint64_t)count * sys_clock_hw_cycles_per_sec() /
+	ret = esp_sdr_s31_capture(rate, count, capture_hook, capture_hook_user, elapsed_us, &past);
+	/*
+	 * The samples returned end where the engine stopped, but for what it wrote after them while
+	 * a hook ran: their first, not the engine's start.
+	 */
+	*t0 = k_cycle_get_64() - (uint64_t)(count + past) * sys_clock_hw_cycles_per_sec() /
 					 esp_sdr_rx_rate_hz(rate);
 	return ret;
 }
@@ -461,7 +469,7 @@ int esp_sdr_rx_capture(enum esp_sdr_rate rate, size_t count, struct esp_sdr_rx_b
 	ret = esp_sdr_ready ? capture_locked(rate, count, __esp_sdr_bank_start, usage, &elapsed, &t0)
 			: -EAGAIN;
 	if (ret == 0) {
-		burst->words = __esp_sdr_bank_start + DUMP_FIRST_WORD;
+		burst->words = BURST_WORDS;
 		burst->count = count;
 		burst->elapsed_us = elapsed;
 	}
@@ -480,10 +488,12 @@ static bool dc_measure_bursts(int32_t mean[2], void *user)
 
 	ARG_UNUSED(user);
 	for (unsigned int b = 0; b < DC_BURSTS; b++) {
-		const uint32_t *w = __esp_sdr_bank_start + DUMP_FIRST_WORD;
+		const uint32_t *w = BURST_WORDS;
 		int32_t si = 0, sq = 0;
+		uint32_t past;
 
-		if (esp_sdr_s31_capture(ESP_SDR_RATE_4MSPS, ESP_SDR_SAMPLES_MAX, &elapsed) != 0) {
+		if (esp_sdr_s31_capture(ESP_SDR_RATE_4MSPS, ESP_SDR_SAMPLES_MAX, NULL, NULL, &elapsed,
+					&past) != 0) {
 			return false;
 		}
 		for (size_t j = 0; j < ESP_SDR_SAMPLES_MAX; j++) {
@@ -535,7 +545,7 @@ int esp_sdr_rx_capture_with(enum esp_sdr_rate rate, size_t count, esp_sdr_rx_wor
 			: -EAGAIN;
 	if (ret == 0) {
 		/* Still under the lock: another thread's capture or transmit reuses the bank. */
-		fn(user, __esp_sdr_bank_start + DUMP_FIRST_WORD, count);
+		fn(user, BURST_WORDS, count);
 		*first_ns = k_cyc_to_ns_floor64(t0);
 	}
 	k_mutex_unlock(&esp_sdr_lock);
@@ -674,7 +684,7 @@ int esp_sdr_rx_capture_decimated(enum esp_sdr_rate rate, size_t count, unsigned 
 			: -EAGAIN;
 	if (ret == 0) {
 		/* Still under the lock: a transmit session would overwrite the bank. */
-		*n_out = cic(__esp_sdr_bank_start + DUMP_FIRST_WORD, count, m, out, max_out);
+		*n_out = cic(BURST_WORDS, count, m, out, max_out);
 		/* Output k is centred 1.5 (m - 1) samples before input (k + 1) m - 1. */
 		*first_ns = k_cyc_to_ns_floor64(t0) +
 			    ((uint64_t)(CIC_STAGES + 1U) * m - 1U - (3U * (m - 1U)) / 2U) *
@@ -732,7 +742,7 @@ int esp_sdr_rx_capture_folded(enum esp_sdr_rate rate, size_t count, unsigned int
 			: -EAGAIN;
 	if (ret == 0) {
 		/* Still under the lock: a transmit session would overwrite the bank. */
-		*n_out = fold(__esp_sdr_bank_start + DUMP_FIRST_WORD, count, n, out, max_out);
+		*n_out = fold(BURST_WORDS, count, n, out, max_out);
 		*first_ns = k_cyc_to_ns_floor64(t0);
 	}
 	k_mutex_unlock(&esp_sdr_lock);

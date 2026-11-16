@@ -302,6 +302,8 @@ static bool tx_tone_on;
 static bool tx_chain_on;
 /* The DAC reader owns group 2 (esp_sdr_s31_dac_start()). */
 static bool dac_on;
+/* The dump ring runs (esp_sdr_s31_ring_start()): the writer between groups 2 and 3. */
+static bool ring_on;
 
 /* What the S31 tunes, and so transmits at. */
 #define TX_MIN_MHZ 2200U
@@ -564,18 +566,42 @@ void esp_sdr_s31_tune(unsigned int mhz, int khz, unsigned int cbw)
 }
 
 /*
- * The gate is open for the whole burst, some 4 ms at 4 MS/s: the upper group, ROM data in it, is
- * the engine's. Hence interrupts off, code and stack below the group, and no calls.
+ * The gate is open for the whole burst, some 4 ms at 4 MS/s. In the upper group, the ROM data's,
+ * that means interrupts off, the other core parked, code and stack below the group and no calls.
+ * Group 2 holds nothing else: the other core runs on, and only this one's interrupts are off, so
+ * that it stops the engine before it wraps (at 80 MS/s 125 us after the burst).
  */
-static IRAM_ATTR __noinline bool dump_run(size_t words, unsigned int rate_field, uint32_t *cycles,
-					 uint32_t *end)
-{
-	uint32_t ctrl = dump_reset_ctrl | DUMP_CAPACITY | DUMP_CTRL_CIRCULAR;
-	uint32_t at = 0U;
-	unsigned int key = group_take();
-	uint32_t start;
+#if defined(CONFIG_ESP_SDR_S31_GROUP2)
+#define BURST_USAGE DUMP_USAGE_DAC
+#define BURST_PARK  false
+/* The whole group but its guard words: what the engine may write past a burst while a hook runs. */
+#define BURST_CAPACITY (0x20000U / 4U - 8U)
+BUILD_ASSERT((BURST_CAPACITY + DUMP_GUARD_WORDS) * 4U <= 0x20000U, "aperture past group 2");
+#else
+#define BURST_USAGE DUMP_USAGE_OWN
+#define BURST_PARK  true
+#define BURST_CAPACITY DUMP_CAPACITY
+#endif
+BUILD_ASSERT(BURST_CAPACITY <= DUMP_CTRL_COUNT, "aperture past the count field");
 
-	REG_WRITE(DUMP_USAGE_REG, DUMP_USAGE_OWN);
+/*
+ * In group 2 the capture hook runs while the engine writes, interrupts on, and the burst is
+ * stopped after it: the engine runs on past the burst meanwhile, up to the aperture's end. A hook
+ * that takes longer fails the capture, -EOVERFLOW.
+ */
+#define HOOK_WORDS_MAX (BURST_CAPACITY - 64U)
+
+static IRAM_ATTR __noinline int dump_run(size_t words, unsigned int rate_field,
+					 uint32_t cycles_per_word, void (*hook)(void *user),
+					 void *user, uint32_t *cycles, uint32_t *end)
+{
+	uint32_t ctrl = dump_reset_ctrl | BURST_CAPACITY | DUMP_CTRL_CIRCULAR;
+	uint32_t at = 0U;
+	unsigned int key = BURST_PARK ? group_take() : irq_lock();
+	uint32_t start;
+	int ret = 0;
+
+	REG_WRITE(DUMP_USAGE_REG, BURST_USAGE);
 	__asm__ volatile("fence" ::: "memory");
 	REG_WRITE(DUMP_MODE_REG, (REG_READ(DUMP_MODE_REG) & ~(DUMP_MODE_SOURCE | DUMP_MODE_RATE)) |
 					 FIELD_PREP(DUMP_MODE_RATE, rate_field) |
@@ -586,7 +612,17 @@ static IRAM_ATTR __noinline bool dump_run(size_t words, unsigned int rate_field,
 	REG_SET_BIT(DUMP_CTRL_REG, DUMP_CTRL_RUN);
 	REG_SET_BIT(DUMP_CTRL_REG, DUMP_CTRL_TRIGGER);
 	REG_CLR_BIT(DUMP_CTRL_REG, DUMP_CTRL_TRIGGER);
-	while (at < words && (uint32_t)esp_cpu_get_cycle_count() - start < DUMP_CYCLES_MAX) {
+	if (!BURST_PARK && hook != NULL) {
+		irq_unlock(key);
+		hook(user);
+		key = irq_lock();
+		if (((uint32_t)esp_cpu_get_cycle_count() - start) / cycles_per_word >
+		    HOOK_WORDS_MAX) {
+			ret = -EOVERFLOW;
+		}
+	}
+	while (ret == 0 && at < words &&
+	       (uint32_t)esp_cpu_get_cycle_count() - start < DUMP_CYCLES_MAX) {
 		at = REG_READ(DUMP_MODE_REG) & DUMP_MODE_INDEX;
 	}
 	*cycles = (uint32_t)esp_cpu_get_cycle_count() - start;
@@ -594,22 +630,31 @@ static IRAM_ATTR __noinline bool dump_run(size_t words, unsigned int rate_field,
 	REG_CLR_BIT(DUMP_CTRL_REG, DUMP_CTRL_RUN);
 	REG_WRITE(DUMP_USAGE_REG, 0U);
 	__asm__ volatile("fence" ::: "memory");
-	group_give(key);
-	return at >= words && at < DUMP_CAPACITY;
+	if (BURST_PARK) {
+		group_give(key);
+	} else {
+		irq_unlock(key);
+	}
+	if (ret == 0 && (at < words || at >= BURST_CAPACITY)) {
+		ret = -ETIMEDOUT;
+	}
+	return ret;
 }
 
-int esp_sdr_s31_capture(enum esp_sdr_rate rate, size_t count, uint32_t *elapsed_us)
+int esp_sdr_s31_capture(enum esp_sdr_rate rate, size_t count, void (*hook)(void *user),
+			void *user, uint32_t *elapsed_us, uint32_t *past)
 {
 	/* Measured by upstream from capture lengths: 80, 40, 20, 10, 8, 4 MS/s. */
 	static const uint8_t rate_field[] = {0, 1, 3, 5, 7, 9};
-	volatile uint32_t *bank = __esp_sdr_bank_start;
+	volatile uint32_t *bank = ESP_SDR_S31_BURST_BANK;
 	size_t last = DUMP_FIRST_WORD + count - 1U;
 	uint32_t cycles, end;
+	int ret;
 
 	if ((unsigned int)rate >= ARRAY_SIZE(rate_field)) {
 		return -EINVAL;
 	}
-	if (dac_on) {
+	if (dac_on || ring_on) {
 		return -EBUSY;
 	}
 	if (!dump_ready) {
@@ -619,14 +664,21 @@ int esp_sdr_s31_capture(enum esp_sdr_rate rate, size_t count, uint32_t *elapsed_
 	bank[DUMP_FIRST_WORD] = SENTINEL;
 	bank[last] = SENTINEL;
 	for (unsigned int j = 0; j < DUMP_GUARD_WORDS; j++) {
-		bank[DUMP_CAPACITY + j] = SENTINEL;
+		bank[BURST_CAPACITY + j] = SENTINEL;
 	}
 	esp_sdr_s31_rx_on();
-	if (!dump_run(DUMP_FIRST_WORD + count, rate_field[rate], &cycles, &end)) {
-		return -ETIMEDOUT;
+	/* In the ROM data's group nothing runs during the burst: the hook comes first. */
+	if (BURST_PARK && hook != NULL) {
+		hook(user);
+	}
+	ret = dump_run(DUMP_FIRST_WORD + count, rate_field[rate],
+		       (uint32_t)esp_clk_cpu_freq() / esp_sdr_rx_rate_hz(rate), hook, user, &cycles,
+		       &end);
+	if (ret != 0) {
+		return ret;
 	}
 	for (unsigned int j = 0; j < DUMP_GUARD_WORDS; j++) {
-		if (bank[DUMP_CAPACITY + j] != SENTINEL) {
+		if (bank[BURST_CAPACITY + j] != SENTINEL) {
 			return -EOVERFLOW;
 		}
 	}
@@ -634,6 +686,7 @@ int esp_sdr_s31_capture(enum esp_sdr_rate rate, size_t count, uint32_t *elapsed_
 		return -ETIMEDOUT;
 	}
 	*elapsed_us = (uint32_t)((uint64_t)cycles * USEC_PER_SEC / (uint32_t)esp_clk_cpu_freq());
+	*past = end - (DUMP_FIRST_WORD + (uint32_t)count);
 	return 0;
 }
 
@@ -655,7 +708,7 @@ int esp_sdr_s31_dac_start(unsigned int rate_code, uint32_t ctrl, uint32_t *t0)
 	if (!dump_ready) {
 		return -EAGAIN;
 	}
-	if (dac_on) {
+	if (dac_on || ring_on) {
 		return -EBUSY;
 	}
 	key = irq_lock();
@@ -670,6 +723,66 @@ int esp_sdr_s31_dac_start(unsigned int rate_code, uint32_t ctrl, uint32_t *t0)
 	dac_on = true;
 	return 0;
 }
+
+bool esp_sdr_s31_ring_busy(void)
+{
+	return ring_on;
+}
+
+#if defined(CONFIG_ESP_SDR_DUMPRING)
+/*
+ * The writer in its circular mode over the first words of whichever group the ownership register
+ * names, group 2 to begin with, receiving at a DUMP_MODE rate code. Group 2 holds nothing of the
+ * image, so no one waits for this; group 3 is the caller's to take (esp_sdr_s31_group_take()).
+ */
+int esp_sdr_s31_ring_start(unsigned int rate_code, uint32_t words)
+{
+	unsigned int key;
+	uint32_t ctrl;
+
+	if (!dump_ready) {
+		return -EAGAIN;
+	}
+	if (dac_on || ring_on) {
+		return -EBUSY;
+	}
+	esp_sdr_s31_rx_on();
+	ctrl = dump_reset_ctrl | FIELD_PREP(DUMP_CTRL_COUNT, words) | DUMP_CTRL_CIRCULAR;
+	key = irq_lock();
+	REG_WRITE(DUMP_MODE_REG, (REG_READ(DUMP_MODE_REG) & ~(DUMP_MODE_SOURCE | DUMP_MODE_RATE)) |
+					 FIELD_PREP(DUMP_MODE_RATE, rate_code) |
+					 FIELD_PREP(DUMP_MODE_SOURCE, DUMP_SOURCE_IQ));
+	REG_WRITE(DUMP_CTRL_REG, ctrl | DUMP_CTRL_DONE);
+	REG_WRITE(DUMP_CTRL_REG, ctrl);
+	REG_WRITE(DUMP_USAGE_REG, DUMP_USAGE_DAC);
+	__asm__ volatile("fence" ::: "memory");
+	REG_WRITE(DUMP_CTRL_REG, ctrl | DUMP_CTRL_RUN);
+	irq_unlock(key);
+	ring_on = true;
+	return 0;
+}
+
+void esp_sdr_s31_ring_stop(void)
+{
+	if (!ring_on) {
+		return;
+	}
+	REG_CLR_BIT(DUMP_CTRL_REG, DUMP_CTRL_RUN);
+	REG_WRITE(DUMP_USAGE_REG, 0U);
+	__asm__ volatile("fence" ::: "memory");
+	ring_on = false;
+}
+
+IRAM_ATTR unsigned int esp_sdr_s31_group_take(void)
+{
+	return group_take();
+}
+
+IRAM_ATTR void esp_sdr_s31_group_give(unsigned int key)
+{
+	group_give(key);
+}
+#endif /* CONFIG_ESP_SDR_DUMPRING */
 
 void esp_sdr_s31_dac_stop(void)
 {

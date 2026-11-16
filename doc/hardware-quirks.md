@@ -399,6 +399,22 @@ esp-phy-lib b88e4b76e090, the blob this repo fetches. The `lib/esp_sdr` code is 
   against the system timer. The nodes leave a 16-byte hole for a block header, with burst 16 (a frame
   ends mid-ring: its length field holds 65535 bytes, less than the ring, and nothing is lost there).
   Lower rates are every n-th sample, so 10 and 5 MS/s alias under a 13 MHz floor of the low-pass.
+- **A ring without the bus (`esp_sdr_dumpring_*()`):** the dump engine's writer runs without a stop
+  in its circular mode and writes whichever TCM group the ownership register gives it, from the same
+  index on (upstream's continuous spectra turn it the same way). The run gives the writer group 2 for
+  units of 1536 words and the capture bank's group 3 only while it copies a unit out of group 2;
+  sentinel words in group 2 find each unit's ends. Group 3 needs none: its words of a turn run from
+  where one unit ended to where the next one starts (a first version marked and checked group 3 as
+  well, and every end matched over 10000 turns; the marks and scans cost the CPU near 4 cycles of
+  the 16 a word it has at 20 MS/s). 1 s at 20 MS/s: 19999813 of the 20000754 words its time allows
+  (the rest the unread last unit and the settling start), 10800 turns. A turn takes up to 21 us, a
+  fifth of the time, in which the other core waits in its stall interrupt (the ROM's data is in
+  group 3): a busy thread there keeps 74 % of its speed. The VIEWE board's panel uses 4 of the bus ring's signals
+  (`LCD_DATA_OUT_PAD_OUT0..3` carry Q[9:6]), so there this is the only gapless receive.
+- **TCM is slow to load from:** a load stalls its use some 5 cycles at 320 MHz. Copying 2048 words
+  takes 2.4 cycles a word unrolled with the loads first, 2.7 with `memcpy`, 7 through a volatile
+  pointer with a masked index; storing alone 3 a word. A loop that uses each word as it loads it
+  runs near 10 cycles a word.
 - **Pads:** GPIO 20 to 25, 36 to 40, 42 to 44, 47, 48. Upstream's GPIO 33 and 34 instead of 47 and
   48 are USB-Serial-JTAG's, so it would go away while streaming. Not 35, 45, 46 or 49: lines on them
   come out mixed with others, so Q's rms reaches 2.5 times I's whatever the phase.

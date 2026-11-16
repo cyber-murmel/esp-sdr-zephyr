@@ -1,0 +1,17 @@
+common:
+  tags:
+    - esp-sdr
+    - hardware
+  harness: ztest
+  timeout: 120
+  platform_allow:
+    - esp32s31_function_coreboard/esp32s31/hpcore
+    - ues31s043h800v480c_u/esp32s31/hpcore
+
+tests:
+  # Flashed over the board's UART bridge, without the Wi-Fi driver (socs/esp32s31_hpcore.conf).
+  integration.esp_sdr.dumpring_api.s31: {}
+  # Both cores: the turns park the other one, whose work this measures too.
+  integration.esp_sdr.dumpring_api.s31.smp:
+    extra_configs:
+      - CONFIG_SMP=y

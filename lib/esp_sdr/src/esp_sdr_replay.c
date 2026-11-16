@@ -79,7 +79,7 @@ uint32_t *esp_sdr_replay_buf(size_t *words)
 {
 	*words = ESP_SDR_REPLAY_MAX;
 #if defined(CONFIG_SOC_SERIES_ESP32S31)
-	return __esp_sdr_dac_start;
+	return __esp_sdr_group2_start;
 #else
 	return __esp_sdr_bank_start;
 #endif

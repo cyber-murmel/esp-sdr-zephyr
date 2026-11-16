@@ -207,8 +207,12 @@ int esp_sdr_rx_capture_bank(enum esp_sdr_rate rate, size_t count, int bank,
  * its start, in the capturing thread, instead of spinning all that time. It must not start a
  * capture or read the bank. It may take longer than the capture, which then only ends late.
  *
- * On the ESP32-S31 nothing can run while the engine has the memory: it is called just before the
- * burst, which then starts late.
+ * On the ESP32-S31 the burst lands in TCM group 2 where the image leaves it free
+ * (CONFIG_ESP_SDR_S31_GROUP2): @p fn runs during it, interrupts on, and the engine runs on past
+ * the burst until @p fn returns. It must return before the engine reaches the group's end, some
+ * 16000 words after the burst's (0.8 ms at 20 MS/s, 0.2 ms at 80), or the capture fails with
+ * -EOVERFLOW. Without group 2 nothing can run while the engine has the memory: it is called just
+ * before the burst, which then starts late.
  *
  * @param fn Called with @p user; NULL for none.
  * @param user Passed to @p fn.
