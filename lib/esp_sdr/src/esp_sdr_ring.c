@@ -219,12 +219,17 @@ struct fir_job {
 	const int16_t *xi, *xq, *h;
 	uint32_t groups, nout, step, shift;
 	int16_t *oi, *oq;
+	/* esp_sdr_ring_dot() only: every other output's taps and the step after it. */
+	const int16_t *h2;
+	uint32_t step2;
 };
 
 void esp_sdr_ring_unpack_iq10(const uint32_t *src, int16_t *di, int16_t *dq, unsigned int groups8);
 void esp_sdr_ring_fir_split(const struct fir_job *job);
 void esp_sdr_ring_fir8_l32(const struct fir_job *job);
 void esp_sdr_ring_rot_fs4(int16_t *wi, int16_t *wq, unsigned int groups8, const int16_t *masks);
+/* Sums of 4 lanes, 8 outputs a group of 32 (ESP_SDR_RING_DECIM_BOX4). */
+void esp_sdr_ring_sum4(const int16_t *x, int16_t *out, unsigned int groups32, const int16_t *ones);
 /* esp_sdr_ring_fir_split with the data loads fused, for an even number of tap groups. */
 void esp_sdr_ring_dot(const struct fir_job *job);
 
@@ -239,6 +244,12 @@ void esp_sdr_ring_dot(const struct fir_job *job);
 struct fstage {
 	/* Decimation, taps, samples in wi/wq, accumulator shift. */
 	uint32_t d, l, n, shift;
+	/*
+	 * Tap sets, and the samples between their phases: the vector loads need windows on
+	 * multiples of 8 samples, and windows d apart start on multiples of g = gcd(d, 8). Set p
+	 * is the filter shifted by p g taps, for a window read from p g samples before its start.
+	 */
+	uint32_t phases, g;
 	/* Input index of wi[0]; last input index of the next output. */
 	uint64_t base, next_end;
 	int16_t *h, *wi, *wq;
@@ -288,10 +299,18 @@ static void fstage_init(struct fstage *s, uint32_t d, uint32_t l, uint32_t shift
 {
 	float fc = 0.5f / (float)d, sum = 0.0f;
 	float h[FS2_LMAX];
+	/* gcd(d, 8): d's lowest set bit, at most 8. */
+	const uint32_t g = MIN(d & (~d + 1U), 8U), phases = 8U / g;
+	/* The filter's own taps: room for the last set's shift in the kernel's l. */
+	const uint32_t ld = l - (phases - 1U) * g;
 
+	/* Two sets at most (d 8 q + 4, esp_sdr_ring_dot()'s alternation), with an even group count. */
+	__ASSERT_NO_MSG(phases <= 2U && phases * l <= FS2_LMAX && (phases == 1U || l % 16U == 0U));
 	s->d = d;
 	s->l = l;
 	s->shift = shift;
+	s->phases = phases;
+	s->g = g;
 	if (d == 8U && l == FS1_L) {
 		float k[18];
 
@@ -309,15 +328,19 @@ static void fstage_init(struct fstage *s, uint32_t d, uint32_t l, uint32_t shift
 			}
 		}
 	} else {
-		for (uint32_t i = 0; i < l; i++) {
-			h[i] = kaiser_tap(i, l, fc);
+		for (uint32_t i = 0; i < ld; i++) {
+			h[i] = kaiser_tap(i, ld, fc);
 		}
 	}
-	for (uint32_t i = 0; i < l; i++) {
+	for (uint32_t i = 0; i < ld; i++) {
 		sum += h[i];
 	}
-	for (uint32_t i = 0; i < l; i++) {
-		s->h[i] = (int16_t)roundf(32768.0f * h[i] / sum);
+	for (uint32_t p = 0; p < phases; p++) {
+		for (uint32_t i = 0; i < l; i++) {
+			const bool in = i >= p * g && i < p * g + ld;
+
+			s->h[p * l + i] = in ? (int16_t)roundf(32768.0f * h[i - p * g] / sum) : 0;
+		}
 	}
 }
 
@@ -328,6 +351,26 @@ static void fstage_reset(struct fstage *s, uint64_t start)
 	s->n = s->l;
 	s->base = start - s->l;
 	s->next_end = start + s->d - 1U;
+}
+
+/*
+ * no outputs from windows off, off + d, ... for d = 8 q + 4 (D 32: d 4), whose starts alternate
+ * between the 16-byte grid and 4 samples past it. The vector loads take the aligned address below
+ * any other (every other output was the one before it again), so those windows are read from 4
+ * samples before their start with tap set 1, the filter shifted by 4 taps: the kernel alternates
+ * the sets, the aligned start moving 16 q bytes after a set 0 output and 16 (q + 1) after a set 1.
+ */
+HOT static void fstage_two(const struct fstage *s, uint32_t off, uint32_t no, int16_t *oi,
+			   int16_t *oq)
+{
+	const uint32_t q = s->d / 8U, ph = off & 7U;
+	const int16_t *h0 = s->h, *h1 = s->h + s->l;
+	const uint32_t s0 = 16U * q, s1 = 16U * (q + 1U);
+	const struct fir_job j = {s->wi + (off - ph), s->wq + (off - ph), ph == 0U ? h0 : h1,
+				  s->l / 8U, no, ph == 0U ? s0 : s1, s->shift, oi, oq,
+				  ph == 0U ? h1 : h0, ph == 0U ? s1 : s0};
+
+	esp_sdr_ring_dot(&j);
 }
 
 /* All complete outputs to oi/oq; returns their count; drops consumed history. */
@@ -341,14 +384,18 @@ HOT static uint32_t fstage_run(struct fstage *s, int16_t *oi, int16_t *oq)
 
 		no = (uint32_t)(s->base + s->n - 1U - s->next_end) / s->d + 1U;
 		off = (uint32_t)(s->next_end + 1U - s->l - s->base);
-		j = (struct fir_job){s->wi + off, s->wq + off, s->h, s->l / 8U, no,
-				     2U * s->d, s->shift, oi, oq};
-		if (s->d == 8U && s->l == FS1_L) {
-			esp_sdr_ring_fir8_l32(&j);
-		} else if ((j.groups & 1U) == 0U) {
-			esp_sdr_ring_dot(&j);
+		if (s->phases == 1U) {
+			j = (struct fir_job){s->wi + off, s->wq + off, s->h, s->l / 8U, no,
+					     2U * s->d, s->shift, oi, oq, s->h, 2U * s->d};
+			if (s->d == 8U && s->l == FS1_L) {
+				esp_sdr_ring_fir8_l32(&j);
+			} else if ((j.groups & 1U) == 0U) {
+				esp_sdr_ring_dot(&j);
+			} else {
+				esp_sdr_ring_fir_split(&j);
+			}
 		} else {
-			esp_sdr_ring_fir_split(&j);
+			fstage_two(s, off, no, oi, oq);
 		}
 		s->next_end += (uint64_t)no * s->d;
 	}
@@ -586,10 +633,14 @@ static inline void b4_reset(void)
 
 /*
  * ESP_SDR_RING_DECIM_BOX4: the -fs/4 mix as swaps and signs ((-j)^n, n the
- * pair index, so phase 0 sits on the decimation grid), summed over 4 pairs.
- * Summing costs about 14 cycles per pair, over the budget at 16 MS/s once a sink
- * runs too: cfg->subsample takes only the phase-0 pairs for about 1 cycle.
+ * pair index, so phase 0 sits on the decimation grid), summed over 4 pairs:
+ * the lanes split by index mod 4 with PIE's unzip and added as vectors
+ * (esp_sdr_ring_sum4). Summed lane by lane it cost about 14 cycles per pair,
+ * over the budget at 16 MS/s once a sink runs too; cfg->subsample takes only
+ * the phase-0 pairs for about 1 cycle.
  */
+static const int16_t sum4_ones[8] __aligned(16) = {1, 1, 1, 1, 1, 1, 1, 1};
+
 HOT static void box4_feed(const uint32_t *p, uint32_t a, uint32_t m)
 {
 	const uint32_t *w = p + a;
@@ -655,15 +706,37 @@ HOT static void box4_feed(const uint32_t *p, uint32_t a, uint32_t m)
 				esp_sdr_ring_rot_fs4(fs1_wi, fs1_wq, g, rot_masks);
 			}
 			PROF(0, t);
-			for (uint32_t k = 0; k < 2U * g; k++) {
-				const int16_t *li = &fs1_wi[4U * k], *lq = &fs1_wq[4U * k];
-				/* Lanes hold value << 6; the output scale is 4 x the sum. */
-				int32_t si = lq[0] + lq[1] + lq[2] + lq[3];
-				int32_t sq = li[0] + li[1] + li[2] + li[3];
+			/* Outputs left from the pair-by-pair path: out to the sink, back on the grid. */
+			if ((k2 & 7U) != 0U && g >= 4U) {
+				rs.cfg->sink(rs.cfg->user, out_i, out_q, k2, rs.out_index);
+				rs.out_index += k2;
+				rs.st->samples += k2;
+				k2 = 0;
+			}
+			for (uint32_t k = 0; k < 2U * g;) {
+				/*
+				 * 8 outputs a vector where they start a vector of out_i: the
+				 * rest, and a start off that grid, lane by lane.
+				 */
+				uint32_t blocks = MIN(2U * g - k, OUT_MAX - k2) / 8U;
 
-				out_i[k2] = (int16_t)(si >> 4);
-				out_q[k2] = (int16_t)(sq >> 4);
-				if (++k2 == OUT_MAX) {
+				if ((k & 7U) == 0U && (k2 & 7U) == 0U && blocks != 0U) {
+					esp_sdr_ring_sum4(&fs1_wq[4U * k], &out_i[k2], blocks, sum4_ones);
+					esp_sdr_ring_sum4(&fs1_wi[4U * k], &out_q[k2], blocks, sum4_ones);
+					k += 8U * blocks;
+					k2 += 8U * blocks;
+				} else {
+					const int16_t *li = &fs1_wi[4U * k], *lq = &fs1_wq[4U * k];
+					/* Lanes hold value << 6; the output scale is 4 x the sum. */
+					int32_t si = lq[0] + lq[1] + lq[2] + lq[3];
+					int32_t sq = li[0] + li[1] + li[2] + li[3];
+
+					out_i[k2] = (int16_t)(si >> 4);
+					out_q[k2] = (int16_t)(sq >> 4);
+					k++;
+					k2++;
+				}
+				if (k2 == OUT_MAX) {
 					rs.cfg->sink(rs.cfg->user, out_i, out_q, k2, rs.out_index);
 					rs.out_index += k2;
 					rs.st->samples += k2;

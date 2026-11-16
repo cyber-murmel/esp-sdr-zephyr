@@ -212,7 +212,9 @@ at 40 MS/s today.
   `include/esp_sdr/esp_sdr_ring.h`:
   - **S3:** the ring runs at 16 MS/s. Its two-stage FIR fits the 15-cycle-per-pair budget at
     decimation 64 and up (about 12.7 cycles) but not at decimation 4. A boxcar of 4 costs about
-    14 cycles per pair, over budget once a sink runs; taking every 4th pair costs about 1.
+    9.5 cycles per pair: 4.5 to unpack and mix, 5 for the sums, the lanes split by index mod 4
+    with PIE's unzip (19 summed lane by lane, measured on the XIAO); taking every 4th pair costs
+    about 1.
   - **C5:** the diagnostic-bus ring streams 40 MS/s of 4-bit I/Q gaplessly with a budget of 6.0
     cycles per byte; box16 and a CIC3 already take 4.1 to 4.4 (5.7 with the USB service).
   - **C6:** no gapless raw stream; the CPU-paced receive reads the IQ estimator at a few MS/s at

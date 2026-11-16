@@ -197,3 +197,42 @@ esp_sdr_ring_rot_fs4:
 .Lrot_end:
     retw.n
     .size   esp_sdr_ring_rot_fs4, . - esp_sdr_ring_rot_fs4
+
+#if defined(CONFIG_ESP_SDR_RING_BOX4)
+/*
+ * void esp_sdr_ring_sum4(const int16_t *x, int16_t *out, unsigned groups32, const int16_t *ones);
+ *   x: lanes of value << 6 (the unpack's), out: 8 int16 per group, both 16-byte aligned; ones: 8
+ *   int16 1, 16-byte aligned. out[k] = (x[4k] + x[4k + 1] + x[4k + 2] + x[4k + 3]) >> 4, the
+ *   scalar sum exactly: a multiply by 1 shifts each lane right by 4 first (its low 6 bits are
+ *   zero), two levels of unzip split 32 lanes by index mod 4, three adds sum the phases.
+ */
+    .align  4
+    .global esp_sdr_ring_sum4
+    .type   esp_sdr_ring_sum4, @function
+esp_sdr_ring_sum4:
+    entry   a1, 32
+    ee.vld.128.ip q7, a5, 0
+    ssai    4
+    loopnez a4, .Lsum4_end
+    ee.vld.128.ip q0, a2, 16
+    ee.vld.128.ip q1, a2, 16
+    ee.vld.128.ip q2, a2, 16
+    ee.vld.128.ip q3, a2, 16
+    ee.vmul.s16 q0, q0, q7
+    ee.vmul.s16 q1, q1, q7
+    ee.vmul.s16 q2, q2, q7
+    ee.vmul.s16 q3, q3, q7
+    /* q0: lanes 0, 2, .. 14; q1: 1, 3, .. 15; q2: 16, 18, .. 30; q3: 17, .. 31 */
+    ee.vunzip.16 q0, q1
+    ee.vunzip.16 q2, q3
+    /* q0: 0, 4, .. 28; q2: 2, 6, .. 30; q1: 1, 5, .. 29; q3: 3, 7, .. 31 */
+    ee.vunzip.16 q0, q2
+    ee.vunzip.16 q1, q3
+    ee.vadds.s16 q0, q0, q1
+    ee.vadds.s16 q2, q2, q3
+    ee.vadds.s16 q0, q0, q2
+    ee.vst.128.ip q0, a3, 16
+.Lsum4_end:
+    retw.n
+    .size   esp_sdr_ring_sum4, . - esp_sdr_ring_sum4
+#endif /* CONFIG_ESP_SDR_RING_BOX4 */
