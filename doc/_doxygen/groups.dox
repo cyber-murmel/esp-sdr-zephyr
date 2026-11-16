@@ -7,7 +7,9 @@
  * @brief Raw I/Q receive and transmit on the Wi-Fi radio (CONFIG_ESP_SDR).
  *
  * One user of the radio at a time; all calls may sleep. The ESP32-S3 has the
- * whole library, the ESP32-C6 burst capture at 80 MS/s.
+ * whole library; the ESP32-C6 burst capture at 80 MS/s, triggered snapshots,
+ * CPU-paced streaming and the gapless 80 MS/s receive; the ESP32-C5 bursts,
+ * paced streaming, the diagnostic-bus ring and the DAC-engine replay.
  */
 
 /**
@@ -53,6 +55,27 @@
  * @ingroup esp_sdr
  * @brief Waveform loops at 80 or 40 MS/s through the modem DAC engine, ESP32-C5
  * (esp_sdr_replay.h, CONFIG_ESP_SDR_REPLAY).
+ */
+
+/**
+ * @defgroup esp_sdr_paced CPU-paced streaming
+ * @ingroup esp_sdr
+ * @brief Continuous receive and transmit, one sample at a time from the caller's loop,
+ * ESP32-C6 and ESP32-C5 (esp_sdr_paced.h, CONFIG_ESP_SDR_PACED).
+ */
+
+/**
+ * @defgroup esp_sdr_trig Triggered snapshots
+ * @ingroup esp_sdr
+ * @brief The full 80 MS/s kept from before a burst, ESP32-C6 (esp_sdr_trig.h,
+ * CONFIG_ESP_SDR_TRIG).
+ */
+
+/**
+ * @defgroup esp_sdr_gapless Gapless receive
+ * @ingroup esp_sdr
+ * @brief The whole 80 MS/s through a ring in SRAM blocks 1 and 2, pruned to the windows above
+ * the noise, ESP32-C6 (esp_sdr_gapless.h, CONFIG_ESP_SDR_GAPLESS).
  */
 
 /**

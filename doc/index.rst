@@ -4,8 +4,10 @@ esp-sdr-zephyr
 ##############
 
 A Zephyr module that turns the Wi-Fi radio of the ESP32-S3 into a software
-defined radio (raw I/Q receive and transmit; burst capture on the ESP32-C6),
-an IEEE 802.15.4 software radio built on it, and the apps that use both.
+defined radio (raw I/Q receive and transmit; bursts, paced streams, triggered
+snapshots and gapless 80 MS/s receive on the ESP32-C6, bursts, paced streams
+and a gapless ring on the ESP32-C5), an IEEE 802.15.4 software radio built on
+it, a Zigbee coordinator, and the apps that use them.
 
 The API reference of the library is generated with Doxygen:
 `API reference <doxygen/index.html>`_.
@@ -24,6 +26,7 @@ The API reference of the library is generated with Doxygen:
    apps/stream
    apps/osmosdr
    apps/osmosdr_serial
+   apps/osmosdr_bridge
    apps/link
    apps/wpan
    apps/zstack
