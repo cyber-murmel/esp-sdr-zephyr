@@ -17,6 +17,7 @@ zephyr_library_sources(
 zephyr_library_sources_ifdef(CONFIG_SOC_SERIES_ESP32S3 src/esp_sdr_tx.c)
 zephyr_library_sources_ifdef(CONFIG_ESP_SDR_PACED src/esp_sdr_paced.c)
 zephyr_library_sources_ifdef(CONFIG_ESP_SDR_TRIG src/esp_sdr_trig.c)
+zephyr_library_sources_ifdef(CONFIG_ESP_SDR_GAPLESS src/esp_sdr_gapless.c)
 zephyr_library_sources_ifdef(CONFIG_ESP_SDR_DIAG src/esp_sdr_diag.c)
 zephyr_library_sources_ifdef(CONFIG_ESP_SDR_REPLAY src/esp_sdr_replay.c)
 zephyr_library_sources_ifdef(CONFIG_ESP_SDR_TX src/esp_sdr_tx_stream.c)
@@ -29,6 +30,10 @@ zephyr_library_sources_ifdef(CONFIG_ESP_SDR_CHANCAP_SIMD src/esp_sdr_chancap_pie
 if(CONFIG_ESP_SDR_TRIG)
   # The snapshot packing loop.
   set_source_files_properties(src/esp_sdr_trig.c PROPERTIES COMPILE_OPTIONS "-O3")
+endif()
+if(CONFIG_ESP_SDR_GAPLESS)
+  # The run's hot path (the default -Os costs it a third of its free time).
+  set_source_files_properties(src/esp_sdr_gapless.c PROPERTIES COMPILE_OPTIONS "-O2")
 endif()
 if(CONFIG_ESP_SDR_CHANCAP)
   # Per-sample loops of the channelizer and the sink.
@@ -43,7 +48,9 @@ endif()
 
 # Three banks for the continuous ring; two: loop playback ping-pongs between
 # them, captures may use either.
-if(CONFIG_SOC_SERIES_ESP32C6)
+if(CONFIG_ESP_SDR_GAPLESS)
+  zephyr_linker_sources(SECTIONS esp_sdr_bank_c6_gapless.ld)
+elseif(CONFIG_SOC_SERIES_ESP32C6)
   zephyr_linker_sources(SECTIONS esp_sdr_bank_c6.ld)
 elseif(CONFIG_SOC_SERIES_ESP32C5)
   # Among the RAM sections, so that .noinit and .bss follow the bank.
@@ -56,6 +63,25 @@ elseif(CONFIG_ESP_SDR_BANK1)
   zephyr_linker_sources(SECTIONS esp_sdr_bank_tx.ld)
 else()
   zephyr_linker_sources(SECTIONS esp_sdr_bank.ld)
+endif()
+
+if(CONFIG_ESP_SDR_PHY_ONLY)
+  # What the hal builds for the PHY when Wi-Fi, BT or 802.15.4 is on.
+  set(esp_sdr_hal ${ZEPHYR_HAL_ESPRESSIF_MODULE_DIR})
+  zephyr_library_sources(
+    ${esp_sdr_hal}/components/esp_phy/src/phy_init.c
+    ${esp_sdr_hal}/components/esp_phy/src/lib_printf.c
+    ${esp_sdr_hal}/components/esp_phy/src/phy_common.c
+    ${esp_sdr_hal}/components/esp_phy/src/phy_override.c
+    ${esp_sdr_hal}/components/esp_phy/${CONFIG_SOC_SERIES}/phy_init_data.c
+  )
+  # Zephyr defines the PHY's options only with a radio driver on.
+  zephyr_library_compile_definitions(CONFIG_ESP_PHY_MAX_TX_POWER=20)
+  esp_blobs_link(phy)
+  zephyr_link_libraries(
+    gcc
+    -T${esp_sdr_hal}/components/esp_rom/${CONFIG_SOC_SERIES}/ld/${CONFIG_SOC_SERIES}.rom.phy.ld
+  )
 endif()
 
 if(CONFIG_ESP_SDR_RFTEST)

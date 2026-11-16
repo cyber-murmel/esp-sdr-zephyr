@@ -34,6 +34,11 @@
 extern "C" {
 #endif
 
+/**
+ * @addtogroup esp_sdr_paced
+ * @{
+ */
+
 /** Input rate of the estimator: each receive output sums 80 MHz / rate of its samples. */
 #define ESP_SDR_PACED_INPUT_HZ 80000000U
 
@@ -158,6 +163,8 @@ void esp_sdr_paced_sync(void);
 
 /** @brief Statistics of the running or last stream. */
 void esp_sdr_paced_get_stats(struct esp_sdr_paced_stats *stats);
+
+/** @} */
 
 #ifdef __cplusplus
 }

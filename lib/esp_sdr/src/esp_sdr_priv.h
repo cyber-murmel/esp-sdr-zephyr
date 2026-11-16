@@ -429,6 +429,11 @@ void esp_sdr_rx_prepare(void);
 bool esp_sdr_rx_gain_refresh(void);
 /* The same with another age, for a ring run that never transmits (the loss follows transmissions). */
 bool esp_sdr_rx_gain_refresh_after(uint32_t ms);
+/*
+ * Force receive gain @p index now, without the front end setup esp_sdr_rx_set_gain() does
+ * (the gapless gain servo, interrupts off); returns the cycles it took. Lock held.
+ */
+uint32_t esp_sdr_rx_gain_force_locked(int index);
 #define SDR_GAIN_REFRESH_RX_ONLY_MS 1000U
 void esp_sdr_rx_resume(void);
 /*

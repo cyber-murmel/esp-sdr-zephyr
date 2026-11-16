@@ -1,10 +1,20 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+config ESP_SDR_PHY_ONLY
+	bool "Radio without the Wi-Fi driver (ESP32-C6)"
+	depends on SOC_SERIES_ESP32C6 && !WIFI_ESP32
+	help
+	  Brings the PHY up through the HAL's esp_phy_enable() instead of the
+	  Wi-Fi driver, and links only the PHY and RF test libraries. Frees
+	  the Wi-Fi driver's code, its heap and its share of SRAM blocks 0
+	  and 1 (the gapless ring takes block 1), and drops the blob's
+	  periodic receive glitch.
+
 config ESP_SDR
 	bool "ESP-SDR raw I/Q receiver"
 	depends on SOC_SERIES_ESP32S3 || SOC_SERIES_ESP32C6 || SOC_SERIES_ESP32C5 || \
 		   SOC_SERIES_ESP32
-	depends on WIFI_ESP32
+	depends on WIFI_ESP32 || ESP_SDR_PHY_ONLY
 	# The bank and heap limits assume no APPCPU image in SRAM.
 	depends on !SOC_ENABLE_APPCPU
 	help
@@ -71,6 +81,28 @@ config ESP_SDR_TRIG
 	  frozen once the power the IQ estimator sums over the 80 MHz input
 	  rises past a threshold, so a snapshot holds a burst and what came
 	  before it.
+
+config ESP_SDR_GAPLESS
+	bool "Gapless 80 MS/s ring over two SRAM blocks (ESP32-C6)"
+	depends on SOC_SERIES_ESP32C6 && ESP_SDR_PHY_ONLY && ESP_SDR_PACED
+	help
+	  esp_sdr_gapless_*(): the dump engine runs without a stop while the
+	  CPU switches it between SRAM blocks 1 and 2 (upstream's ring, after
+	  h0m3us3r/eSpDR), with marker words proving every unit boundary;
+	  the CPU reads the block the engine is not writing. The image must
+	  fit SRAM block 0, which in practice needs ESP_SDR_PHY_ONLY.
+
+config ESP_SDR_GAPLESS_STAGE_KB
+	int "Gapless staging ring, KiB"
+	depends on ESP_SDR_GAPLESS
+	default 48
+	range 8 96
+	help
+	  Kept windows are copied raw from the ring's blocks into this ring
+	  in SRAM block 3 before they are packed: a block is readable for one
+	  unit (154 us) only, the copy is cheap, and the packing then has no
+	  deadline. Bursts up to its size (4 bytes a sample, 12288 samples in
+	  48 KiB) are kept whole.
 
 config ESP_SDR_DIAG
 	bool "Gapless receive through the modem diagnostic bus (ESP32-C5)"

@@ -170,6 +170,17 @@ static void lpf_apply_locked(void)
 	lpf_forced = true;
 }
 
+#if defined(CONFIG_ESP_SDR_GAPLESS)
+uint32_t esp_sdr_rx_gain_force_locked(int index)
+{
+	uint32_t t0 = k_cycle_get_32();
+
+	gain_index = index;
+	gain_apply();
+	return k_cycle_get_32() - t0;
+}
+#endif
+
 int esp_sdr_rx_set_gain(int index)
 {
 	int ret;
