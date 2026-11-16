@@ -126,6 +126,8 @@ struct ieee154_phy_rx {
 	/* The last frame delivered with a bad FCS: its end position, and whether there was one. */
 	uint32_t bad_end;
 	bool bad_seen;
+	/* The most preamble symbols in a row a tracker has found. */
+	uint8_t run_max;
 };
 
 /** Build the chip tables. Call once before anything else. */
@@ -182,6 +184,16 @@ void ieee154_phy_rx_block_i(struct ieee154_phy_rx *rx, const int16_t *iq, size_t
  * @param rx The receiver.
  */
 void ieee154_phy_rx_reset_i(struct ieee154_phy_rx *rx);
+
+/**
+ * The most preamble symbols in a row a tracker has found since the receiver was set up or reset:
+ * a stream cut before its frame's end still shows what it was. Each takes 16 us; the count stops
+ * at 4, where the receiver goes on to look for the frame's start.
+ *
+ * @param rx The receiver.
+ * @return 0 to 4.
+ */
+uint8_t ieee154_phy_rx_preamble_run_i(const struct ieee154_phy_rx *rx);
 
 /**
  * A receiver's sample count, over all blocks (wraps). In the callbacks: the

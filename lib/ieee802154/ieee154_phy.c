@@ -213,6 +213,9 @@ static __attribute__((noinline)) void trk_chip_slow(struct ieee154_phy_rx *rx,
 			t->run = (t->run && t->nchip - t->anchor == 32) ?
 				 t->run + 1 : 1;
 			t->anchor = t->nchip;
+			if (t->run > rx->run_max) {
+				rx->run_max = t->run;
+			}
 			if (t->run >= 4) {
 				t->st = ST_PREAMBLE;
 			}
@@ -295,6 +298,11 @@ uint32_t ieee154_phy_rx_position_i(const struct ieee154_phy_rx *rx)
 	return rx->pos;
 }
 
+uint8_t ieee154_phy_rx_preamble_run_i(const struct ieee154_phy_rx *rx)
+{
+	return rx->run_max;
+}
+
 uint32_t ieee154_phy_rx_frame_start_i(const struct ieee154_phy_rx *rx)
 {
 	return rx->frame_start;
@@ -306,6 +314,7 @@ void ieee154_phy_rx_reset_i(struct ieee154_phy_rx *rx)
 	trk_reset(&rx->trk[1]);
 	rx->pi1 = rx->pq1 = rx->pi2 = rx->pq2 = 0;
 	rx->bad_seen = false;
+	rx->run_max = 0;
 }
 
 void ieee154_phy_rx_init(struct ieee154_phy_rx *rx)
