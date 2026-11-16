@@ -45,8 +45,8 @@ config MULTIAPP_AUTOSTART
 	string "App to start at boot"
 	default ""
 	help
-	  Started when no "app run" request is pending from before a reset.
-	  Empty: none, start one with "app run <name>".
+	  Started when no "multiapp run" request is pending from before a reset.
+	  Empty: none, start one with "multiapp run <name>".
 
 config LLEXT_EXPORT_SYMBOL_GROUP_MULTIAPP
 	def_bool y

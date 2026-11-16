@@ -12,7 +12,7 @@ common:
   integration_platforms:
     - xiao_esp32s3/esp32s3/procpu
 tests:
-  # The console is on USB CDC-ACM; "app run <name>" there (see README).
+  # The console is on USB CDC-ACM; "multiapp run <name>" there (see README).
   sample.esp_sdr.multiapp:
     build_only: true
   # On the desk with the boards attached (pytest/test_multiapp.py): the image and

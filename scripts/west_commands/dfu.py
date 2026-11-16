@@ -77,6 +77,13 @@ class Shell:
     def close(self):
         self.s.close()
 
+    def app_list(self):
+        """multiapp's app list; images from before the command's rename call it "app"."""
+        out = self.cmd("multiapp list")
+        if "command not found" in out:
+            out = self.cmd("app list")
+        return out
+
 
 class Dfu(WestCommand):
     def __init__(self):
@@ -186,7 +193,7 @@ class Dfu(WestCommand):
             self.die(f"{sn}: did not come back after esptool")
         time.sleep(1.0)
         sh = Shell(shell_tty(sn))
-        out = sh.cmd("app list") if args.storage is not None else sh.cmd("kernel version")
+        out = sh.app_list() if args.storage is not None else sh.cmd("kernel version")
         # The image written this way boots unconfirmed: without a confirm the trial watchdog
         # resets it every half minute (there is no older image to revert to).
         if not args.no_confirm:
@@ -281,7 +288,7 @@ class Dfu(WestCommand):
         if storage:
             try:
                 sh = Shell(shell_tty(sn))
-                out = sh.cmd("app list")
+                out = sh.app_list()
                 sh.close()
             except Exception as e:  # serial.SerialException, or the link went away
                 self.die(f"{sn}: no shell after the volume download ({e})")
