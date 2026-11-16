@@ -2,13 +2,6 @@
 
 mainmenu "ESP-SDR stream"
 
-config APP_SDR
-	bool "Run the radio"
-	default y
-	help
-	  Disable to bring up USB and the network alone: the app then sends
-	  one small test datagram per second instead of capturing.
-
 config APP_FREQ_MHZ
 	int "LO frequency in MHz at boot (shared by RX and TX)"
 	range 100 6000

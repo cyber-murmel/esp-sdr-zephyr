@@ -15,7 +15,6 @@
 #include <esp_sdr/esp_sdr.h>
 
 #include "vrt_rx.h"
-#include "transport.h"
 #include "vrt_tx.h"
 #include "app_cpu.h"
 #include "app_usb.h"
@@ -236,16 +235,6 @@ int main(void)
 	}
 	if (IS_ENABLED(CONFIG_APP_TX) && vrt_tx_init() != 0) {
 		LOG_ERR("tx init failed");
-	}
-
-	if (!IS_ENABLED(CONFIG_APP_SDR)) {
-		/* USB bring-up test: a small datagram per second instead of samples. */
-		static const char beacon[] = "rx stream: beacon\n";
-
-		for (;;) {
-			(void)transport_send(beacon, sizeof(beacon) - 1);
-			k_sleep(K_SECONDS(1));
-		}
 	}
 
 	k_thread_create(&capture_thread, capture_stack, K_THREAD_STACK_SIZEOF(capture_stack),
