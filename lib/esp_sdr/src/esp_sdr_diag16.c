@@ -587,7 +587,8 @@ int esp_sdr_diag16_run(const struct esp_sdr_diag16_cfg *cfg, struct esp_sdr_diag
 		return -EBUSY;
 	}
 	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
-	if (st.running) {
+	/* A replay from this thread (the lock is recursive) has the group the ring would take. */
+	if (st.running || esp_sdr_s31_dac_busy()) {
 		k_mutex_unlock(&esp_sdr_lock);
 		return -EBUSY;
 	}

@@ -170,13 +170,16 @@ config ESP_SDR_DIAG16_RING_KB
 	  this much from the top of the image's memory.
 
 config ESP_SDR_REPLAY
-	bool "Loop replay through the DAC engine (ESP32-C5)"
-	depends on SOC_SERIES_ESP32C5 && ESP_SDR_PACED
+	bool "Loop replay through the DAC engine (ESP32-C5, ESP32-S31)"
+	depends on (SOC_SERIES_ESP32C5 && ESP_SDR_PACED) || SOC_SERIES_ESP32S31
 	help
-	  esp_sdr_replay_*(): the modem DAC engine plays up to 16383 words
-	  out of the dump bank at 80 or 40 MS/s, once, a number of times or
-	  endlessly, without the CPU. Periodic content only: the engine owns
-	  the bank while it plays.
+	  esp_sdr_replay_*(): the modem DAC engine plays words out of memory,
+	  once, a number of times or endlessly, without the CPU. Periodic
+	  content only: the engine owns its memory while it plays. The C5:
+	  up to 16383 words of the dump bank at 80 or 40 MS/s. The S31: up to
+	  32768 words at 80, 40 or 20 MS/s out of the TCM's 128 KiB group at
+	  0x2F040000, which the image must then end below (shared with the
+	  DIAG16 ring).
 
 config ESP_SDR_BANK1
 	bool "Reserve a second dump bank"

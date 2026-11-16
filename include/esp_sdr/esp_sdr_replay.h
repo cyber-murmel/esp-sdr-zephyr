@@ -4,19 +4,24 @@
 
 /**
  * @file
- * @brief ESP-SDR loop replay through the modem DAC engine (ESP32-C5).
+ * @brief ESP-SDR loop replay through the modem DAC engine (ESP32-C5, ESP32-S31).
  *
- * The DAC engine plays words out of the dump bank on its own clock, at 80 or
- * 40 MS/s: one pass, a number of passes, or endlessly until stopped. The CPU is
- * free meanwhile. Only periodic content fits: the engine owns the whole SRAM
- * block while it plays, so the CPU can neither refill the buffer nor run the
- * diagnostic-bus ring (esp_sdr_diag.h) in that time.
+ * The DAC engine plays words out of memory on its own clock: one pass, a
+ * number of passes, or endlessly until stopped. The CPU is free meanwhile.
+ * Only periodic content fits: the engine owns its memory while it plays, so
+ * the CPU can neither refill the buffer nor run the diagnostic-bus ring
+ * (esp_sdr_diag.h, esp_sdr_diag16.h) or a capture in that time.
  *
  * Write the samples with esp_sdr_replay_word() into esp_sdr_replay_buf()
  * before esp_sdr_replay_start(): the engine drops CPU stores to its block.
  *
- * Registers after upstream ESP-SDR's first C5 transmitter (git show
- * e605684:main/c5_main.c, emit_dma()).
+ * - ESP32-C5: the dump bank, 80 or 40 MS/s, up to 16383 words. Registers after
+ *   upstream ESP-SDR's first C5 transmitter (git show e605684:main/c5_main.c,
+ *   emit_dma()).
+ * - ESP32-S31: the TCM's group at 0x2F040000 (128 KiB), which the image must
+ *   end below (the linker checks), at 80, 40 or 20 MS/s, up to 32768 words.
+ *   Captures and the ring give -EBUSY while it plays. Measured, as no vendor
+ *   code programs this engine: doc/hardware-quirks.md.
  */
 
 #ifndef ESP_SDR_ESP_SDR_REPLAY_H_
@@ -37,12 +42,17 @@ extern "C" {
  * @{
  */
 
+#if defined(CONFIG_SOC_SERIES_ESP32S31)
+/** Largest number of words in one pass: the engine's group, which its index wraps at. */
+#define ESP_SDR_REPLAY_MAX 32768U
+#else
 /** Largest number of words in one pass (the engine's 14-bit count). */
 #define ESP_SDR_REPLAY_MAX 16383U
+#endif
 
 /** Replay settings. */
 struct esp_sdr_replay_cfg {
-	/** ESP_SDR_RATE_80MSPS or ESP_SDR_RATE_40MSPS. */
+	/** ESP_SDR_RATE_80MSPS or ESP_SDR_RATE_40MSPS, on the S31 also ESP_SDR_RATE_20MSPS. */
 	enum esp_sdr_rate rate;
 	/** Words per pass, 1 to ESP_SDR_REPLAY_MAX. */
 	size_t count;
@@ -54,8 +64,9 @@ struct esp_sdr_replay_cfg {
 	 */
 	unsigned int power;
 	/**
-	 * DAC digital scale per branch, 1 to 255; 0 takes the default (15, as upstream). The
-	 * chain compresses above samples times scale of about 1000.
+	 * DAC digital scale per branch, 1 to 255; 0 takes the default: on the C5 15, as
+	 * upstream (the chain compresses above samples times scale of about 1000), on the S31
+	 * the scale as it is (255), since its level does not follow the scale monotonically.
 	 */
 	uint8_t scale;
 	/** Bench use: bits ORed into the trigger word. 0 normally. */
@@ -84,8 +95,10 @@ uint32_t *esp_sdr_replay_buf(size_t *words);
  * Holds the radio until esp_sdr_replay_stop(), at the frequency set with
  * esp_sdr_set_freq().
  *
- * @return 0, -EINVAL for a bad setting, -EAGAIN before esp_sdr_init(),
- *	   -EBUSY while a replay runs, -ERANGE for a frequency the chain cannot take.
+ * @return 0, -EINVAL for a bad setting, -EAGAIN before esp_sdr_init() (on the
+ *	   S31 also before the first tuning), -EBUSY while a replay runs (on the S31
+ *	   also a carrier or a paced stream), -ERANGE for a frequency the chain
+ *	   cannot take.
  */
 int esp_sdr_replay_start(const struct esp_sdr_replay_cfg *cfg);
 
@@ -94,7 +107,8 @@ int esp_sdr_replay_start(const struct esp_sdr_replay_cfg *cfg);
  *
  * @param timeout_us Longest wait.
  * @param cycles Set to the CPU cycles from the start to the done flag
- *	   (esp_sdr_paced_cycles() clock); may be NULL.
+ *	   (esp_sdr_paced_cycles() clock on the C5, the cycle counter on the S31);
+ *	   may be NULL.
  * @return 0, -ETIMEDOUT, or -EINVAL for no replay or an endless one.
  */
 int esp_sdr_replay_wait(uint32_t timeout_us, uint32_t *cycles);

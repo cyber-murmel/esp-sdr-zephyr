@@ -11,3 +11,8 @@ tests:
   integration.esp_sdr.replay_api.c5:
     platform_allow:
       - waveshare_esp32c5_zero/esp32c5/hpcore
+  # Flashed over its UART bridge, without the Wi-Fi driver (socs/esp32s31_hpcore.conf).
+  integration.esp_sdr.replay_api.s31:
+    platform_allow:
+      - esp32s31_function_coreboard/esp32s31/hpcore
+      - ues31s043h800v480c_u/esp32s31/hpcore

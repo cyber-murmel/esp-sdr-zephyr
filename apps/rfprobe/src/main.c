@@ -41,12 +41,15 @@
 #include <esp_sdr/esp_sdr_replay.h>
 #endif
 
-/* "probe tx": the paced TX DC path (C5, S31) and the DAC engine's replay (C5). */
+/* "probe tx": the paced TX DC path (C5, S31) and the DAC engine's replay (C5, S31). */
 #if defined(CONFIG_ESP_SDR_REPLAY) || \
 	(defined(CONFIG_ESP_SDR_PACED) && defined(CONFIG_SOC_SERIES_ESP32S31))
 #define TX_BENCH 1
 #else
 #define TX_BENCH 0
+#endif
+#if defined(CONFIG_ESP_SDR_REPLAY) && !defined(CONFIG_ESP_SDR_PACED)
+#error "probe tx: the replay commands come with the paced ones, CONFIG_ESP_SDR_PACED"
 #endif
 
 #if defined(CONFIG_USB_DEVICE_STACK_NEXT)
@@ -681,7 +684,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(diag_cmds,
  * The tone tables of the paced commands, and the TX DC value's address: the idle replay buffer
  * on the C5, the idle capture bank on the S31 (the paced path holds the radio meanwhile).
  */
-#if defined(CONFIG_ESP_SDR_REPLAY)
+#if defined(CONFIG_SOC_SERIES_ESP32C5)
 #define TXDC_REG_BENCH 0x600a0c08U
 
 static uint32_t *tx_table(size_t *words)
@@ -700,8 +703,21 @@ static uint32_t *tx_table(size_t *words)
 #endif
 
 #if defined(CONFIG_ESP_SDR_REPLAY)
+/* The replay's rates (ESP_SDR_RATE_80MSPS, 40, and 20 on the S31) in Hz. */
+static double replay_fs(enum esp_sdr_rate rate)
+{
+	return rate == ESP_SDR_RATE_40MSPS ? 40e6 : (rate == ESP_SDR_RATE_20MSPS ? 20e6 : 80e6);
+}
+
+#if defined(CONFIG_SOC_SERIES_ESP32S31)
+/* The S31's DAC scale is no plain gain: the replay keeps it unless asked. */
+#define REPLAY_SCALE_PAINT 0
+#else
+#define REPLAY_SCALE_PAINT 2
+#endif
+
 /*
- * tx replay <Hz> [amp] [rate 0|1] [passes] [n] [power] [extra] [scale]: a tone of a
+ * tx replay <Hz> [amp] [rate 0|1|2] [passes] [n] [power] [extra] [scale]: a tone of a
  * whole number of cycles in n words (at most n: the period closest to Hz when
  * n is left out), played by the DAC engine. passes 0 loops until "probe tx
  * stop"; otherwise the command waits and prints the cycles the passes took,
@@ -718,7 +734,7 @@ static int cmd_tx_replay(const struct shell *sh, size_t argc, char **argv)
 		.ctrl_extra = (uint32_t)strtoul(argc > 7 ? argv[7] : "0", NULL, 0),
 		.scale = (uint8_t)arg(argv, argc, 8, 0),
 	};
-	double fs = cfg.rate == ESP_SDR_RATE_40MSPS ? 40e6 : 80e6;
+	double fs = replay_fs(cfg.rate);
 	long nmax = arg(argv, argc, 5, 16000);
 	size_t words, n;
 	long cycles;
@@ -1349,7 +1365,7 @@ static int cmd_tx_paint_row(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-/* tx paint run <row ms> [amp] [rate 0|1] [n] [scale] [gap ms]: play the image until "tx stop". */
+/* tx paint run <row ms> [amp] [rate 0|1|2] [n] [scale] [gap ms]: play the image until "tx stop". */
 static int cmd_tx_paint_run(const struct shell *sh, size_t argc, char **argv)
 {
 	static bool started;
@@ -1372,7 +1388,7 @@ static int cmd_tx_paint_run(const struct shell *sh, size_t argc, char **argv)
 		.count = (size_t)n,
 		.passes = 0,
 		.power = 15,
-		.scale = (uint8_t)arg(argv, argc, 5, 2),
+		.scale = (uint8_t)arg(argv, argc, 5, REPLAY_SCALE_PAINT),
 	};
 	/* At most 128 tones of 128: the sums stay in 16 bits' worth per branch. */
 	for (uint32_t t = 0; t < PAINT_TAB; t++) {
@@ -1396,7 +1412,7 @@ static int cmd_tx_paint_run(const struct shell *sh, size_t argc, char **argv)
 	k_thread_resume(&paint_thread);
 	shell_print(sh, "paint %ux%u, %u ms a row, %u ms between passes, tones %ld Hz apart",
 		    paint_w, paint_h, paint_row_ms, paint_gap_ms,
-		    lround((paint_cfg.rate == ESP_SDR_RATE_40MSPS ? 40e6 : 80e6) / (double)n));
+		    lround(replay_fs(paint_cfg.rate) / (double)n));
 	return 0;
 }
 
@@ -1413,7 +1429,7 @@ static int cmd_tx_paint_state(const struct shell *sh, size_t argc, char **argv)
 SHELL_STATIC_SUBCMD_SET_CREATE(paint_cmds,
 	SHELL_CMD_ARG(size, NULL, "<w> <h>: a new blank image", cmd_tx_paint_size, 3, 0),
 	SHELL_CMD_ARG(row, NULL, "<r> <hex>: row r, MSB first", cmd_tx_paint_row, 3, 0),
-	SHELL_CMD_ARG(run, NULL, "<row ms> [amp] [rate 0|1] [n] [scale] [gap ms]: play until tx stop",
+	SHELL_CMD_ARG(run, NULL, "<row ms> [amp] [rate 0|1|2] [n] [scale] [gap ms]: until tx stop",
 		      cmd_tx_paint_run, 2, 5),
 	SHELL_CMD(state, NULL, "rows played", cmd_tx_paint_state),
 	SHELL_SUBCMD_SET_END);
@@ -1435,7 +1451,7 @@ static int cmd_tx_stop(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-/* The paced commands; the C5 adds its DAC engine's. */
+/* The paced commands; with the DAC engine (C5, S31) its commands too. */
 #define TX_PACED_CMDS                                                                              \
 	SHELL_CMD_ARG(dc, NULL, "<rate> <Hz> [ms] [amp] [interp] [power]: paced TX DC tone",       \
 		      cmd_tx_dc, 3, 4),                                                            \
@@ -1451,7 +1467,7 @@ static int cmd_tx_stop(const struct shell *sh, size_t argc, char **argv)
 #if defined(CONFIG_ESP_SDR_REPLAY)
 SHELL_STATIC_SUBCMD_SET_CREATE(tx_cmds,
 	SHELL_CMD_ARG(replay, NULL,
-		      "<Hz> [amp] [rate 0|1] [passes] [n] [power] [extra] [scale]: DAC engine loop",
+		      "<Hz> [amp] [rate 0|1|2] [passes] [n] [power] [extra] [scale]: DAC loop",
 		      cmd_tx_replay, 1, 8),
 	SHELL_CMD_ARG(rearm, NULL, "<ms>: restart a finite replay back to back", cmd_tx_rearm,
 		      1, 1),
@@ -1610,7 +1626,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(probe_cmds,
 		      cmd_ring, 3, 5),
 #endif
 #if TX_BENCH
-	SHELL_CMD(tx, &tx_cmds, "paced TX DC (C5, S31), DAC engine replay (C5)", NULL),
+	SHELL_CMD(tx, &tx_cmds, "paced TX DC (C5, S31), DAC engine replay (C5, S31)", NULL),
 #endif
 #if defined(CONFIG_SOC_SERIES_ESP32S31)
 	SHELL_CMD(dc, NULL, "DC servo at the fixed gain", cmd_dc),

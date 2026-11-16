@@ -369,10 +369,10 @@ XIAO ESP32-C6 on the other end of a 30 dB coax attenuator.
 
 The VIEWE board is at the end of this section. Measured on one ESP32-S31-Function-CoreBoard-1 (ESP32-S31 rev v0.0, 40 MHz crystal, 16 MB flash,
 16 MB octal PSRAM, PCB antenna), board `esp32s31_function_coreboard/esp32s31/hpcore`, single core
-(Zephyr holds CPU1 in reset), simple boot. Receive, a carrier and the CPU-paced transmit. The method is ESPARGOS esp-sdr's S31
+(Zephyr holds CPU1 in reset), simple boot. Receive, a carrier, the CPU-paced transmit and the DAC engine's replay. The method is ESPARGOS esp-sdr's S31
 firmware at 9b61e7465, where noted otherwise it differs from it. Its PHY offsets belong to
-esp-phy-lib b88e4b76e090, the blob this repo fetches. The `lib/esp_sdr` code is `esp_sdr_s31.c` and
-`esp_sdr_diag16.c`.
+esp-phy-lib b88e4b76e090, the blob this repo fetches. The `lib/esp_sdr` code is `esp_sdr_s31.c`,
+`esp_sdr_diag16.c` and `esp_sdr_replay.c`.
 
 - **`0x20104ddc` bit 4 turns the receiver on.** Without it the ADC gives only its own noise, rms 1
   to 2 counts at any gain, and nothing else looks wrong: the PHY calibrates, the AGC register
@@ -443,8 +443,8 @@ esp-phy-lib b88e4b76e090, the blob this repo fetches. The `lib/esp_sdr` code is 
   receives as before (the floor within 1.5 dB). Attenuation is in quarter dB, from the vendor's least,
   24, to the generator's most, 127. Heard on a XIAO ESP32-S3 a few cm from the VIEWE board: 1.4 dB a
   step of 6, 21 dB from the strongest to the weakest, carriers from 2420 to 2700 MHz, all 21 ppm low
-  against that board's crystal. librftest's `fedump_wr_txmem()` may be the S3's replay memory
-  under another name, untried.
+  against that board's crystal. librftest's `fedump_wr_txmem()`, `fedump_rd_txmem()` and
+  `fedump_rd_rxmem()` are empty here (a lone `ret`): the replay below drives the engine itself.
 - **Transmit, samples: the TX DC value register (`0x20100c08`, I 9:0, Q 19:10), paced by the CPU**
   (`esp_sdr_tx_paced_*()`). Measured on the VIEWE board (rfprobe and
   `tests/integration/esp_sdr_tx_paced_api`), heard on a XIAO ESP32-S3 a few cm away
@@ -480,6 +480,35 @@ esp-phy-lib b88e4b76e090, the blob this repo fetches. The `lib/esp_sdr` code is 
     -20 dBc (-41 at 16000). Full scale is 16384 (256 DAC counts); the library maps 32767 to 511.
   - Pacing the TX DC store from the CPU is the only way found: ETM has no task that writes a
     register value.
+- **Transmit, replay: a DAC reader at `0x2010900c`** (`esp_sdr_replay_*()`), the dump block's
+  third word as the C5's trigger. No vendor code, ROM or upstream program writes it (upstream only
+  clears bit 31 before receive), so all of this is measured on the VIEWE board: a scratch probe,
+  rfprobe's `probe tx replay` and `tests/integration/esp_sdr_replay_api`, heard on the XIAO
+  ESP32-S3 (`tmp/s31/tx/replay_s*.py` and `replay_lib*.py` in the workspace).
+  - Fields as on the C5 but for the rate: RUN 31, REPEAT 27:20, LOOP 19, DONE 18 (read only),
+    COUNT 16:0. Bit 17 does not latch: there is no rate bit. LOOP with REPEAT n plays n passes back
+    to back, with REPEAT 0 until RUN clears; LOOP cleared while it plays ends the pass and sets
+    DONE; a finite pass does not hold its last word.
+  - The rate is the capture's field, `0x20109008` bits 24:21: 0, 1 and 3 give 4, 8 and 16 CPU
+    cycles a word (80, 40 and 20 MS/s at 320 MHz), 4 gives 24; the rest are unmeasured. 255
+    passes of 16000 words at 80 MS/s take the samples' cycles and 89 more.
+  - It plays the group that `HP_SYSTEM_TCM_DATA_DUMP_CTRL_REG` hands the engine, from its first
+    word: `0x00ff0000` is the group at `0x2F040000`. With nothing owned it plays nothing, the
+    upper group (`0xff000000`) never. The index wraps at the group's 32768 words; counts up to
+    `0x10000` finish, `0x10001` never sets DONE. It writes nothing: the group, the vector table
+    and the IRAM code read the same afterwards.
+  - The CPU runs on while it plays: sleeps, a 1 ms timer and a busy wait keep time, and the IRAM
+    code is unchanged (the test). So the library gives it that group and the image must end below
+    `0x2F040000` (`esp_sdr_bank_s31.ld` checks; the DIAG16 ring shares the group), and the upper
+    group with the ROM data stays the CPU's. A capture or the ring would write the ownership
+    register, so both return -EBUSY while it plays.
+  - The words are the TX DC value's (I 9:0, Q 19:10), the chain on as for the paced path;
+    `0x2010040c`'s source bits do not matter. Amplitude 100 is -19 dBFS on the XIAO at gain 10
+    and about 5.5 dB more at 200; the I/Q image -25 dBc as on the paced path, the LO leakage -40
+    dBc; the same at all three rates, and a tone at -1 MHz lands at -1 MHz.
+  - The DAC scale bytes (`0x20100c04`) act here, unlike on the TX DC value, but not as a gain:
+    against `0xff`, `0x40` is +10.7 dB, `0x10` +3.9 dB and `0x80` -30 dB. The library keeps `0xff`
+    unless asked.
 
 
 ### VIEWE PLCM-UES31S043H800V480C-U

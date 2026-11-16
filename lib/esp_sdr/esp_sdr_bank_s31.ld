@@ -24,7 +24,31 @@ __esp_sdr_bank_len = 0x1A010;
 	__esp_sdr_ring_start = .;
 	. += CONFIG_ESP_SDR_DIAG16_RING_KB * 1024;
 }
+#endif
+
+#if defined(CONFIG_ESP_SDR_REPLAY)
+/*
+ * The DAC reader's group (esp_sdr_replay.c), the 128 KiB below the bank: it plays from the
+ * group's first word while it owns it, and the CPU runs on, so no part of the image may be there.
+ * The ring, where there is one, shares it: the two exclude each other.
+ */
+#if defined(CONFIG_ESP_SDR_DIAG16)
+__esp_sdr_dac_start = 0x2F040000;
+#else
+.esp_sdr_dac 0x2F040000 (NOLOAD) :
+{
+	__esp_sdr_dac_start = .;
+	. += 0x20000;
+}
+#endif
+#endif
+
+#if defined(CONFIG_ESP_SDR_DIAG16) && defined(CONFIG_ESP_SDR_REPLAY)
+__esp_sdr_image_end_max = MIN(__esp_sdr_ring_start, 0x2F040000);
+#elif defined(CONFIG_ESP_SDR_DIAG16)
 __esp_sdr_image_end_max = __esp_sdr_ring_start;
+#elif defined(CONFIG_ESP_SDR_REPLAY)
+__esp_sdr_image_end_max = __esp_sdr_dac_start;
 #else
 __esp_sdr_image_end_max = __esp_sdr_bank_org;
 #endif
@@ -32,5 +56,6 @@ __esp_sdr_image_end_max = __esp_sdr_bank_org;
 _heap_sentry = __esp_sdr_image_end_max;
 _libc_heap_size = _heap_sentry - _end;
 
-ASSERT(_end <= __esp_sdr_image_end_max, "esp-sdr: DRAM image overlaps the ring or capture bank")
+ASSERT(_end <= __esp_sdr_image_end_max,
+       "esp-sdr: DRAM image overlaps the ring, DAC group or capture bank")
 ASSERT(__esp_sdr_bank_end <= 0x2F07AFB0, "esp-sdr: capture bank reaches the ROM boot stack")

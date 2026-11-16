@@ -105,10 +105,11 @@ Shell
                                ablation); without arguments clears the list
    probe diag regs             0x600a9000, 0x600a9400 and 0x600a9c00 (64 words each) as the
                                last run had them right after the pokes
-   probe tx replay <Hz> [amp] [rate 0|1] [passes] [n] [power] [extra] [scale]
-                               C5: a whole-cycle tone played by the DAC engine (80 or 40 MS/s);
-                               passes 0 loops until "probe tx stop", otherwise prints the
-                               cycles the passes took and holds the radio for "probe tx rearm"
+   probe tx replay <Hz> [amp] [rate 0|1|2] [passes] [n] [power] [extra] [scale]
+                               C5, S31: a whole-cycle tone played by the DAC engine (80 or 40
+                               MS/s, on the S31 also 20); passes 0 loops until "probe tx
+                               stop", otherwise prints the cycles the passes took and holds the
+                               radio for "probe tx rearm"
    probe tx rearm <ms>         restart the finite replay back to back for ms (restart hole)
    probe tx dc <rate> <Hz> [ms] [amp] [interp] [power]
                                C5, S31: the paced TX DC path fed from a tone table on the
@@ -131,7 +132,7 @@ Shell
    probe tx paint row <r> <hex>
                                row r's pixels as hex digits, the leftmost in the most
                                significant bit
-   probe tx paint run <row ms> [amp] [rate 0|1] [n] [scale] [gap ms]
+   probe tx paint run <row ms> [amp] [rate 0|1|2] [n] [scale] [gap ms]
                                play the image until "probe tx stop": a row at a time, the
                                bottom row first (a waterfall scrolling down shows it upright),
                                every set pixel a tone, column j at (j - w / 2) x rate / n (125

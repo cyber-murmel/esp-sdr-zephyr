@@ -246,7 +246,20 @@
 #define DUMP_MODE_SOURCE   GENMASK(20, 17)
 #define DUMP_MODE_RATE     GENMASK(24, 21)
 #define DUMP_SOURCE_IQ     3U
-#define DUMP_MAC_REG       0x2010900cU
+/*
+ * The DAC reader (esp_sdr_replay.c), DUMP_CTRL + 8 as on the C5, measured: it plays the owned
+ * group from its word 0 at the rate in DUMP_MODE_RATE (0, 1, 3: 4, 8, 16 CPU cycles a word),
+ * writes nothing, and wraps at the group's 32768 words. A count past 0x10000 never finishes; bit
+ * 17 does not latch (no rate bit here).
+ */
+#define DAC_TRIG_REG       0x2010900cU
+#define DAC_TRIG_RUN       BIT(31)
+#define DAC_TRIG_REPEAT    GENMASK(27, 20)
+#define DAC_TRIG_LOOP      BIT(19)
+#define DAC_TRIG_DONE      BIT(18)
+#define DAC_TRIG_COUNT     GENMASK(16, 0)
+#define DAC_SCALE_REG      0x20100c04U
+#define DAC_SCALE_M        GENMASK(23, 8)
 #define DUMP_CONFIG_REG    0x20109018U
 #define DUMP_CONFIG_LANES  GENMASK(23, 0)
 #define DUMP_CONFIG_IQ     (24U | (25U << 6) | (26U << 12) | (27U << 18) | BIT(24))
@@ -261,6 +274,8 @@
 #define DUMP_USAGE_OWN  0xff000000U
 #define DUMP_USAGE_M    DUMP_USAGE_OWN
 #define DUMP_USAGE_S    24U
+/* The group below, 0x2F040000, the DAC reader's while it plays (esp_sdr_bank_s31.ld). */
+#define DUMP_USAGE_DAC  0x00ff0000U
 
 /* BBTOP as on the C6: the I/Q low-pass capacitor codes in registers 4 and 5. */
 #define BBTOP_BLOCK    0x67U
@@ -550,6 +565,8 @@ void regi2c_exit_critical(void);
 extern uint32_t __esp_sdr_bank_start[];
 /* Second bank, only linked with CONFIG_ESP_SDR_BANK1 (esp_sdr_bank_s3.ld). */
 extern uint32_t __esp_sdr_bank1_start[];
+/* The S31's DAC group, only linked with CONFIG_ESP_SDR_REPLAY (esp_sdr_bank_s31.ld). */
+extern uint32_t __esp_sdr_dac_start[];
 
 /* Radio state, guarded by esp_sdr_lock (esp_sdr.c). */
 extern struct k_mutex esp_sdr_lock;
@@ -593,6 +610,14 @@ void esp_sdr_s31_diag_stop(void);
 typedef bool (*esp_sdr_s31_dc_measure_t)(int32_t mean[2], void *user);
 int esp_sdr_s31_dc_calibrate(esp_sdr_s31_dc_measure_t measure, void *user,
 			     struct esp_sdr_rx_dc *out);
+/*
+ * The DAC reader on group 2 (esp_sdr_replay.c), lock held: start it with ctrl at a DUMP_MODE rate
+ * code, setting *t0 to the cycle count at the trigger; while it plays, captures and the ring give
+ * -EBUSY, since both write the ownership register. -EAGAIN before the first tune.
+ */
+int esp_sdr_s31_dac_start(unsigned int rate_code, uint32_t ctrl, uint32_t *t0);
+void esp_sdr_s31_dac_stop(void);
+bool esp_sdr_s31_dac_busy(void);
 #endif
 /* Back to the resting RX-ready state after a tuning change; lock held. */
 int esp_sdr_retune(void);

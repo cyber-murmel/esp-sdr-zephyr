@@ -300,6 +300,8 @@ void esp_sdr_s31_rx_on(void)
 static bool tx_tone_on;
 /* The paced stream's chain (esp_sdr_tx_chain_on()): the tone and the stream exclude each other. */
 static bool tx_chain_on;
+/* The DAC reader owns group 2 (esp_sdr_s31_dac_start()). */
+static bool dac_on;
 
 /* What the S31 tunes, and so transmits at. */
 #define TX_MIN_MHZ 2200U
@@ -345,7 +347,7 @@ void esp_sdr_tx_tone_stop(void)
 int esp_sdr_tx_chain_on(unsigned int power)
 {
 	ARG_UNUSED(power);
-	if (tx_tone_on) {
+	if (tx_tone_on || tx_chain_on) {
 		return -EBUSY;
 	}
 	if (esp_sdr_freq_mhz < TX_MIN_MHZ || esp_sdr_freq_mhz > TX_MAX_MHZ) {
@@ -410,7 +412,7 @@ static ALWAYS_INLINE void dump_regs(void)
 	REG_WRITE(DUMP_SRC_SEL_REG, (REG_READ(DUMP_SRC_SEL_REG) & ~DUMP_SRC_SEL_M) | 1U);
 	REG_SET_BIT(DUMP_CLK_EN_REG, DUMP_CLK_EN_BIT);
 	REG_WRITE(DUMP_CLK_FORCE0_REG, UINT32_MAX);
-	REG_CLR_BIT(DUMP_MAC_REG, BIT(31));
+	REG_CLR_BIT(DAC_TRIG_REG, DAC_TRIG_RUN);
 	REG_SET_BIT(HP_SYSTEM_TCM_RAM_PWR_CTRL0_REG, HP_SYSTEM_REG_HP_SYSTEM_TCM_CLK_FORCE_ON);
 	REG_SET_BIT(DUMP_CLK_FORCE1_REG, BIT(31));
 	REG_SET_BIT(DUMP_CLK_FORCE2_REG, DUMP_CLK_FORCE2_M);
@@ -607,6 +609,9 @@ int esp_sdr_s31_capture(enum esp_sdr_rate rate, size_t count, uint32_t *elapsed_
 	if ((unsigned int)rate >= ARRAY_SIZE(rate_field)) {
 		return -EINVAL;
 	}
+	if (dac_on) {
+		return -EBUSY;
+	}
 	if (!dump_ready) {
 		return -EAGAIN;
 	}
@@ -630,6 +635,52 @@ int esp_sdr_s31_capture(enum esp_sdr_rate rate, size_t count, uint32_t *elapsed_
 	}
 	*elapsed_us = (uint32_t)((uint64_t)cycles * USEC_PER_SEC / (uint32_t)esp_clk_cpu_freq());
 	return 0;
+}
+
+/*
+ * The DAC reader plays group 2 while the CPU runs on: the image ends below it
+ * (esp_sdr_bank_s31.ld), so nothing but the samples lives there, and group 3, the ROM data's,
+ * stays the CPU's. A capture or the ring would hand the groups back with a 0 in the ownership
+ * register, hence dac_on.
+ */
+bool esp_sdr_s31_dac_busy(void)
+{
+	return dac_on;
+}
+
+int esp_sdr_s31_dac_start(unsigned int rate_code, uint32_t ctrl, uint32_t *t0)
+{
+	unsigned int key;
+
+	if (!dump_ready) {
+		return -EAGAIN;
+	}
+	if (dac_on) {
+		return -EBUSY;
+	}
+	key = irq_lock();
+	REG_WRITE(DUMP_MODE_REG, (REG_READ(DUMP_MODE_REG) & ~DUMP_MODE_RATE) |
+					 FIELD_PREP(DUMP_MODE_RATE, rate_code));
+	REG_WRITE(DUMP_USAGE_REG, DUMP_USAGE_DAC);
+	__asm__ volatile("fence" ::: "memory");
+	REG_WRITE(DAC_TRIG_REG, 0U);
+	*t0 = (uint32_t)esp_cpu_get_cycle_count();
+	REG_WRITE(DAC_TRIG_REG, ctrl);
+	irq_unlock(key);
+	dac_on = true;
+	return 0;
+}
+
+void esp_sdr_s31_dac_stop(void)
+{
+	if (!dac_on) {
+		return;
+	}
+	REG_WRITE(DAC_TRIG_REG, REG_READ(DAC_TRIG_REG) & ~DAC_TRIG_RUN);
+	REG_WRITE(DAC_TRIG_REG, 0U);
+	REG_WRITE(DUMP_USAGE_REG, 0U);
+	__asm__ volatile("fence" ::: "memory");
+	dac_on = false;
 }
 
 /*

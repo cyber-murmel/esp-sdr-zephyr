@@ -140,8 +140,9 @@ The library
   (MCH2022 badge) takes bursts. ESP32-S31 (ESP32-S31-Function-CoreBoard-1, the
   VIEWE 4.3 inch touch display board): bursts, and a gapless 8+8 bit ring up to
   40 MS/s through the modem diagnostic bus (``esp_sdr_diag16.h``,
-  ``CONFIG_ESP_SDR_DIAG16``), receive only, without the Wi-Fi driver;
-  ``capture`` and ``rfprobe`` run on them.
+  ``CONFIG_ESP_SDR_DIAG16``), and
+  waveform loops through its DAC engine at 80, 40 or 20 MS/s while the CPU
+  runs on (``esp_sdr_replay.h``), without the Wi-Fi driver; ``capture`` and ``rfprobe`` run on them.
 - **Tuning:** 100 to 6000 MHz in the API, but the PLL locks over a
   chip-specific range (about 1.8 to 2.8 GHz on the S3); below 2210 MHz
   through the 5/6 divider (2.2 to 2.9 GHz on the S31, which has none).
