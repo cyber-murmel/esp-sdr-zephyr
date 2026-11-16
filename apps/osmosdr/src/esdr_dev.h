@@ -22,6 +22,10 @@ static inline uint32_t esdr_rate_round(uint32_t max_hz, uint32_t count, uint32_t
 {
 	uint32_t min_hz = max_hz >> (count - 1U);
 
+	/* Also keeps 2 hz^2 below 2^64. */
+	if (hz >= max_hz) {
+		return max_hz;
+	}
 	for (uint32_t r = max_hz; r > min_hz; r /= 2U) {
 		/* Above the geometric mean of r and r / 2. */
 		if (2U * (uint64_t)hz * hz >= (uint64_t)r * r) {

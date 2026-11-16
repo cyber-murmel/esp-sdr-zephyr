@@ -29,6 +29,9 @@ ZTEST(esdr_dev, test_rate_round)
 	zassert_equal(esdr_rate_round(2000000U, 8U, 100000U), 125000U);
 	zassert_equal(esdr_rate_round(2000000U, 8U, 10000U), 15625U);
 	zassert_equal(esdr_rate_round(250000U, 1U, 1000U), 250000U);
+	/* 2 hz^2 passes 2^64 from 3.04 GHz up. */
+	zassert_equal(esdr_rate_round(500000U, 6U, 3100000000U), 500000U);
+	zassert_equal(esdr_rate_round(2000000U, 8U, UINT32_MAX), 2000000U);
 	/* Every offered rate rounds to itself. */
 	for (uint32_t k = 0; k < 8U; k++) {
 		zassert_equal(esdr_rate_round(2000000U, 8U, 2000000U >> k), 2000000U >> k);
