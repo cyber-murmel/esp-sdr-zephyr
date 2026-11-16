@@ -126,14 +126,22 @@ bool openByCriteria(libusb_context *ctx, const std::string &wantSerial, UsbEsdr 
 /* Receive-side ring of converted samples, written by the USB callback thread. */
 class SampleRing {
 public:
-	void reset(size_t itemBytes)
+	void reset(size_t itemBytes, double rateHz)
 	{
 		std::lock_guard<std::mutex> g(m_);
 		itemBytes_ = itemBytes;
-		buf_.assign(CAPACITY * itemBytes, 0);
+		capacity_ = std::max(MIN_CAPACITY, (size_t)(rateHz * BACKLOG_S));
+		buf_.assign(capacity_ * itemBytes, 0);
 		head_ = tail_ = 0;
 		overflowed_ = false;
 		dropped_ = 0;
+	}
+
+	/* Samples went that the ring never held: the next read that returns any says so. */
+	void flagLoss(void)
+	{
+		std::lock_guard<std::mutex> g(m_);
+		overflowed_ = true;
 	}
 
 	/* Items dropped because the reader fell behind, since the last reset. */
@@ -147,15 +155,18 @@ public:
 	void push(const uint8_t *data, size_t n)
 	{
 		std::lock_guard<std::mutex> g(m_);
-		for (size_t k = 0; k < n; k++) {
-			std::memcpy(&buf_[(head_ % CAPACITY) * itemBytes_], data + k * itemBytes_,
-				   itemBytes_);
-			head_++;
-			if (head_ - tail_ > CAPACITY) {
-				tail_ = head_ - CAPACITY;
-				overflowed_ = true;
-				dropped_++;
-			}
+		for (size_t done = 0; done < n;) {
+			size_t at = head_ % capacity_;
+			size_t k = std::min(n - done, capacity_ - at);
+
+			std::memcpy(&buf_[at * itemBytes_], data + done * itemBytes_, k * itemBytes_);
+			head_ += k;
+			done += k;
+		}
+		if (head_ - tail_ > capacity_) {
+			dropped_ += head_ - tail_ - capacity_;
+			tail_ = head_ - capacity_;
+			overflowed_ = true;
 		}
 		cv_.notify_one();
 	}
@@ -171,19 +182,28 @@ public:
 		size_t avail = head_ - tail_;
 		size_t k = std::min(avail, n);
 
-		for (size_t i = 0; i < k; i++) {
-			std::memcpy(out + i * itemBytes_, &buf_[(tail_ % CAPACITY) * itemBytes_],
-				   itemBytes_);
-			tail_++;
+		for (size_t done = 0; done < k;) {
+			size_t at = tail_ % capacity_;
+			size_t m = std::min(k - done, capacity_ - at);
+
+			std::memcpy(out + done * itemBytes_, &buf_[at * itemBytes_], m * itemBytes_);
+			tail_ += m;
+			done += m;
 		}
-		overflow = overflowed_;
-		overflowed_ = false;
+		/* An empty read is a timeout, with no flags to carry this: it stays for the next. */
+		overflow = overflowed_ && k > 0;
+		if (k > 0) {
+			overflowed_ = false;
+		}
 		return k;
 	}
 
 private:
 	/* About 1 s at 250 kS/s: more only adds latency when the reader lags. */
-	static constexpr size_t CAPACITY = 1u << 18; /* items */
+	static constexpr size_t MIN_CAPACITY = 1u << 18; /* items */
+	/* At high speed a burst of a reader's lag is the same time, not the same items. */
+	static constexpr double BACKLOG_S = 0.1;
+	size_t capacity_ = MIN_CAPACITY;
 	std::mutex m_;
 	std::condition_variable cv_;
 	std::vector<uint8_t> buf_;
@@ -285,7 +305,7 @@ private:
 	 */
 	void rxLoop()
 	{
-		static constexpr int XFERS = 8;
+		static constexpr int XFERS = 32;
 		static constexpr size_t XFER_BYTES = 16 * ESDR_BLOCK_BYTES;
 		std::vector<libusb_transfer *> xfers(XFERS);
 		std::vector<std::vector<uint8_t>> bufs(XFERS);
@@ -1087,7 +1107,11 @@ public:
 	}
 
 	/* ---- channels ---- */
-	size_t getNumChannels(const int) const override { return 1; }
+	/* A device with no transmit gain does not transmit. */
+	size_t getNumChannels(const int direction) const override
+	{
+		return direction == SOAPY_SDR_TX && txGainMax_ == 0 ? 0 : 1;
+	}
 	bool getFullDuplex(const int, const size_t) const override { return false; }
 
 	/* ---- streaming ---- */
@@ -1171,19 +1195,28 @@ public:
 		return list;
 	}
 
-	/* Half duplex: starting one direction stops the other. */
+	/*
+	 * Half duplex: starting one direction stops the other. GNU Radio calls this from a block's
+	 * start(): a throw there ends the block's thread before the scheduler's start barrier, and
+	 * top_block::start() never returns, which is a frozen gqrx. So a refusal is an error code.
+	 */
 	int activateStream(SoapySDR::Stream *stream, const int, const long long, const size_t) override
 	{
-		if (isTx(stream)) {
-			if (rxRunning_) {
-				stopRx();
+		try {
+			if (isTx(stream)) {
+				if (rxRunning_) {
+					stopRx();
+				}
+				startTx();
+			} else {
+				if (txRunning_) {
+					stopTx();
+				}
+				startRx();
 			}
-			startTx();
-		} else {
-			if (txRunning_) {
-				stopTx();
-			}
-			startRx();
+		} catch (const std::exception &e) {
+			SoapySDR_logf(SOAPY_SDR_ERROR, "esdr: %s", e.what());
+			return SOAPY_SDR_STREAM_ERROR;
 		}
 		return 0;
 	}
@@ -1409,9 +1442,18 @@ public:
 			}
 			return;
 		}
+		double before = rateHz_;
+
 		rateHz_ = actual;
 		if (!txRunning_) {
 			setU32(ESDR_REQ_SET_SAMPLE_RATE, (uint32_t)actual);
+		}
+		/*
+		 * The backlog is in time: a faster stream needs more room. Snapshots have no rate,
+		 * and a reader tells them apart only by counting: a reset would cut one.
+		 */
+		if (rxRunning_ && trigRatio_ <= 0 && actual != before) {
+			ring_.reset(bits_ == 16 ? 4 : 2, rateHz_);
 		}
 	}
 
@@ -1563,7 +1605,9 @@ private:
 		setU32(ESDR_REQ_SET_SAMPLE_RATE, (uint32_t)txRateHz_);
 		link_->ctrlOut(ESDR_REQ_SET_TX_GAIN, (uint16_t)txGain_, nullptr, 0);
 		link_->ctrlOut(ESDR_REQ_SET_FORMAT, (uint16_t)txBits_, nullptr, 0);
-		link_->ctrlOut(ESDR_REQ_SET_MODE, ESDR_MODE_TX, nullptr, 0);
+		if (link_->ctrlOut(ESDR_REQ_SET_MODE, ESDR_MODE_TX, nullptr, 0) < 0) {
+			throw std::runtime_error("esdr: the radio does not transmit");
+		}
 		txRunning_ = true;
 	}
 
@@ -1589,12 +1633,12 @@ private:
 
 		size_t itemBytes = bits_ == 16 ? 4 : 2;
 
-		ring_.reset(itemBytes);
+		ring_.reset(itemBytes, rateHz_);
 		expect_ = 0;
 		haveExpect_ = false;
 		synced_ = false;
 		carryLen_ = 0;
-		rxSamples_ = gaps_ = gapZeros_ = resyncs_ = snaps_ = 0;
+		rxSamples_ = gaps_ = gapZeros_ = gapSkipped_ = resyncs_ = snaps_ = 0;
 		link_->ctrlOut(ESDR_REQ_SET_MODE, ESDR_MODE_OFF, nullptr, 0);
 		setFreq((uint64_t)freqHz_);
 		if (trigRatio_ > 0) {
@@ -1619,7 +1663,10 @@ private:
 		link_->ctrlOut(ESDR_REQ_SET_RX_GAIN, rxAuto_ ? ESDR_GAIN_AUTO : (uint16_t)rxGain_,
 			nullptr, 0);
 		link_->ctrlOut(ESDR_REQ_SET_FORMAT, (uint16_t)(wire4_ ? 4 : bits_), nullptr, 0);
-		link_->ctrlOut(ESDR_REQ_SET_MODE, ESDR_MODE_RX, nullptr, 0);
+		if (link_->ctrlOut(ESDR_REQ_SET_MODE, ESDR_MODE_RX, nullptr, 0) < 0) {
+			throw std::runtime_error("esdr: the radio refuses to receive (osmosdr_hs needs "
+						 "a high-speed USB link)");
+		}
 
 		rxRunning_ = true;
 		link_->startRx([this](const uint8_t *p, size_t n) { onBytes(p, n); });
@@ -1633,10 +1680,10 @@ private:
 		rxRunning_ = false;
 		SoapySDR_logf(SOAPY_SDR_INFO,
 			      "esdr: rx stopped: %llu samples, %llu snapshots, %llu gaps (%llu zero "
-			      "filled), %llu dropped by a slow reader, %llu resync steps",
+			      "filled, %llu skipped), %llu dropped by a slow reader, %llu resync steps",
 			      (unsigned long long)rxSamples_, (unsigned long long)snaps_,
-			      (unsigned long long)gaps_,
-			      (unsigned long long)gapZeros_, (unsigned long long)ring_.dropped(),
+			      (unsigned long long)gaps_, (unsigned long long)gapZeros_,
+			      (unsigned long long)gapSkipped_, (unsigned long long)ring_.dropped(),
 			      (unsigned long long)resyncs_);
 	}
 
@@ -1644,7 +1691,8 @@ private:
 	 * The receive stream is split into whole EBLK blocks (the device never
 	 * splits one across transfers) and converted into the ring. A gap in the
 	 * device's sample index is filled with zeros, bounded, so GRC/gqrx see a
-	 * continuous time axis instead of a jump.
+	 * continuous time axis instead of a jump. A longer one, which would push out
+	 * what the ring holds, is counted and reported as SOAPY_SDR_END_BURST.
 	 */
 	/* A plausible header of a block kind this module decodes. */
 	static bool headerOk(const uint8_t *p)
@@ -1665,19 +1713,26 @@ private:
 			rxSamples_ += h.samples;
 			return;
 		}
-		if (haveExpect_ && h.index > expect_ && h.index - expect_ < 1000000U) {
-			/* Missing samples become zeros: the time axis stays continuous. */
-			static const uint8_t zeros[4 * 1024] = {0};
-			size_t item = bits_ == 16 ? 4 : 2;
+		if (haveExpect_ && h.index > expect_) {
+			uint64_t missing = h.index - expect_;
 
-			for (uint64_t z = h.index - expect_; z > 0;) {
-				uint64_t k = std::min<uint64_t>(z, sizeof(zeros) / item);
-
-				ring_.push(zeros, (size_t)k);
-				z -= k;
-			}
 			gaps_++;
-			gapZeros_ += h.index - expect_;
+			if (missing < 1000000U) {
+				/* Missing samples become zeros: the time axis stays continuous. */
+				static const uint8_t zeros[4 * 1024] = {0};
+				size_t item = bits_ == 16 ? 4 : 2;
+
+				for (uint64_t z = missing; z > 0;) {
+					uint64_t k = std::min<uint64_t>(z, sizeof(zeros) / item);
+
+					ring_.push(zeros, (size_t)k);
+					z -= k;
+				}
+				gapZeros_ += missing;
+			} else {
+				gapSkipped_ += missing;
+				ring_.flagLoss();
+			}
 		}
 		if ((h.flags & ESDR_BLK_4BIT) != 0U) {
 			/* Each nibble sign extended, times 16: CS8 items. */
@@ -1777,7 +1832,7 @@ private:
 
 	bool rxRunning_ = false;
 	/* Receive parser state and counters (the link's receive thread). */
-	uint64_t rxSamples_ = 0, gaps_ = 0, gapZeros_ = 0, resyncs_ = 0;
+	uint64_t rxSamples_ = 0, gaps_ = 0, gapZeros_ = 0, gapSkipped_ = 0, resyncs_ = 0;
 	uint64_t expect_ = 0;
 	bool haveExpect_ = false, synced_ = false;
 	uint8_t carry_[ESDR_BLOCK_BYTES];

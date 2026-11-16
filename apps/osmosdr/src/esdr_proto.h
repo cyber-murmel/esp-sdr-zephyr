@@ -401,7 +401,9 @@ static inline bool esdr_block_hdr_ok(const void *p, uint16_t accept)
 
 	memcpy(&h, p, sizeof(h));
 	return h.magic == ESDR_BLOCK_MAGIC && (h.flags & ~(uint32_t)accept) == 0U &&
-	       h.samples <= ESDR_BLOCK_PAYLOAD / ((h.flags & ESDR_BLK_4BIT) != 0U ? 1U : 2U);
+	       h.samples <= ESDR_BLOCK_PAYLOAD / ((h.flags & ESDR_BLK_4BIT) != 0U  ? 1U
+						  : (h.flags & ESDR_BLK_16BIT) != 0U ? 4U
+										     : 2U);
 }
 
 /* Segment flags. */

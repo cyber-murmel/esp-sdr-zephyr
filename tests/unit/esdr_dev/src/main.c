@@ -101,6 +101,10 @@ ZTEST(esdr_dev, test_block_hdr_ok)
 	zassert_true(esdr_block_hdr_ok(b, ESDR_BLK_KNOWN));
 	put_hdr(b, ESDR_BLOCK_MAGIC, ESDR_BLK_4BIT, items4 + 1U);
 	zassert_false(esdr_block_hdr_ok(b, ESDR_BLK_KNOWN));
+	put_hdr(b, ESDR_BLOCK_MAGIC, ESDR_BLK_16BIT, ESDR_BLOCK_PAYLOAD / 4U);
+	zassert_true(esdr_block_hdr_ok(b, ESDR_BLK_KNOWN));
+	put_hdr(b, ESDR_BLOCK_MAGIC, ESDR_BLK_16BIT, ESDR_BLOCK_PAYLOAD / 4U + 1U);
+	zassert_false(esdr_block_hdr_ok(b, ESDR_BLK_KNOWN));
 	/* Flags outside the accepted set, known or not. */
 	put_hdr(b, ESDR_BLOCK_MAGIC, ESDR_BLK_SEG, 0U);
 	zassert_true(esdr_block_hdr_ok(b, ESDR_BLK_KNOWN));

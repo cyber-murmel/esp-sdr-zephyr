@@ -77,7 +77,8 @@
 #define VID 0x2fe3
 #define PID 0x0005
 
-#define XFERS      8
+/* 2 MiB queued: 50 ms of a host's stall at 40 MB/s, on top of what the device holds. */
+#define XFERS      32
 #define XFER_BYTES (16 * ESDR_BLOCK_BYTES)
 #define CTRL_MS    1000
 
@@ -520,9 +521,10 @@ static void chan_block(struct stream *s, const struct esdr_block_hdr *h, const u
 static void parse_block(struct stream *s, const uint8_t *b)
 {
 	struct esdr_block_hdr h;
-	size_t item = s->bits == 16 ? 4 : 2;
+	size_t item;
 
 	memcpy(&h, b, sizeof(h));
+	item = (h.flags & ESDR_BLK_16BIT) != 0U ? 4 : 2;
 	s->blocks++;
 	if ((h.flags & ESDR_BLK_TRIGGER) != 0U) {
 		trig_block(s, &h, b + sizeof(h));
@@ -690,11 +692,12 @@ static int run_stream(struct stream *s, bool in, double seconds, double rate)
 
 		x[k] = libusb_alloc_transfer(0);
 		/*
-		 * No timeout on IN: queued transfers fill one after another, so one
-		 * counted from submission expires on the later ones at low rates.
+		 * No timeout: queued transfers move one after another, so one counted
+		 * from submission expires on the later ones at low rates. The clock
+		 * below ends the stream and cancels them.
 		 */
 		libusb_fill_bulk_transfer(x[k], dev, in ? ep_in : ep_out, buf, XFER_BYTES,
-					  in ? in_cb : out_cb, s, in ? 0 : 2000);
+					  in ? in_cb : out_cb, s, 0);
 		if (!in && !s->test) {
 			tx_fill(s, buf, XFER_BYTES);
 		}
@@ -858,6 +861,7 @@ static void usage(void)
 			" gapless | chan | temp | cal | cal-set | cal-clear | c6 | fw\n"
 			"  [-t seconds] [-f Hz] [-r S/s] [-g gain|auto] [-d digital dB] [-b 4|8|16] [-B bw Hz]\n"
 			"  [-p ppb] [-n (no offset tuning)] [-o file] [-x Hz (retune half way)]\n"
+			"  rx: without -B the device keeps its current filter\n"
 			"  tx: [-G step] (-i file | -T tone Hz [-a amplitude])\n"
 			"  trig: [-R ratio] [-P samples after the trigger]\n"
 			"  gapless: [-R ratio, the threshold's floor | -L fixed level, raw units^2 a pair]"
@@ -872,7 +876,8 @@ int main(int argc, char **argv)
 {
 	const char *serial = NULL, *outfile = NULL, *cmd;
 	double seconds = 10, freq = 2450e6;
-	uint32_t rate = 250000, bw = 13000000;
+	uint32_t rate = 250000, bw = 0;
+	bool bw_given = false;
 	int gain = -1, bits = 8, ppb = 0, dgain = -1, txgain = 4, opt;
 	const char *infile = NULL;
 	double tone = 0, amp = 0.5, ratio = 8;
@@ -905,6 +910,7 @@ int main(int argc, char **argv)
 			break;
 		case 'B':
 			bw = (uint32_t)atof(optarg);
+			bw_given = true;
 			break;
 		case 'p':
 			ppb = atoi(optarg);
@@ -998,17 +1004,26 @@ int main(int argc, char **argv)
 		set_freq((uint64_t)freq);
 		retune_base = (uint64_t)freq;
 		set_u32(ESDR_REQ_SET_SAMPLE_RATE, rate);
-		set_u32(ESDR_REQ_SET_BANDWIDTH, bw);
+		/* Without -B the device keeps its filter: 0 would ask for the widest there is. */
+		if (bw_given) {
+			set_u32(ESDR_REQ_SET_BANDWIDTH, bw);
+		}
 		set_u32(ESDR_REQ_SET_FREQ_CORR, (uint32_t)ppb);
 		ctrl_out(ESDR_REQ_SET_RX_GAIN, gain < 0 ? ESDR_GAIN_AUTO : (uint16_t)gain, NULL, 0);
-		ctrl_out(ESDR_REQ_SET_FORMAT, (uint16_t)bits, NULL, 0);
+		if (ctrl_out(ESDR_REQ_SET_FORMAT, (uint16_t)bits, NULL, 0) < 0) {
+			fprintf(stderr, "this device does not stream %d-bit items\n", bits);
+			return 1;
+		}
 		ctrl_out(ESDR_REQ_SET_DIGITAL_GAIN, dgain < 0 ? ESDR_DGAIN_DEFAULT : (uint16_t)dgain,
 			 NULL, 0);
 		ctrl_out(ESDR_REQ_SET_OPTIONS, offset ? ESDR_OPT_OFFSET_TUNING : 0, NULL, 0);
 		if (ctrl_in(ESDR_REQ_GET_STATE, &st, sizeof(st)) == sizeof(st)) {
 			rate = st.sample_rate_hz;
 		}
-		ctrl_out(ESDR_REQ_SET_MODE, ESDR_MODE_RX, NULL, 0);
+		if (ctrl_out(ESDR_REQ_SET_MODE, ESDR_MODE_RX, NULL, 0) < 0) {
+			fprintf(stderr, "the device refuses to receive\n");
+			return 1;
+		}
 		run_stream(&s, true, seconds, rate);
 		ctrl_out(ESDR_REQ_SET_MODE, ESDR_MODE_OFF, NULL, 0);
 		print_state();
@@ -1191,7 +1206,10 @@ int main(int argc, char **argv)
 			rate = st.sample_rate_hz;
 		}
 		s.rate = rate;
-		ctrl_out(ESDR_REQ_SET_MODE, ESDR_MODE_TX, NULL, 0);
+		if (ctrl_out(ESDR_REQ_SET_MODE, ESDR_MODE_TX, NULL, 0) < 0) {
+			fprintf(stderr, "the device refuses to transmit\n");
+			return 1;
+		}
 		run_stream(&s, false, seconds, rate);
 		ctrl_out(ESDR_REQ_SET_MODE, ESDR_MODE_OFF, NULL, 0);
 		usleep(200000);
