@@ -44,10 +44,13 @@ repos:
             apps/micropython/cmod/(esdr_fsk|esdr_pcap_core|esdr_pcap_dissect)\.[ch]$|
             apps/micropython/cmod/(esdr_scan|esdr_wf|esdr_hb)\.[ch]$|
             apps/chancap/tools/ble_pcap\.py$|
-            apps/pcap/src/(dec_ble|dec_wpan|dec_generic|refine)\.c$|
+            apps/pcap/tools/esdr_(pcap\.py|burst\.lua)$|
+            apps/pcap/src/(pcap_proto|pcapng|records|decode|burst)\.h$|
+            apps/pcap/src/(pcapng|records|dec_ble|dec_wpan|dec_generic|refine)\.c$|
             lib/ieee802154/ieee154_phy\.c$|
             lib/esp_sdr/src/esp_sdr_ring_stage\.c$|
             include/esp_sdr/esp_sdr_ring_stage\.h$|
+            apps/osmosdr/src/esdr_proto\.h$|
             apps/osmosdr_serial/tools/esdr_serial\.py$|
             include/esp_sdr/(esdr_link|mch2022_coproc)\.h$|
             apps/ubertooth/tools/le_ref\.py$|

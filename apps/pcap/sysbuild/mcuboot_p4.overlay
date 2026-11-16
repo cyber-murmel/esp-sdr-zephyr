@@ -1,0 +1,14 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * MCUboot on an ESP32-P4: the application's flash layout (apps/micropython's, so that the two
+ * apps can update each other), the boot partition its code partition.
+ */
+
+#include "../../micropython/boards/partitions_p4.dtsi"
+
+/ {
+	chosen {
+		zephyr,code-partition = &boot_partition;
+	};
+};

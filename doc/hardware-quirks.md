@@ -722,7 +722,7 @@ looked at: at a pixel clock of 500 kHz the CPU can follow PCLK and compare all 3
     the cost); a vector used by the next instruction stalls one.
   - The vector state is in no thread context: one thread per core may use it.
     The enables and the vector, accumulator and loop registers are per core,
-    so under SMP that thread is pinned before it starts: moved,
+    so under SMP that thread is pinned before it starts (`apps/pcap`): moved,
     it would trap where PIE is off, or carry on with the other core's state.
 - **The ESP32-S31's PIE is CPU1's only, and version 2.2** (`-march=..._xesploop_xespv2p2`,
   binutils 16.2; ESP-IDF says the same in its `vectors.S`). On CPU0 the state CSR 0x7f2 reads
@@ -748,7 +748,7 @@ looked at: at a pixel clock of 500 kHz the CPU can follow PCLK and compare all 3
   releases the stall first (`soc/espressif/esp32p4/hw_init.c`). On the WHY2025
   badge, with an MCUboot without the first two steps the first reboot of an SMP
   image wedged the chip (USB stayed enumerated, nothing answered); without the
-  release, a single-core image (MicroPython) hung early after an SMP
+  release, a single-core image (MicroPython, pcap) hung early after an SMP
   image's reboot, before its USB came up, while a cold boot was fine.
 - **The ESP32-P4's memcpy, memmove and memset are ROM routines** (the
   `esp32p4.rom.libc*.ld` scripts) at some 5.5 cycles a byte. Moving the

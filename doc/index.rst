@@ -36,6 +36,7 @@ The API reference of the library is generated with Doxygen:
    apps/multiapp
    apps/micropython
    apps/chancap
+   apps/pcap
    apps/mch2022_coproc
 
 .. toctree::
@@ -57,6 +58,7 @@ The API reference of the library is generated with Doxygen:
    zigbit-reference
    ubertooth
    lte-calibration
+   pcap
 
 Indices
 =======

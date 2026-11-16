@@ -304,7 +304,7 @@ board and in GNU Radio:
 Pcap
 ====
 
-``eggs/pcap``: apps/pcap's packet capture on the board's own radio, its
+``eggs/pcap``: apps/pcap's packet capture (``doc/pcap.md``) on the board's own radio, its
 packets in a table. Not a GRC export: a packet list is no flowgraph.
 
 - One channel at 2 MS/s: Bluetooth LE advertising 37, 38, 39 or 802.15.4 11 to 26, cut into

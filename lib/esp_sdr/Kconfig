@@ -136,7 +136,7 @@ config ESP_SDR_GAPLESS_THR_LOST_PCT
 	help
 	  A period in which the CPU abandoned more than this share of the
 	  samples kept raises the threshold by 2 dB. 0: any lost sample does,
-	  which keeps some 40 % fewer samples at 80 MS/s. Past
+	  which keeps some 40 % fewer samples at 80 MS/s (doc/pcap.md). Past
 	  the link's budget it rises by 2 dB whatever this says.
 
 config ESP_SDR_DIAG
