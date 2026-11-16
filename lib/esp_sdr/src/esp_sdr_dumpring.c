@@ -57,6 +57,11 @@ BUILD_ASSERT(RING * 4U <= 0x1A010U, "the ring fits the capture bank");
 BUILD_ASSERT(2U * (UNIT + LATE_MAX + TURN_MAX) + START_GUARD + END_GUARD < RING,
 	     "group 3's words wait a turn: the writer comes back to them a turn after that");
 
+#if defined(CONFIG_ESP_SDR_RING_STAGE)
+BUILD_ASSERT(RING * 4U <= 0x8000U,
+	     "the ring stage (esp_sdr_ring_stage.c) starts 32 KiB into the capture bank");
+#endif
+
 #define G2 ((volatile uint32_t *)__esp_sdr_group2_start)
 #define G3 ((volatile uint32_t *)__esp_sdr_bank_start)
 

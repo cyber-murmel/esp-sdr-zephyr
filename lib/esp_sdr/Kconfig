@@ -229,6 +229,19 @@ config ESP_SDR_RING_BOX4
 	  4 MS/s. About 1 KiB of IRAM, which on the S3 comes out of the same
 	  SRAM as the DRAM image: leave it out where that is tight.
 
+config ESP_SDR_RING_STAGE
+	bool "The receiver's output staged in internal RAM for the other CPU"
+	depends on ESP_SDR_RING || (ESP_SDR_DUMPRING && ESP_SDR_S31_GROUP2)
+	default ESP_SDR_RING_BOX4
+	help
+	  esp_sdr_ring_stage.h: a sink that writes the output samples into
+	  internal RAM, from IRAM, for a consumer on the other CPU that reads
+	  them in place; the run's CPU touches no flash or PSRAM. On the S3
+	  SRAM bank 2 (a ring run with spare_bank_app), optionally pairs
+	  averaged (4 MS/s from the box4 path as 2 MS/s); on the S31 the
+	  capture bank past the dump ring's words, written with
+	  esp_sdr_stage_put(). Some 400 bytes of IRAM.
+
 config ESP_SDR_RING_RAW
 	bool "Ring without decimation (the unpacked 16 MS/s stream to the sink)"
 	depends on ESP_SDR_RING

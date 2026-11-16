@@ -39,6 +39,8 @@ repos:
         files: |
           (?x)^(
             apps/multiapp/[^/]+\.py$|
+            lib/esp_sdr/src/esp_sdr_ring_stage\.c$|
+            include/esp_sdr/esp_sdr_ring_stage\.h$|
             apps/osmosdr_serial/tools/esdr_serial\.py$|
             include/esp_sdr/(esdr_link|mch2022_coproc)\.h$|
             boards/badgeteam/mch2022_rp2040/support/|
