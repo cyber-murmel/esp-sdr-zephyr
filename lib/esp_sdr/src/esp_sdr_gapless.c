@@ -413,7 +413,11 @@ static ESP_SDR_GAPLESS_HOT bool peak_within(uint32_t power, int32_t dc, int32_t 
 	return room > 0 && (uint64_t)power * (CREST * CREST / 2) <= (uint64_t)room * room;
 }
 
-ESP_SDR_GAPLESS_HOT unsigned int esp_sdr_gapless_shift(uint32_t power, int32_t dc_i, int32_t dc_q)
+/*
+ * The int8 shift for a window of @p power per sample about its mean and DC @p dc_i, @p dc_q:
+ * the smallest that keeps the DC plus CREST rms per component below full scale.
+ */
+static ESP_SDR_GAPLESS_HOT unsigned int seg_shift(uint32_t power, int32_t dc_i, int32_t dc_q)
 {
 	int32_t dc = MAX(dc_i < 0 ? -dc_i : dc_i, dc_q < 0 ? -dc_q : dc_q);
 
@@ -449,7 +453,8 @@ static ALWAYS_INLINE int32_t msb32(uint32_t v)
 	return m + (v >= 2U ? 1 : 0);
 }
 
-ESP_SDR_GAPLESS_HOT int16_t esp_sdr_gapless_dbfs_x10(uint32_t power)
+/* @p power per sample (raw units squared) in dB below full scale, times 10. */
+static ESP_SDR_GAPLESS_HOT int16_t dbfs_x10(uint32_t power)
 {
 	/* log2(1 + k / 16) in Q8. */
 	static const DRAM_ATTR uint8_t frac[16] = {0, 22, 43, 63, 82, 101, 118, 135,
@@ -537,22 +542,6 @@ pack_run(const uint32_t *w, uint32_t n, uint16_t *o, unsigned int shift)
 	o = (uint16_t *)o32;
 	for (; n > 0U; n--) {
 		*o++ = (uint16_t)pack_lut(*w++, lut);
-	}
-}
-
-void esp_sdr_gapless_pack(const uint32_t *words, uint32_t at, uint32_t n, int8_t *out,
-			  unsigned int shift)
-{
-	uint16_t *o = (uint16_t *)out;
-
-	sat_lut_init();
-	while (n > 0U) {
-		uint32_t run = MIN(n, ESP_SDR_GAPLESS_RING - at);
-
-		pack_run(words + at, run, o, shift);
-		o += run;
-		n -= run;
-		at = 0;
 	}
 }
 
@@ -750,7 +739,7 @@ static ESP_SDR_GAPLESS_HOT void job_add(uint64_t s, uint64_t e, unsigned int shi
 		.gain = (uint8_t)rs.gain,
 		.dc_i = (int8_t)CLAMP((rs.dc_i + 8) >> 4, INT8_MIN, INT8_MAX),
 		.dc_q = (int8_t)CLAMP((rs.dc_q + 8) >> 4, INT8_MIN, INT8_MAX),
-		.dbfs = esp_sdr_gapless_dbfs_x10(power)};
+		.dbfs = dbfs_x10(power)};
 	rs.job_tail++;
 }
 
@@ -774,7 +763,7 @@ static ESP_SDR_GAPLESS_HOT void decide(uint32_t w, uint32_t pre, uint32_t span)
 		}
 	}
 	rs.st.kept_windows++;
-	job_add(win->s, win->e, esp_sdr_gapless_shift(pmax, rs.dc_i >> 4, rs.dc_q >> 4),
+	job_add(win->s, win->e, seg_shift(pmax, rs.dc_i >> 4, rs.dc_q >> 4),
 		win->loud ? ESP_SDR_GAPLESS_SEG_LOUD : 0U, win->power);
 }
 

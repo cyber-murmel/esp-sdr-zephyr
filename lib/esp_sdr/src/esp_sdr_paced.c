@@ -272,13 +272,6 @@ IRAM_ATTR __attribute__((optimize("O3"))) uint32_t esp_sdr_rx_paced_fill_iq8(int
 	return late;
 }
 
-uint32_t esp_sdr_rx_paced_slack(void)
-{
-	int32_t d = (int32_t)(rxp.target - cycles());
-
-	return d > 0 ? (uint32_t)d : 0U;
-}
-
 void esp_sdr_rx_paced_stop(void)
 {
 	if (!rx_on) {
@@ -325,7 +318,8 @@ unsigned int esp_sdr_tx_paced_power_max(void)
 	return TX_POWER_MAX;
 }
 
-void esp_sdr_tx_paced_range(uint32_t *min_mhz, uint32_t *max_mhz)
+/* Transmit range in MHz: what the vendor tone path tunes (C6 2.4 GHz, C5 also 5 GHz). */
+static void tx_range(uint32_t *min_mhz, uint32_t *max_mhz)
 {
 #if defined(CONFIG_SOC_SERIES_ESP32C5)
 	/* The C5's tone path takes any MHz, 2.4 and 5 GHz. */
@@ -341,7 +335,7 @@ int esp_sdr_tx_chain_on(unsigned int power)
 {
 	uint32_t min_mhz, max_mhz;
 
-	esp_sdr_tx_paced_range(&min_mhz, &max_mhz);
+	tx_range(&min_mhz, &max_mhz);
 	if (power > TX_POWER_MAX) {
 		return -EINVAL;
 	}
@@ -461,13 +455,6 @@ bool esp_sdr_tx_paced_poll(void)
 	txp.ph = (txp.ph + 1U) & (txp.l - 1U);
 	txp.target += txp.step;
 	return true;
-}
-
-uint32_t esp_sdr_tx_paced_slack(void)
-{
-	int32_t d = (int32_t)(txp.target - cycles());
-
-	return d > 0 ? (uint32_t)d : 0U;
 }
 
 void esp_sdr_tx_paced_stop(void)

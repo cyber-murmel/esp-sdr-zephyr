@@ -228,24 +228,6 @@ static inline int16_t esp_sdr_rx_q(uint32_t word)
 	return (int16_t)((int32_t)(word << 22) >> 22);
 }
 
-/**
- * @brief Pack raw words to signed 8-bit I then Q (upper 8 of 10 bits).
- *
- * @p out may alias @p words.
- *
- * @return Bytes written, 2 * count.
- */
-size_t esp_sdr_rx_pack_iq8(const uint32_t *words, size_t count, uint8_t *out);
-
-/**
- * @brief Pack raw words to the upstream packed 10-bit format.
- *
- * Little-endian 20-bit I/Q pairs, two samples per five bytes. @p out may alias @p words.
- *
- * @return Bytes written, ceil(20 * count / 8).
- */
-size_t esp_sdr_rx_pack_iq10(const uint32_t *words, size_t count, uint8_t *out);
-
 /** @} */
 
 #ifdef __cplusplus
