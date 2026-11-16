@@ -1,0 +1,10 @@
+{
+  "name": "Pcap",
+  "description": "apps/pcap's packet capture on the board's own radio: one channel at 2 MS/s, 4 MS/s on the S3 (Bluetooth LE advertising 37, 38, 39 or IEEE 802.15.4 11 to 26), cut into bursts and decoded on the board into Bluetooth LE packets, 802.15.4 frames and records of the other bursts' modulation and symbol rate. The table shows them newest first; Show filters (decoded, one protocol, bursts, bad CRC, the selected row's source), Group makes a row per source, type, protocol or channel, Sort orders by time, level, length, count, source or type. The bar at the table's edge selects a row, shown in full below. Save writes the capture to the SD card as pcapng for Wireshark.",
+  "category": "receive",
+  "author": "esp-sdr",
+  "revision": 1,
+  "needs": [
+    "pcap_new"
+  ]
+}
