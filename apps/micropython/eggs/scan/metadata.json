@@ -1,0 +1,10 @@
+{
+  "name": "Scan",
+  "description": "A survey of everything the radio tunes: it hops its LO over the whole range the PLL locks in (found by bisection, or from a table where the radio cannot tell), an 80 MS/s burst at each LO, and draws a panorama in 312.5 kHz bins: the average, the peak held and the floor, a history of the sweeps below it, a marker with the frequency and levels. Gain, a span around the marker, Peak, Reset, Pause; Save writes the history as rtl_power CSV to the SD card.",
+  "category": "receive",
+  "author": "esp-sdr",
+  "revision": 1,
+  "needs": [
+    "scan_hop"
+  ]
+}
