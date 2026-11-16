@@ -161,40 +161,64 @@ static const int16_t ieee154_dsp_taps[IEEE154_DSP_NTAPS] = {
 
 /*
  * 16 MS/s receive words to interleaved I/Q at 4 MS/s, +-8192 full scale:
- * output k = sum over t of taps[t] x[4k + t] (-j)^(4k + t). The mix by
- * -fs/4 depends on t only, so it folds into the taps as a swap and a sign.
- * qsign -1 conjugates the result. Returns the output count.
+ * output k = sum over t of taps[t] x[4k + t] (-j)^(4k + t). qsign -1
+ * conjugates the result. Returns the output count.
+ *
+ * Every word lies under the taps of about 7 outputs: unpacked tap by tap,
+ * each was unpacked 7 times (4 operations each). So a first pass turns each
+ * word in place into its mixed I and Q, two int16 (I in the low half), with
+ * the mix by -fs/4 as swaps and signs; then the taps, symmetric, take the
+ * sum of two mirrored samples a multiply, and the zero taps none. The same
+ * products in integers: the result is the tap-by-tap one exactly
+ * (tests/unit/ieee154_dsp). Overwrites w.
  */
-static inline size_t ieee154_dsp_mix_decimate(const uint32_t *w, size_t n, int16_t *out,
+static inline int16_t *ieee154_dsp_premix(uint32_t *w, size_t n)
+{
+	size_t m = 0;
+
+	for (; m + 4U <= n; m += 4U) {
+		const int32_t i0 = esp_sdr_rx_i(w[m]), q0 = esp_sdr_rx_q(w[m]);
+		const int32_t i1 = esp_sdr_rx_i(w[m + 1U]), q1 = esp_sdr_rx_q(w[m + 1U]);
+		const int32_t i2 = esp_sdr_rx_i(w[m + 2U]), q2 = esp_sdr_rx_q(w[m + 2U]);
+		const int32_t i3 = esp_sdr_rx_i(w[m + 3U]), q3 = esp_sdr_rx_q(w[m + 3U]);
+
+		/* (-j)^n: 1, -j, -1, j. */
+		w[m] = (uint16_t)i0 | ((uint32_t)(uint16_t)q0 << 16);
+		w[m + 1U] = (uint16_t)q1 | ((uint32_t)(uint16_t)-i1 << 16);
+		w[m + 2U] = (uint16_t)-i2 | ((uint32_t)(uint16_t)-q2 << 16);
+		w[m + 3U] = (uint16_t)-q3 | ((uint32_t)(uint16_t)i3 << 16);
+	}
+	for (; m < n; m++) {
+		const int32_t i = esp_sdr_rx_i(w[m]), q = esp_sdr_rx_q(w[m]);
+		static const int8_t ci[4] = {1, 0, -1, 0}, cq[4] = {0, 1, 0, -1};
+		const int32_t a = ci[m & 3U] * i + cq[m & 3U] * q;
+		const int32_t b = ci[m & 3U] * q - cq[m & 3U] * i;
+
+		w[m] = (uint16_t)a | ((uint32_t)(uint16_t)b << 16);
+	}
+	/* The build does not assume strict aliasing (Zephyr's -fno-strict-aliasing). */
+	return (int16_t *)w;
+}
+
+static inline size_t ieee154_dsp_mix_decimate(uint32_t *w, size_t n, int16_t *out,
 					      int32_t qsign)
 {
 	const int16_t *h = ieee154_dsp_taps;
-	size_t outs = IEEE154_DSP_DECIM_OUT(n);
+	const size_t outs = IEEE154_DSP_DECIM_OUT(n);
+	const int16_t *x = ieee154_dsp_premix(w, n);
 
+	BUILD_ASSERT(IEEE154_DSP_NTAPS % 2U == 1U, "a middle tap");
 	for (size_t k = 0; k < outs; k++) {
-		const uint32_t *x = &w[IEEE154_DSP_DECIM * k];
-		int32_t ai = 0, aq = 0;
+		const int16_t *p = &x[2U * IEEE154_DSP_DECIM * k];
+		const size_t mid = IEEE154_DSP_NTAPS / 2U;
+		int32_t ai = h[mid] * p[2U * mid], aq = h[mid] * p[2U * mid + 1U];
 
-		for (size_t t = 0; t < IEEE154_DSP_NTAPS; t++) {
-			int32_t i = esp_sdr_rx_i(x[t]), q = esp_sdr_rx_q(x[t]);
+		for (size_t t = 0; t < mid; t++) {
+			const size_t u = IEEE154_DSP_NTAPS - 1U - t;
 
-			switch (t & 3U) {
-			case 0:
-				ai += h[t] * i;
-				aq += h[t] * q;
-				break;
-			case 1: /* (i + jq)(-j) = q - ji */
-				ai += h[t] * q;
-				aq -= h[t] * i;
-				break;
-			case 2:
-				ai -= h[t] * i;
-				aq -= h[t] * q;
-				break;
-			default: /* (i + jq)(j) = -q + ji */
-				ai -= h[t] * q;
-				aq += h[t] * i;
-				break;
+			if (h[t] != 0) {
+				ai += h[t] * (p[2U * t] + p[2U * u]);
+				aq += h[t] * (p[2U * t + 1U] + p[2U * u + 1U]);
 			}
 		}
 		/* 10-bit input, Q14 taps. */

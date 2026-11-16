@@ -49,11 +49,14 @@ config ESP_SDR_IEEE802154_HIGH_RAM_APP
 
 config ESP_SDR_IEEE802154_PHY_PRIORITY
 	int "PHY thread priority"
-	default 14
+	default 13
 	help
 	  The PHY drains the sample ring whenever samples wait. Keep it below
-	  USB, network and shell threads: if it falls behind it drops samples
-	  instead of starving them.
+	  the USB, network and application threads: if it falls behind it
+	  drops samples instead of starving them. It is above the shell and the
+	  log thread (14): it takes some 70 % of CPU 0 on the S3 (40 cycles a
+	  sample), they keep the rest, and printing to the console does not
+	  hold it off for a ring's length.
 
 module = ESP_SDR_IEEE802154
 module-str = esp_sdr_ieee802154

@@ -85,7 +85,8 @@ static struct sdr154_high high_ram ESP_SDR_HIGH_RAM;
 static struct sdr154_high *const high = &high_ram;
 #endif
 
-__attribute__((optimize("O3"))) static void mix_decimate(const uint32_t *w, int16_t *out)
+/* Overwrites the words (ieee154_dsp_mix_decimate()): nothing reads a capture after this. */
+__attribute__((optimize("O3"))) static void mix_decimate(uint32_t *w, int16_t *out)
 {
 	(void)ieee154_dsp_mix_decimate(w, RX_WORDS, out, rx_qsign);
 }
@@ -424,7 +425,11 @@ static struct esp_sdr_ring_cfg ring_cfg = {
 	.decim = ESP_SDR_RING_DECIM_BOX4,
 	.shift_fs4 = true,
 	.sink = ring_sink,
-	/* Summing four costs about 14 cycles per pair, over budget at 16 MS/s with the sink. */
+	/*
+	 * Every 4th pair. Summing four (the boxcar, 6 dB better in noise) costs about 9.5 cycles a
+	 * pair with PIE (doc/chancap.md), which fits the budget: not yet checked against a peer on the
+	 * air.
+	 */
 	.subsample = true,
 	/*
 	 * 64 us units: the PHY decides a frame about 100 us after its end

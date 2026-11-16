@@ -144,16 +144,26 @@ void ieee154_phy_set_rx_cb(ieee154_phy_frame_cb_t cb, void *user)
 	ieee154_phy_set_rx_cb_i(&g_rx, cb, user);
 }
 
+/*
+ * Symbol k + 8 is symbol k with its odd chips inverted, so the discriminator sees the complement:
+ * chips_msk[k + 8] == ~chips_msk[k] & DMASK, and its errors are 31 less those of k. Half the
+ * popcounts, the same winner, ties to the lowest symbol as before.
+ */
 static int match(uint32_t w, int *err)
 {
-	int best = 0, be = 33;
+	int best = 0, be = 33, e[8];
 
-	for (int k = 0; k < 16; k++) {
-		int e = popcount32((w ^ chips_msk[k]) & DMASK);
-
-		if (e < be) {
-			be = e;
+	for (int k = 0; k < 8; k++) {
+		e[k] = popcount32((w ^ chips_msk[k]) & DMASK);
+		if (e[k] < be) {
+			be = e[k];
 			best = k;
+		}
+	}
+	for (int k = 0; k < 8; k++) {
+		if (31 - e[k] < be) {
+			be = 31 - e[k];
+			best = k + 8;
 		}
 	}
 	*err = be;
@@ -344,6 +354,99 @@ uint32_t ieee154_phy_chips(int sym)
 }
 
 /*
+ * Both trackers hunting, some 99.8 % of the samples: the discriminator and the sync test alone,
+ * from an even sample, the state in registers. Inside the loop below, with the frame path's state
+ * live, a pair took some 92 instructions, 16 of them stack traffic. As RX_STEP does it, bit for
+ * bit. The sync test looks at chips 1 to 31 in other bytes than sync_close() (the sum is the same):
+ * no mask. Takes up to @p pairs pairs or up to the first hit, the last sample taken; returns the
+ * samples taken and sets *hit to the hit's tracker (0 or 1), or -1.
+ */
+struct hunt_st {
+	int32_t dci, dcq, i1, q1, i2, q2;
+	uint32_t w0, w1;
+};
+
+static inline int hunt_close(uint32_t x)
+{
+	unsigned int a = pop8[(x >> 1) & 0xffu] + pop8[(x >> 9) & 0xffu];
+
+	if (a > SYNC_MAX_ERR) {
+		return 0;
+	}
+	/*
+	 * Some 77 % of noise ends above, so no more before it: else GCC works out the other bytes
+	 * ahead of the test, and the registers they take push the history onto the stack.
+	 */
+	__asm__ volatile("" : "+r"(x));
+	a += pop8[(x >> 17) & 0xffu];
+	if (a > SYNC_MAX_ERR) {
+		return 0;
+	}
+	return a + pop8[x >> 25] <= SYNC_MAX_ERR;
+}
+
+#define HUNT_STEP(w_, pi_, pq_, xi_, xq_)                                                     \
+	do {                                                                                 \
+		dci += ((xi_) * 256 - dci) >> 8;                                             \
+		dcq += ((xq_) * 256 - dcq) >> 8;                                             \
+		xi_ -= dci >> 8;                                                             \
+		xq_ -= dcq >> 8;                                                             \
+		d = (xq_) * (pi_) - (xi_) * (pq_);                                           \
+		pi_ = xi_;                                                                   \
+		pq_ = xq_;                                                                   \
+		w_ = (w_ << 1) | (uint32_t)(d > 0);                                          \
+	} while (0)
+
+static __attribute__((noinline, optimize("O2"))) size_t hunt_pairs(struct hunt_st *st,
+								   const int16_t *iq,
+								   size_t pairs, int *hit)
+{
+	int32_t dci = st->dci, dcq = st->dcq;
+	/* Two samples back of the pair's first (a) and second (b): the same tracker's last. */
+	int32_t ai = st->i2, aq = st->q2, bi = st->i1, bq = st->q1;
+	uint32_t w0 = st->w0, w1 = st->w1;
+	const uint32_t ref = chips_msk[0];
+	const int16_t *p = iq, *const end = iq + 4U * pairs;
+	int h = -1;
+
+	while (p != end) {
+		int32_t xi = p[0], xq = p[1], d;
+
+		HUNT_STEP(w0, ai, aq, xi, xq);
+		if (hunt_close(w0 ^ ref)) {
+			h = 0;
+			p += 2;
+			break;
+		}
+		xi = p[2];
+		xq = p[3];
+		HUNT_STEP(w1, bi, bq, xi, xq);
+		p += 4;
+		if (hunt_close(w1 ^ ref)) {
+			h = 1;
+			break;
+		}
+	}
+	st->dci = dci;
+	st->dcq = dcq;
+	if (h == 0) {
+		st->i1 = ai;
+		st->q1 = aq;
+		st->i2 = bi;
+		st->q2 = bq;
+	} else {
+		st->i1 = bi;
+		st->q1 = bq;
+		st->i2 = ai;
+		st->q2 = aq;
+	}
+	st->w0 = w0;
+	st->w1 = w1;
+	*hit = h;
+	return (size_t)(p - iq) / 2U;
+}
+
+/*
  * iq: interleaved I,Q int16 at 4 MS/s. Call with consecutive blocks.
  * Even samples (from n_total) go to tracker 0, odd ones to tracker 1. The
  * state lives in locals (builds without strict aliasing would reload it
@@ -398,13 +501,50 @@ void ieee154_phy_rx_block_i(struct ieee154_phy_rx *rx, const int16_t *iq, size_t
 	rx->pos = n0;
 
 	/* Sample k goes to t0 for even k: chip count c0 + k / 2 + 1 after it. */
-	for (; k + 1 < n; k++) {
+	while (k < n) {
+		if ((k & 1U) != 0U) {
+			RX_STEP(w1, s1, a1, t1, c1 + (uint32_t)k / 2U + 1U);
+			k++;
+			continue;
+		}
+		if (hunting && k + 1 < n) {
+			struct hunt_st st = {dci, dcq, i1, q1, i2, q2, w0, w1};
+			int hit;
+
+			k += hunt_pairs(&st, &iq[2 * k], (n - k) / 2U, &hit);
+			dci = st.dci;
+			dcq = st.dcq;
+			i1 = st.i1;
+			q1 = st.q1;
+			i2 = st.i2;
+			q2 = st.q2;
+			w0 = st.w0;
+			w1 = st.w1;
+			if (hit >= 0) {
+				/* As RX_STEP's hit, for the last sample taken. */
+				struct ieee154_phy_trk *t = hit == 0 ? t0 : t1;
+				const size_t j = k - 1U;
+
+				t->win = hit == 0 ? w0 : w1;
+				t->nchip = (hit == 0 ? c0 : c1) + (uint32_t)j / 2U + 1U;
+				rx->pos = n0 + (uint32_t)j + 1U;
+				trk_chip_slow(rx, t);
+				s0 = t0->st;
+				s1 = t1->st;
+				a0 = t0->anchor;
+				a1 = t1->anchor;
+				hunting = s0 == ST_HUNT && s1 == ST_HUNT;
+			}
+			continue;
+		}
+		/* A frame in a tracker: pairs through RX_STEP until both hunt again. */
 		RX_STEP(w0, s0, a0, t0, c0 + (uint32_t)k / 2U + 1U);
 		k++;
-		RX_STEP(w1, s1, a1, t1, c1 + (uint32_t)k / 2U + 1U);
-	}
-	if (k < n) {
-		RX_STEP(w0, s0, a0, t0, c0 + (uint32_t)k / 2U + 1U);
+		for (; k + 1 < n && !hunting; k++) {
+			RX_STEP(w1, s1, a1, t1, c1 + (uint32_t)k / 2U + 1U);
+			k++;
+			RX_STEP(w0, s0, a0, t0, c0 + (uint32_t)k / 2U + 1U);
+		}
 	}
 	t0->win = w0;
 	t0->nchip = c0 + (uint32_t)(n + 1) / 2U;

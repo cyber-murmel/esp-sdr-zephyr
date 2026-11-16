@@ -287,3 +287,71 @@ ZTEST(ieee154_dsp, test_cfo_estimator_accuracy)
 			     "coarse cfo at %.0f Hz: estimated %.0f Hz", offs[o], (double)fc);
 	}
 }
+
+/* The decimator as it was, tap by tap with the mix in a switch: the reference. */
+static size_t mix_decimate_ref(const uint32_t *w, size_t n, int16_t *out, int32_t qsign)
+{
+	const int16_t *h = ieee154_dsp_taps;
+	size_t outs = IEEE154_DSP_DECIM_OUT(n);
+
+	for (size_t k = 0; k < outs; k++) {
+		const uint32_t *x = &w[IEEE154_DSP_DECIM * k];
+		int32_t ai = 0, aq = 0;
+
+		for (size_t t = 0; t < IEEE154_DSP_NTAPS; t++) {
+			int32_t i = esp_sdr_rx_i(x[t]), q = esp_sdr_rx_q(x[t]);
+
+			switch (t & 3U) {
+			case 0:
+				ai += h[t] * i;
+				aq += h[t] * q;
+				break;
+			case 1:
+				ai += h[t] * q;
+				aq -= h[t] * i;
+				break;
+			case 2:
+				ai -= h[t] * i;
+				aq -= h[t] * q;
+				break;
+			default:
+				ai -= h[t] * q;
+				aq += h[t] * i;
+				break;
+			}
+		}
+		out[2 * k] = (int16_t)(ai >> 10);
+		out[2 * k + 1] = (int16_t)(qsign * (aq >> 10));
+	}
+	return outs;
+}
+
+/*
+ * The in-place premix and the symmetric taps give the tap-by-tap result exactly, for any word
+ * (the bits above the samples are the receiver's state: random here too), any length, both signs.
+ */
+ZTEST(ieee154_dsp, test_mix_decimate_bit_exact)
+{
+	static const size_t lens[] = {27, 28, 30, 31, 101, 1024, 1027, 4099};
+	static uint32_t raw[4099], work[4099];
+	static int16_t got[2 * 1024], want[2 * 1024];
+
+	for (size_t l = 0; l < ARRAY_SIZE(lens); l++) {
+		for (int s = -1; s <= 1; s += 2) {
+			const size_t n = lens[l];
+			size_t ng, nw;
+
+			for (size_t m = 0; m < n; m++) {
+				raw[m] = test_rng_u32();
+				work[m] = raw[m];
+			}
+			nw = mix_decimate_ref(raw, n, want, s);
+			ng = ieee154_dsp_mix_decimate(work, n, got, s);
+			zassert_equal(ng, nw, "%zu words: %zu outputs, want %zu", n, ng, nw);
+			for (size_t k = 0; k < 2U * nw; k++) {
+				zassert_equal(got[k], want[k], "%zu words, qsign %d: output %zu is %d, want %d",
+					      n, s, k / 2U, got[k], want[k]);
+			}
+		}
+	}
+}
