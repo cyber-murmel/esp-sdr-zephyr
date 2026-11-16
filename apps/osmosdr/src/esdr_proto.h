@@ -81,6 +81,26 @@ enum esdr_req {
 	 * the next one. A running stream stops.
 	 */
 	ESDR_REQ_RESET = 0x10,
+	/*
+	 * Serial transport, ESP32-C6 with CONFIG_ESP_SDR_GAPLESS. OUT struct
+	 * esdr_gapless_cfg: which windows of the gapless 80 MS/s stream are kept.
+	 * Applies to ESDR_MODE_GAPLESS, now or next.
+	 */
+	ESDR_REQ_SET_GAPLESS = 0x11,
+	/* Serial transport, ESP32-C6. IN: struct esdr_gapless_stats of the current or last run. */
+	ESDR_REQ_GET_GAPLESS_STATS = 0x12,
+	/*
+	 * P4 bridge (apps/osmosdr_bridge) over a gapless C6. OUT struct esdr_chan_cfg: the
+	 * channelizer the bridge runs on the segments; channels 0 forwards the segments as
+	 * they come (ESDR_BLK_SEG). IN: struct esdr_chan_stats.
+	 */
+	ESDR_REQ_SET_CHANNELIZER = 0x13,
+	/*
+	 * WHY2025 badge bridge (apps/osmosdr_bridge), answered by the P4 itself. wValue: seconds
+	 * (0: 30). After the reply the P4 hands USB-C port J8 to the ESP32-C6 (its
+	 * USB-Serial-JTAG, for esptool) for that long, then takes it back.
+	 */
+	ESDR_REQ_USB_TO_C6 = 0x14,
 };
 
 #define ESDR_BURST_MAX 16380U
@@ -98,6 +118,14 @@ enum esdr_mode {
 	 * Some 4 ms pass before the next can trigger.
 	 */
 	ESDR_MODE_TRIGGER = 3,
+	/*
+	 * Serial transport, ESP32-C6 with CONFIG_ESP_SDR_GAPLESS: the whole 80 MHz
+	 * input without a gap, pruned to what the link carries. The receiver keeps the
+	 * 10 us windows whose power passes the threshold (ESDR_REQ_SET_GAPLESS), with
+	 * windows before and after them, and sends them as ESDR_BLK_SEG blocks. Every
+	 * sample keeps its index on the 80 MS/s axis, so the host sees what was left out.
+	 */
+	ESDR_MODE_GAPLESS = 4,
 	/* Throughput tests: IN sends counting blocks as fast as the bus takes them, OUT sinks. */
 	ESDR_MODE_TEST_IN = 0x10,
 	ESDR_MODE_TEST_OUT = 0x11,
@@ -200,6 +228,24 @@ struct esdr_stats {
  */
 #define ESDR_BLK_TRIGGER  0x0040U
 
+/*
+ * A gapless block (ESDR_MODE_GAPLESS), int8: segments of the 80 MS/s stream.
+ * The header's index is the first segment's, samples the pairs of all its
+ * segments. The payload holds segments back to back, each a struct
+ * esdr_seg_hdr then its pairs (I then Q, int8), padded to 4 bytes; a segment
+ * header with no pairs, or the payload's end, ends the block.
+ */
+#define ESDR_BLK_SEG      0x0080U
+/*
+ * A channel block (ESDR_REQ_SET_CHANNELIZER), int16: runs of the bridge's channelizer output,
+ * each one channel's consecutive samples. The payload holds runs back to back, each a struct
+ * esdr_chan_hdr then its samples (I then Q, int16 little endian); a run header with no samples,
+ * or the payload's end, ends the block. The block header's index is the first run's (counted
+ * at the channel rate, 80 MS/s over esdr_chan_hdr.decim, from the stream's start), its samples
+ * those of all runs.
+ */
+#define ESDR_BLK_CHAN     0x0100U
+
 struct esdr_block_hdr {
 	uint32_t magic;
 	uint16_t flags;
@@ -210,6 +256,132 @@ struct esdr_block_hdr {
 } __attribute__((packed));
 
 #define ESDR_BLOCK_PAYLOAD (ESDR_BLOCK_BYTES - sizeof(struct esdr_block_hdr))
+
+/* Segment flags. */
+/* Windows that passed the threshold were dropped before this segment: the link was full. */
+#define ESDR_SEG_DROPPED 0x01U
+/* The ring restarted before this segment (an error): the indices before it are an estimate. */
+#define ESDR_SEG_RESTART 0x02U
+/* The segment's first window passed the threshold (else it is a window before or after one). */
+#define ESDR_SEG_LOUD    0x04U
+/* Gain index of a segment taken with the receiver's automatic gain. */
+#define ESDR_SEG_GAIN_AUTO 0xffU
+
+struct esdr_seg_hdr {
+	/* The first pair's index less the block header's index. */
+	uint32_t delta;
+	uint16_t pairs;
+	/* Right shift from the 10-bit raw samples to int8 (saturated), 0 to 2. */
+	uint8_t shift;
+	uint8_t flags;
+	/* Power of the segment's first window in dB below full scale, times 10 (negative). */
+	int16_t power_dbfs_x10;
+	/*
+	 * The receiver's DC when the segment was kept, raw units: it is left in the items, so a
+	 * sample is (item << shift) - dc.
+	 */
+	int8_t dc_i, dc_q;
+	/* Receive gain index the samples were taken at (255: automatic gain). */
+	uint8_t gain;
+	uint8_t reserved[3];
+} __attribute__((packed));
+
+/* Pairs in a gapless block whose payload is one segment. */
+#define ESDR_SEG_PAIRS_MAX ((ESDR_BLOCK_PAYLOAD - sizeof(struct esdr_seg_hdr)) / 2U)
+#define ESDR_GAPLESS_RATE_HZ 80000000U
+/* One window of the IQ estimator, the unit of the keep decision: 10 us. */
+#define ESDR_GAPLESS_WINDOW_PAIRS 800U
+
+/* Gapless options. */
+/* Step the receive gain to keep the peaks in the headroom band (default with ESDR_GAIN_AUTO). */
+#define ESDR_GAPLESS_F_GAIN_SERVO 0x0001U
+/* Keep the threshold where ratio_x16 puts it: no servo against the link's budget. */
+#define ESDR_GAPLESS_F_FIXED_THR  0x0002U
+
+struct esdr_gapless_cfg {
+	/* Threshold over the quiet baseline in sixteenths, the servo's floor (0: 64, 6 dB). */
+	uint16_t ratio_x16;
+	/* Windows kept before and after a window past the threshold (0xff: default 1, at most 4). */
+	uint8_t pre, post;
+	/* Fixed threshold, window power per pair in raw units squared (0: from the baseline). */
+	uint32_t level;
+	/* Payload bytes per second the device may send (0: what the link carries). */
+	uint32_t budget_bps;
+	/* ESDR_GAPLESS_F_*. */
+	uint16_t flags;
+	/* Headroom band of both servos in percent (0, 0: 5 and 10). */
+	uint8_t headroom_lo, headroom_hi;
+} __attribute__((packed));
+
+struct esdr_gapless_stats {
+	/*
+	 * Pairs the ring delivered; kept and sent; kept but dropped (no room in the staging ring
+	 * or past the unit's cap); kept but lost (their block was needed again first).
+	 */
+	uint64_t pairs, kept_pairs, dropped_pairs, abandoned_pairs;
+	/* Runs (a request or a ring error ends one), units, windows, past the threshold, kept. */
+	uint32_t runs, units, windows, loud_windows, kept_windows;
+	/* Ring errors (each restarts the run), the last one (esp_sdr_gapless.h) and its detail. */
+	uint32_t ring_errors, ring_last_error, ring_last_detail;
+	/* Latest switch past the threshold, pairs; fewest free CPU cycles a unit had. */
+	uint32_t late_max, idle_cycles_min;
+	/* Staging ring: size and highest fill, bytes. */
+	uint32_t stage_bytes, stage_peak_bytes;
+	/* Quiet baseline (window power per pair, raw units squared), threshold over it (/16). */
+	uint32_t baseline, ratio_x16;
+	/* Receive gain index now, its steps. */
+	uint32_t gain, gain_steps;
+	/* Blocks sent; segments the link had no room for at once (they waited). */
+	uint32_t blocks_sent, link_full;
+	/*
+	 * The last run's first step that made a switch late (esp_sdr_gapless.h: its activity + 1,
+	 * 0 for none), its CPU cycles and the cycles it had before the deadline.
+	 */
+	uint32_t overrun_activity, overrun_cycles, overrun_room;
+} __attribute__((packed));
+
+/* Channel block flags. */
+/* The first samples after a gap: the filter history was zeros. */
+#define ESDR_CHAN_TRANSIENT 0x01U
+/* The channel's burst detector opened at this block / closed after it. */
+#define ESDR_CHAN_OPEN      0x02U
+#define ESDR_CHAN_CLOSE     0x04U
+
+struct esdr_chan_hdr {
+	/* Channel 0 is the centre; channel k sits k * 80 MHz / channels above it (k > channels / 2: below). */
+	uint16_t channel, channels;
+	/* Channel rate is ESDR_GAPLESS_RATE_HZ / decim. */
+	uint16_t decim;
+	uint8_t flags;
+	uint8_t reserved;
+	/* The run's first sample index less the block header's index; its samples. */
+	uint32_t delta;
+	uint16_t samples;
+	uint16_t reserved2;
+} __attribute__((packed));
+
+struct esdr_chan_stats {
+	/* Segment blocks taken, and dropped (the channelizer fell behind). */
+	uint32_t seg_blocks, seg_dropped;
+	/* Channel blocks sent, and dropped (no free buffer, or USB refused). */
+	uint32_t chan_blocks, chan_dropped;
+	/* Input pairs channelized, and the CPU cycles that took (filterbank, detector, packing). */
+	uint64_t pairs, cycles;
+	uint32_t cpu_mhz;
+	/* Of the cycles: the detector's, and the channel blocks' (taking, packing, sending). */
+	uint64_t det_cycles, send_cycles;
+	/* The filterbank's branch sums and FFTs, when built with ESDR_PFB_PROFILE (else 0). */
+	uint64_t branch_cycles, fft_cycles;
+} __attribute__((packed));
+
+struct esdr_chan_cfg {
+	/* Channels over the 80 MHz (16, 32, 40, 64 or 80), 0 for no channelizer. */
+	uint16_t channels;
+	/* Burst detector: open above the channel's noise floor by this many dB, times 10. */
+	uint16_t open_db_x10;
+	/* Bitmap of channels to send (bit k = channel k); all ones for every active one. */
+	uint32_t mask[3];
+} __attribute__((packed));
 
 /* A triggered snapshot: whole int8 blocks. */
 #define ESDR_TRIG_BLOCKS  8U

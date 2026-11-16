@@ -20,6 +20,14 @@
  *   esdr_usb [-s serial] trig [-f Hz] [-g gain|auto] [-R ratio] [-P samples] [-t seconds]
  *                            [-o file]
  *
+ *   esdr_usb [-s serial] gapless [-f Hz] [-g gain|auto] [-R ratio | -L level] [-t seconds]
+ *                               [-o file]
+ *
+ *   esdr_usb [-s serial] chan [-f Hz] [-g gain|auto] [-C channels] [-O open dB] [-R ratio | -L level]
+ *                            [-t seconds] [-o file]
+ *
+ *   esdr_usb [-s serial] c6 [-t seconds]
+ *
  * rx writes interleaved I/Q (cs8 or cs16, little endian; 4-bit items as cs8) with the samples a
  * gap lost replaced by zeros, so the file keeps the real time axis.
  *
@@ -27,6 +35,20 @@
  * takes triggered snapshots, bursts past ratio times the quiet power with P samples after
  * the trigger: each ESDR_TRIG_SAMPLES of cs8 at 80 MS/s, written one after another, and a
  * line per snapshot in file.txt with its number and the samples before its trigger.
+ *
+ * gapless (a radio with ESDR_MODE_GAPLESS: the badge's C6 built with gapless.conf) receives
+ * the whole 80 MS/s pruned to the windows past ratio times the quiet power (the threshold's
+ * floor: the device raises it to fit the link) and writes the ESDR_BLK_SEG blocks as they
+ * come, ESDR_BLOCK_BYTES each (esdr_seg.h parses them; ../../osmosdr_serial/tools/gapless.py
+ * analyses a file of them).
+ *
+ * chan (apps/osmosdr_bridge over a gapless C6) runs the bridge's channelizer on the gapless
+ * stream: C channels over the 80 MHz (16, 32, 40, 64 or 80; 40 is the BLE grid), a channel
+ * opening O dB over its floor; writes the ESDR_BLK_CHAN blocks as they come and counts the
+ * bursts per channel.
+ *
+ * c6 (apps/osmosdr_bridge) hands USB-C port J8 to the badge's C6 for -t seconds (default 30),
+ * for esptool.
  */
 
 #include <errno.h>
@@ -44,6 +66,7 @@
 #include <esp_sdr/esp_sdr_dsp.h>
 
 #include "esdr_proto.h"
+#include "esdr_seg.h"
 
 #define VID 0x2fe3
 #define PID 0x0005
@@ -250,6 +273,14 @@ struct stream {
 	uint32_t snap_got;
 	int64_t snap_first;
 	int8_t snap[2 * ESDR_TRIG_SAMPLES];
+	/* chan: blocks, samples and bursts (opens) per channel. */
+	bool chan;
+	uint64_t chan_blocks[96], chan_samples[96], chan_opens[96], chan_transient;
+	/* gapless: segments, their pairs, gaps between them, and what their flags say. */
+	bool gapless;
+	uint64_t segs, seg_pairs, seg_gaps, restarts, dropped, backwards, shifts[3];
+	uint64_t first_index, last_index;
+	struct esdr_seg_track track;
 };
 
 /* Fill a transmit buffer from the source. */
@@ -340,6 +371,77 @@ static void trig_block(struct stream *s, const struct esdr_block_hdr *h, const u
 	s->snaps++;
 }
 
+static int seg_cb(const struct esdr_seg *seg, void *user)
+{
+	struct stream *s = user;
+	uint64_t gap = esdr_seg_track_gap(&s->track, seg);
+
+	if (s->segs == 0) {
+		s->first_index = seg->index;
+	}
+	s->segs++;
+	s->seg_pairs += seg->pairs;
+	s->last_index = seg->index + seg->pairs;
+	s->shifts[seg->shift < 3 ? seg->shift : 2]++;
+	if ((seg->flags & ESDR_SEG_RESTART) != 0U) {
+		s->restarts++;
+	}
+	if ((seg->flags & ESDR_SEG_DROPPED) != 0U) {
+		s->dropped++;
+	}
+	if (gap == ESDR_SEG_GAP_BACK) {
+		s->backwards++;
+	} else if (gap != 0U && gap != ESDR_SEG_GAP_START) {
+		s->seg_gaps++;
+	}
+	return 0;
+}
+
+/* A gapless block (ESDR_BLK_SEG): written as it is, its segments counted. */
+static void seg_block(struct stream *s, const uint8_t *b)
+{
+	if (esdr_seg_parse(b, ESDR_BLOCK_BYTES, seg_cb, s) < 0) {
+		s->bad++;
+		return;
+	}
+	if (s->out != NULL) {
+		fwrite(b, 1, ESDR_BLOCK_BYTES, s->out);
+	}
+}
+
+/* A channel block (ESDR_BLK_CHAN): written as it is, its runs counted per channel. */
+static void chan_block(struct stream *s, const struct esdr_block_hdr *h, const uint8_t *b)
+{
+	size_t pos = sizeof(*h);
+
+	(void)h;
+	while (pos + sizeof(struct esdr_chan_hdr) <= ESDR_BLOCK_BYTES) {
+		struct esdr_chan_hdr c;
+
+		memcpy(&c, b + pos, sizeof(c));
+		if (c.samples == 0U) {
+			break;
+		}
+		pos += sizeof(c) + 4U * c.samples;
+		if (c.channel >= 96U || pos > ESDR_BLOCK_BYTES) {
+			s->bad++;
+			return;
+		}
+		s->chan_blocks[c.channel]++;
+		s->chan_samples[c.channel] += c.samples;
+		s->samples += c.samples;
+		if ((c.flags & ESDR_CHAN_OPEN) != 0U) {
+			s->chan_opens[c.channel]++;
+		}
+		if ((c.flags & ESDR_CHAN_TRANSIENT) != 0U) {
+			s->chan_transient++;
+		}
+	}
+	if (s->out != NULL) {
+		fwrite(b, 1, ESDR_BLOCK_BYTES, s->out);
+	}
+}
+
 static void parse_block(struct stream *s, const uint8_t *b)
 {
 	struct esdr_block_hdr h;
@@ -349,6 +451,14 @@ static void parse_block(struct stream *s, const uint8_t *b)
 	s->blocks++;
 	if ((h.flags & ESDR_BLK_TRIGGER) != 0U) {
 		trig_block(s, &h, b + sizeof(h));
+		return;
+	}
+	if ((h.flags & ESDR_BLK_SEG) != 0U) {
+		seg_block(s, b);
+		return;
+	}
+	if ((h.flags & ESDR_BLK_CHAN) != 0U) {
+		chan_block(s, &h, b);
 		return;
 	}
 	if (s->test) {
@@ -407,7 +517,8 @@ static bool header_ok(const uint8_t *b)
 	memcpy(&h, b, sizeof(h));
 	return h.magic == ESDR_BLOCK_MAGIC &&
 	       h.samples <= ESDR_BLOCK_PAYLOAD / ((h.flags & ESDR_BLK_4BIT) != 0U ? 1U : 2U) &&
-	       (h.flags & ~(0x000fU | ESDR_BLK_4BIT | ESDR_BLK_TRIGGER)) == 0U;
+	       (h.flags & ~(0x000fU | ESDR_BLK_4BIT | ESDR_BLK_TRIGGER | ESDR_BLK_SEG |
+			    ESDR_BLK_CHAN)) == 0U;
 }
 
 /* Bulk data in any chunking: whole blocks out, the device's 64-byte packets as the search grid. */
@@ -541,6 +652,18 @@ static int run_stream(struct stream *s, bool in, double seconds, double rate)
 			if (s->trig) {
 				fprintf(stderr, ", %" PRIu64 " snapshots, %" PRIu64 " broken", s->snaps,
 					s->broken);
+			} else if (s->chan) {
+				uint64_t opens = 0;
+
+				for (int k = 0; k < 96; k++) {
+					opens += s->chan_opens[k];
+				}
+				fprintf(stderr, ", %" PRIu64 " channel samples, %" PRIu64 " bursts",
+					s->samples, opens);
+			} else if (s->gapless) {
+				fprintf(stderr, ", %" PRIu64 " segments, %.2f M pairs kept, %" PRIu64
+					" dropped flags, %" PRIu64 " restarts", s->segs,
+					(double)s->seg_pairs / 1e6, s->dropped, s->restarts);
 			} else if (in && !s->test) {
 				double r = (double)(s->samples - last_samples) / (tl - last);
 
@@ -574,6 +697,27 @@ static int run_stream(struct stream *s, bool in, double seconds, double rate)
 	if (s->trig) {
 		fprintf(stderr, ", %" PRIu64 " snapshots (%.1f/s), %" PRIu64 " broken, %" PRIu64
 			" bad blocks", s->snaps, (double)s->snaps / tl, s->broken, s->bad);
+	} else if (s->chan) {
+		fprintf(stderr, ", %" PRIu64 " channel samples, %" PRIu64 " transient runs, %" PRIu64
+			" bad blocks\n  channel: runs samples bursts", s->samples, s->chan_transient,
+			s->bad);
+		for (int k = 0; k < 96; k++) {
+			if (s->chan_blocks[k] != 0U) {
+				fprintf(stderr, "\n  %3d: %" PRIu64 " %" PRIu64 " %" PRIu64, k,
+					s->chan_blocks[k], s->chan_samples[k], s->chan_opens[k]);
+			}
+		}
+	} else if (s->gapless) {
+		double span = (double)(s->last_index - s->first_index) / ESDR_GAPLESS_RATE_HZ;
+
+		fprintf(stderr, ", %" PRIu64 " segments, %" PRIu64 " pairs (%.0f pairs/s, %.2f %% of "
+			"%.3f s at 80 MS/s), %" PRIu64 " gaps between segments, %" PRIu64
+			" backwards, %" PRIu64 " restarts, %" PRIu64 " dropped flags, shifts %" PRIu64
+			"/%" PRIu64 "/%" PRIu64 ", %" PRIu64 " bad blocks",
+			s->segs, s->seg_pairs, (double)s->seg_pairs / tl,
+			span > 0 ? 100.0 * (double)s->seg_pairs / (span * ESDR_GAPLESS_RATE_HZ) : 0.0,
+			span, s->seg_gaps, s->backwards, s->restarts, s->dropped, s->shifts[0],
+			s->shifts[1], s->shifts[2], s->bad);
 	} else if (in && !s->test) {
 		fprintf(stderr, ", %" PRIu64 " samples (%.0f S/s, %.2f %% of %.0f), %" PRIu64
 			" gaps (%" PRIu64 " samples), %" PRIu64 " overflow flags, %" PRIu64
@@ -594,11 +738,16 @@ static int run_stream(struct stream *s, bool in, double seconds, double rate)
 
 static void usage(void)
 {
-	fprintf(stderr, "usage: esdr_usb [-s serial] info | test-in | test-out | rx | tx\n"
+	fprintf(stderr, "usage: esdr_usb [-s serial] info | test-in | test-out | rx | tx | trig |"
+			" gapless | chan | c6\n"
 			"  [-t seconds] [-f Hz] [-r S/s] [-g gain|auto] [-d digital dB] [-b 4|8|16] [-B bw Hz]\n"
 			"  [-p ppb] [-n (no offset tuning)] [-o file] [-x Hz (retune half way)]\n"
 			"  tx: [-G step] (-i file | -T tone Hz [-a amplitude])\n"
-			"  trig: [-R ratio] [-P samples after the trigger]\n");
+			"  trig: [-R ratio] [-P samples after the trigger]\n"
+			"  gapless: [-R ratio, the threshold's floor | -L fixed level, raw units^2 a pair]"
+			" [-o file of blocks]\n"
+			"  chan: [-C channels] [-O open dB] [-R ratio | -L level] [-o file of blocks]\n"
+			"  c6: [-t seconds J8 goes to the C6]\n");
 }
 
 int main(int argc, char **argv)
@@ -609,12 +758,14 @@ int main(int argc, char **argv)
 	int gain = -1, bits = 8, ppb = 0, dgain = -1, txgain = 4, opt;
 	const char *infile = NULL;
 	double tone = 0, amp = 0.5, ratio = 8;
+	uint32_t level = 0, channels = 40;
+	double open_db = 6;
 	uint32_t post = ESDR_TRIG_SAMPLES / 2;
 	bool offset = true;
 	struct stream s = {0};
 	int ret = 0;
 
-	while ((opt = getopt(argc, argv, "s:t:f:r:g:b:B:p:no:x:d:G:i:T:a:R:P:h")) != -1) {
+	while ((opt = getopt(argc, argv, "s:t:f:r:g:b:B:p:no:x:d:G:i:T:a:R:P:L:C:O:h")) != -1) {
 		switch (opt) {
 		case 's':
 			serial = optarg;
@@ -669,6 +820,15 @@ int main(int argc, char **argv)
 			break;
 		case 'P':
 			post = (uint32_t)atof(optarg);
+			break;
+		case 'L':
+			level = (uint32_t)atof(optarg);
+			break;
+		case 'C':
+			channels = (uint32_t)atoi(optarg);
+			break;
+		case 'O':
+			open_db = atof(optarg);
 			break;
 		default:
 			usage();
@@ -761,6 +921,117 @@ int main(int argc, char **argv)
 		if (s.out != NULL) {
 			fclose(s.out);
 			fclose(s.idx);
+		}
+	} else if (strcmp(cmd, "chan") == 0) {
+		struct esdr_gapless_cfg g = {
+			.ratio_x16 = (uint16_t)lrint(ratio * 16.0),
+			.pre = 0xff,
+			.post = 0xff,
+			.level = level,
+			.flags = level != 0U ? ESDR_GAPLESS_F_FIXED_THR : 0U,
+		};
+		struct esdr_chan_cfg c = {
+			.channels = (uint16_t)channels,
+			.open_db_x10 = (uint16_t)lrint(open_db * 10.0),
+			.mask = {0xffffffffU, 0xffffffffU, 0xffffffffU},
+		};
+		struct esdr_chan_cfg off = {0};
+
+		s.chan = true;
+		if (outfile != NULL && (s.out = fopen(outfile, "wb")) == NULL) {
+			perror(outfile);
+			return 1;
+		}
+		ctrl_out(ESDR_REQ_SET_MODE, ESDR_MODE_OFF, NULL, 0);
+		set_freq((uint64_t)freq);
+		ctrl_out(ESDR_REQ_SET_RX_GAIN, gain < 0 ? ESDR_GAIN_AUTO : (uint16_t)gain, NULL, 0);
+		if (ctrl_out(ESDR_REQ_SET_CHANNELIZER, 0, &c, sizeof(c)) < 0) {
+			fprintf(stderr, "the device has no channelizer (apps/osmosdr_bridge)\n");
+			ret = 1;
+		} else if (ctrl_out(ESDR_REQ_SET_GAPLESS, 0, &g, sizeof(g)) < 0 ||
+			   ctrl_out(ESDR_REQ_SET_MODE, ESDR_MODE_GAPLESS, NULL, 0) < 0) {
+			fprintf(stderr, "the radio has no gapless mode\n");
+			ret = 1;
+		} else {
+			run_stream(&s, true, seconds, 0);
+		}
+		ctrl_out(ESDR_REQ_SET_MODE, ESDR_MODE_OFF, NULL, 0);
+		{
+			struct esdr_chan_stats cs;
+
+			if (ctrl_in(ESDR_REQ_SET_CHANNELIZER, &cs, sizeof(cs)) == sizeof(cs)) {
+				fprintf(stderr,
+					"bridge: %u segment blocks (%u dropped), %u channel blocks (%u "
+					"dropped); %" PRIu64 " pairs in %.3f s of CPU at %u MHz: %.1f "
+					"cycles a pair, %.2f M pairs/s at most\n",
+					cs.seg_blocks, cs.seg_dropped, cs.chan_blocks, cs.chan_dropped,
+					cs.pairs, cs.cpu_mhz ? (double)cs.cycles / (cs.cpu_mhz * 1e6) : 0.0,
+					cs.cpu_mhz, cs.pairs ? (double)cs.cycles / (double)cs.pairs : 0.0,
+					cs.cycles ? cs.cpu_mhz * (double)cs.pairs / (double)cs.cycles : 0.0);
+				fprintf(stderr, "  of it detector %.1f, channel blocks %.1f, branch sums "
+					"%.1f, FFTs %.1f cycles a pair\n",
+					cs.pairs ? (double)(cs.det_cycles - cs.send_cycles) / cs.pairs : 0.0,
+					cs.pairs ? (double)cs.send_cycles / cs.pairs : 0.0,
+					cs.pairs ? (double)cs.branch_cycles / cs.pairs : 0.0,
+					cs.pairs ? (double)cs.fft_cycles / cs.pairs : 0.0);
+			}
+		}
+		ctrl_out(ESDR_REQ_SET_CHANNELIZER, 0, &off, sizeof(off));
+		print_state();
+		if (s.out != NULL) {
+			fclose(s.out);
+		}
+	} else if (strcmp(cmd, "gapless") == 0) {
+		struct esdr_gapless_cfg g = {
+			.ratio_x16 = (uint16_t)lrint(ratio * 16.0),
+			.pre = 0xff,
+			.post = 0xff,
+			.level = level,
+			.flags = level != 0U ? ESDR_GAPLESS_F_FIXED_THR : 0U,
+		};
+		struct esdr_gapless_stats gs;
+
+		s.gapless = true;
+		esdr_seg_track_reset(&s.track);
+		if (outfile != NULL && (s.out = fopen(outfile, "wb")) == NULL) {
+			perror(outfile);
+			return 1;
+		}
+		ctrl_out(ESDR_REQ_SET_MODE, ESDR_MODE_OFF, NULL, 0);
+		set_freq((uint64_t)freq);
+		ctrl_out(ESDR_REQ_SET_RX_GAIN, gain < 0 ? ESDR_GAIN_AUTO : (uint16_t)gain, NULL, 0);
+		if (ctrl_out(ESDR_REQ_SET_GAPLESS, 0, &g, sizeof(g)) < 0 ||
+		    ctrl_out(ESDR_REQ_SET_MODE, ESDR_MODE_GAPLESS, NULL, 0) < 0) {
+			fprintf(stderr, "the radio has no gapless mode\n");
+			ret = 1;
+		} else {
+			run_stream(&s, true, seconds, 0);
+		}
+		ctrl_out(ESDR_REQ_SET_MODE, ESDR_MODE_OFF, NULL, 0);
+		if (ctrl_in(ESDR_REQ_GET_GAPLESS_STATS, &gs, sizeof(gs)) == sizeof(gs)) {
+			fprintf(stderr,
+				"device: %u runs, %u units, %" PRIu64 " pairs, kept %" PRIu64
+				", dropped %" PRIu64 ", lost %" PRIu64 "; windows %u, loud %u, kept %u; "
+				"ring errors %u (last %u, 0x%08x); late max %u, idle min %u cycles; "
+				"stage %u of %u B; baseline %u, ratio %.1f, gain %u (%u steps); "
+				"blocks %u, link full %u; overrun %u (%u cycles in %u)\n",
+				gs.runs, gs.units, gs.pairs, gs.kept_pairs, gs.dropped_pairs,
+				gs.abandoned_pairs, gs.windows, gs.loud_windows, gs.kept_windows,
+				gs.ring_errors, gs.ring_last_error, gs.ring_last_detail, gs.late_max,
+				gs.idle_cycles_min, gs.stage_peak_bytes, gs.stage_bytes, gs.baseline,
+				gs.ratio_x16 / 16.0, gs.gain, gs.gain_steps, gs.blocks_sent,
+				gs.link_full, gs.overrun_activity, gs.overrun_cycles, gs.overrun_room);
+		}
+		print_state();
+		if (s.out != NULL) {
+			fclose(s.out);
+		}
+	} else if (strcmp(cmd, "c6") == 0) {
+		uint16_t secs = argc > 0 && seconds != 10 ? (uint16_t)seconds : 30;
+
+		ret = ctrl_out(ESDR_REQ_USB_TO_C6, secs, NULL, 0) < 0;
+		if (ret == 0) {
+			fprintf(stderr, "J8 goes to the C6 for %u s\n", secs);
 		}
 	} else if (strcmp(cmd, "tx") == 0) {
 		struct esdr_state st;
