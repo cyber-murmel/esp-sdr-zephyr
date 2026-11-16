@@ -10,6 +10,9 @@
 #include <string.h>
 
 #include <zephyr/arch/cpu.h>
+#if defined(CONFIG_RISCV)
+#include <zephyr/arch/riscv/csr.h>
+#endif
 #include <zephyr/fatal.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/reboot.h>
@@ -59,6 +62,7 @@ static void note(uint32_t reason)
 void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 {
 	memset(&record, 0, sizeof(record));
+#if defined(CONFIG_XTENSA)
 	if (esf != NULL) {
 		/* The frame starts with a pointer to the base save area. */
 		const uint8_t *bsa = *(const uint8_t *const *)esf;
@@ -69,6 +73,16 @@ void k_sys_fatal_error_handler(unsigned int reason, const struct arch_esf *esf)
 		record.pc = *(const uint32_t *)(bsa + BSA_PC);
 		record.a0 = *(const uint32_t *)(bsa + BSA_A0);
 	}
+#elif defined(CONFIG_RISCV)
+	/* The trap CSRs still hold the fault: the fatal path runs with interrupts off. */
+	record.exccause = csr_read(mcause);
+	record.excvaddr = csr_read(mtval);
+	if (esf != NULL) {
+		record.pc = esf->mepc;
+		record.a0 = esf->ra;
+		record.ps = esf->mstatus;
+	}
+#endif
 	note(reason);
 	sys_reboot(SYS_REBOOT_COLD);
 	CODE_UNREACHABLE;
