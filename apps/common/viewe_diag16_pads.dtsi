@@ -1,0 +1,14 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * The gapless ring's 16 pads on the VIEWE ESP32-S31 board, for an image without the display: the
+ * panel's data lines, all alike and with nothing but the panel's inputs on them. The library's default
+ * pads have the RS485 transceiver, the touch controller and the ADC keys here, and GPIO 47 and 48 are
+ * slow with the amplifier's enable and the codec's MCLK on them: Q's top bits come out late (measured).
+ */
+
+/ {
+	zephyr,user {
+		esp-sdr-diag-pads = <2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17>;
+	};
+};

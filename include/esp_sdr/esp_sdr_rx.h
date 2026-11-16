@@ -131,11 +131,38 @@ int esp_sdr_rx_capture(enum esp_sdr_rate rate, size_t count, struct esp_sdr_rx_b
  * @param rate Native sample rate.
  * @param count Complex samples, ESP_SDR_SAMPLES_MIN to ESP_SDR_SAMPLES_MAX.
  * @param out Output samples, @p count of them.
- * @param first_ns Set to the arming time (k_cycle_get_64() clock, ns).
+ * @param first_ns Set to the time of the first sample returned (k_cycle_get_64() clock, ns): the
+ *                 arming time, but on the ESP32-S31 256 settling words after it.
  * @return Like esp_sdr_rx_capture().
  */
 int esp_sdr_rx_capture_iq(enum esp_sdr_rate rate, size_t count, struct esp_sdr_iq16 *out,
 			  uint64_t *first_ns);
+
+#if defined(CONFIG_SOC_SERIES_ESP32S31) || defined(__DOXYGEN__)
+/** What a DC calibration measured; means in 1/256 of an 8-bit step, I then Q. */
+struct esp_sdr_rx_dc {
+	/** Before it. */
+	int32_t before[2];
+	/** After it, the best it reached. */
+	int32_t after[2];
+	/** Settings it tried. */
+	uint32_t steps;
+};
+
+/**
+ * @brief Take the receive DC off with the baseband's DC DACs (ESP32-S31).
+ *
+ * For the fixed gain set: its setting stays until the next retune, gain change or
+ * esp_sdr_diag16_run(), whose phase check passes through gain 0 (cfg.dc_correct finds it anew).
+ * Takes the receiver for some 100 ms.
+ *
+ * @param result What it measured.
+ * @return 0 on success (or nothing to do), -ENOTSUP under the AGC or without a calibrated
+ *         gain word, -ERANGE if the DACs do not move the DC, -EIO if a capture failed,
+ *         -EAGAIN before esp_sdr_init().
+ */
+int esp_sdr_rx_dc_calibrate(struct esp_sdr_rx_dc *result);
+#endif
 
 /**
  * @brief Capture one burst into a chosen bank, like esp_sdr_rx_capture().
@@ -159,6 +186,9 @@ int esp_sdr_rx_capture_bank(enum esp_sdr_rate rate, size_t count, int bank,
  * The engine needs no CPU while it fills the bank, so @p fn is called once in each capture from
  * its start, in the capturing thread, instead of spinning all that time. It must not start a
  * capture or read the bank. It may take longer than the capture, which then only ends late.
+ *
+ * On the ESP32-S31 nothing can run while the engine has the memory: it is called just before the
+ * burst, which then starts late.
  *
  * @param fn Called with @p user; NULL for none.
  * @param user Passed to @p fn.

@@ -20,19 +20,22 @@
 
 #if defined(CONFIG_ESP_SDR_PHY_ONLY)
 #include <esp_phy_init.h>
-#if defined(CONFIG_SOC_SERIES_ESP32C6)
+#if defined(CONFIG_SOC_SERIES_ESP32C6) || defined(CONFIG_SOC_SERIES_ESP32S31)
 #include <esp_private/esp_modem_clock.h>
 #else
 #include <esp_private/periph_ctrl.h>
 #include <hal/clk_gate_ll.h>
 #endif
 #include <esp_timer.h>
+#if defined(CONFIG_SOC_SERIES_ESP32S31)
+#include <esp_phy_cert_test.h>
+#endif
 #else
 #include <esp_wifi.h>
 #endif
 
 /* Upstream helpers, used unmodified. */
-#if !defined(CONFIG_SOC_SERIES_ESP32C5)
+#if !defined(CONFIG_SOC_SERIES_ESP32C5) && !defined(CONFIG_SOC_SERIES_ESP32S31)
 #include "rx_lo.h"
 #endif
 #include "rx_tuning.h"
@@ -73,7 +76,7 @@ uint32_t esp_sdr_turn_settle_us = SDR_RETUNE_SETTLE_US;
 static unsigned int sdr_cbw;
 bool esp_sdr_turn_retune = true;
 
-#if !defined(CONFIG_SOC_SERIES_ESP32C5)
+#if !defined(CONFIG_SOC_SERIES_ESP32C5) && !defined(CONFIG_SOC_SERIES_ESP32S31)
 static bool is_channel(uint32_t mhz)
 {
 	return (mhz >= 2412U && mhz <= 2472U && (mhz - 2412U) % 5U == 0U) || mhz == 2484U;
@@ -90,8 +93,8 @@ static bool is_channel(uint32_t mhz)
 
 bool esp_sdr_lo_divided(void)
 {
-#if defined(CONFIG_SOC_SERIES_ESP32C5)
-	/* No divided LO path qualified on the C5. */
+#if defined(CONFIG_SOC_SERIES_ESP32C5) || defined(CONFIG_SOC_SERIES_ESP32S31)
+	/* No divided LO path qualified on these. */
 	return false;
 #else
 	return esp_sdr_freq_mhz < LO_DIVIDER_BELOW_MHZ;
@@ -114,6 +117,13 @@ static bool pll_in_window(void)
 #if defined(CONFIG_SOC_SERIES_ESP32C5) || defined(CONFIG_SOC_SERIES_ESP32)
 	/* The PLL status bits of the C5 and the ESP32 are not mapped yet. */
 	return true;
+#elif defined(CONFIG_SOC_SERIES_ESP32S31)
+	unsigned int status;
+
+	regi2c_enter_critical();
+	status = rom_chip_i2c_readReg(RFPLL_BLOCK, 1U, RFPLL_STATUS_REG);
+	regi2c_exit_critical();
+	return (status & RFPLL_STATUS_VCO) == 0U;
 #else
 	unsigned int status;
 
@@ -223,6 +233,16 @@ void esp_sdr_tune(void)
 		phy_set_rf_freq_offset(phy_param[PHY_PARAM_XTAL], esp_sdr_freq_mhz, khz);
 	}
 }
+#elif defined(CONFIG_SOC_SERIES_ESP32S31)
+void esp_sdr_tune(void)
+{
+	uint64_t want = (uint64_t)esp_sdr_freq_mhz * 1000000U + (int64_t)esp_sdr_fofs_khz * 1000;
+	int64_t exact;
+	int32_t khz = esp_sdr_pll_khz(want, esp_sdr_freq_mhz * 1000U, &exact);
+
+	esp_sdr_tuned((int64_t)esp_sdr_freq_mhz * 1000000 + (int64_t)khz * 1000 - exact, false);
+	esp_sdr_s31_tune(esp_sdr_freq_mhz, khz, sdr_cbw);
+}
 #else
 void esp_sdr_tune(void)
 {
@@ -276,6 +296,16 @@ void esp_sdr_tune(void)
 }
 #endif
 
+#if defined(CONFIG_SOC_SERIES_ESP32S31)
+int esp_sdr_bank_usage(uint32_t *usage)
+{
+	if ((uintptr_t)__esp_sdr_bank_start != DUMP_BANK0_ADDR) {
+		return -ENOMEM;
+	}
+	*usage = DUMP_USAGE_OWN;
+	return 0;
+}
+#else
 int esp_sdr_bank_usage(uint32_t *usage)
 {
 	uintptr_t base = (uintptr_t)__esp_sdr_bank_start;
@@ -292,6 +322,7 @@ int esp_sdr_bank_usage(uint32_t *usage)
 #endif
 	return 0;
 }
+#endif
 
 #if defined(CONFIG_ESP_SDR_PHY_ONLY)
 /* The Wi-Fi driver's power-up (wifi_init.c, esp_adapter.c) without the driver. */
@@ -304,7 +335,10 @@ static int radio_up(void)
 		return -EIO;
 	}
 	esp_wifi_bt_power_domain_on();
-#if defined(CONFIG_SOC_SERIES_ESP32C6)
+#if defined(CONFIG_SOC_SERIES_ESP32S31)
+	esp_phy_rftest_config(1);
+#endif
+#if defined(CONFIG_SOC_SERIES_ESP32C6) || defined(CONFIG_SOC_SERIES_ESP32S31)
 	modem_clock_module_mac_reset(PERIPH_WIFI_MODULE);
 	modem_clock_module_enable(PERIPH_WIFI_MODULE);
 #else

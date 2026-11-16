@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 config ESP_SDR_PHY_ONLY
-	bool "Radio without the Wi-Fi driver (ESP32-C6, ESP32-S3)"
-	depends on (SOC_SERIES_ESP32C6 || SOC_SERIES_ESP32S3) && !WIFI_ESP32
+	bool "Radio without the Wi-Fi driver (ESP32-C6, ESP32-S3, ESP32-S31)"
+	depends on (SOC_SERIES_ESP32C6 || SOC_SERIES_ESP32S3 || SOC_SERIES_ESP32S31) && !WIFI_ESP32
 	help
 	  Brings the PHY up through the HAL's esp_phy_enable() instead of the
 	  Wi-Fi driver, and links only the PHY and RF test libraries. Frees
@@ -19,8 +19,10 @@ config ESP_SDR_AS_EXTENSION
 
 config ESP_SDR
 	bool "ESP-SDR raw I/Q receiver"
+	# Its radio comes up through esp_phy_rftest_config(), which lives in that library.
+	select ESP_SDR_RFTEST if SOC_SERIES_ESP32S31
 	depends on SOC_SERIES_ESP32S3 || SOC_SERIES_ESP32C6 || SOC_SERIES_ESP32C5 || \
-		   SOC_SERIES_ESP32
+		   SOC_SERIES_ESP32 || SOC_SERIES_ESP32S31
 	depends on WIFI_ESP32 || ESP_SDR_PHY_ONLY
 	# The bank and heap limits assume no APPCPU image in SRAM.
 	depends on !SOC_ENABLE_APPCPU
@@ -34,7 +36,8 @@ config ESP_SDR
 	  like the C6 or gapless through the diagnostic bus (ESP_SDR_DIAG),
 	  and loops waveforms through its DAC engine (ESP_SDR_REPLAY). The
 	  ESP32 receives bursts at 80, 40 and 16 MS/s into 64 KiB of SRAM1,
-	  which needs ESP32_REGION_1_NOINIT off.
+	  which needs ESP32_REGION_1_NOINIT off. The ESP32-S31 receives bursts
+	  at 80 to 4 MS/s into the TCM's upper group, without the Wi-Fi driver.
 
 if ESP_SDR
 
@@ -143,6 +146,26 @@ config ESP_SDR_DIAG
 	  ring in SRAM bank 1 collects 4 bits of I and 4 bits of Q at 40 MS/s
 	  without the CPU. Drives 8 pads as outputs while it runs. Takes the
 	  bank of the capture engine and the radio for the whole run.
+
+config ESP_SDR_DIAG16
+	bool "Gapless receive through the diagnostic bus (ESP32-S31)"
+	depends on SOC_SERIES_ESP32S31
+	help
+	  esp_sdr_diag16_run(): continuous 8+8 bit I/Q up to 40 MS/s, the bus
+	  looped through 16 pads into PARLIO, a GDMA ring collecting it without
+	  the CPU. Takes 16 pads, which nothing else may drive, and the ring below
+	  the capture bank. Not with the LCD-CAM panel driver in the image: every
+	  run resets the whole AXI GDMA group.
+
+config ESP_SDR_DIAG16_RING_KB
+	int "Ring size in KiB"
+	default 128
+	range 64 192
+	depends on ESP_SDR_DIAG16
+	help
+	  A multiple of 64: the ring's 4 KiB nodes make frames of 16, the most
+	  a PARLIO frame's length holds. 128 KiB hold 3.3 ms at 20 MS/s. It takes
+	  this much from the top of the image's memory.
 
 config ESP_SDR_REPLAY
 	bool "Loop replay through the DAC engine (ESP32-C5)"

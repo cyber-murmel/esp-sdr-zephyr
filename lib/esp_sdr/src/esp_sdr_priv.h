@@ -18,6 +18,7 @@
 #include <zephyr/sys/util.h>
 
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_rx.h>
 
 #include <soc/soc.h>
 
@@ -225,6 +226,59 @@
 #define DAC_SCALE_REG    0x600a0c04U
 #define DAC_SCALE_M      GENMASK(23, 8)
 
+#elif defined(CONFIG_SOC_SERIES_ESP32S31)
+#include <soc/hp_system_reg.h>
+
+/*
+ * S31 dump engine (esp_sdr_s31.c, upstream targets/esp32s31): the C5's control bits. No done
+ * flag for a burst: the write index counts in DUMP_MODE_REG, raw source 3, the rate in 24:21.
+ */
+#define DUMP_CTRL_REG      0x20109004U
+#define DUMP_CTRL_RUN      BIT(31)
+#define DUMP_CTRL_TRIGGER  BIT(19)
+#define DUMP_CTRL_DONE     BIT(18)
+#define DUMP_CTRL_CIRCULAR BIT(17)
+#define DUMP_CTRL_COUNT    GENMASK(16, 0)
+/* Everything but RUN and bits 21:0 holds its reset value. */
+#define DUMP_CTRL_KEEP     (~0x803fffffU)
+#define DUMP_MODE_REG      0x20109008U
+#define DUMP_MODE_INDEX    GENMASK(16, 0)
+#define DUMP_MODE_SOURCE   GENMASK(20, 17)
+#define DUMP_MODE_RATE     GENMASK(24, 21)
+#define DUMP_SOURCE_IQ     3U
+#define DUMP_MAC_REG       0x2010900cU
+#define DUMP_CONFIG_REG    0x20109018U
+#define DUMP_CONFIG_LANES  GENMASK(23, 0)
+#define DUMP_CONFIG_IQ     (24U | (25U << 6) | (26U << 12) | (27U << 18) | BIT(24))
+/* The first words of a burst are the engine settling. */
+#define DUMP_FIRST_WORD    256U
+
+/* One bank: the TCM's upper 128 KiB group, the engine's while DUMP_USAGE_REG says so. */
+#define DUMP_BANK0_ADDR 0x2f060000U
+#define DUMP_BANK_SIZE  0x20000U
+#define DUMP_BANKS      1U
+#define DUMP_USAGE_REG  HP_SYSTEM_TCM_DATA_DUMP_CTRL_REG
+#define DUMP_USAGE_OWN  0xff000000U
+#define DUMP_USAGE_M    DUMP_USAGE_OWN
+#define DUMP_USAGE_S    24U
+
+/* BBTOP as on the C6: the I/Q low-pass capacitor codes in registers 4 and 5. */
+#define BBTOP_BLOCK    0x67U
+#define BBTOP_HOST     1U
+#define BBTOP_LPF_REG  4U
+#define BBTOP_LPF_DCAP GENMASK(5, 0)
+
+#define AGC_FORCE_REG      0x2010702cU
+#define AGC_FORCE_INDEX    GENMASK(31, 24)
+#define AGC_FORCE_EN       BIT(23)
+#define AGC_GAIN_MAX       GENMASK(14, 8)
+#define AGC_GAIN_MAX_VALID 79U
+/* The AGC's starting index and its threshold's: a forced gain sets both (upstream). */
+#define AGC_INIT_REG       0x20107094U
+#define AGC_INIT_INDEX     GENMASK(8, 2)
+#define AGC_THRESH_REG     0x2010713cU
+#define AGC_THRESH_INDEX   GENMASK(24, 18)
+
 #elif defined(CONFIG_SOC_SERIES_ESP32)
 #include <soc/dport_access.h>
 #include <soc/dport_reg.h>
@@ -289,6 +343,10 @@
 
 #ifndef DUMP_USAGE_ALLOC
 #define DUMP_USAGE_ALLOC 0U
+#endif
+
+#ifndef DUMP_FIRST_WORD
+#define DUMP_FIRST_WORD 0U
 #endif
 
 #if defined(CONFIG_SOC_SERIES_ESP32S3) || defined(CONFIG_SOC_SERIES_ESP32C6)
@@ -405,7 +463,31 @@ extern void rom_set_rf_freq_offset(unsigned int xtal, unsigned int mhz, int offs
 #define phy_pbus_xpd_rx_on  rom_pbus_xpd_rx_on
 #define phy_pbus_xpd_tx_off rom_pbus_xpd_tx_off
 #define phy_set_rxclk_en    rom_set_rxclk_en
-#else
+#elif defined(CONFIG_SOC_SERIES_ESP32S31)
+/* All in the S31 ROM (esp32s31.rom.phy.ld) but the two the PHY library keeps. */
+extern void phy_pbus_workmode(void);
+extern void phy_pbus_debugmode(void);
+extern void phy_pbus_xpd_rx_on(unsigned int en);
+extern void phy_pbus_xpd_tx_off(void);
+extern void phy_set_rxclk_en(unsigned int en);
+extern void phy_set_txclk_en(unsigned int en);
+extern void phy_loopback_mode_en(unsigned int en);
+extern void phy_bb_bss_cbw40_dig(unsigned int en);
+extern void phy_bb_cbw_chan_cfg(unsigned int cfg);
+extern void phy_wifi_fbw_sel(unsigned int sel);
+extern void phy_force_rx_gain(unsigned int force, unsigned int index);
+extern void phy_rfrx_sat_rst(unsigned int en);
+extern void phy_set_freq(unsigned int mhz, int khz);
+extern unsigned int phy_i2c_readReg(unsigned int block, unsigned int host, unsigned int reg);
+extern void phy_i2c_writeReg(unsigned int block, unsigned int host, unsigned int reg,
+			     unsigned int val);
+#define rom_chip_i2c_readReg  phy_i2c_readReg
+#define rom_chip_i2c_writeReg phy_i2c_writeReg
+/* libphy. */
+extern void phy_chip_set_chan(unsigned int mhz, unsigned int mode);
+extern void phy_set_rx_gain_table(unsigned int mhz, unsigned int mode);
+extern unsigned char phy_param[];
+#elif defined(CONFIG_SOC_SERIES_ESP32C6)
 extern void pbus_workmode(void);
 extern void ram_pbus_xpd_rx_on(unsigned int en);
 extern void rom_pbus_xpd_tx_off(void);
@@ -419,6 +501,8 @@ extern void phy_set_freq(unsigned int mhz, int khz);
 #define phy_pbus_xpd_tx_off rom_pbus_xpd_tx_off
 #define phy_set_rxclk_en    set_rxclk_en
 #define phy_stop_tx_tone    ram_stop_tx_tone
+#else
+#error "esp_sdr: no PHY entry points for this SoC"
 #endif
 #if defined(CONFIG_ESP_SDR_RFTEST)
 /* librftest.a: force, index, bt (0 selects the Wi-Fi AGC). */
@@ -472,6 +556,24 @@ void esp_sdr_cal_apply_stored(void);
 void esp_sdr_tune(void);
 /* The LO plan puts esp_sdr_freq_mhz behind the 5/6 divider (below 2210 MHz). */
 bool esp_sdr_lo_divided(void);
+#if defined(CONFIG_SOC_SERIES_ESP32S31)
+/* The S31 receiver (esp_sdr_s31.c); lock held. */
+void esp_sdr_s31_tune(unsigned int mhz, int khz, unsigned int cbw);
+/* Gain index, or negative for the hardware AGC. */
+void esp_sdr_s31_gain(int index);
+int esp_sdr_s31_gain_get(void);
+void esp_sdr_s31_rx_on(void);
+/* The ADC's noise alone, at any gain, or the antenna again. */
+void esp_sdr_s31_rx_mute(bool mute);
+int esp_sdr_s31_capture(enum esp_sdr_rate rate, size_t count, uint32_t *elapsed_us);
+/* The dump engine running for the diagnostic bus (esp_sdr_diag16.c). */
+void esp_sdr_s31_diag_start(void);
+void esp_sdr_s31_diag_stop(void);
+/* Mean I and Q in 1/256 of an 8-bit step; false if none could be had. */
+typedef bool (*esp_sdr_s31_dc_measure_t)(int32_t mean[2], void *user);
+int esp_sdr_s31_dc_calibrate(esp_sdr_s31_dc_measure_t measure, void *user,
+			     struct esp_sdr_rx_dc *out);
+#endif
 /* Back to the resting RX-ready state after a tuning change; lock held. */
 int esp_sdr_retune(void);
 /* MAC_DUMP_USAGE one-hot bits of the capture bank. */

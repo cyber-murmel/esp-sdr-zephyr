@@ -17,8 +17,12 @@ elseif(CONFIG_SOC_SERIES_ESP32C5)
   zephyr_linker_sources(RAM_SECTIONS esp_sdr_bank_c5.ld)
 elseif(CONFIG_SOC_SERIES_ESP32)
   zephyr_linker_sources(RAM_SECTIONS esp_sdr_bank_esp32.ld)
-else()
+elseif(CONFIG_SOC_SERIES_ESP32S31)
+  zephyr_linker_sources(SECTIONS esp_sdr_bank_s31.ld)
+elseif(CONFIG_SOC_SERIES_ESP32S3)
   zephyr_linker_sources(SECTIONS esp_sdr_bank_s3.ld)
+else()
+  message(FATAL_ERROR "esp-sdr: no capture bank for ${CONFIG_SOC_SERIES}")
 endif()
 
 if(CONFIG_ESP_SDR_AS_EXTENSION)
@@ -35,6 +39,11 @@ if(CONFIG_ESP_SDR_PHY_ONLY)
       -T${ZEPHYR_HAL_ESPRESSIF_MODULE_DIR}/components/esp_rom/${CONFIG_SOC_SERIES}/ld/${CONFIG_SOC_SERIES}.rom.phy.ld
     )
   endif()
+endif()
+
+if(CONFIG_SOC_SERIES_ESP32S31)
+  # esp_sdr_s31.c: the PHY library's calls into the ROM.
+  zephyr_link_libraries(-Wl,--wrap=phy_set_channel_rfpll_freq -Wl,--wrap=phy_write_gain_mem)
 endif()
 
 if(CONFIG_ESP_SDR_RFTEST)

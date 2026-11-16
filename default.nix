@@ -158,10 +158,56 @@ let
     '';
   };
 
+  # esptool for the ESP32-S31, which nixpkgs' 5.1.0 does not know (5.3 is the first that does).
+  # It needs esp-pylib, which nixpkgs does not have.
+  esp-pylib = pkgs.python3Packages.buildPythonPackage rec {
+    pname = "esp-pylib";
+    version = "1.2.1";
+    pyproject = true;
+    src = pkgs.fetchurl {
+      url = "https://files.pythonhosted.org/packages/source/e/esp_pylib/esp_pylib-${version}.tar.gz";
+      sha256 = "1xjjv048v6s17ii15brwv71g5ag8spaj1j3skxg79ql6gg2lr1f0";
+    };
+    build-system = [ pkgs.python3Packages.setuptools ];
+    dependencies = with pkgs.python3Packages; [ click pyserial rich rich-click websockets ];
+    pythonImportsCheck = [ "esp_pylib" ];
+  };
+
+  esptool = pkgs.esptool.overridePythonAttrs (old: rec {
+    version = "5.6.0";
+    src = pkgs.fetchFromGitHub {
+      owner = "espressif";
+      repo = "esptool";
+      tag = "v${version}";
+      sha256 = "1pa551p8zaj9gf2z1f9g247fm5lrnl89kf186rzgjvcfhwkbslnd";
+    };
+    dependencies = old.dependencies ++ [ esp-pylib ];
+    # The tests need softhsm and exercise nothing we use that differs from the release's own CI.
+    doCheck = false;
+  });
+
+  # Espressif's OpenOCD: nixpkgs-esp-dev's (20250707) has no ESP32-S31.
+  openocd-esp32 = pkgs.stdenv.mkDerivation rec {
+    pname = "openocd-esp32";
+    version = "0.12.0-esp32-20260831";
+    src = pkgs.fetchurl {
+      url = "https://github.com/espressif/openocd-esp32/releases/download/v${version}/openocd-esp32-linux-amd64-${version}.tar.gz";
+      sha256 = "0nkfxrd3clbwh5pggp4wkg718brap1l05yqw3xfgm5i2qgpzip49";
+    };
+    nativeBuildInputs = [ pkgs.autoPatchelfHook ];
+    buildInputs = [ pkgs.libusb1 pkgs.systemdLibs pkgs.zlib ];
+    dontConfigure = true;
+    dontBuild = true;
+    installPhase = ''
+      mkdir -p $out
+      cp -r bin share $out/
+    '';
+  };
+
   # What a firmware build needs.
   build = [
     pkgs.cmake
-    pkgs.esptool
+    esptool
     pkgs.ninja
     pkgs.protobuf
     python
@@ -175,7 +221,7 @@ let
     clang-tools
     dfu-util
     doxygen
-    (esp-idf-xtensa.tools.openocd-esp32)
+    openocd-esp32
     gnuradio
     gqrx
     # Synthesis, place and route for the MCH2022 badge's iCE40 (gateware/).
@@ -418,7 +464,7 @@ let
 
   tools = pkgs.symlinkJoin {
     name = "esp-sdr-tools-${version}";
-    paths = [ host-tools soapysdr pkgs.esptool pkgs.dfu-util ];
+    paths = [ host-tools soapysdr esptool pkgs.dfu-util ];
     nativeBuildInputs = [ pkgs.makeWrapper ];
     postBuild = ''
       makeWrapper ${pkgs.gqrx}/bin/gqrx $out/bin/gqrx --prefix SOAPY_SDR_PLUGIN_PATH : ${soapyPluginPath}
