@@ -15,6 +15,7 @@
 #include <string.h>
 
 #include <esp_sdr/esp_sdr_dsp.h>
+#include <esp_sdr/esp_sdr_tx.h>
 #include <esp_sdr/esp_sdr_xtensa.h>
 
 #include "ofdm.h"
@@ -392,7 +393,7 @@ static inline __attribute__((always_inline)) uint32_t emit_run(const uint32_t *_
 		int cq = vq > 511 ? 511 : (vq < -511 ? -511 : vq);
 
 		clipped += (uint32_t)((ci != vi) | (cq != vq));
-		out[i] = ((uint32_t)ci & 0x3ffU) | (((uint32_t)cq & 0x3ffU) << 10);
+		out[i] = esp_sdr_tx_word((int16_t)ci, (int16_t)cq);
 	}
 	return clipped;
 }

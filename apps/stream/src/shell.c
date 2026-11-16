@@ -185,6 +185,7 @@ static int set_txgain(const struct shell *sh, const char *value)
 static void print_tx_status(const struct shell *sh)
 {
 	struct esp_sdr_tx_stats bs;
+	struct esp_sdr_tx_dac_stats ds;
 	struct vrt_tx_stats st;
 	uint64_t freq;
 	uint32_t rate;
@@ -192,20 +193,15 @@ static void print_tx_status(const struct shell *sh)
 	vrt_tx_get_stats(&st);
 	vrt_tx_get_settings(&freq, &rate);
 	esp_sdr_tx_get_stats(&bs);
-	shell_print(sh, "tx %s, backend %s, %llu Hz, %u S/s",
-		    esp_sdr_tx_active() ? "active" : "idle", esp_sdr_tx_get_backend()->name,
+	esp_sdr_tx_dac_get_stats(&ds);
+	shell_print(sh, "tx %s, %llu Hz, %u S/s", esp_sdr_tx_active() ? "active" : "idle",
 		    (unsigned long long)freq, rate);
 	shell_print(sh,
-		    "packets %u data, %u commands, %u acks, %u gaps, %u underruns, %u bad, "
-		    "%u errors; samples %u hole-filled, %u late",
-		    st.data, st.commands, st.acks, st.gaps, st.underruns, st.bad, st.errors, st.holes,
-		    st.late);
+		    "packets %u data, %u commands, %u acks, %u gaps, %u bad, %u errors; "
+		    "samples %u hole-filled, %u late",
+		    st.data, st.commands, st.acks, st.gaps, st.bad, st.errors, st.holes, st.late);
 	shell_print(sh, "backend %llu samples in %u writes, %u errors",
 		    (unsigned long long)bs.samples, bs.writes, bs.errors);
-#if defined(CONFIG_ESP_SDR_TX_DAC)
-	struct esp_sdr_tx_dac_stats ds;
-
-	esp_sdr_tx_dac_get_stats(&ds);
 	shell_print(sh,
 		    "dac x%u: %llu played, %llu dropped (%.0f %% on air), %u switches, %u underruns, "
 		    "%u overruns, %u errors, %u ms",
@@ -223,7 +219,6 @@ static void print_tx_status(const struct shell *sh)
 		shell_print(sh, "dac filler %d: %u blocks, %u ms filling, cpu %u", f,
 			    ds.fill_blocks[f], ds.fill_us[f] / 1000U, ds.fill_cpu[f]);
 	}
-#endif
 }
 
 #endif

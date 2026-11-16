@@ -296,14 +296,14 @@ Evidence:
 
 - *measured* `lib/esp_sdr/src/esp_sdr_priv.h:236-244` (loop mode)
 - *decompile* S3 `mac_common.o` (`dactrig()`)
-- `lib/esp_sdr/src/esp_sdr_tx.c:222-223, 311-312` (the library skips the ramp, clears DUMP_CTRL_REG)
-- DUMP_DAC_RUN: *working* `lib/esp_sdr/src/esp_sdr_tx.c:146-156`
+- `lib/esp_sdr/src/esp_sdr_tx.c:272-273` (the library skips the ramp, clears DUMP_CTRL_REG)
+- DUMP_DAC_RUN: *working* `lib/esp_sdr/src/esp_sdr_tx.c:158-166`
 - DUMP_B27_20: *measured* `lib/esp_sdr/src/esp_sdr_priv.h:46-48`; *decompile* S3 `mac_common.o`
-- DUMP_DAC_TRIGGER: *measured* `lib/esp_sdr/src/esp_sdr_tx.c:197-199, 292-302`, `lib/esp_sdr/src/esp_sdr_priv.h:236-244`
-- DUMP_DAC_DONE: *working* `lib/esp_sdr/src/esp_sdr_tx.c:158-167`
+- DUMP_DAC_TRIGGER: *measured* `lib/esp_sdr/src/esp_sdr_tx.c:163-166, 253-263`, `lib/esp_sdr/src/esp_sdr_priv.h:236-244`
+- DUMP_DAC_DONE: *working* `lib/esp_sdr/src/esp_sdr_tx.c:167-169`
 - DUMP_B16: *measured* `lib/esp_sdr/src/esp_sdr_priv.h:46-48`
 - DUMP_DAC_RATE_80M: *measured* `lib/esp_sdr/src/esp_sdr_priv.h:46-49`, hardware-quirks.md
-- DUMP_DAC_COUNT: *working* `lib/esp_sdr/src/esp_sdr_tx.c:148-149`
+- DUMP_DAC_COUNT: *working* `lib/esp_sdr/src/esp_sdr_tx.c:158-159`
 
 #### Register DUMP_CONFIG_REG (0x60033d90)
 
@@ -377,7 +377,7 @@ Evidence:
 
 - `lib/esp_sdr/src/esp_sdr_rx.c:246-278`, `lib/esp_sdr/src/esp_sdr.c:123-133` (save and restore)
 - `lib/esp_sdr/esp_sdr_bank_ring.ld:4-14` (reserved banks)
-- *measured* `lib/esp_sdr/src/esp_sdr_tx.c:392-396` (CPU stores and the DAC)
+- *measured* `lib/esp_sdr/src/esp_sdr_tx.c:346-349` (CPU stores and the DAC)
 - *measured* hardware-quirks.md, "Capture and DAC engine"; `lib/esp_sdr/src/esp_sdr_priv.h:236-244` (a change while running)
 - *measured* bench 2026-10-05, `lib/esp_sdr/esp_sdr_bank.ld`; *upstream* `modules/lib/esp-sdr/main/common/ring_capture.h:26` (bank 3)
 - SENSITIVE_INTERNAL_SRAM_MAC_DUMP_USAGE: `modules/hal/espressif/components/soc/esp32s3/register/soc/sensitive_reg.h:101-107`

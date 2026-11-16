@@ -122,12 +122,12 @@ def shell_tx_stats(path):
     time.sleep(1.0)
     out = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", s.read(65536).decode(errors="replace"))
     s.close()
-    m = re.search(r"packets (\d+) data, (\d+) commands, (\d+) acks, (\d+) gaps, (\d+) underruns, "
-                  r"(\d+) bad, (\d+) errors", out)
+    m = re.search(r"packets (\d+) data, (\d+) commands, (\d+) acks, (\d+) gaps, (\d+) bad, "
+                  r"(\d+) errors", out)
     b = re.search(r"backend (\d+) samples", out)
     if not m or not b:
         raise RuntimeError("no 'sdr status' output:\n" + out)
-    keys = ["data", "commands", "acks", "gaps", "underruns", "bad", "errors"]
+    keys = ["data", "commands", "acks", "gaps", "bad", "errors"]
     st = dict(zip(keys, map(int, m.groups())))
     st["samples"] = int(b.group(1))
     return st
@@ -213,8 +213,7 @@ def main():
         d = {k: after[k] - before[k] for k in after}
         check("board received all packets", d["data"] == n_packets, f"({d['data']}/{n_packets})")
         check("no gaps or bad packets", d["gaps"] == 0 and d["bad"] == 0 and d["errors"] == 0,
-              f"(gaps {d['gaps']}, bad {d['bad']}, errors {d['errors']}, "
-              f"underruns {d['underruns']})")
+              f"(gaps {d['gaps']}, bad {d['bad']}, errors {d['errors']})")
         # The backend restarts its counters on every start; compare the last run.
         check("backend consumed every sample", after["samples"] == n, f"({after['samples']}/{n})")
     print(f"vrt_tx: {'PASS' if ok else 'FAIL'}")

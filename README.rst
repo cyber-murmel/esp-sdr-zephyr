@@ -129,9 +129,10 @@ The library
   ``CONFIG_ESP_SDR_CHANCAP``): a grid of channels, one capture per packet.
 - **Gain:** AGC or a fixed index; the fixed gain and TX power steps use
   ``librftest.a`` (``west blobs fetch esp-sdr-zephyr``, or
-  ``CONFIG_ESP_SDR_RFTEST=n``).
+  ``CONFIG_ESP_SDR_RFTEST=n``, which leaves transmit out).
 - **Transmit:** sample playback at 40 or 80 MS/s, gapless streaming at
-  40 MS/s / n (``CONFIG_ESP_SDR_TX_DAC``, needs PSRAM), 18 power steps.
+  40 MS/s / n (``CONFIG_ESP_SDR_TX``, needs ``librftest.a`` and PSRAM),
+  18 power steps.
 
 Chip details and quirks: `doc/hardware-quirks.md <doc/hardware-quirks.md>`__.
 Enable it with:

@@ -190,7 +190,7 @@ On the S3 the engine's 64 KiB banks and the `ESP_SDR_HIGH_RAM` region sit at
 the top of internal DRAM, laid out by the linker snippets
 `lib/esp_sdr/esp_sdr_bank*.ld` (picked in `lib/esp_sdr/CMakeLists.txt`). Bank 2
 (0x3fcd0000) is always the capture bank. `CONFIG_ESP_SDR_BANK1`, which
-`ESP_SDR_TX_DAC` and `ESP_SDR_RING` select, adds bank 1 (0x3fcc0000) as the
+`ESP_SDR_TX` and `ESP_SDR_RING` select, adds bank 1 (0x3fcc0000) as the
 second DAC and capture bank, and the ring takes banks 0 to 2 (from
 0x3fcb0000). Each snippet lowers `_heap_sentry` to its lowest bank, so the libc
 heap stays below it, and fails the link if the DRAM image grows into a bank

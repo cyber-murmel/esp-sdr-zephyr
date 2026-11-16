@@ -1,8 +1,8 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * Library internals shared by esp_sdr.c, esp_sdr_rx.c, esp_sdr_tx.c and the DAC
- * streaming backend: registers, ROM entry points, the shared state and the
+ * Library internals shared by esp_sdr.c, esp_sdr_rx.c, esp_sdr_tx.c, the DAC
+ * stream and the other sources: registers, ROM entry points, the shared state and the
  * DAC session.
  */
 
@@ -518,6 +518,14 @@ void esp_sdr_dac_halt(void);
 
 /* Back to RX and release the lock. */
 void esp_sdr_dac_end(void);
+
+/*
+ * The DAC stream behind esp_sdr_tx_start(), esp_sdr_tx_write() and esp_sdr_tx_stop()
+ * (esp_sdr_tx_dac.c), called by the front end with its lock held.
+ */
+int esp_sdr_dac_stream_start(uint64_t freq_hz, uint32_t rate_hz);
+int esp_sdr_dac_stream_write(const struct esp_sdr_iq16 *samples, size_t count);
+int esp_sdr_dac_stream_stop(void);
 
 /*
  * Hold off the Wi-Fi MAC interrupt on the calling CPU (esp_sdr_ring.c); returns whether the

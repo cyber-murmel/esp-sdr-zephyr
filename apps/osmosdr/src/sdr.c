@@ -133,7 +133,7 @@ static struct {
 	uint8_t carry[4];
 	uint32_t carry_len;
 } txs;
-/* Converted samples on their way to the backend. */
+/* Converted samples on their way to the DAC stream. */
 static struct esp_sdr_iq16 tx_conv[256] ESP_SDR_HIGH_RAM;
 
 static void snapshot(struct sdr_settings *s, uint32_t *gen)
@@ -345,7 +345,7 @@ static void usb_thread_fn(void *a, void *b, void *c)
 		/* Transmit polls the DAC backlog; the rest waits for work. */
 		(void)k_sem_take(&usb_wake, atomic_get(&tx_on) ? K_MSEC(2) : K_MSEC(100));
 		snapshot(&s, NULL);
-		if (atomic_get(&tx_on)) {
+		if (IS_ENABLED(CONFIG_ESP_SDR_TX) && atomic_get(&tx_on)) {
 			while (atomic_get(&tx_park_r) != atomic_get(&tx_park_w) &&
 			       esp_sdr_tx_dac_queued() < tx_limit) {
 				uint32_t r = (uint32_t)atomic_get(&tx_park_r);
@@ -419,7 +419,7 @@ static inline int16_t tx_item(const uint8_t *p)
 	return txs.bits16 ? (int16_t)sys_get_le16(p) : (int16_t)((int8_t)p[0] * 256);
 }
 
-/* Host samples to the backend, rotated by the fine tuning residual. */
+/* Host samples to the DAC stream, rotated by the fine tuning residual. */
 static void tx_convert(const uint8_t *p, size_t len)
 {
 	const size_t item = txs.bits16 ? 4U : 2U;
@@ -483,7 +483,7 @@ void usb_sdr_out_done(uint8_t *data, size_t len, int err)
 		return;
 	}
 	stats.usb_out_bytes += len;
-	if (atomic_get(&tx_on)) {
+	if (IS_ENABLED(CONFIG_ESP_SDR_TX) && atomic_get(&tx_on)) {
 		uint32_t w = (uint32_t)atomic_get(&tx_park_w);
 
 		tx_convert(data, len);
@@ -778,7 +778,7 @@ static void tx_session(const struct sdr_settings *s, uint32_t gen)
 	txs.ps = 0.0f;
 	txs.renorm = 0;
 	txs.carry_len = 0;
-	/* 50 ms ahead, beyond the backend's 20 ms start buffer. */
+	/* 50 ms ahead, beyond the DAC stream's 20 ms start buffer. */
 	tx_limit = s->rate_hz / 20U + ESDR_BLOCK_BYTES;
 
 	ret = esp_sdr_set_freq_offset(khz);
@@ -786,7 +786,10 @@ static void tx_session(const struct sdr_settings *s, uint32_t gen)
 		ret = esp_sdr_tx_set_gain(s->tx_gain);
 	}
 	if (ret == 0) {
-		ret = esp_sdr_tx_start((uint64_t)mhz * 1000000U, s->rate_hz);
+		/* Transmit needs CONFIG_ESP_SDR_TX (PSRAM and the RF test library). */
+		ret = IS_ENABLED(CONFIG_ESP_SDR_TX)
+			      ? esp_sdr_tx_start((uint64_t)mhz * 1000000U, s->rate_hz)
+			      : -ENOTSUP;
 	}
 	cur_lo_mhz = 0;
 	cur_center_hz = s->freq_hz;

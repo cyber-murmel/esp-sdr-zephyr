@@ -233,7 +233,7 @@ int main(void)
 		LOG_ERR("stream init failed");
 		return 0;
 	}
-	if (IS_ENABLED(CONFIG_APP_TX) && vrt_tx_init() != 0) {
+	if (vrt_tx_init() != 0) {
 		LOG_ERR("tx init failed");
 	}
 

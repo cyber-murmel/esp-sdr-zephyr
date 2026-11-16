@@ -9,7 +9,7 @@
  * RX: the 16 MS/s ring, mixed down by fs/4 and decimated by 4 to the PHY's
  * 4 MS/s, gapless.
  * TX: the frame is synthesized at the 40 MS/s DAC rate from half-sine
- * templates and played gapless by the DAC backend.
+ * templates and played gapless by the DAC stream.
  *
  * Frames that ask for an ACK wait for it (one capture after the frame);
  * frames to this node that ask for one get it from inside the ring run

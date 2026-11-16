@@ -385,9 +385,10 @@ int esp_sdr_tx_paced_start(uint32_t rate_hz, unsigned int interp, unsigned int p
 	return 0;
 }
 
+/* The DAC word, each component clamped to +-511. */
 static inline uint32_t iq10(int32_t i, int32_t q)
 {
-	return ((uint32_t)CLAMP(i, -511, 511) & 0x3ffU) | (((uint32_t)CLAMP(q, -511, 511) & 0x3ffU) << 10);
+	return esp_sdr_tx_word((int16_t)CLAMP(i, -511, 511), (int16_t)CLAMP(q, -511, 511));
 }
 
 bool esp_sdr_tx_paced_poll(void)

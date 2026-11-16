@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * Transmit backend: samples arrive at a low rate (fit for USB) and are
+ * DAC transmit: samples arrive at a low rate (fit for USB) and are
  * interpolated linearly to the 40 MS/s DAC rate. The DAC runs in loop mode
  * (gapless, at exactly the DAC rate) over one of two 64 KiB dump banks; while
  * it plays one, the next block is interpolated straight into the other, with
@@ -53,7 +53,7 @@ static atomic_t running, stop_req;
 static atomic_t ring_w;
 /*
  * Input index the filled blocks reach (zeros included): input written below
- * it came too late to play. Kept by the leader, read by dac_write().
+ * it came too late to play. Kept by the leader, read by esp_sdr_dac_stream_write().
  */
 static atomic_t filled_in, late_in;
 static uint32_t ring_r, in_base;
@@ -67,7 +67,7 @@ static uint64_t gen_total;
 /* Set by the player when a session could not start. */
 static int sess_err;
 
-static int dac_start(uint64_t freq_hz, uint32_t rate_hz)
+int esp_sdr_dac_stream_start(uint64_t freq_hz, uint32_t rate_hz)
 {
 	uint32_t fs = esp_sdr_tx_rate_hz(DAC_RATE);
 	int ret;
@@ -102,7 +102,7 @@ static int dac_start(uint64_t freq_hz, uint32_t rate_hz)
 	return 0;
 }
 
-static int dac_write(const struct esp_sdr_iq16 *samples, size_t count)
+int esp_sdr_dac_stream_write(const struct esp_sdr_iq16 *samples, size_t count)
 {
 	uint32_t w = (uint32_t)atomic_get(&ring_w);
 	int32_t late = (int32_t)((uint32_t)atomic_get(&filled_in) - w);
@@ -121,7 +121,7 @@ static int dac_write(const struct esp_sdr_iq16 *samples, size_t count)
 	return (int)count;
 }
 
-static int dac_stop(void)
+int esp_sdr_dac_stream_stop(void)
 {
 	/* A generator session ends by itself; its caller waits for it. */
 	if (!atomic_get(&running) || gen_fn != NULL) {
@@ -765,13 +765,6 @@ static int fillers_init(void)
 }
 
 SYS_INIT(fillers_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
-
-const struct esp_sdr_tx_backend esp_sdr_tx_dac_backend = {
-	.name = "dac",
-	.start = dac_start,
-	.write = dac_write,
-	.stop = dac_stop,
-};
 
 int esp_sdr_tx_dac_play_gen(esp_sdr_tx_dac_gen_t gen, void *user, uint64_t samples)
 {

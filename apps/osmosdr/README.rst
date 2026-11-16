@@ -21,7 +21,7 @@ the host tool ``tools/esdr_usb.c``.
   of the band. The LO is whole MHz plus a kHz PLL offset; a rotation of the
   output removes the rest, so the centre is exact to the Hz, after the
   crystal correction.
-- **Transmit**: the host's samples go to the DAC backend (PSRAM ring, linear
+- **Transmit**: the host's samples go to the DAC stream (PSRAM ring, linear
   interpolation to 40 MS/s, gapless loop playback). USB flow control paces
   the host about 50 ms ahead of the air.
 - USB: the SDR's vendor interface, CDC-ACM shell, DFU (MCUboot).
@@ -39,7 +39,7 @@ as in ``apps/stream/README.rst``); hosts find it by its vendor
 interface and the ``GET_INFO`` magic.
 
 The three ring banks leave little internal RAM: sample blocks, filter
-buffers, the transmit backend's buffers and the thread stacks live in
+buffers, the DAC stream's buffers and the thread stacks live in
 ``ESP_SDR_HIGH_RAM`` (``doc/hardware-quirks.md``, Memory).
 
 The first flash goes over USB-Serial-JTAG. From then on the app owns the USB

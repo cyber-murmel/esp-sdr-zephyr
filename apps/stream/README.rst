@@ -73,10 +73,10 @@ Receiving
 The script prints rates, decoded context and counter gaps, writes the samples
 as little endian complex int16, and exits 0 when the stream is valid.
 
-Command packets to the receive stream ID set the receiver: RF reference
-frequency (whole MHz), gain (stage 1 is the PHY gain table index, not dB;
-stage 2 must be 0), sample rate (16 MS/s, or 16 MS/s / m for decimation) and
-payload format (16, 12 or 8 bit items). Query-state requests return them.
+Command packets to the receive stream ID (UDP port 4992) set the receiver: RF
+reference frequency (whole MHz), gain (stage 1 is the PHY gain table index, not
+dB; stage 2 must be 0), sample rate (16 MS/s, or 16 MS/s / m for decimation)
+and payload format (16, 12 or 8 bit items). Query-state requests return them.
 
 USB full speed limits the receive stream to about 1 MB/s: 0.24 MS/s raw at
 16 bit, 0.32 MS/s at 12 bit, 0.48 MS/s at 8 bit. Decimated streams are
@@ -103,7 +103,10 @@ The board accepts VITA 49.2 packets on UDP port 4992:
   zero filled holes. TX starts with the first data packet and stops 500 ms
   after the last.
 
-The DAC backend keeps a 256k sample ring in PSRAM and interpolates each block
+Transmit needs ``CONFIG_APP_TX``, which needs PSRAM and ``librftest.a``
+(``CONFIG_ESP_SDR_TX``); without it the port serves the receiver's commands only.
+
+The DAC stream keeps a 256k sample ring in PSRAM and interpolates each block
 into one of two SRAM banks while the DAC plays the other. The DAC runs in
 loop mode, so playback is gapless and locked to real time; the bank switches
 on a precomputed cycle of the leader's CPU. Measured on air (``sdr status``):

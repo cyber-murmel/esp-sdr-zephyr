@@ -39,7 +39,7 @@ config APP_RX_HIGH_BLOCKS
 	default 5
 	help
 	  ESP_SDR_HIGH_RAM, about 38 KiB, shared with the ring's filter
-	  buffers, the transmit backend and the app's thread stacks; the rest
+	  buffers, the DAC stream and the app's thread stacks; the rest
 	  go to the DRAM image below the ring banks.
 
 rsource "../common/Kconfig"
