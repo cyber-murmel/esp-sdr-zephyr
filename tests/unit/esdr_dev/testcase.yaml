@@ -1,0 +1,11 @@
+common:
+  tags:
+    - esp-sdr
+    - osmosdr
+  platform_allow:
+    - native_sim
+    - native_sim/native/64
+tests:
+  unit.esp_sdr.esdr_dev:
+    integration_platforms:
+      - native_sim

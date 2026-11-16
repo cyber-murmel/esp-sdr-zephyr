@@ -57,9 +57,7 @@
  */
 #define ESDR_SEG_SHIFT_MAX     7U
 /* Block flags of other kinds of blocks, which a segment block never carries. */
-#define ESDR_SEG_BLK_OTHER                                                                         \
-	(ESDR_BLK_16BIT | ESDR_BLK_TEST | ESDR_BLK_BURST | ESDR_BLK_4BIT | ESDR_BLK_TRIGGER |      \
-	 ESDR_BLK_CHAN)
+#define ESDR_SEG_BLK_OTHER     (ESDR_BLK_KNOWN & ~(ESDR_BLK_SEG | ESDR_BLK_GAP | ESDR_BLK_OVERFLOW))
 
 /* Offsets stay 4-byte aligned only if both headers are whole words; a full block's pairs fit. */
 typedef char esdr_seg_check_hdrs

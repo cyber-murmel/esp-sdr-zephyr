@@ -509,16 +509,10 @@ static void parse_block(struct stream *s, const uint8_t *b)
 	}
 }
 
-/* A plausible block header (the magic alone could occur in sample data). */
+/* A plausible block header: any kind but a burst's (this tool never asks for bursts). */
 static bool header_ok(const uint8_t *b)
 {
-	struct esdr_block_hdr h;
-
-	memcpy(&h, b, sizeof(h));
-	return h.magic == ESDR_BLOCK_MAGIC &&
-	       h.samples <= ESDR_BLOCK_PAYLOAD / ((h.flags & ESDR_BLK_4BIT) != 0U ? 1U : 2U) &&
-	       (h.flags & ~(0x000fU | ESDR_BLK_4BIT | ESDR_BLK_TRIGGER | ESDR_BLK_SEG |
-			    ESDR_BLK_CHAN)) == 0U;
+	return esdr_block_hdr_ok(b, ESDR_BLK_KNOWN & ~ESDR_BLK_BURST);
 }
 
 /* Bulk data in any chunking: whole blocks out, the device's 64-byte packets as the search grid. */
