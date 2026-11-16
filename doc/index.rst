@@ -33,6 +33,7 @@ The API reference of the library is generated with Doxygen:
    apps/rfprobe
    apps/multiapp
    apps/chancap
+   apps/mch2022_coproc
 
 .. toctree::
    :maxdepth: 1
@@ -48,6 +49,7 @@ The API reference of the library is generated with Doxygen:
    testing
    multiapp
    fpga-accelerator
+   mch2022-rp2040
    zigbit-reference
    lte-calibration
 

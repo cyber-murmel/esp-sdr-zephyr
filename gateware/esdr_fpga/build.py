@@ -37,6 +37,12 @@ def debug():
 
 
 @variant
+def link():
+    from .link import LinkTop
+    return LinkTop()
+
+
+@variant
 def misotest():
     from .top import Top
     return Top(miso_test=True)

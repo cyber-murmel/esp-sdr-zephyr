@@ -105,6 +105,8 @@ static void bootsel_fn(struct k_work *work)
 {
 	ARG_UNUSED(work);
 	(void)irq_lock();
+	/* The ROM's bootloader does not feed it. */
+	watchdog_hw->ctrl &= ~WATCHDOG_CTRL_ENABLE_BITS;
 	reset_usb_boot(0, 0);
 }
 static K_WORK_DELAYABLE_DEFINE(bootsel_work, bootsel_fn);

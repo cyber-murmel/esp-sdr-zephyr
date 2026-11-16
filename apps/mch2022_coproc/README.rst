@@ -19,6 +19,8 @@ What it adds (``include/esp_sdr/mch2022_coproc.h``):
   ``apps/osmosdr_serial`` stopped at 2 Mbaud);
 - interface 6, a bulk pipe to the ESP32's UART with requests for the chip itself: counters, log,
   resets, the ROM's USB bootloader;
+- the FPGA's fast line into that pipe: with the link bitstream 15 Mbaud from the FPGA, about 700 kB/s
+  of ``apps/osmosdr_serial``'s blocks where the UART takes 300 (``doc/mch2022-rp2040.md``);
 - registers 100 to 103, by which the ESP32 can tell it from the stock firmware.
 
 Building and installing

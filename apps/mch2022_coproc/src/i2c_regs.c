@@ -206,6 +206,10 @@ static int on_stop(struct i2c_target_config *cfg)
 {
 	ARG_UNUSED(cfg);
 	atomic_set(&bus_active, 0);
+	/* CRESET at once: the ESP32 starts the bitstream 2 ms after this and the FPGA needs 1.2. */
+	if (atomic_test_bit(map.modified, REG_FPGA)) {
+		fpga_run((map.regs[REG_FPGA] & 0x01U) != 0U);
+	}
 	(void)k_work_submit(&apply_work);
 	return 0;
 }
@@ -231,7 +235,7 @@ int regs_init(void)
 	if (hwinfo_get_device_id(id, sizeof(id)) > 0) {
 		memcpy(&map.regs[REG_UID], id, sizeof(id));
 	}
-	map.regs[COPROC_REG_FEATURES] = (uint8_t)COPROC_F_LINK;
+	map.regs[COPROC_REG_FEATURES] = (uint8_t)(COPROC_F_LINK | COPROC_F_FASTLINK);
 	map.regs[REG_CRASH_DEBUG] = sysctl_crashed() ? BIT(0) : 0U;
 	/* What the PWM starts at (the stock firmware's register said 0). */
 	map.regs[REG_BACKLIGHT] = 255;

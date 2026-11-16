@@ -17,3 +17,9 @@
 &uart0 {
 	current-speed = <2000000>;
 };
+
+/*
+ * The FPGA, for the framed link's blocks when its image has the link bitstream
+ * (CONFIG_ESDR_FPGA_IMAGE, gateware/esdr_fpga/link.py). The panel stays where the board has it.
+ */
+#include "../../../dts/esdr/mch2022_gateware.dtsi"

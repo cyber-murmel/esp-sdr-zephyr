@@ -14,5 +14,6 @@ SOAPY_SDR_MODULE_UTIL(
   SOURCES SoapyEsdr.cpp
   LIBRARIES ${LIBUSB_LIBRARY})
 target_include_directories(EsdrSupport PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../src
+                                               ${CMAKE_CURRENT_SOURCE_DIR}/../../../include
                                                ${LIBUSB_INCLUDE_DIR})
 target_compile_features(EsdrSupport PRIVATE cxx_std_17)

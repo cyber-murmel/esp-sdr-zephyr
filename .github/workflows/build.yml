@@ -55,6 +55,10 @@ jobs:
             platforms: -p mch2022/esp32/procpu
             toolchains: xtensa-espressif_esp32_zephyr-elf
             twister-args: --build-only
+          - name: Build mch2022_rp2040
+            platforms: -p mch2022_rp2040/rp2040
+            toolchains: arm-zephyr-eabi
+            twister-args: --build-only
           # Unit tests: built and run on the host. The SDK installs no
           # cross toolchain for them, only its host tools. gcovr (Zephyr's
           # requirements) reads the host gcc's coverage data; paths in the
