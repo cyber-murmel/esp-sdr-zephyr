@@ -175,9 +175,13 @@ static int32_t pie_vec[24] __aligned(16) ESP_SDR_DATA(TABLE, pie_vec) = {
 #endif
 
 /*
- * The fill and the bank switch run from IRAM on input staged in internal RAM:
- * while the other core runs a flash operation the shared cache is suspended,
- * and code or data behind it (flash, PSRAM) stalls for milliseconds.
+ * The per-sample fill, the spin before a bank switch and the switch itself
+ * run from IRAM on input staged in internal RAM, off the cache. A flash
+ * operation on the other core parks this one in its stall interrupt wherever
+ * its code runs (the fillers and the player run from flash,
+ * lib/esp_sdr/place/esp32s3.h), so one can delay a block or a switch; but not
+ * with interrupts locked, as they are from 5 us before a switch to
+ * esp_sdr_dac_select().
  */
 #define HOT(cat, fn) ESP_SDR_CODE(cat, fn) __attribute__((optimize("O3")))
 
