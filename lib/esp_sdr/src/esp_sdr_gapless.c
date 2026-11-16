@@ -1721,3 +1721,14 @@ out:
 	k_mutex_unlock(&esp_sdr_lock);
 	return ret;
 }
+
+/* From the sink's callbacks too, with interrupts off: what the run's end fills in, now. */
+ESP_SDR_GAPLESS_HOT void esp_sdr_gapless_peek(struct esp_sdr_gapless_stats *stats)
+{
+	*stats = rs.st;
+	stats->baseline = baseline_q8 >> 8;
+	stats->ratio_x16 = rs.thr_q8 / 16U;
+	stats->gain = (uint32_t)rs.gain;
+	stats->cap = rs.cap;
+	stats->stage_words = rs.st_words;
+}
