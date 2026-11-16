@@ -340,6 +340,9 @@ extern bool esp_sdr_turn_retune;
 void esp_sdr_rx_prepare(void);
 /* Re-force a fixed receive gain last applied more than 20 ms ago; lock held. Returns whether it did. */
 bool esp_sdr_rx_gain_refresh(void);
+/* The same with another age, for a ring run that never transmits (the loss follows transmissions). */
+bool esp_sdr_rx_gain_refresh_after(uint32_t ms);
+#define SDR_GAIN_REFRESH_RX_ONLY_MS 1000U
 void esp_sdr_rx_resume(void);
 /*
  * Point the dump engine at the receive I/Q and give it the SRAM bank per usage;
