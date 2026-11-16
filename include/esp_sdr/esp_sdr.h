@@ -158,6 +158,20 @@ int esp_sdr_set_freq_offset(int32_t khz);
  */
 int esp_sdr_set_channel_bw(unsigned int cbw);
 
+/**
+ * @brief Return the radio's settings to those esp_sdr_init() left.
+ *
+ * The LO at the calibration channel (2412 MHz) without an offset, the 20 MHz
+ * channel bandwidth flag, the hardware AGC, the automatic analog low-pass and
+ * the default turnaround, for the next user to start from (an app that ends).
+ * Nothing that streams is stopped: stop it first.
+ *
+ * @retval 0 on success.
+ * @retval -EAGAIN if esp_sdr_init() has not run.
+ * @retval -ERANGE as for esp_sdr_set_freq().
+ */
+int esp_sdr_reset_settings(void);
+
 /** Radio housekeeping counters, for diagnosis. */
 struct esp_sdr_stats {
 	/** Transmit sessions; forced RX gain re-applied at captures, and the last one's time. */

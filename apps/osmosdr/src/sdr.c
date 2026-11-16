@@ -77,6 +77,8 @@ static struct sdr_settings want = {
 	/* Set in sdr_init() from CONFIG_APP_RX_BW_MHZ. */
 };
 static uint32_t want_gen;
+/* The settings sdr_init() made, for ESDR_REQ_RESET. */
+static struct sdr_settings want_start;
 
 /* Kconfig cannot express the gap: 1 to 12 MHz is below esp_sdr_rx_bandwidth_range(). */
 BUILD_ASSERT(CONFIG_APP_RX_BW_MHZ <= 0 || CONFIG_APP_RX_BW_MHZ >= 13,
@@ -101,7 +103,7 @@ static struct {
 	uint8_t *blk;
 	uint32_t fill, samples, max_samples;
 	uint16_t flags;
-	bool bits16;
+	bool bits16, bits4;
 	/* Digital gain as a left shift. */
 	uint32_t shl;
 	/* Expected index of the next sample, and the offset onto the stream's time axis. */
@@ -181,6 +183,10 @@ int usb_sdr_control_out(uint8_t req, uint16_t value, const uint8_t *data, size_t
 
 	key = k_spin_lock(&lock);
 	switch (req) {
+	case ESDR_REQ_RESET:
+		want = want_start;
+		changed();
+		break;
 	case ESDR_REQ_SET_MODE:
 		if (value != ESDR_MODE_OFF && value != ESDR_MODE_RX && value != ESDR_MODE_TX &&
 		    value != ESDR_MODE_TEST_IN && value != ESDR_MODE_TEST_OUT) {
@@ -240,7 +246,7 @@ int usb_sdr_control_out(uint8_t req, uint16_t value, const uint8_t *data, size_t
 		changed();
 		break;
 	case ESDR_REQ_SET_FORMAT:
-		if (value != 8U && value != 16U) {
+		if (value != 4U && value != 8U && value != 16U) {
 			ret = -EINVAL;
 			break;
 		}
@@ -532,7 +538,7 @@ static inline void block_close(void)
 {
 	struct esdr_block_hdr *h = (struct esdr_block_hdr *)snk.blk;
 
-	h->flags = snk.flags | (snk.bits16 ? ESDR_BLK_16BIT : 0U);
+	h->flags = snk.flags | (snk.bits16 ? ESDR_BLK_16BIT : 0U) | (snk.bits4 ? ESDR_BLK_4BIT : 0U);
 	h->samples = (uint16_t)snk.samples;
 	/* Zero the unused tail: the host may read the whole block. */
 	memset(snk.blk + sizeof(*h) + snk.fill, 0, ESDR_BLOCK_PAYLOAD - snk.fill);
@@ -580,6 +586,13 @@ static void put_items(const int32_t *vi, const int32_t *vq, size_t m)
 			       ((uint32_t)(uint16_t)sat((vq[k] << shl) * 2, 32767) << 16);
 		}
 		snk.fill += 4U * m;
+	} else if (snk.bits4) {
+		/* One byte a sample: I in the low nibble, Q in the high one, full scale 8. */
+		for (size_t k = 0; k < m; k++) {
+			o[k] = (uint8_t)((sat(((vi[k] << shl) + 1024) >> 11, 7) & 0xf) |
+					  (sat(((vq[k] << shl) + 1024) >> 11, 7) << 4));
+		}
+		snk.fill += m;
 	} else {
 		uint16_t *h = (uint16_t *)o;
 
@@ -903,8 +916,9 @@ static void rx_thread_fn(void *a, void *b, void *c)
 			stats.rx_restart_samples += gap;
 		}
 		snk.bits16 = s.bits == 16U;
+		snk.bits4 = s.bits == 4U;
 		snk.shl = sdr_dgain_db(&s) / 6U;
-		snk.max_samples = ESDR_BLOCK_PAYLOAD / (snk.bits16 ? 4U : 2U);
+		snk.max_samples = ESDR_BLOCK_PAYLOAD / (snk.bits16 ? 4U : snk.bits4 ? 1U : 2U);
 		cfg.decim = ESP_SDR_RING_RATE_HZ / s.rate_hz;
 		cfg.shift_fs4 = use_offset(&s);
 
@@ -977,6 +991,7 @@ int sdr_bench(unsigned int decim, bool real_sink, bool rot, struct esp_sdr_ring_
 	snk.blk = NULL;
 	snk.max_samples = ESDR_BLOCK_PAYLOAD / 4U;
 	snk.bits16 = true;
+	snk.bits4 = false;
 	usb_flush();
 	int ret = esp_sdr_ring_bench(&cfg, 8, r);
 
@@ -1008,6 +1023,7 @@ int sdr_init(void)
 					    : (CONFIG_APP_RX_BW_MHZ == 0 ? bw_max : (uint32_t)CONFIG_APP_RX_BW_MHZ) *
 						      1000000U;
 	}
+	want_start = want;
 
 	k_thread_create(&rx_thread, sdr_rx_stack, K_KERNEL_STACK_SIZEOF(sdr_rx_stack), rx_thread_fn, NULL,
 			NULL, NULL, K_PRIO_COOP(2), K_FP_REGS, K_FOREVER);

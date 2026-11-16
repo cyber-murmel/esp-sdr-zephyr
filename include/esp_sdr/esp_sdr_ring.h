@@ -33,7 +33,7 @@ extern "C" {
 #define ESP_SDR_RING_RATE_HZ 16000000U
 
 /** Decimation limits (powers of two). */
-#define ESP_SDR_RING_DECIM_MIN 64U
+#define ESP_SDR_RING_DECIM_MIN 32U
 #define ESP_SDR_RING_DECIM_MAX 1024U
 
 /** Output full scale: the raw 10-bit full scale times 32. */

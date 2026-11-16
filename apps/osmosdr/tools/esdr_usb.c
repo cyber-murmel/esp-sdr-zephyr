@@ -11,14 +11,22 @@
  *   esdr_usb [-s serial] info
  *   esdr_usb [-s serial] test-in  [-t seconds]
  *   esdr_usb [-s serial] test-out [-t seconds]
- *   esdr_usb [-s serial] rx [-f Hz] [-r rate] [-g gain|auto] [-d dB] [-b 8|16] [-B bw Hz]
+ *   esdr_usb [-s serial] rx [-f Hz] [-r rate] [-g gain|auto] [-d dB] [-b 4|8|16] [-B bw Hz]
  *                          [-p ppb] [-n] [-t seconds] [-o file]
  *
  *   esdr_usb [-s serial] tx [-f Hz] [-r rate] [-G step] [-b 8|16] [-p ppb] [-t seconds]
  *                          (-i file | -T tone Hz [-a amplitude 0..1])
  *
- * rx writes interleaved I/Q (cs8 or cs16, little endian) with the samples a
+ *   esdr_usb [-s serial] trig [-f Hz] [-g gain|auto] [-R ratio] [-P samples] [-t seconds]
+ *                            [-o file]
+ *
+ * rx writes interleaved I/Q (cs8 or cs16, little endian; 4-bit items as cs8) with the samples a
  * gap lost replaced by zeros, so the file keeps the real time axis.
+ *
+ * trig (a radio with ESDR_MODE_TRIGGER: the WHY2025 badge's C6, through apps/osmosdr_bridge)
+ * takes triggered snapshots, bursts past ratio times the quiet power with P samples after
+ * the trigger: each ESDR_TRIG_SAMPLES of cs8 at 80 MS/s, written one after another, and a
+ * line per snapshot in file.txt with its number and the samples before its trigger.
  */
 
 #include <errno.h>
@@ -235,6 +243,13 @@ struct stream {
 	/* tx source: a file (looped), or a tone. */
 	FILE *in;
 	double tone_hz, amp, phase, rate;
+	/* trig: snapshots complete and lost to a missing block; the one being assembled. */
+	bool trig;
+	FILE *idx;
+	uint64_t snaps, broken;
+	uint32_t snap_got;
+	int64_t snap_first;
+	int8_t snap[2 * ESDR_TRIG_SAMPLES];
 };
 
 /* Fill a transmit buffer from the source. */
@@ -284,6 +299,47 @@ static void tx_fill(struct stream *s, uint8_t *buf, int len)
 	}
 }
 
+/* A triggered snapshot's block (ESDR_BLK_TRIGGER): assembled, then written whole. */
+static void trig_block(struct stream *s, const struct esdr_block_hdr *h, const uint8_t *p)
+{
+	int64_t index = (int64_t)h->index;
+
+	if ((h->flags & ESDR_BLK_GAP) != 0U) {
+		if (s->snap_got != 0U) {
+			s->broken++;
+		}
+		s->snap_got = 0;
+		s->snap_first = index;
+	}
+	if (index != s->snap_first + (int64_t)s->snap_got ||
+	    s->snap_got + h->samples > ESDR_TRIG_SAMPLES) {
+		if (s->snap_got != 0U) {
+			s->broken++;
+		}
+		s->snap_got = 0;
+		s->snap_first = INT64_MIN / 2;
+		return;
+	}
+	memcpy(&s->snap[2U * s->snap_got], p, 2U * h->samples);
+	s->snap_got += h->samples;
+	s->samples += h->samples;
+	if (s->snap_got < ESDR_TRIG_SAMPLES) {
+		return;
+	}
+	s->snap_got = 0;
+	if (s->out != NULL) {
+		fwrite(s->snap, 2, ESDR_TRIG_SAMPLES, s->out);
+	}
+	if (s->idx != NULL) {
+		fprintf(s->idx, "%" PRIu64 " %" PRId64 "\n", s->snaps, -s->snap_first);
+	}
+	if (s->snaps < 3) {
+		fprintf(stderr, "snapshot %" PRIu64 ": trigger %" PRId64 " samples in\n", s->snaps,
+			-s->snap_first);
+	}
+	s->snaps++;
+}
+
 static void parse_block(struct stream *s, const uint8_t *b)
 {
 	struct esdr_block_hdr h;
@@ -291,6 +347,10 @@ static void parse_block(struct stream *s, const uint8_t *b)
 
 	memcpy(&h, b, sizeof(h));
 	s->blocks++;
+	if ((h.flags & ESDR_BLK_TRIGGER) != 0U) {
+		trig_block(s, &h, b + sizeof(h));
+		return;
+	}
 	if (s->test) {
 		if (s->have_index && h.index != s->next_index) {
 			s->gaps++;
@@ -323,7 +383,18 @@ static void parse_block(struct stream *s, const uint8_t *b)
 	s->next_index = h.index + h.samples;
 	s->have_index = true;
 	s->samples += h.samples;
-	if (s->out != NULL) {
+	if (s->out != NULL && (h.flags & ESDR_BLK_4BIT) != 0U) {
+		/* 4-bit items to cs8: each nibble sign extended, times 16. */
+		int8_t o[2 * ESDR_BLOCK_PAYLOAD];
+
+		for (unsigned int k = 0; k < h.samples; k++) {
+			uint8_t v = b[sizeof(h) + k];
+
+			o[2 * k] = (int8_t)(v << 4);
+			o[2 * k + 1] = (int8_t)(v & 0xf0);
+		}
+		fwrite(o, 2, h.samples, s->out);
+	} else if (s->out != NULL) {
 		fwrite(b + sizeof(h), item, h.samples, s->out);
 	}
 }
@@ -334,8 +405,9 @@ static bool header_ok(const uint8_t *b)
 	struct esdr_block_hdr h;
 
 	memcpy(&h, b, sizeof(h));
-	return h.magic == ESDR_BLOCK_MAGIC && h.samples <= ESDR_BLOCK_PAYLOAD / 2U &&
-	       (h.flags & ~0x000fU) == 0U;
+	return h.magic == ESDR_BLOCK_MAGIC &&
+	       h.samples <= ESDR_BLOCK_PAYLOAD / ((h.flags & ESDR_BLK_4BIT) != 0U ? 1U : 2U) &&
+	       (h.flags & ~(0x000fU | ESDR_BLK_4BIT | ESDR_BLK_TRIGGER)) == 0U;
 }
 
 /* Bulk data in any chunking: whole blocks out, the device's 64-byte packets as the search grid. */
@@ -466,7 +538,10 @@ static int run_stream(struct stream *s, bool in, double seconds, double rate)
 		if (tl - last >= 1.0) {
 			fprintf(stderr, "%6.1f s: %7.1f kB/s", tl - t0,
 				(double)(s->bytes - last_bytes) / (tl - last) / 1e3);
-			if (in && !s->test) {
+			if (s->trig) {
+				fprintf(stderr, ", %" PRIu64 " snapshots, %" PRIu64 " broken", s->snaps,
+					s->broken);
+			} else if (in && !s->test) {
 				double r = (double)(s->samples - last_samples) / (tl - last);
 
 				fprintf(stderr, ", %8.0f S/s (%.1f %%), gaps %" PRIu64 ", overflows %" PRIu64,
@@ -496,7 +571,10 @@ static int run_stream(struct stream *s, bool in, double seconds, double rate)
 	}
 	tl = now() - t0;
 	fprintf(stderr, "total %.1f s: %.1f kB/s", tl, (double)s->bytes / tl / 1e3);
-	if (in && !s->test) {
+	if (s->trig) {
+		fprintf(stderr, ", %" PRIu64 " snapshots (%.1f/s), %" PRIu64 " broken, %" PRIu64
+			" bad blocks", s->snaps, (double)s->snaps / tl, s->broken, s->bad);
+	} else if (in && !s->test) {
 		fprintf(stderr, ", %" PRIu64 " samples (%.0f S/s, %.2f %% of %.0f), %" PRIu64
 			" gaps (%" PRIu64 " samples), %" PRIu64 " overflow flags, %" PRIu64
 			" bad blocks, %" PRIu64 " resync steps",
@@ -517,9 +595,10 @@ static int run_stream(struct stream *s, bool in, double seconds, double rate)
 static void usage(void)
 {
 	fprintf(stderr, "usage: esdr_usb [-s serial] info | test-in | test-out | rx | tx\n"
-			"  [-t seconds] [-f Hz] [-r S/s] [-g gain|auto] [-d digital dB] [-b 8|16] [-B bw Hz]\n"
+			"  [-t seconds] [-f Hz] [-r S/s] [-g gain|auto] [-d digital dB] [-b 4|8|16] [-B bw Hz]\n"
 			"  [-p ppb] [-n (no offset tuning)] [-o file] [-x Hz (retune half way)]\n"
-			"  tx: [-G step] (-i file | -T tone Hz [-a amplitude])\n");
+			"  tx: [-G step] (-i file | -T tone Hz [-a amplitude])\n"
+			"  trig: [-R ratio] [-P samples after the trigger]\n");
 }
 
 int main(int argc, char **argv)
@@ -529,12 +608,13 @@ int main(int argc, char **argv)
 	uint32_t rate = 250000, bw = 13000000;
 	int gain = -1, bits = 8, ppb = 0, dgain = -1, txgain = 4, opt;
 	const char *infile = NULL;
-	double tone = 0, amp = 0.5;
+	double tone = 0, amp = 0.5, ratio = 8;
+	uint32_t post = ESDR_TRIG_SAMPLES / 2;
 	bool offset = true;
 	struct stream s = {0};
 	int ret = 0;
 
-	while ((opt = getopt(argc, argv, "s:t:f:r:g:b:B:p:no:x:d:G:i:T:a:h")) != -1) {
+	while ((opt = getopt(argc, argv, "s:t:f:r:g:b:B:p:no:x:d:G:i:T:a:R:P:h")) != -1) {
 		switch (opt) {
 		case 's':
 			serial = optarg;
@@ -583,6 +663,12 @@ int main(int argc, char **argv)
 			break;
 		case 'a':
 			amp = atof(optarg);
+			break;
+		case 'R':
+			ratio = atof(optarg);
+			break;
+		case 'P':
+			post = (uint32_t)atof(optarg);
 			break;
 		default:
 			usage();
@@ -643,6 +729,38 @@ int main(int argc, char **argv)
 		print_state();
 		if (s.out != NULL && s.out != stdout) {
 			fclose(s.out);
+		}
+	} else if (strcmp(cmd, "trig") == 0) {
+		uint8_t le[4] = {(uint8_t)post, (uint8_t)(post >> 8), (uint8_t)(post >> 16),
+				 (uint8_t)(post >> 24)};
+
+		s.trig = true;
+		if (outfile != NULL) {
+			char name[1024];
+
+			s.out = fopen(outfile, "wb");
+			snprintf(name, sizeof(name), "%s.txt", outfile);
+			s.idx = fopen(name, "w");
+			if (s.out == NULL || s.idx == NULL) {
+				perror(outfile);
+				return 1;
+			}
+		}
+		ctrl_out(ESDR_REQ_SET_MODE, ESDR_MODE_OFF, NULL, 0);
+		set_freq((uint64_t)freq);
+		ctrl_out(ESDR_REQ_SET_RX_GAIN, gain < 0 ? ESDR_GAIN_AUTO : (uint16_t)gain, NULL, 0);
+		if (ctrl_out(ESDR_REQ_SET_TRIGGER, (uint16_t)lrint(ratio * 16.0), le, 4) < 0 ||
+		    ctrl_out(ESDR_REQ_SET_MODE, ESDR_MODE_TRIGGER, NULL, 0) < 0) {
+			fprintf(stderr, "the radio has no trigger mode\n");
+			ret = 1;
+		} else {
+			run_stream(&s, true, seconds, 0);
+		}
+		ctrl_out(ESDR_REQ_SET_MODE, ESDR_MODE_OFF, NULL, 0);
+		print_state();
+		if (s.out != NULL) {
+			fclose(s.out);
+			fclose(s.idx);
 		}
 	} else if (strcmp(cmd, "tx") == 0) {
 		struct esdr_state st;
