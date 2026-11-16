@@ -14,6 +14,8 @@
 
 /* Whether the host has configured the interface (bulk transfers possible). */
 bool usb_sdr_enabled(void);
+/* Whether the link came up at high speed. */
+bool usb_sdr_high_speed(void);
 
 /*
  * Queue @p len bytes at @p data (internal RAM, stays untouched until done) on
@@ -24,8 +26,10 @@ int usb_sdr_submit_in(uint8_t *data, size_t len);
 int usb_sdr_submit_out(uint8_t *data, size_t cap);
 /* Cancel everything queued on both endpoints (completions report -ECONNABORTED). */
 void usb_sdr_cancel(void);
+/* The same for bulk IN alone. */
+void usb_sdr_cancel_in(void);
 
-/* Provided by the app. */
+/* Provided by the app. For IN, @p len is what was queued. */
 void usb_sdr_in_done(uint8_t *data, size_t len, int err);
 void usb_sdr_out_done(uint8_t *data, size_t len, int err);
 /* Interface enabled (alternate setting 0 selected) or gone. */

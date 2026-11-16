@@ -1234,7 +1234,7 @@ public:
 				startRx();
 			}
 		} catch (const std::exception &e) {
-			SoapySDR_logf(SOAPY_SDR_ERROR, "esdr: %s", e.what());
+			SoapySDR_logf(SOAPY_SDR_ERROR, "%s", e.what());
 			return SOAPY_SDR_STREAM_ERROR;
 		}
 		return 0;

@@ -1,0 +1,21 @@
+sample:
+  name: ESP-SDR osmosdr over USB high speed
+  description: >-
+    An ESP32-S31 as a USB high-speed osmosdr device, its radio on the same chip:
+    the gapless ring through the diagnostic bus, up to 20 MS/s
+common:
+  tags: esp-sdr
+  platform_allow:
+    - esp32s31_function_coreboard/esp32s31/hpcore
+    - ues31s043h800v480c_u/esp32s31/hpcore
+  integration_platforms:
+    - esp32s31_function_coreboard/esp32s31/hpcore
+tests:
+  esp_sdr.osmosdr_hs:
+    build_only: true
+  esp_sdr.osmosdr_hs.loadlog:
+    build_only: true
+    extra_args: EXTRA_CONF_FILE=loadlog.conf
+  esp_sdr.osmosdr_hs.selftest:
+    build_only: true
+    extra_args: EXTRA_CONF_FILE=selftest.conf

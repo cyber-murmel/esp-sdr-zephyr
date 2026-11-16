@@ -97,7 +97,7 @@ little endian:
        PLL's VCO after a tune (not the C5 nor the classic ESP32),
        ``ESDR_STATUS_LO_UNLOCKED`` where the last tune left it outside its window or the radio
        refused the frequency. The request that tuned does not fail for it: a tune is applied
-       as asked, after the reply; this app sends 0
+       as asked, after the reply; this app and ``apps/osmosdr_hs`` send 0
    * - ``SET_OPTIONS`` (0x0c)
      - bit 0: offset tuning (default on)
    * - ``SET_DIGITAL_GAIN`` (0x0d)
@@ -117,7 +117,7 @@ little endian:
        this app answers ``GET_CAL`` only
    * - ``GET_RATES`` (0x1c, in)
      - the receive rates in Hz, 4 bytes each, fastest first, the reply's length giving their
-       number; only where ``esdr_info.caps`` has ``ESDR_CAP_RATE_LIST``. The
+       number; only where ``esdr_info.caps`` has ``ESDR_CAP_RATE_LIST`` (osmosdr_hs). The
        ``rx_rate_max_hz >> k`` of ``GET_INFO`` are among them for hosts that know only those
 
 Receive data comes in 4096-byte blocks on bulk IN: a 16-byte header

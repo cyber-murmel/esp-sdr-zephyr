@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+mainmenu "ESP-SDR osmosdr over USB high speed"
+
+config APP_HS_SELFTEST
+	bool "Run the ring without USB and report the CPU it leaves"
+	help
+	  For a board with nothing on its USB port: the stream as it would run,
+	  every batch ready to send and dropped, at each rate, and the share of
+	  the CPU a low priority thread still gets.
+
+config APP_HS_LOAD_LOG
+	bool "Log the CPU the stream leaves, with USB running"
+	help
+	  A low priority thread counts what it gets, against what it got before
+	  USB came up, and the log has it every 10 s.
+
+source "samples/subsys/usb/common/Kconfig.sample_usbd"
+
+source "Kconfig.zephyr"

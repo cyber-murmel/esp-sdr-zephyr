@@ -1,0 +1,16 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * The VIEWE ESP32-S31 board's USB 2.0 OTG HS port, its USB-A socket. Its VBUS is driven whenever the
+ * board has power: connect it with VBUS cut. See ../README.rst. No display in this image: the ring's
+ * pads are the panel's.
+ */
+
+#include "../../common/viewe_diag16_pads.dtsi"
+
+zephyr_udc0: &usb_otg {
+	status = "okay";
+
+	/* As on the ESP32-S31-Function-CoreBoard-1: the stream is EP1 IN alone, on FIFO 1. */
+	g-tx-fifo-size = <512 16 16 16 16 16 16>;
+};

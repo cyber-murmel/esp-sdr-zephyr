@@ -1,0 +1,18 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * The ESP32-S31-Function-CoreBoard-1's USB 2.0 OTG HS port, its USB-A socket J4. Its VBUS is driven
+ * whenever the board has power: connect it with VBUS cut. See ../README.rst.
+ */
+
+zephyr_udc0: &usb_otg {
+	status = "okay";
+
+	/*
+	 * The stream is EP1 IN alone, on FIFO 1. The SoC's 128 words are one packet: IN tokens get NAKs
+	 * while it refills, which caps the link at 16.384 MB/s (4 packets per microframe). 20 MS/s
+	 * needs 40. 256 words already run gapless; this gives it all that is free (512 is the
+	 * controller's power-on limit, the total of 896 is GHWCFG3's).
+	 */
+	g-tx-fifo-size = <512 16 16 16 16 16 16>;
+};

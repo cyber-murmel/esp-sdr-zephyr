@@ -154,6 +154,20 @@ int usb_sdr_submit_out(uint8_t *data, size_t cap)
 	return submit(sdr_desc.out_ep.bEndpointAddress, data, cap, false);
 }
 
+bool usb_sdr_high_speed(void)
+{
+	return sdr_c_data != NULL &&
+	       usbd_bus_speed(usbd_class_get_ctx(sdr_c_data)) == USBD_SPEED_HS;
+}
+
+void usb_sdr_cancel_in(void)
+{
+	if (sdr_c_data == NULL) {
+		return;
+	}
+	(void)usbd_ep_dequeue(usbd_class_get_ctx(sdr_c_data), sdr_desc.in_ep.bEndpointAddress);
+}
+
 void usb_sdr_cancel(void)
 {
 	if (sdr_c_data == NULL) {
@@ -168,12 +182,14 @@ static int sdr_request(struct usbd_class_data *const c_data, struct net_buf *buf
 	struct udc_buf_info *bi = udc_get_buf_info(buf);
 	uint8_t *data = buf->__buf;
 	size_t len = buf->len;
+	/* The controller consumes an IN buffer's length as it sends: size is what was queued. */
+	size_t queued = buf->size;
 	uint8_t ep = bi->ep;
 
 	ARG_UNUSED(c_data);
 	net_buf_unref(buf);
 	if (ep == sdr_desc.in_ep.bEndpointAddress) {
-		usb_sdr_in_done(data, len, err);
+		usb_sdr_in_done(data, queued, err);
 	} else if (ep == sdr_desc.out_ep.bEndpointAddress) {
 		usb_sdr_out_done(data, len, err);
 	}

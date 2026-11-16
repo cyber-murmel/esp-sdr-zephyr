@@ -444,9 +444,10 @@ esp-phy-lib b88e4b76e090, the blob this repo fetches. The `lib/esp_sdr` code is 
   at 2437), and a look with Q on one side of zero proves nothing. Then it looks with the receiver on,
   at gains where Q crosses, in moments with nothing on the air: a Wi-Fi frame hides the wrong values.
   Over 15 LOs from 2300 to 2800 MHz that took 5 of 16 starts: 4 passed, one ended in
-  `stats.phase_bad` (`-EIO` with `cfg.phase_required`). On its own,
+  `stats.phase_bad` (`-EIO` with `cfg.phase_required`) and passed on osmosdr_hs's restart. On its own,
   as this did at first, the look on air gave up on 3 starts in 24 on a busy channel.
-- **HS USB:** the only OTG connector is the USB-A socket J4, VBUS always driven. Zephyr's DWC2 driver works, buffer DMA
+- **HS USB:** the only OTG connector is the USB-A socket J4, VBUS always driven; see
+  `apps/osmosdr_hs/README.rst` before connecting it to a PC. Zephyr's DWC2 driver works, buffer DMA
   from TCM included. The stream's IN endpoint needs more than the SoC's one packet of TX FIFO: with
   `DIEPTXF1` at 128 words every IN token during a refill gets a NAK, and the link stops at exactly
   16.384 MB/s, 4 packets a microframe. From 256 words it carries 40.157 MB/s, 20 MS/s plus block
@@ -620,7 +621,7 @@ looked at: at a pixel clock of 500 kHz the CPU can follow PCLK and compare all 3
 
   Stopping the controller for every burst, at a frame's start, and restarting it after gave back up to 3.5 dB
   of floor (0 to 3.5 between 2337 and 2687 MHz) and took 2400 and 2600 MHz down 6 to 7 dB, but the panel
-  glitched and faded in and out while it ran: not usable.
+  glitched and faded in and out while it ran: not usable. `apps/osmosdr_hs` has no panel running.
 
 ## CPU and toolchain
 

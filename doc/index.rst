@@ -27,6 +27,7 @@ The API reference of the library is generated with Doxygen:
    apps/osmosdr
    apps/osmosdr_serial
    apps/osmosdr_bridge
+   apps/osmosdr_hs
    apps/link
    apps/wpan
    apps/zstack

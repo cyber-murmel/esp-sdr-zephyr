@@ -63,6 +63,8 @@ Contents
          ESP32); on the WHY2025 badge's C6 gapless 80 MS/s receive
        - ``osmosdr_bridge``: the WHY2025 badge's P4 as a USB high-speed osmosdr device, its
          C6 running ``osmosdr_serial`` behind it
+       - ``osmosdr_hs``: the ESP32-S31 as a USB high-speed osmosdr device, its own radio up to
+         20 MS/s
        - ``mch2022_coproc``: firmware for the MCH2022 badge's RP2040, all the stock one does
          with its UARTs on DMA and a bulk link to the ESP32
        - ``link``: QAM or OFDM packet link
@@ -145,7 +147,7 @@ The library
   dump engine turned between two TCM groups at 20 MS/s
   (``esp_sdr_dumpring.h``), and
   waveform loops through its DAC engine at 80, 40 or 20 MS/s while the CPU
-  runs on (``esp_sdr_replay.h``), without the Wi-Fi driver; ``capture`` and ``rfprobe`` run on them.
+  runs on (``esp_sdr_replay.h``), without the Wi-Fi driver; ``capture``, ``rfprobe`` and ``osmosdr_hs`` run on them.
 - **Tuning:** 100 to 6000 MHz in the API, but the PLL locks over a
   chip-specific range (about 1.8 to 2.8 GHz on the S3); below 2210 MHz
   through the 5/6 divider (2.2 to 2.9 GHz on the S31, which has none).
