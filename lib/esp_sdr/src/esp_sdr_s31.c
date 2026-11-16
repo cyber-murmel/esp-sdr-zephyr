@@ -20,6 +20,7 @@
 #include <esp_private/esp_clk.h>
 #include <modem/modem_widgets_reg.h>
 
+#include <esp_sdr/esp_sdr_place.h>
 #include <esp_sdr/esp_sdr_tx.h>
 
 #if defined(CONFIG_SMP)
@@ -455,7 +456,8 @@ static ALWAYS_INLINE void group_give(unsigned int key)
  * The engine's clocks and lanes, once. Nothing here may touch ROM data, the PHY or the scheduler:
  * their memory is the engine's meanwhile.
  */
-static IRAM_ATTR __noinline void dump_setup(void)
+ESP_SDR_CODE(NOCACHE, dump_setup)
+static __noinline void dump_setup(void)
 {
 	unsigned int key = group_take();
 
@@ -480,7 +482,7 @@ static IRAM_ATTR __noinline void dump_setup(void)
 #define DIAG_LATCH_SPINS   64U
 
 /* The engine running with its bank handed back: the bus still carries its word. */
-IRAM_ATTR void esp_sdr_s31_diag_start(void)
+ESP_SDR_CODE(NOCACHE, esp_sdr_s31_diag_start) void esp_sdr_s31_diag_start(void)
 {
 	unsigned int key = group_take();
 	uint32_t ctrl;
@@ -591,7 +593,8 @@ BUILD_ASSERT(BURST_CAPACITY <= DUMP_CTRL_COUNT, "aperture past the count field")
  */
 #define HOOK_WORDS_MAX (BURST_CAPACITY - 64U)
 
-static IRAM_ATTR __noinline int dump_run(size_t words, unsigned int rate_field,
+ESP_SDR_CODE(PACED_EVENT, dump_run)
+static __noinline int dump_run(size_t words, unsigned int rate_field,
 					 uint32_t cycles_per_word, void (*hook)(void *user),
 					 void *user, uint32_t *cycles, uint32_t *end)
 {
@@ -773,12 +776,12 @@ void esp_sdr_s31_ring_stop(void)
 	ring_on = false;
 }
 
-IRAM_ATTR unsigned int esp_sdr_s31_group_take(void)
+ESP_SDR_CODE(NOCACHE, esp_sdr_s31_group_take) unsigned int esp_sdr_s31_group_take(void)
 {
 	return group_take();
 }
 
-IRAM_ATTR void esp_sdr_s31_group_give(unsigned int key)
+ESP_SDR_CODE(NOCACHE, esp_sdr_s31_group_give) void esp_sdr_s31_group_give(unsigned int key)
 {
 	group_give(key);
 }

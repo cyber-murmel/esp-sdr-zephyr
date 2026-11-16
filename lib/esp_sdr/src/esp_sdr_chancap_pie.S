@@ -66,7 +66,9 @@
  * use: the multiply-accumulates form one chain through QACC.
  */
 
-	.section .iram1.esp_sdr_chancap_pie, "ax"
+#include <esp_sdr/esp_sdr_place.h>
+
+	ESP_SDR_ASM_SECTION(PACED_SAMPLE, esp_sdr_chancap_pie)
 
 /*
  * One plane of a frame: a12 the window (advances), a10 the taps (advances), the sum
@@ -165,7 +167,7 @@ esp_sdr_chancap_energy2:
  * The channelizer thread's kernels: flash code, cached (only the sink's kernel above runs
  * on the ring's CPU, interrupts masked, from IRAM).
  */
-	.section .text.esp_sdr_chancap_pie, "ax"
+	ESP_SDR_ASM_SECTION(SAMPLE, esp_sdr_chancap_pie)
 
 /*
  * One frame of esp_sdr_chancap_post_n() (chancap_dft8_odd(), bit-exact): a3 in (advances 32),

@@ -24,6 +24,7 @@
 #include <zephyr/sys/util.h>
 
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_place.h>
 
 #include <esp_attr.h>
 
@@ -325,6 +326,7 @@ static int cmd_stop(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+ESP_SDR_CODE(COLD, cmd_status)
 static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 {
 	struct mac_cfg c;
@@ -510,8 +512,8 @@ static int cmd_set(const struct shell *sh, size_t argc, char **argv)
 }
 
 /* Internal RAM read speed: 4096 reads over 1024 words. */
-static uint32_t bench_ram[1024];
-static ESP_SDR_HIGH_RAM uint32_t bench_high[1024];
+static ESP_SDR_DATA(SCRATCH, bench_ram) uint32_t bench_ram[1024];
+static ESP_SDR_DATA_F(SCRATCH, bench_high, NOINIT) uint32_t bench_high[1024];
 
 struct noise_decode {
 	const struct esp_sdr_rx_burst *b;
@@ -524,8 +526,8 @@ struct noise_decode {
 static void noise_decode(void *arg)
 {
 	/* PSRAM: internal RAM is short with both dump banks reserved. */
-	static EXT_RAM_BSS_ATTR struct qam_rx rx;
-	static EXT_RAM_BSS_ATTR uint8_t cw[QAM_RX_CW_BYTES];
+	static ESP_SDR_DATA(BULK, rx) struct qam_rx rx;
+	static ESP_SDR_DATA(BULK, cw) uint8_t cw[QAM_RX_CW_BYTES];
 	struct noise_decode *job = arg;
 	struct qam_hdr h;
 	uint32_t t0;

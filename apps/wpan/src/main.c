@@ -303,8 +303,9 @@ static void tx_thread_fn(void *p1, void *p2, void *p3)
 }
 
 #if defined(CONFIG_ESP_SDR)
-/* Internal RAM below the dump banks is tight on the S3. */
-#define TX_STACK_ATTR ESP_SDR_HIGH_RAM
+/* Internal RAM below the dump banks is tight on the S3: the stack category's region. */
+#include <esp_sdr/esp_sdr_place.h>
+#define TX_STACK_ATTR ESP_SDR_DATA_F(STACK, tx_stack, NOINIT)
 #else
 #define TX_STACK_ATTR __kstackmem
 #endif

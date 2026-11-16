@@ -57,24 +57,25 @@
 #include <esp_sdr/esdr_fpga.h>
 #endif
 #include "esdr_proto.h"
+#include <esp_sdr/esp_sdr_place.h>
+/* Pins of this file: ESP_SDR_PIN_*_osmosdr_serial_<name> (esp_sdr_place.h, ../place.h). */
+#define ESP_SDR_PLACE_FILE osmosdr_serial
 #if defined(CONFIG_ESP_SDR_GAPLESS)
 #if !defined(CONFIG_APP_LINK_SDIO)
 #error "the gapless receiver needs the SDIO link (CONFIG_APP_LINK_SDIO)"
 #endif
 /* The sink writes blocks with interrupts off: the codec's functions in IRAM too. */
-#define ESDR_SEG_HOT ESP_SDR_GAPLESS_HOT
+#define ESDR_SEG_HOT ESP_SDR_CODE(PACED_CHUNK, esdr_seg) __attribute__((hot))
 #include "esdr_seg.h"
-/* What the gapless run calls with interrupts off lives in IRAM. */
-#define APP_HOT ESP_SDR_GAPLESS_HOT
-/*
- * The ring takes SRAM blocks 1 and 2 and the image must fit block 0: the large buffers go to
- * block 3 (not zeroed at boot: main() clears them).
- */
-#define APP_HIGH ESP_SDR_HIGH_RAM
+/* What the paced runs call with interrupts off. */
+#define APP_HOT(fn) ESP_SDR_CODE(PACED_CHUNK, fn) __attribute__((hot))
 #else
-#define APP_HOT
-#define APP_HIGH
+#define APP_HOT(fn) ESP_SDR_CODE(PACED_CHUNK, fn)
 #endif
+/*
+ * With the gapless receiver the ring takes SRAM blocks 1 and 2 and the image must fit block 0:
+ * the large buffers go to block 3 (not zeroed at boot: main() clears them).
+ */
 #if defined(CONFIG_APP_LINK_SDIO)
 #include "link_sdio.h"
 #endif
@@ -283,7 +284,7 @@ static struct {
 	uint32_t fill_n;
 	uint16_t next_flags;
 	uint64_t index;
-} out APP_HIGH;
+} out ESP_SDR_DATA_F2(STATE, out, NOINIT, DMA);
 
 #if defined(CONFIG_APP_LINK_SDIO)
 /*
@@ -291,9 +292,11 @@ static struct {
  * once the host has read its chain. Replies are copied into a bounce buffer behind them.
  */
 static uint32_t out_queued;
-static uint8_t bounce[2][ESDR_BLOCK_BYTES] __aligned(4) APP_HIGH;
+static uint8_t bounce[2][ESDR_BLOCK_BYTES] __aligned(4)
+	ESP_SDR_DATA_F2(SCRATCH, bounce, NOINIT, DMA);
 static uint32_t bounce_next;
 
+ESP_SDR_CODE(PACED_CHUNK, sdio_out)
 static void sdio_out(void)
 {
 	while (out_queued != out.committed &&
@@ -314,6 +317,7 @@ static void out_service(uint32_t max)
 	sdio_out();
 }
 
+ESP_SDR_CODE(PACED_CHUNK, out_until)
 static void out_until(uint32_t due)
 {
 	ARG_UNUSED(due);
@@ -378,7 +382,7 @@ static struct {
 	uint32_t ready_n;
 	/* A rate to go to after the reply. */
 	uint32_t baud_next;
-} fr APP_HIGH;
+} fr ESP_SDR_DATA_F(STATE, fr, NOINIT);
 
 /* Payload of a block as it stands in out.blk: its header and its samples. */
 static size_t block_bytes(const uint8_t *blk)
@@ -401,7 +405,8 @@ static const struct device *const fpga = DEVICE_DT_GET(DT_NODELABEL(fpga));
  * A block's frame leaves by DMA while the main loop goes on with the next burst, so that the
  * write's time need not add to the capture's: fast_tx is this thread's from fast_go to fast_idle.
  */
-static uint8_t fast_tx[FRAME_TX_BYTES] __aligned(4) APP_HIGH;
+static uint8_t fast_tx[FRAME_TX_BYTES] __aligned(4)
+	ESP_SDR_DATA_F2(SCRATCH, fast_tx, NOINIT, DMA);
 static uint32_t fast_len;
 static K_SEM_DEFINE(fast_go, 0, 1);
 static K_SEM_DEFINE(fast_idle, 1, 1);
@@ -563,6 +568,7 @@ static void out_service(uint32_t max)
  * Write queued bytes until @p due is near. Each byte needs room first: a
  * write to a full FIFO stalls the CPU until the host takes a packet.
  */
+ESP_SDR_CODE(PACED_CHUNK, out_until)
 static void out_until(uint32_t due)
 {
 	while (out.sent != out.committed &&
@@ -625,7 +631,8 @@ static struct {
 } req;
 
 /* One byte from the host. */
-static APP_HOT void req_feed(uint8_t b)
+APP_HOT(req_feed)
+static void req_feed(uint8_t b)
 {
 	if (req.tx_left > 0U) {
 		txr.buf[txr.head++ % TX_RING_BYTES] = b;
@@ -739,7 +746,8 @@ static void framed_frame(void)
 }
 
 /* One byte from the host, in whichever transport it speaks. */
-static APP_HOT void link_byte(uint8_t b)
+APP_HOT(link_byte)
+static void link_byte(uint8_t b)
 {
 	if (!fr.on) {
 		req_feed(b);
@@ -793,7 +801,8 @@ static void framed_baud(void)
 #endif /* CONFIG_APP_LINK_FRAMED */
 
 /* Read from the host while there is room for transmit data; at most @p max bytes. */
-static APP_HOT void in_service(uint32_t max)
+APP_HOT(in_service)
+static void in_service(uint32_t max)
 {
 	while (max-- > 0U && !req.ready && link_readable()) {
 		if (req.tx_left > 0U && txr.head - txr.tail >= TX_RING_BYTES) {
@@ -805,6 +814,7 @@ static APP_HOT void in_service(uint32_t max)
 
 #if defined(CONFIG_ESP_SDR_PACED)
 /* Read from the host until @p due is near (or nothing waits, or the transmit ring is full). */
+ESP_SDR_CODE(PACED_CHUNK, in_until)
 static void in_until(uint32_t due)
 {
 	while (!req.ready && (int32_t)(due - esp_sdr_paced_cycles()) > IO_SLACK_CYCLES &&
@@ -1119,14 +1129,16 @@ static struct {
 static uint32_t gl_rep_after;
 static bool gl_rep_busy;
 
-static APP_HOT void gl_finish(void)
+APP_HOT(gl_finish)
+static void gl_finish(void)
 {
 	(void)esdr_seg_writer_finish(&gl.w, 0U);
 	gl.filled++;
 	gl.open = false;
 }
 
-static APP_HOT uint32_t gl_reserve(const struct esp_sdr_gapless_seg *seg, int8_t **dst,
+APP_HOT(gl_reserve)
+static uint32_t gl_reserve(const struct esp_sdr_gapless_seg *seg, int8_t **dst,
 				   void *user)
 {
 	const struct esdr_seg_meta m = {
@@ -1170,7 +1182,8 @@ static APP_HOT uint32_t gl_reserve(const struct esp_sdr_gapless_seg *seg, int8_t
 	return 0U;
 }
 
-static APP_HOT void gl_commit(uint32_t pairs, void *user)
+APP_HOT(gl_commit)
+static void gl_commit(uint32_t pairs, void *user)
 {
 	ARG_UNUSED(pairs);
 	ARG_UNUSED(user);
@@ -1181,7 +1194,8 @@ static APP_HOT void gl_commit(uint32_t pairs, void *user)
  * zeroes the block's tail (the ROM's memset, a cycle a byte at worst): a part full one waits
  * for a budget that covers it.
  */
-static APP_HOT bool gl_service(uint32_t budget, void *user)
+APP_HOT(gl_service)
+static bool gl_service(uint32_t budget, void *user)
 {
 	ARG_UNUSED(user);
 	if (gl.open && gl.w.samples != 0U &&
@@ -1202,7 +1216,8 @@ static APP_HOT bool gl_service(uint32_t budget, void *user)
 }
 
 /* A run's statistics added to @p to. */
-static APP_HOT void gl_add(struct esdr_gapless_stats *to, const struct esp_sdr_gapless_stats *st,
+APP_HOT(gl_add)
+static void gl_add(struct esdr_gapless_stats *to, const struct esp_sdr_gapless_stats *st,
 			   int ret)
 {
 	to->pairs += st->pairs;
@@ -1252,7 +1267,8 @@ static void gl_account(const struct esp_sdr_gapless_stats *st, int ret)
 	stats.rx_samples += st->kept_pairs;
 }
 
-static APP_HOT bool gl_answer_stats(void)
+APP_HOT(gl_answer_stats)
+static bool gl_answer_stats(void)
 {
 	struct esp_sdr_gapless_stats cur;
 	size_t len = MIN(sys_le16_to_cpu(req.h.len), sizeof(gl_rep.st));
@@ -1282,7 +1298,8 @@ static APP_HOT bool gl_answer_stats(void)
 }
 
 /* Any request ends the run but the statistics, answered meanwhile (when not now, later). */
-static APP_HOT bool gl_stop(void *user)
+APP_HOT(gl_stop)
+static bool gl_stop(void *user)
 {
 	ARG_UNUSED(user);
 	if (req.ready && (req.h.flags & ESDR_SER_IN) != 0U &&
@@ -1293,6 +1310,7 @@ static APP_HOT bool gl_stop(void *user)
 	return req.ready;
 }
 
+ESP_SDR_CODE(PACED_CHUNK, run_gapless)
 static void run_gapless(void)
 {
 	const struct esdr_gapless_cfg *g = &want.gapless;
@@ -1654,6 +1672,7 @@ static void pacing_stats(void)
 }
 #endif
 
+ESP_SDR_CODE(PACED_CHUNK, out_commit)
 static void out_commit(void)
 {
 	struct esdr_block_hdr *h = (struct esdr_block_hdr *)out.blk[out.committed % OUT_BLOCKS];
@@ -1694,6 +1713,7 @@ static void rx_block_check(void)
 }
 
 /* One sample, int16 full scale; commits the block when it is full. */
+ESP_SDR_CODE(PACED_SAMPLE, rx_emit)
 static void rx_emit(int32_t vi, int32_t vq)
 {
 	uint8_t *blk = out.blk[out.committed % OUT_BLOCKS] + sizeof(struct esdr_block_hdr);
@@ -1742,6 +1762,7 @@ static void rx_end(void)
 static uint64_t diag_expect;
 static unsigned int diag_dgain_shift;
 
+ESP_SDR_CODE(PACED_SAMPLE, diag_iq_sink)
 static void diag_iq_sink(void *user, const int32_t *iq, size_t n, uint64_t index)
 {
 	ARG_UNUSED(user);
@@ -1811,6 +1832,7 @@ static void run_rx_diag(void)
  * inputs, times 2^(gain / 6) / 4 per input, to the nearest power of 2 (within 3 dB of the
  * one-sample path's scale).
  */
+ESP_SDR_CODE(PACED_CHUNK, run_rx_fast)
 static void run_rx_fast(void)
 {
 	static int8_t drop[2U * DROP_CHUNK] __aligned(4);
@@ -1906,6 +1928,7 @@ static void rx_during_capture(void *user)
  * last one moves the block index and flags the block. Their CIC's full scale is int16's; the
  * digital gain shifts it up.
  */
+ESP_SDR_CODE(PACED_CHUNK, run_rx)
 static void run_rx(void)
 {
 	static struct esp_sdr_iq16 iq[ESP_SDR_SAMPLES_MAX / (BURST_IN_HZ / LINK_RATE_MAX_HZ)];
@@ -1953,6 +1976,7 @@ static void run_rx(void)
 	rx_end();
 }
 #else
+ESP_SDR_CODE(PACED_CHUNK, run_rx)
 static void run_rx(void)
 {
 	uint32_t k = rx_scale();

@@ -13,6 +13,7 @@
 #include <zephyr/sys/util.h>
 
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_place.h>
 
 #include "vrt_rx.h"
 #include "vrt_tx.h"
@@ -27,8 +28,8 @@ LOG_MODULE_REGISTER(stream, LOG_LEVEL_INF);
 #define PROCESS_STACK_SIZE 3072
 
 /* Bursts live above the capture bank: frees low DRAM for the USB buffers. */
-K_MEM_SLAB_DEFINE_IN_SECT(burst_slab, Z_GENERIC_SECTION(.esp_sdr_high), sizeof(struct vrt_rx_burst),
-			  CONFIG_APP_RX_BURSTS, 4);
+K_MEM_SLAB_DEFINE_IN_SECT(burst_slab, ESP_SDR_DATA_F(STATE, burst_slab, NOINIT),
+			  sizeof(struct vrt_rx_burst), CONFIG_APP_RX_BURSTS, 4);
 K_MSGQ_DEFINE(burst_q, sizeof(struct vrt_rx_burst *), CONFIG_APP_RX_BURSTS, 4);
 
 K_THREAD_STACK_DEFINE(capture_stack, CAPTURE_STACK_SIZE);
@@ -211,6 +212,7 @@ static void process(void *p1, void *p2, void *p3)
 	}
 }
 
+ESP_SDR_CODE(COLD, main)
 int main(void)
 {
 	printk("stream %s\n", APP_VERSION_STRING);

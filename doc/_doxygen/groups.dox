@@ -44,6 +44,20 @@
  */
 
 /**
+ * @defgroup esp_sdr_place Code and data placement
+ * @ingroup esp_sdr
+ * @brief Usage categories for functions and buffers, placed in memory by rules for the SoC, the
+ * board and the app (esp_sdr_place.h, doc/code-placement.md).
+ */
+
+/**
+ * @defgroup esp_sdr_prof CPU profiler
+ * @ingroup esp_sdr
+ * @brief The other CPU's program counter, sampled while the ring runs, ESP32-S3
+ * (esp_sdr_prof.h, CONFIG_ESP_SDR_CPU_PROF).
+ */
+
+/**
  * @defgroup esp_sdr_diag Diagnostic-bus ring
  * @ingroup esp_sdr
  * @brief Gapless 40 MS/s receive through the modem diagnostic bus and PARLIO, ESP32-C5

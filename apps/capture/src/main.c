@@ -16,6 +16,7 @@
 
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_dsp.h>
+#include <esp_sdr/esp_sdr_place.h>
 
 #define SAMPLES   4096U
 #define NFFT      256U
@@ -38,7 +39,12 @@ static const struct survey_step survey[] = {
 	{.mhz = 1900, .rate = ESP_SDR_RATE_80MSPS},
 };
 
-static float re[NFFT], im[NFFT], window[NFFT], psd[NFFT], column_db[COLUMNS];
+/* The FFT's work arrays and its window, in the DRAM image (place.h). */
+static ESP_SDR_DATA(SCRATCH, re) float re[NFFT];
+static ESP_SDR_DATA(SCRATCH, im) float im[NFFT];
+static ESP_SDR_DATA(TABLE, window) float window[NFFT];
+static ESP_SDR_DATA(SCRATCH, psd) float psd[NFFT];
+static float column_db[COLUMNS];
 static float tw_cos[NFFT / 2], tw_sin[NFFT / 2];
 /* NFFT * sum(window^2): bins then sum to the mean power. */
 static float window_gain;
@@ -158,6 +164,7 @@ static int capture_step(const struct survey_step *step)
 	return 0;
 }
 
+ESP_SDR_CODE(COLD, main)
 int main(void)
 {
 	int ret;

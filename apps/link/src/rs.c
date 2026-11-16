@@ -12,11 +12,13 @@
 
 #include "rs.h"
 
+#include <esp_sdr/esp_sdr_place.h>
+
+/* Placed by category (esp_sdr_place.h), never inlined into a caller placed elsewhere. */
 #if defined(__ZEPHYR__)
-#include <esp_attr.h>
-#define RS_HOT IRAM_ATTR __attribute__((noinline))
+#define RS_HOT(cat, fn) ESP_SDR_CODE(cat, fn) __attribute__((noinline))
 #else
-#define RS_HOT
+#define RS_HOT(cat, fn)
 #endif
 
 #define A0     RS_N /* log of zero */
@@ -29,7 +31,7 @@ static uint8_t alpha_to[RS_N + 1], index_of[RS_N + 1];
 /* Generator polynomial in index form, genpoly[RS_NROOTS] = 1 (monic). */
 static uint8_t genpoly[RS_NROOTS + 1];
 /* Feedback byte times the generator taps, packed for the word-wide register. */
-static uint32_t enc_table[256][WORDS];
+static ESP_SDR_DATA(TABLE, enc_table) uint32_t enc_table[256][WORDS];
 
 static inline unsigned int modnn(unsigned int x)
 {
@@ -106,7 +108,8 @@ void rs_init(void)
 }
 
 /* Parity register over data[0..RS_K). */
-RS_HOT static void parity(const uint8_t *data, uint32_t reg[WORDS])
+RS_HOT(CHUNK, parity)
+static void parity(const uint8_t *data, uint32_t reg[WORDS])
 {
 	uint32_t r[WORDS] = {0};
 
@@ -135,7 +138,8 @@ void rs_encode(uint8_t *cw)
 	}
 }
 
-RS_HOT int rs_decode(uint8_t *cw)
+RS_HOT(CHUNK, rs_decode)
+int rs_decode(uint8_t *cw)
 {
 	uint8_t rem[RS_NROOTS], s[RS_NROOTS];
 	uint8_t lambda[RS_NROOTS + 1], b[RS_NROOTS + 1], t[RS_NROOTS + 1];

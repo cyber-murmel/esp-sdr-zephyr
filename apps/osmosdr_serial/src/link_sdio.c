@@ -26,6 +26,7 @@
 #include <zephyr/sys/util.h>
 
 #include <esp_attr.h>
+#include <esp_sdr/esp_sdr_place.h>
 #include <hal/gpio_ll.h>
 #include <hal/sdio_slave_ll.h>
 #include <soc/gpio_struct.h>
@@ -125,7 +126,8 @@ void sdio_link_init(void)
 }
 
 /* An emptied receive buffer back to the tail of the DMA's list, with its token. */
-static IRAM_ATTR void rx_recycle(uint32_t k)
+ESP_SDR_CODE(PACED_CHUNK, rx_recycle)
+static void rx_recycle(uint32_t k)
 {
 	sdio_slave_ll_desc_t *d = &rx_desc[k];
 
@@ -140,7 +142,8 @@ static IRAM_ATTR void rx_recycle(uint32_t k)
 }
 
 /* The host restarted: drop what it will not read, start the counters again. */
-static IRAM_ATTR void host_restart(void)
+ESP_SDR_CODE(PACED_CHUNK, host_restart)
+static void host_restart(void)
 {
 	sdio_slave_ll_send_stop(slc);
 	sdio_slave_ll_send_reset(slc);
@@ -162,7 +165,8 @@ static IRAM_ATTR void host_restart(void)
 	}
 }
 
-IRAM_ATTR bool sdio_link_readable(void)
+ESP_SDR_CODE(PACED_CHUNK, sdio_link_readable)
+bool sdio_link_readable(void)
 {
 	sdio_slave_ll_slvint_t slv;
 
@@ -185,12 +189,14 @@ IRAM_ATTR bool sdio_link_readable(void)
 	}
 }
 
-IRAM_ATTR uint8_t sdio_link_getc(void)
+ESP_SDR_CODE(PACED_CHUNK, sdio_link_getc)
+uint8_t sdio_link_getc(void)
 {
 	return rx_buf[rx_cur][rx_off++];
 }
 
-IRAM_ATTR bool sdio_link_queue(const uint8_t *p, size_t n, bool block)
+ESP_SDR_CODE(PACED_CHUNK, sdio_link_queue)
+bool sdio_link_queue(const uint8_t *p, size_t n, bool block)
 {
 	sdio_slave_ll_desc_t *d;
 
@@ -208,7 +214,8 @@ IRAM_ATTR bool sdio_link_queue(const uint8_t *p, size_t n, bool block)
 	return true;
 }
 
-IRAM_ATTR void sdio_link_pump(void)
+ESP_SDR_CODE(PACED_CHUNK, sdio_link_pump)
+void sdio_link_pump(void)
 {
 	if (tx.end != tx.start) {
 		if (!sdio_slave_ll_send_done(slc)) {
@@ -246,12 +253,14 @@ IRAM_ATTR void sdio_link_pump(void)
 	tx.end = stop;
 }
 
-IRAM_ATTR uint32_t sdio_link_pending(void)
+ESP_SDR_CODE(PACED_CHUNK, sdio_link_pending)
+uint32_t sdio_link_pending(void)
 {
 	return tx.head - tx.start;
 }
 
-IRAM_ATTR uint32_t sdio_link_blocks_done(void)
+ESP_SDR_CODE(PACED_CHUNK, sdio_link_blocks_done)
+uint32_t sdio_link_blocks_done(void)
 {
 	return tx.blocks_done;
 }

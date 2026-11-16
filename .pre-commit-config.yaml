@@ -39,6 +39,7 @@ repos:
         files: |
           (?x)^(
             apps/multiapp/[^/]+\.py$|
+            (apps|lib|include|tests|drivers|modules|subsys)/.+\.(c|h|S)$|
             lib/esp_sdr/src/esp_sdr_ring_stage\.c$|
             include/esp_sdr/esp_sdr_ring_stage\.h$|
             apps/osmosdr_serial/tools/esdr_serial\.py$|

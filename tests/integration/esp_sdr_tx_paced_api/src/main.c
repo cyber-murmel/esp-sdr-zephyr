@@ -16,10 +16,9 @@
 #include <zephyr/sys/util.h>
 #include <zephyr/ztest.h>
 
-#include <esp_attr.h>
-
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_paced.h>
+#include <esp_sdr/esp_sdr_place.h>
 #include <esp_sdr/esp_sdr_rx.h>
 #include <esp_sdr/esp_sdr_tx.h>
 
@@ -48,7 +47,8 @@ struct feed {
 	bool give;
 };
 
-static IRAM_ATTR bool tone_input(void *user, int16_t *i, int16_t *q)
+ESP_SDR_CODE(PACED_SAMPLE, tone_input)
+static bool tone_input(void *user, int16_t *i, int16_t *q)
 {
 	struct feed *f = user;
 	uint32_t k = f->calls++ & 15U;
@@ -62,7 +62,8 @@ static IRAM_ATTR bool tone_input(void *user, int16_t *i, int16_t *q)
 }
 
 /* The stream for @p cycles CPU cycles, everything it runs in IRAM, interrupts locked. */
-static IRAM_ATTR __noinline void run_locked(uint32_t cycles)
+ESP_SDR_CODE(PACED_CHUNK, run_locked)
+static __noinline void run_locked(uint32_t cycles)
 {
 	unsigned int key = irq_lock();
 	uint32_t c0;

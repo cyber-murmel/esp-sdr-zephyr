@@ -26,6 +26,7 @@
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_cal.h>
 #include <esp_sdr/esp_sdr_dsp.h>
+#include <esp_sdr/esp_sdr_place.h>
 #include <esp_sdr/esp_sdr_rx.h>
 #if defined(CONFIG_ESP_SDR_DIAG16)
 #include <esp_sdr/esp_sdr_diag16.h>
@@ -1113,7 +1114,8 @@ static __noinline uint32_t gap_loop_flash(volatile uint32_t *r, uint32_t dt, uin
 	return gap_loop(r, dt, hist, max);
 }
 
-static IRAM_ATTR __noinline uint32_t gap_loop_iram(volatile uint32_t *r, uint32_t dt,
+ESP_SDR_CODE(PACED_SAMPLE, gap_loop_iram)
+static __noinline uint32_t gap_loop_iram(volatile uint32_t *r, uint32_t dt,
 						   uint32_t *hist, uint32_t *max)
 {
 	return gap_loop(r, dt, hist, max);
@@ -1540,6 +1542,7 @@ static int cmd_cal_lte(const struct shell *sh, size_t argc, char **argv)
 #endif
 
 /* cal show: the correction in force, the temperature, the stored record and its points. */
+ESP_SDR_CODE(COLD, cmd_cal_show)
 static int cmd_cal_show(const struct shell *sh, size_t argc, char **argv)
 {
 	struct esp_sdr_cal_record rec;

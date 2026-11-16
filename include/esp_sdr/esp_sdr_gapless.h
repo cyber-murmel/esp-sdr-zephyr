@@ -60,13 +60,6 @@ extern "C" {
  * @{
  */
 
-/**
- * Code on the run's path (upstream's RING_HOT): in IRAM, since with interrupts off a flash
- * cache miss costs hundreds of cycles against the ring's deadlines, and optimized as hot.
- * The sink's callbacks need it too.
- */
-#define ESP_SDR_GAPLESS_HOT IRAM_ATTR __attribute__((hot))
-
 /** Samples in the ring (one lap, 205 us at 80 MS/s, 410 us at 40). */
 #define ESP_SDR_GAPLESS_RING 16384U
 /** Samples per unit: the CPU switches blocks after this many (154 us, 307 at 40 MS/s). */
@@ -143,7 +136,9 @@ struct esp_sdr_gapless_seg {
 
 /**
  * Where kept samples go. Every callback runs with interrupts off, between the ring's
- * deadlines: mark them ESP_SDR_GAPLESS_HOT, with what they call.
+ * deadlines: mark them, and what they call, as paced code (`ESP_SDR_CODE(PACED_CHUNK, fn)`,
+ * esp_sdr_place.h), which the ESP32-C6's rules place in SRAM: a flash cache miss costs hundreds
+ * of cycles against the deadlines.
  */
 struct esp_sdr_gapless_sink {
 	/**

@@ -45,11 +45,13 @@
 #endif
 
 /* Hot loops in IRAM on the target: code and literals then skip the flash cache. */
+#include <esp_sdr/esp_sdr_place.h>
+
+/* Placed by category (esp_sdr_place.h), never inlined into a caller placed elsewhere. */
 #if defined(__ZEPHYR__)
-#include <esp_attr.h>
-#define QAM_HOT IRAM_ATTR __attribute__((noinline))
+#define QAM_HOT(cat, fn) ESP_SDR_CODE(cat, fn) __attribute__((noinline))
 #else
-#define QAM_HOT
+#define QAM_HOT(cat, fn)
 #endif
 /* Least preamble metric (normalized correlation, squared) for a detection. */
 #define METRIC_MIN 0.3f
@@ -214,7 +216,7 @@ static const uint32_t crc32_nibble[16] = {
  * same followed by k zero bytes, so four bytes are four lookups (slicing by 4)
  * from an aligned word.
  */
-static uint32_t crc32_tab[4][256];
+static ESP_SDR_DATA(TABLE, crc32_tab) uint32_t crc32_tab[4][256];
 static bool crc32_ready;
 
 void qam_crc_init(void)
@@ -490,6 +492,7 @@ size_t qam_full_payload_bytes(enum qam_mod mod, enum qam_fec fec)
 }
 
 /* Map one frame's symbols to tx->sym_* from @p ks0; returns its length in samples, 0 if bad. */
+ESP_SDR_CODE(EVENT, map_frame)
 static size_t map_frame(struct qam_tx *tx, const struct qam_hdr *hdr, const uint8_t *data,
 			size_t ks0)
 {
@@ -577,7 +580,8 @@ static size_t map_frame(struct qam_tx *tx, const struct qam_hdr *hdr, const uint
 }
 
 /* Cyclic convolution with the pulse over nsym symbols: the loop is seamless. */
-QAM_HOT static void shape(struct qam_tx *tx, size_t nsym, uint32_t *out)
+QAM_HOT(SAMPLE, shape)
+static void shape(struct qam_tx *tx, size_t nsym, uint32_t *out)
 {
 	tx->clipped = 0;
 	for (size_t s = 0; s < nsym; s++) {
@@ -620,7 +624,8 @@ QAM_HOT static void shape(struct qam_tx *tx, size_t nsym, uint32_t *out)
 	}
 }
 
-QAM_HOT size_t qam_tx_build(struct qam_tx *tx, const struct qam_hdr *hdr, const uint8_t *data,
+QAM_HOT(EVENT, qam_tx_build)
+size_t qam_tx_build(struct qam_tx *tx, const struct qam_hdr *hdr, const uint8_t *data,
 			    uint32_t *out)
 {
 	size_t len = map_frame(tx, hdr, data, 0);
@@ -631,7 +636,8 @@ QAM_HOT size_t qam_tx_build(struct qam_tx *tx, const struct qam_hdr *hdr, const 
 	return len;
 }
 
-QAM_HOT size_t qam_tx_build_pair(struct qam_tx *tx, const struct qam_hdr *ha, const uint8_t *a,
+QAM_HOT(EVENT, qam_tx_build_pair)
+size_t qam_tx_build_pair(struct qam_tx *tx, const struct qam_hdr *ha, const uint8_t *a,
 				 const struct qam_hdr *hb, const uint8_t *b, uint32_t *out)
 {
 	size_t la, lb;
@@ -650,7 +656,8 @@ QAM_HOT size_t qam_tx_build_pair(struct qam_tx *tx, const struct qam_hdr *ha, co
 }
 
 
-QAM_HOT float qam_rx_power(const uint32_t *words, size_t n)
+QAM_HOT(SAMPLE, qam_rx_power)
+float qam_rx_power(const uint32_t *words, size_t n)
 {
 	float e = 0.0f, mi = 0.0f, mq = 0.0f;
 
@@ -828,7 +835,8 @@ static inline struct cf next_y(struct rxs *r)
  * subsamples, i from imin to imax. Returns the best i (or -1), its metric
  * and the correlation there.
  */
-QAM_HOT static int search(const uint32_t *w, int dci, int dcq, int imin, int imax, float *metric,
+QAM_HOT(SAMPLE, search)
+static int search(const uint32_t *w, int dci, int dcq, int imin, int imax, float *metric,
 			  float *pr_best, float *pi_best)
 {
 	const int h = SEARCH_HALF, step = SEARCH_STEP, lag = SEARCH_HALF * SEARCH_STEP;
@@ -881,7 +889,8 @@ QAM_HOT static int search(const uint32_t *w, int dci, int dcq, int imin, int ima
 }
 
 /* |sum over the first syms preamble symbols of y(t + QAM_SPS k) ph(k) conj(a_k)|^2. */
-QAM_HOT static float preamble_corr(const struct rxs *r, const struct cf *ph, int t, int syms)
+QAM_HOT(SAMPLE, preamble_corr)
+static float preamble_corr(const struct rxs *r, const struct cf *ph, int t, int syms)
 {
 	struct cf s = {0.0f, 0.0f};
 
@@ -1043,6 +1052,7 @@ static inline unsigned int slice(float v, unsigned int k, float inv_c, float c, 
 }
 
 /* Least squares equalizer over the preamble; false if it is singular. */
+ESP_SDR_CODE(EVENT, train)
 static bool train(struct qam_rx *rx, struct rxs *r, struct eq *e, struct qam_rx_info *info)
 {
 	struct cf a[UNK][UNK], v[UNK], x[UNK];
@@ -1116,7 +1126,8 @@ static bool train(struct qam_rx *rx, struct rxs *r, struct eq *e, struct qam_rx_
 }
 
 /* Demap the payload into the interleaved codeword buffer. */
-QAM_HOT static void demod_payload(struct qam_rx *rx, struct rxs *r, struct eq *e,
+QAM_HOT(SAMPLE, demod_payload)
+static void demod_payload(struct qam_rx *rx, struct rxs *r, struct eq *e,
 				  const struct qam_hdr *hdr)
 {
 	uint8_t *cw = rx->cw;
@@ -1265,6 +1276,7 @@ static void setup_avg(struct rxs *r, int want)
  * From a coarse start and offset: fine timing, the offset again, training
  * and the header. Leaves rx->job ready for the payload.
  */
+ESP_SDR_CODE(EVENT, acquire)
 static int acquire(struct qam_rx *rx, size_t n, int t_center, float f, struct qam_hdr *hdr,
 		   struct qam_rx_info *info)
 {

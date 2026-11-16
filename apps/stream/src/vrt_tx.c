@@ -18,6 +18,7 @@
 
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_tx.h>
+#include <esp_sdr/esp_sdr_place.h>
 
 #include <vrt/vrt_init.h>
 #include <vrt/vrt_read.h>
@@ -40,10 +41,10 @@ LOG_MODULE_DECLARE(stream, LOG_LEVEL_INF);
 #define TX_RATE_MAX_HZ (TX_DAC_HZ / 2)
 #define STACK_SIZE     2048
 
-static ESP_SDR_HIGH_RAM uint32_t rx_buf[RX_WORDS];
+static ESP_SDR_DATA_F(SCRATCH, rx_buf, NOINIT) uint32_t rx_buf[RX_WORDS];
 static uint32_t ack_buf[ACK_WORDS];
 /* Room for a full datagram of 8-bit items, two samples per word. */
-static ESP_SDR_HIGH_RAM struct esp_sdr_iq16 samples[2 * RX_WORDS];
+static ESP_SDR_DATA_F(SCRATCH, samples, NOINIT) struct esp_sdr_iq16 samples[2 * RX_WORDS];
 /* Item size the host sends, 8, 12 or 16 bits; set by a VITA command. */
 static unsigned int tx_bits = 16;
 static struct vrt_packet pkt, ack;
@@ -441,6 +442,7 @@ static void handle_command(const struct sockaddr *from, socklen_t from_len)
 	}
 }
 
+ESP_SDR_CODE(CHUNK, tx_loop)
 static void tx_loop(void *p1, void *p2, void *p3)
 {
 	struct sockaddr_in6 from;

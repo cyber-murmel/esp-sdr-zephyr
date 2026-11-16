@@ -153,7 +153,7 @@ The capture and DAC playback use the Wi-Fi MAC's undocumented dump engine
   the image fits block 0. Without the driver nothing sets a receive gain (the
   level stays some 20 dB low until one is forced) and its periodic receive
   glitch is gone. `lib/esp_sdr/src/esp_sdr_gapless.c` runs with interrupts
-  off; everything on its path must be in IRAM (`ESP_SDR_GAPLESS_HOT`), since a
+  off; everything on its path must be in IRAM (paced code, `esp_sdr_place.h`), since a
   flash cache miss of thousands of cycles made switches late. A unit is
   readable for about one unit only, so kept windows are copied raw into a
   staging ring at once (2.5 cycles a sample) and packed to int8 later (9 to

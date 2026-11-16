@@ -14,6 +14,7 @@
 #include <zephyr/sys/util.h>
 
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_place.h>
 
 #include <vrt/vrt_init.h>
 #include <vrt/vrt_read.h>
@@ -36,8 +37,8 @@ LOG_MODULE_DECLARE(stream, LOG_LEVEL_INF);
 #define CONTEXT_PERIOD_MS  1000
 #define SELFTEST_PACKETS   4
 
-static ESP_SDR_HIGH_RAM uint32_t packet[PACKET_WORDS];
-static ESP_SDR_HIGH_RAM uint32_t body[SAMPLES_PER_PACKET];
+static ESP_SDR_DATA_F(SCRATCH, packet, NOINIT) uint32_t packet[PACKET_WORDS];
+static ESP_SDR_DATA_F(SCRATCH, body, NOINIT) uint32_t body[SAMPLES_PER_PACKET];
 static uint8_t data_count, context_count;
 static uint32_t context_freq_mhz, context_rate_hz, context_bits;
 /* Item size of the signal data, 8, 12 or 16 bits; set by a VITA command. */
@@ -68,7 +69,7 @@ static void init_header(struct vrt_packet *p, enum vrt_packet_type type, uint8_t
 /* Decode a few packets back with libvrt to check the encoder output. */
 static void selftest(int32_t words)
 {
-	static ESP_SDR_HIGH_RAM uint32_t copy[PACKET_WORDS];
+	static ESP_SDR_DATA_F(SCRATCH, copy, NOINIT) uint32_t copy[PACKET_WORDS];
 	struct vrt_packet r;
 	int32_t rv;
 

@@ -12,11 +12,13 @@
 
 #include "bch.h"
 
+#include <esp_sdr/esp_sdr_place.h>
+
+/* Placed by category (esp_sdr_place.h), never inlined into a caller placed elsewhere. */
 #if defined(__ZEPHYR__)
-#include <esp_attr.h>
-#define BCH_HOT IRAM_ATTR __attribute__((noinline))
+#define BCH_HOT(cat, fn) ESP_SDR_CODE(cat, fn) __attribute__((noinline))
 #else
-#define BCH_HOT
+#define BCH_HOT(cat, fn)
 #endif
 
 /* Primitive polynomials of GF(2^m), m 5 to 11. */
@@ -90,6 +92,7 @@ static inline unsigned int gf_div(const struct bch_code *c, unsigned int a, unsi
 	return c->alpha_to[s >= n ? s - n : s];
 }
 
+ESP_SDR_CODE(COLD, bch_init)
 int bch_init(struct bch_code *c, unsigned int m, unsigned int t)
 {
 	unsigned int n, r, rbytes, kmax, deg = 0, x = 1;
@@ -167,7 +170,8 @@ int bch_init(struct bch_code *c, unsigned int m, unsigned int t)
 }
 
 /* The remainder of the @p k bytes' polynomial times x^r. */
-BCH_HOT static uint64_t bch_rem(const struct bch_code *c, const uint8_t *p, size_t k)
+BCH_HOT(CHUNK, bch_rem)
+static uint64_t bch_rem(const struct bch_code *c, const uint8_t *p, size_t k)
 {
 	if (c->r > 32U) {
 		uint64_t reg = 0;
@@ -207,6 +211,7 @@ void bch_encode(const struct bch_code *c, const uint8_t *data, size_t k, uint8_t
 	}
 }
 
+ESP_SDR_CODE(CHUNK, bch_decode)
 int bch_decode(const struct bch_code *c, uint8_t *data, size_t k, uint8_t *parity)
 {
 	unsigned int n = (1U << c->m) - 1U, t = c->t, r = c->r, len = 8U * (unsigned int)k + r;

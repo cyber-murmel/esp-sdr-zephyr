@@ -33,6 +33,7 @@
 
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_rx.h>
+#include <esp_sdr/esp_sdr_place.h>
 #include <esp_sdr/esp_sdr_ring.h>
 #include <esp_sdr/esp_sdr_chancap.h>
 #include <esp_sdr/esp_sdr_xtensa.h>
@@ -42,7 +43,9 @@
 
 LOG_MODULE_DECLARE(esp_sdr, CONFIG_ESP_SDR_LOG_LEVEL);
 
-#define HOT IRAM_ATTR __attribute__((optimize("O3")))
+/* Pins of this file: ESP_SDR_PIN_*_chancap_<name> (esp_sdr_place.h). */
+#define ESP_SDR_PLACE_FILE chancap
+#define HOT(cat, fn) ESP_SDR_CODE(cat, fn) __attribute__((optimize("O3")))
 
 #define FS_HZ        ESP_SDR_RING_RATE_HZ
 #define CHANNELS_MAX ESP_SDR_CHANCAP_CHANNELS_MAX
@@ -233,7 +236,7 @@ struct capbuf {
 	int16_t iq[];
 };
 
-static EXT_RAM_BSS_ATTR uint8_t slab[CONFIG_ESP_SDR_CHANCAP_SLAB_KB * 1024U] __aligned(16);
+static ESP_SDR_DATA(BULK, slab) uint8_t slab[CONFIG_ESP_SDR_CHANCAP_SLAB_KB * 1024U] __aligned(16);
 
 /* ---- sink side (CPU 1, ring loop, interrupts masked) ---- */
 
@@ -288,7 +291,8 @@ static bool ho_written(uint64_t *written)
 }
 
 /* n pairs into a ring of @p size pairs at pos, wrapping; [0, HO_MIRROR) mirrored past the end. */
-HOT static void ho_copy(const int16_t *src, int16_t *dst, uint32_t pos, uint32_t n, uint32_t size)
+HOT(PACED_SAMPLE, ho_copy)
+static void ho_copy(const int16_t *src, int16_t *dst, uint32_t pos, uint32_t n, uint32_t size)
 {
 	/* All multiples of 8 pairs: the chunks, their positions and the mirror. */
 	uint32_t first = MIN(n, size - pos);
@@ -312,7 +316,8 @@ HOT static void ho_copy(const int16_t *src, int16_t *dst, uint32_t pos, uint32_t
  * j's window starts FAST_HIST pairs before its first new pair, in the ring's history in front
  * of i and q (ESP_SDR_RING_RAW_HISTORY).
  */
-HOT static void sink_sums(const int16_t *i, const int16_t *q, uint64_t index, uint32_t n)
+HOT(PACED_SAMPLE, sink_sums)
+static void sink_sums(const int16_t *i, const int16_t *q, uint64_t index, uint32_t n)
 {
 	uint32_t f = (uint32_t)(index >> 3), left = n / 8U;
 	const int16_t *xi = i - FAST_HIST, *xq = q - FAST_HIST;
@@ -335,7 +340,8 @@ HOT static void sink_sums(const int16_t *i, const int16_t *q, uint64_t index, ui
 }
 #endif
 
-HOT static void sink(void *user, const int16_t *i, const int16_t *q, size_t n, uint64_t index)
+HOT(PACED_SAMPLE, sink)
+static void sink(void *user, const int16_t *i, const int16_t *q, size_t n, uint64_t index)
 {
 	struct bank2 *b2 = snk.b2;
 	uint32_t pos = (uint32_t)index & snk.ho_mask;
@@ -452,9 +458,11 @@ static struct {
 	uint16_t free_n;
 	struct esp_sdr_chancap_stats st;
 	uint64_t cyc, cyc_pairs;
-} rs ESP_SDR_HIGH_RAM; /* Internal RAM above the capture bank: the PSRAM copies of the captures
-			* stream through the data cache and evicted it from there. Not zeroed
-			* at boot (rs_init() does); no atomics in it. */
+/*
+ * Internal RAM above the capture bank: the PSRAM copies of the captures stream through the data
+ * cache and evicted it from there. Not zeroed at boot (rs_init() does); no atomics in it.
+ */
+} rs ESP_SDR_DATA_F(STATE, rs, NOINIT);
 
 /* The region is not zeroed at boot: the readers of rs (stats, plan) may run before a start. */
 static int rs_init(void)
@@ -468,7 +476,7 @@ SYS_INIT(rs_init, POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT);
 static struct chan *chs;
 #if defined(CONFIG_ESP_SDR_CHANCAP_SIMD)
 /* The decimator channels' kernel tables: internal RAM above the capture bank. */
-static struct ddc_kern ddck[DDC_MAX] ESP_SDR_HIGH_RAM;
+static struct ddc_kern ddck[DDC_MAX] ESP_SDR_DATA_F(TABLE, ddck, NOINIT);
 #endif
 /* The bench's split of the fast run: kernels and per-channel work, in cycles. */
 static bool prof_on;
@@ -491,9 +499,9 @@ static bool lock_ready;
 
 /* The callback queue and threads. */
 K_MSGQ_DEFINE(out_q, sizeof(struct capbuf *), CONFIG_ESP_SDR_CHANCAP_QUEUE, 4);
-ESP_SDR_HIGH_STACK_DEFINE(ring_stack, CONFIG_ESP_SDR_CHANCAP_RING_STACK_SIZE);
-ESP_SDR_HIGH_STACK_DEFINE(dsp_stack, CONFIG_ESP_SDR_CHANCAP_DSP_STACK_SIZE);
-ESP_SDR_HIGH_STACK_DEFINE(out_stack, CONFIG_ESP_SDR_CHANCAP_OUT_STACK_SIZE);
+ESP_SDR_STACK_DEFINE(ring_stack, CONFIG_ESP_SDR_CHANCAP_RING_STACK_SIZE);
+ESP_SDR_STACK_DEFINE(dsp_stack, CONFIG_ESP_SDR_CHANCAP_DSP_STACK_SIZE);
+ESP_SDR_STACK_DEFINE(out_stack, CONFIG_ESP_SDR_CHANCAP_OUT_STACK_SIZE);
 static struct k_thread ring_thread, dsp_thread, out_thread;
 
 /* ---- capture buffers ---- */
@@ -565,6 +573,7 @@ static bool is_pow2(unsigned int v)
 	return v != 0U && (v & (v - 1U)) == 0U;
 }
 
+ESP_SDR_CODE(COLD, plan)
 static int plan(const struct esp_sdr_chancap_cfg *cfg)
 {
 	unsigned int n = cfg->n_channels;
@@ -718,6 +727,7 @@ static inline uint32_t us_to_samples(uint32_t us, uint32_t rate_hz)
  * Run geometry and the sink's view, shared by a start and the bench: the bank-2 layout of the
  * engine, the lookback, the detectors' blocks, the capture length.
  */
+ESP_SDR_CODE(COLD, setup)
 static void setup(const struct esp_sdr_chancap_cfg *cfg)
 {
 	size_t words;
@@ -940,6 +950,7 @@ static inline void copy_run(int16_t *dst, const int16_t *src)
  * C paths: one run of 8 output samples of channel c, already in its lookback ring at @p iq8,
  * with their power (sum of I^2 + Q^2 over the 8, divided by 16).
  */
+ESP_SDR_CODE(SAMPLE, channel_run)
 static inline void channel_run(unsigned int c, const int16_t *iq8, uint32_t p8, bool ch_gate)
 {
 	struct chan *ch = &chs[c];
@@ -996,6 +1007,7 @@ static void run_stop(bool cut)
 
 #if defined(CONFIG_ESP_SDR_CHANCAP_SIMD)
 /* Fast path: the sub-block at @p pair is one run of 8 frames, their sums from the sink. */
+ESP_SDR_CODE(SAMPLE, run_sub_fast)
 static void run_sub_fast(uint64_t pair, bool ch_gate)
 {
 	struct bank2 *b2 = snk.b2;
@@ -1059,6 +1071,7 @@ static void run_sub_fast(uint64_t pair, bool ch_gate)
 }
 
 /* Fast path, the gate pass: the wideband power of the sub-block at @p sub from its sums. */
+ESP_SDR_CODE(SAMPLE, gate_power_fast)
 static uint32_t gate_power_fast(uint64_t sub)
 {
 	return esp_sdr_chancap_energy(&snk.b2->ho.fast.sums[(uint32_t)(sub << 3) & SUMS_MASK], 8U,
@@ -1072,6 +1085,7 @@ static uint32_t gate_power_fast(uint64_t sub)
  * of history (the previous sub-block's, or mixed from the ring after a jump), the filter's
  * outputs straight into the channel's lookback ring, the detector on every 32 samples.
  */
+ESP_SDR_CODE(SAMPLE, run_sub_ddc_fast)
 static void run_sub_ddc_fast(uint64_t pair, bool ch_gate)
 {
 	struct bank2 *b2 = snk.b2;
@@ -1136,6 +1150,7 @@ static void run_sub_ddc_fast(uint64_t pair, bool ch_gate)
 #endif
 
 /* Channelize the sub-block at pair @p pair (64 pairs). Flash code: a thread, cached. */
+ESP_SDR_CODE(SAMPLE, run_sub)
 static void run_sub(uint64_t pair, bool ch_gate)
 {
 	struct bank2 *b2 = snk.b2;
@@ -1256,6 +1271,7 @@ static void apply_thresholds(void)
  * One block: the gate pass judges the sub-blocks up to the written position; the channelizer
  * pass follows lb_subs behind and runs where the gate is open or opens within the lookback.
  */
+ESP_SDR_CODE(CHUNK, dsp_block)
 static bool dsp_block(uint64_t written)
 {
 	unsigned int g = (unsigned int)atomic_get(&gates);
@@ -1332,6 +1348,7 @@ static void dsp_resync(uint64_t written)
 	rs.open_sub = ~0ULL;
 }
 
+ESP_SDR_CODE(CHUNK, dsp_thread_fn)
 static void dsp_thread_fn(void *p1, void *p2, void *p3)
 {
 	uint64_t written = 0;
@@ -1599,8 +1616,10 @@ static void bench_cb(void *user, const struct esp_sdr_chancap *cap)
  * ESP_SDR_RING_RAW_HISTORY pairs in front of each block.
  */
 #define BENCH_H ESP_SDR_RING_RAW_HISTORY
-static int16_t bench_i[BENCH_H + BLOCK_PAIRS] __aligned(16) ESP_SDR_HIGH_RAM;
-static int16_t bench_q[BENCH_H + BLOCK_PAIRS] __aligned(16) ESP_SDR_HIGH_RAM;
+static int16_t bench_i[BENCH_H + BLOCK_PAIRS] __aligned(16)
+	ESP_SDR_DATA_F(SCRATCH, bench_i, NOINIT);
+static int16_t bench_q[BENCH_H + BLOCK_PAIRS] __aligned(16)
+	ESP_SDR_DATA_F(SCRATCH, bench_q, NOINIT);
 
 /*
  * Noise-like input through the sink: the hand-over ring (and the fast path's sums) filled.
@@ -1642,11 +1661,11 @@ static uint32_t bench_fill(uint32_t pairs)
 static void bench_check_fast(uint64_t written, struct esp_sdr_chancap_bench_result *res)
 {
 	struct bank2 *b2 = snk.b2;
-	static frame_t got[8] __aligned(16) ESP_SDR_HIGH_RAM;
-	static frame_t sums8[8] __aligned(16) ESP_SDR_HIGH_RAM;
+	static frame_t got[8] __aligned(16) ESP_SDR_DATA_F(SCRATCH, got, NOINIT);
+	static frame_t sums8[8] __aligned(16) ESP_SDR_DATA_F(SCRATCH, sums8, NOINIT);
 	uint64_t jend = written >> 3, j0 = jend - BLOCK_PAIRS / 8U;
 	/* About 2 KB: never on the caller's stack. */
-	static struct chancap_pfb ref EXT_RAM_BSS_ATTR;
+	static struct chancap_pfb ref ESP_SDR_DATA(BULK, ref);
 	ref = rs.pfb;
 	for (uint64_t j = j0; j < jend; j++) {
 		/* Frame j's window starts FAST_HIST pairs before its first new pair. */
@@ -1752,8 +1771,9 @@ static void bench_check_fast(uint64_t written, struct esp_sdr_chancap_bench_resu
 static void bench_check_ddc(uint64_t written, struct esp_sdr_chancap_bench_result *res)
 {
 	struct bank2 *b2 = snk.b2;
-	static int16_t ref_mi[DDC_BUF] ESP_SDR_HIGH_RAM, ref_mq[DDC_BUF] ESP_SDR_HIGH_RAM;
-	static int16_t out[2U * SUB_PAIRS / 4U] ESP_SDR_HIGH_RAM;
+	static int16_t ref_mi[DDC_BUF] ESP_SDR_DATA_F(SCRATCH, ref_mi, NOINIT),
+		ref_mq[DDC_BUF] ESP_SDR_DATA_F(SCRATCH, ref_mq, NOINIT);
+	static int16_t out[2U * SUB_PAIRS / 4U] ESP_SDR_DATA_F(SCRATCH, out, NOINIT);
 	const struct chancap_ddc *ddc = &rs.ddc[0];
 	struct ddc_kern *k = &ddck[0];
 	int16_t *mi = b2->dmi[0], *mq = b2->dmq[0];
@@ -1805,7 +1825,7 @@ static void bench_check_ddc(uint64_t written, struct esp_sdr_chancap_bench_resul
 static void bench_kernels(struct esp_sdr_chancap_bench_result *res)
 {
 	struct bank2 *b2 = snk.b2;
-	static frame_t out8[8] __aligned(16) ESP_SDR_HIGH_RAM;
+	static frame_t out8[8] __aligned(16) ESP_SDR_DATA_F(SCRATCH, out8, NOINIT);
 	/* The last block's 64 frames, from the bench buffer as the sink computes them. */
 	struct chancap_sums_job sj = {
 		.xi = &bench_i[BENCH_H - FAST_HIST], .xq = &bench_q[BENCH_H - FAST_HIST],
@@ -1840,6 +1860,7 @@ static void bench_kernels(struct esp_sdr_chancap_bench_result *res)
 }
 #endif
 
+ESP_SDR_CODE(COLD, esp_sdr_chancap_bench)
 int esp_sdr_chancap_bench(const struct esp_sdr_chancap_cfg *cfg, uint32_t pairs,
 			  struct esp_sdr_chancap_bench_result *res)
 {

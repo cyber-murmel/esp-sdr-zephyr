@@ -12,8 +12,10 @@
  *          (4 words each)
  */
 
+#include <esp_sdr/esp_sdr_place.h>
+
 	/* IRAM: the transmit hot path must not wait for the flash cache. */
-	.section .iram1.esp_sdr_pie, "ax"
+	ESP_SDR_ASM_SECTION(PACED_SAMPLE, esp_sdr_pie)
 	.align	4
 	.global	esp_sdr_pie_ramp
 	.type	esp_sdr_pie_ramp, @function

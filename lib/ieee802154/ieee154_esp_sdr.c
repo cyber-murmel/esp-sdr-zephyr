@@ -33,6 +33,7 @@
 #include <esp_attr.h>
 
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_place.h>
 #include <esp_sdr/esp_sdr_ring.h>
 #include <esp_sdr/ieee154_esp_sdr.h>
 #include <esp_sdr/ieee154_phy.h>
@@ -81,11 +82,12 @@ struct sdr154_high {
 #if defined(CONFIG_ESP_SDR_IEEE802154_HIGH_RAM_APP)
 static struct sdr154_high *high;
 #else
-static struct sdr154_high high_ram ESP_SDR_HIGH_RAM;
+static struct sdr154_high high_ram ESP_SDR_DATA_F(STATE, high_ram, NOINIT);
 static struct sdr154_high *const high = &high_ram;
 #endif
 
 /* Overwrites the words (ieee154_dsp_mix_decimate()): nothing reads a capture after this. */
+ESP_SDR_CODE(EVENT, mix_decimate)
 __attribute__((optimize("O3"))) static void mix_decimate(uint32_t *w, int16_t *out)
 {
 	(void)ieee154_dsp_mix_decimate(w, RX_WORDS, out, rx_qsign);
@@ -106,8 +108,9 @@ static void tmpl_init(void)
 }
 
 /* Runs in the DAC filler (interrupts locked with the vector interpolator): IRAM, tables in internal RAM. */
-static IRAM_ATTR __attribute__((optimize("O3", "no-tree-loop-distribute-patterns"))) void tx_gen(void *user, uint32_t *dst,
-							     uint64_t index, uint32_t n)
+ESP_SDR_CODE(PACED_SAMPLE, tx_gen)
+static __attribute__((optimize("O3", "no-tree-loop-distribute-patterns"))) void
+tx_gen(void *user, uint32_t *dst, uint64_t index, uint32_t n)
 {
 	ARG_UNUSED(user);
 	ieee154_dsp_tx_gen(&high->tx, dst, index, n);
@@ -267,6 +270,7 @@ static void verdict_latency(struct sdr154_data *d);
 static void ack_verdict(struct sdr154_data *d);
 #endif
 
+ESP_SDR_CODE(EVENT, on_frame)
 static void on_frame(const uint8_t *psdu, uint8_t len, int lqi, void *user)
 {
 	struct sdr154_data *d = user;
@@ -366,7 +370,8 @@ static RTC_NOINIT_ATTR struct {
 	uint32_t pc[STALL_SAMPLES], ls[STALL_SAMPLES];
 } stall;
 
-static IRAM_ATTR void stall_check(void)
+ESP_SDR_CODE(PACED_SAMPLE, stall_check)
+static void stall_check(void)
 {
 	uint32_t beat = (uint32_t)atomic_get(&phy_beat);
 
@@ -401,7 +406,8 @@ size_t ieee154_esp_sdr_get_stall(uint32_t *pc, uint32_t *ls, size_t max)
 	return n;
 }
 
-static IRAM_ATTR void ring_sink(void *user, const int16_t *i, const int16_t *q, size_t n,
+ESP_SDR_CODE(PACED_SAMPLE, ring_sink)
+static void ring_sink(void *user, const int16_t *i, const int16_t *q, size_t n,
 				uint64_t index)
 {
 	uint32_t at = (uint32_t)index;
@@ -449,6 +455,7 @@ static uint32_t blk_r, blk_pos;
  * air the PHY decided it, from the ring's live position (pair 4 k is output
  * sample k). Receive chain delays not included.
  */
+ESP_SDR_CODE(EVENT, verdict_latency)
 static void verdict_latency(struct sdr154_data *d)
 {
 	uint32_t end = blk_r + (ieee154_phy_rx_position() - blk_pos);
@@ -510,8 +517,9 @@ static struct {
 	/* The ring's pair and this CPU's cycle counter at the arm, to time the verdict. */
 	uint64_t arm_pair;
 	uint32_t arm_cyc;
-} ack ESP_SDR_HIGH_RAM;
+} ack ESP_SDR_DATA_F(STATE, ack, NOINIT);
 
+ESP_SDR_CODE(EVENT, ack_build)
 static void ack_build(uint8_t seq)
 {
 	uint8_t psdu[5] = {0x02, 0x00, seq};
@@ -521,6 +529,7 @@ static void ack_build(uint8_t seq)
 }
 
 /* Before a run: the constant part of every ACK into the burst bank. Radio held. */
+ESP_SDR_CODE(EVENT, ack_prefix)
 static void ack_prefix(void)
 {
 	size_t words;
@@ -541,6 +550,7 @@ static bool addr_is_ours(const uint8_t *p, uint8_t mode)
 }
 
 /* PHY thread, PHY lock held: is an ACK due for the frame coming in? */
+ESP_SDR_CODE(EVENT, on_header)
 static bool on_header(const uint8_t *psdu, uint8_t have, uint8_t len, uint32_t end_pos,
 		      void *user)
 {
@@ -623,6 +633,7 @@ static bool on_header(const uint8_t *psdu, uint8_t have, uint8_t len, uint32_t e
 }
 
 /* Frame callback: the armed frame passed its FCS check. */
+ESP_SDR_CODE(EVENT, ack_verdict)
 static void ack_verdict(struct sdr154_data *d)
 {
 	uint32_t pos = ieee154_phy_rx_position();
@@ -654,6 +665,7 @@ static void ack_verdict(struct sdr154_data *d)
 }
 
 /* After each PHY block: an armed frame the PHY is past without a verdict failed. */
+ESP_SDR_CODE(EVENT, ack_check)
 static void ack_check(struct sdr154_data *d, uint32_t pos)
 {
 	if (!ack.armed) {
@@ -719,6 +731,7 @@ int ieee154_esp_sdr_set_ack_timing(uint32_t delay_us, uint32_t limit_us)
 #endif /* CONFIG_ESP_SDR_IEEE802154_AUTO_ACK */
 
 /* Runs the ring while receiving and no transmission waits for the radio. */
+ESP_SDR_CODE(COLD, ring_thread_fn)
 static void ring_thread_fn(void *p1, void *p2, void *p3)
 {
 	struct sdr154_data *d = p1;
@@ -778,6 +791,7 @@ static void ring_thread_fn(void *p1, void *p2, void *p3)
 }
 
 /* Feeds the PHY from the sample ring, on the other CPU. */
+ESP_SDR_CODE(CHUNK, rx_thread_fn)
 static void rx_thread_fn(void *p1, void *p2, void *p3)
 {
 	struct sdr154_data *d = p1;
@@ -1184,6 +1198,7 @@ int ieee154_esp_sdr_set_rx_gain(int index)
 	return ret;
 }
 
+ESP_SDR_CODE(COLD, ieee154_esp_sdr_measure)
 int ieee154_esp_sdr_measure(struct ieee154_esp_sdr_measurement *m)
 {
 	struct sdr154_data *d = &sdr154;

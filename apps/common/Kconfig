@@ -89,3 +89,20 @@ config APP_LIVENESS_TIMEOUT_MS
 	  The ESP32 driver counts milliseconds as 0.5 ms ticks: 4000 resets
 	  after about 2 s without feeding.
 
+config APP_PROF_SHELL
+	bool "Shell command prof (esp_sdr_prof.h)"
+	default y
+	depends on SHELL && ESP_SDR_CPU_PROF
+	select THREAD_MONITOR
+	help
+	  "prof start [period_us] | stop | dump": the ring's profile of the
+	  other CPU (CONFIG_ESP_SDR_CPU_PROF). The dump prints the samples in
+	  the layout of Zephyr's "perf printbuf", each under its thread's
+	  entry function (THREAD_MONITOR), with a table of the threads before
+	  them: scripts/place/prof_map.py, scripts/place/hot_text.py and
+	  Zephyr's scripts/profiling/stackcollapse.py read it.
+
+# A dump of 131072 samples is 7 MB: over CDC-ACM it took 46 s through the shell's default 8 byte
+# transmit buffer, 11 s through 1 KB.
+configdefault SHELL_BACKEND_SERIAL_TX_RING_BUFFER_SIZE
+	default 1024 if APP_PROF_SHELL

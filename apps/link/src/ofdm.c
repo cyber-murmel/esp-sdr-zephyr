@@ -20,12 +20,14 @@
 
 #include "ofdm.h"
 
+#include <esp_sdr/esp_sdr_place.h>
+
+/* Placed by category (esp_sdr_place.h), never inlined into a caller placed elsewhere. */
 #if defined(__ZEPHYR__)
-#include <esp_attr.h>
 #include <zephyr/kernel.h>
-#define OFDM_HOT IRAM_ATTR __attribute__((noinline))
+#define OFDM_HOT(cat, fn) ESP_SDR_CODE(cat, fn) __attribute__((noinline))
 #else
-#define OFDM_HOT
+#define OFDM_HOT(cat, fn)
 #endif
 
 /* Input scale of the 16-bit receive FFT (ofdm_init(), take_slot()). */
@@ -290,7 +292,8 @@ static inline void fft(const struct ofdm_ctx *ctx, struct ofdm_cf *buf, unsigned
 	(void)dsps_fft2r_fc32_aes3_((float *)buf, (int)n, (float *)ctx->w);
 }
 #else
-OFDM_HOT static void fft(const struct ofdm_ctx *ctx, struct ofdm_cf *buf, unsigned int n)
+OFDM_HOT(SAMPLE, fft)
+static void fft(const struct ofdm_ctx *ctx, struct ofdm_cf *buf, unsigned int n)
 {
 	float *d = (float *)buf;
 	const float *w = ctx->w;
@@ -325,7 +328,8 @@ void ofdm_test_fft(struct ofdm_ctx *ctx)
  * the conjugate, conjugated again here (Q negated); the samples are read
  * through the bit reversal. Cyclic prefix first, scaled and clipped.
  */
-OFDM_HOT static void emit(const struct ofdm_ctx *ctx, struct ofdm_txbuf *tb, float g,
+OFDM_HOT(SAMPLE, emit)
+static void emit(const struct ofdm_ctx *ctx, struct ofdm_txbuf *tb, float g,
 			  uint32_t *out)
 {
 	unsigned int n = ctx->nfft;
@@ -403,6 +407,7 @@ static inline __attribute__((always_inline)) uint32_t emit_run(const uint32_t *_
  * shift (the shift a constant: no shift register set per sample) and from flash (internal
  * RAM is short; the loop stays in the cache).
  */
+ESP_SDR_CODE(SAMPLE, emit16)
 static __attribute__((noinline)) uint32_t emit16(const struct ofdm_ctx *ctx, const int16_t *q,
 						 unsigned int shift, uint32_t *out)
 {
@@ -457,6 +462,7 @@ static void tx_lut(const struct txjob *j, uint32_t lut[64])
 	}
 }
 
+ESP_SDR_CODE(CHUNK, tx_slot16)
 static __attribute__((noinline)) uint32_t tx_slot16(const struct txjob *j, const uint32_t *lut,
 						    int16_t *q, unsigned int s)
 {
@@ -655,6 +661,7 @@ void ofdm_tx_help(struct ofdm_txbuf *tb, bool (*keep_going)(void *), void *arg)
 }
 #endif
 
+ESP_SDR_CODE(EVENT, ofdm_tx_build)
 size_t ofdm_tx_build(const struct ofdm_ctx *ctx, struct ofdm_txbuf *tb, enum ofdm_mod mod,
 		     const uint8_t *hdr, const uint8_t *bits, uint32_t *out)
 {
@@ -731,6 +738,7 @@ size_t ofdm_tx_build(const struct ofdm_ctx *ctx, struct ofdm_txbuf *tb, enum ofd
  * edge (later ones cut into the next symbol), from a ring of the last cp + 1
  * metrics.
  */
+ESP_SDR_CODE(SAMPLE, sc_scan)
 static __attribute__((noinline)) void sc_scan(struct ofdm_ctx *ctx, const uint32_t *w, int t0,
 					      int t1, int st, int dci, int dcq, struct sc_best *b)
 {
@@ -807,7 +815,8 @@ static __attribute__((noinline)) void sc_scan(struct ofdm_ctx *ctx, const uint32
  * Ra Rb >= min(Ra, Rb)^2, so a step whose |pr| + |pi| stays below sqrt(best) min(Ra, Rb) cannot
  * beat the best. Rounded so that it never skips one that could: the same peak as sc_scan().
  */
-OFDM_HOT static void sc_scan_coarse(struct ofdm_ctx *ctx, const uint32_t *w, int t0, int t1,
+OFDM_HOT(SAMPLE, sc_scan_coarse)
+static void sc_scan_coarse(struct ofdm_ctx *ctx, const uint32_t *w, int t0, int t1,
 				    int st, int dci, int dcq, struct sc_best *b)
 {
 	int L = (int)ctx->rnfft / 2;
@@ -1050,7 +1059,8 @@ static void derot16(const struct ofdm_ctx *ctx, int16_t *q, const uint32_t *x, u
  * against the first pilot's, slot s comes out turned by exp(+j tau eps rslot
  * (s - 1)), which u = exp(-j tau eps rslot (s - 1)) undoes.
  */
-OFDM_HOT static void take_slot(const struct ofdm_ctx *ctx, struct ofdm_worker *wk,
+OFDM_HOT(CHUNK, take_slot)
+static void take_slot(const struct ofdm_ctx *ctx, struct ofdm_worker *wk,
 			       const uint32_t *w, unsigned int s, bool fast)
 {
 	int pos = ctx->rx.start + (int)(s * ctx->rslot) + (int)ctx->rcp - (int)(ctx->rcp / 4U);
@@ -1273,7 +1283,8 @@ static inline __attribute__((always_inline)) struct ofdm_cf track(const struct o
 	return r;
 }
 
-OFDM_HOT static struct ofdm_cf track_any(const struct ofdm_ctx *ctx, struct ofdm_worker *wk,
+OFDM_HOT(CHUNK, track_any)
+static struct ofdm_cf track_any(const struct ofdm_ctx *ctx, struct ofdm_worker *wk,
 					 enum ofdm_mod mod)
 {
 	return track(ctx, wk, mod);
@@ -1517,6 +1528,7 @@ static inline __attribute__((always_inline)) void data_symbol_v(const struct ofd
  * fold, for the two that carry the data (from flash: internal RAM is short,
  * and a loop this tight runs from the cache); the others run the generic one.
  */
+ESP_SDR_CODE(CHUNK, data_symbol_16)
 static __attribute__((noinline)) void data_symbol_16(const struct ofdm_ctx *ctx,
 						     struct ofdm_worker *wk, struct bitsink *k,
 						     float *err)
@@ -1530,6 +1542,7 @@ static __attribute__((noinline)) void data_symbol_16(const struct ofdm_ctx *ctx,
 	data_symbol_m(ctx, wk, OFDM_16QAM, k, err);
 }
 
+ESP_SDR_CODE(CHUNK, data_symbol_64)
 static __attribute__((noinline)) void data_symbol_64(const struct ofdm_ctx *ctx,
 						     struct ofdm_worker *wk, struct bitsink *k,
 						     float *err)
@@ -1543,7 +1556,8 @@ static __attribute__((noinline)) void data_symbol_64(const struct ofdm_ctx *ctx,
 	data_symbol_m(ctx, wk, OFDM_64QAM, k, err);
 }
 
-OFDM_HOT static void data_symbol_any(const struct ofdm_ctx *ctx, struct ofdm_worker *wk,
+OFDM_HOT(CHUNK, data_symbol_any)
+static void data_symbol_any(const struct ofdm_ctx *ctx, struct ofdm_worker *wk,
 				     enum ofdm_mod mod, struct bitsink *k, float *err)
 {
 	data_symbol_m(ctx, wk, mod, k, err);
@@ -1701,6 +1715,7 @@ static bool chan_avg(struct ofdm_ctx *ctx, struct ofdm_cf *h)
  * (3 taps 1 2 1, after taking out the phase slope between subcarriers that a
  * timing offset puts there); then conj(H) / |H|^2.
  */
+ESP_SDR_CODE(EVENT, channel)
 static void channel(struct ofdm_ctx *ctx, const uint32_t *w)
 {
 	unsigned int c = ctx->cfg.channels, np = ctx->cfg.pilots;
@@ -1839,6 +1854,7 @@ int ofdm_rx_begin(struct ofdm_ctx *ctx, const uint32_t *words, size_t n, uint8_t
 	return ofdm_rx_begin_period(ctx, words, n, ctx->rlen, hdr, info);
 }
 
+ESP_SDR_CODE(EVENT, ofdm_rx_begin_period)
 int ofdm_rx_begin_period(struct ofdm_ctx *ctx, const uint32_t *words, size_t n, size_t period,
 			 uint8_t *hdr, struct ofdm_rx_info *info)
 {

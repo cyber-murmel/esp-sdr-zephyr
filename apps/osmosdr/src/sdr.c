@@ -30,6 +30,7 @@
 #include <esp_sdr/esp_sdr_dsp.h>
 #include <esp_sdr/esp_sdr_ring.h>
 #include <esp_sdr/esp_sdr_tx.h>
+#include <esp_sdr/esp_sdr_place.h>
 
 #include "esdr_cal.h"
 #include "esdr_dev.h"
@@ -48,7 +49,10 @@ LOG_MODULE_REGISTER(sdr, LOG_LEVEL_INF);
 /* Internal RAM for the USB DMA: what fits above the capture bank, the rest in DRAM. */
 #define BLOCKS      CONFIG_APP_RX_BLOCKS
 #define HIGH_BLOCKS MIN(BLOCKS, CONFIG_APP_RX_HIGH_BLOCKS)
-ESP_SDR_HIGH_BUF_DEFINE(uint8_t, blocks_high, [HIGH_BLOCKS][ESDR_BLOCK_BYTES], 16);
+/* Pins of this file: ESP_SDR_PIN_*_osmosdr_<name> (esp_sdr_place.h, ../place.h). */
+#define ESP_SDR_PLACE_FILE osmosdr
+
+ESP_SDR_BUF_DEFINE(STATE, uint8_t, blocks_high, [HIGH_BLOCKS][ESDR_BLOCK_BYTES], 16, NOINIT);
 #if BLOCKS > HIGH_BLOCKS
 static uint8_t blocks_low[BLOCKS - HIGH_BLOCKS][ESDR_BLOCK_BYTES] __aligned(16);
 #endif
@@ -135,7 +139,7 @@ static struct {
 	uint32_t carry_len;
 } txs;
 /* Converted samples on their way to the DAC stream. */
-static struct esp_sdr_iq16 tx_conv[256] ESP_SDR_HIGH_RAM;
+static struct esp_sdr_iq16 tx_conv[256] ESP_SDR_DATA_F(SCRATCH, tx_conv, NOINIT);
 
 static void snapshot(struct sdr_settings *s, uint32_t *gen)
 {
@@ -527,6 +531,7 @@ void usb_sdr_link(bool up)
 
 /* ---- receive sink (CPU 1, interrupts masked between the ring's windows) ---- */
 
+ESP_SDR_CODE(PACED_CHUNK, block_close)
 static inline void block_close(void)
 {
 	struct esdr_block_hdr *h = (struct esdr_block_hdr *)snk.blk;
@@ -543,6 +548,7 @@ static inline void block_close(void)
 	k_sem_give(&usb_wake);
 }
 
+ESP_SDR_CODE(PACED_CHUNK, block_open)
 static inline bool block_open(uint64_t index)
 {
 	struct esdr_block_hdr *h;
@@ -565,6 +571,7 @@ static inline int32_t sat(int32_t v, int32_t lim)
 }
 
 /* Items of m samples at the block's fill position: 4-byte aligned, little endian. */
+ESP_SDR_CODE(PACED_SAMPLE, put_items)
 static void put_items(const int32_t *vi, const int32_t *vq, size_t m)
 {
 	uint8_t *o = snk.blk + sizeof(struct esdr_block_hdr) + snk.fill;
@@ -600,6 +607,7 @@ static void put_items(const int32_t *vi, const int32_t *vq, size_t m)
 
 #define SINK_RUN 32
 
+ESP_SDR_CODE(PACED_SAMPLE, sink_pack)
 static void sink_pack(const int16_t *i, const int16_t *q, size_t m)
 {
 	int32_t vi[SINK_RUN], vq[SINK_RUN];
@@ -619,6 +627,7 @@ static void sink_pack(const int16_t *i, const int16_t *q, size_t m)
 }
 
 /* With the fine tuning rotation. */
+ESP_SDR_CODE(PACED_SAMPLE, sink_nco)
 static void sink_nco(const int16_t *i, const int16_t *q, size_t m)
 {
 	int32_t vi[SINK_RUN], vq[SINK_RUN];
@@ -654,6 +663,7 @@ static void sink_nco(const int16_t *i, const int16_t *q, size_t m)
 /* The settings generation the running ring was started for. */
 static uint32_t run_gen;
 
+ESP_SDR_CODE(PACED_SAMPLE, sink)
 static void sink(void *user, const int16_t *i, const int16_t *q, size_t n,
 			  uint64_t index)
 {
@@ -850,6 +860,7 @@ static void tx_session(const struct sdr_settings *s, uint32_t gen)
 	stats.tx_restarts = ds.restarts;
 }
 
+ESP_SDR_CODE(CHUNK, rx_thread_fn)
 static void rx_thread_fn(void *a, void *b, void *c)
 {
 	struct esp_sdr_ring_stats rst;
@@ -946,8 +957,8 @@ static void rx_thread_fn(void *a, void *b, void *c)
  * Stacks above the capture bank: the DRAM image must end below the ring banks.
  * Receive peak: 1808 bytes, 1920 in multiapp.
  */
-ESP_SDR_HIGH_STACK_DEFINE(sdr_rx_stack, 2560);
-ESP_SDR_HIGH_STACK_DEFINE(sdr_usb_stack, 1024);
+ESP_SDR_STACK_DEFINE(sdr_rx_stack, 2560);
+ESP_SDR_STACK_DEFINE(sdr_usb_stack, 1024);
 static struct k_thread rx_thread, usb_thread;
 
 unsigned int sdr_dgain_db(const struct sdr_settings *s)

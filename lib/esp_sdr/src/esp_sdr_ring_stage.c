@@ -13,11 +13,11 @@
 #include <stddef.h>
 #include <string.h>
 
+#include <esp_sdr/esp_sdr_place.h>
 #include <esp_sdr/esp_sdr_ring_stage.h>
 
 #ifdef ESP_SDR_STAGE_HOST
 /* tests/host/test_ring_stage.py: the stage in the test's buffer, built with the host compiler. */
-#define IRAM_ATTR
 #define ALWAYS_INLINE                 inline __attribute__((always_inline))
 #define ARG_UNUSED(x)                 (void)(x)
 #define MIN(a, b)                     ((a) < (b) ? (a) : (b))
@@ -173,7 +173,8 @@ static ALWAYS_INLINE void put(struct stage *st, const int16_t *i, const int16_t 
 /* Words a put writes at most (the S31's decimator: GL_OUT): a reader closer to a lap stops. */
 #define PUT_MAX 128U
 
-IRAM_ATTR void esp_sdr_stage_sink(void *user, const int16_t *i, const int16_t *q, size_t n,
+ESP_SDR_CODE(PACED_SAMPLE, esp_sdr_stage_sink)
+void esp_sdr_stage_sink(void *user, const int16_t *i, const int16_t *q, size_t n,
 				  uint64_t index)
 {
 	struct stage *st = STAGE;
@@ -221,7 +222,8 @@ IRAM_ATTR void esp_sdr_stage_sink(void *user, const int16_t *i, const int16_t *q
 	}
 }
 
-IRAM_ATTR void esp_sdr_stage_put(const int16_t *iq, size_t n, uint64_t index)
+ESP_SDR_CODE(PACED_SAMPLE, esp_sdr_stage_put)
+void esp_sdr_stage_put(const int16_t *iq, size_t n, uint64_t index)
 {
 	put(STAGE, NULL, iq, (uint32_t)n, index);
 }

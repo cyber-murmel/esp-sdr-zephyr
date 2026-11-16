@@ -26,6 +26,7 @@
 #include <zephyr/sys/util.h>
 
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_place.h>
 
 #include <esp_attr.h>
 
@@ -85,29 +86,30 @@ BUILD_ASSERT(CONFIG_APP_RX_BW_MHZ <= 0 || CONFIG_APP_RX_BW_MHZ >= 13,
 	     "CONFIG_APP_RX_BW_MHZ: -1, 0 or 13 to 69");
 
 /* Pulse tables and frame buffers: above the capture bank, outside the libc heap. */
-static ESP_SDR_HIGH_RAM struct qam_tx qam_tx_ctx;
+static ESP_SDR_DATA_F(STATE, qam_tx_ctx, NOINIT) struct qam_tx qam_tx_ctx;
 /* ACKs are built while the data context may be busy; they are short, PSRAM will do. */
-static EXT_RAM_BSS_ATTR struct qam_tx ack_tx_ctx;
+static ESP_SDR_DATA(BULK, ack_tx_ctx) struct qam_tx ack_tx_ctx;
 /* Two decoders (a pair decodes on both CPUs): state here, codewords in PSRAM. */
-static struct qam_rx qam_rx_ctx, qam_rx2_ctx;
-static EXT_RAM_BSS_ATTR uint8_t rx_cw[2][QAM_RX_CW_BYTES];
+static ESP_SDR_DATA(STATE, qam_rx_ctx) struct qam_rx qam_rx_ctx;
+static ESP_SDR_DATA(STATE, qam_rx2_ctx) struct qam_rx qam_rx2_ctx;
+static ESP_SDR_DATA(BULK, rx_cw) uint8_t rx_cw[2][QAM_RX_CW_BYTES];
 /* Test data, only copied into the codewords: PSRAM is fast enough. */
 /* User data of the frames being built: a QAM pair, or one OFDM frame. */
 #define PAYLOAD_MAX                                                                                \
 	(QAM_NCW_MAX * QAM_UNIT > OFDM_FRAME_CAP_MAX ? QAM_NCW_MAX * QAM_UNIT : OFDM_FRAME_CAP_MAX)
-static EXT_RAM_BSS_ATTR uint8_t payload[WIN_MAX][PAYLOAD_MAX];
+static ESP_SDR_DATA(BULK, payload) uint8_t payload[WIN_MAX][PAYLOAD_MAX];
 /*
  * OFDM frames: transmit buffers for the builder, receive ones for the MAC
  * thread. The FFT buffer in internal RAM (in PSRAM a build took 20 ms), the
  * byte work in PSRAM.
  */
-static struct ofdm_txbuf ofdm_tb __aligned(16);
-static EXT_RAM_BSS_ATTR struct ofdm_fwork ofdm_txw, ofdm_rxw;
-static EXT_RAM_BSS_ATTR uint8_t ofdm_rx_data[OFDM_FRAME_CAP_MAX];
+static struct ofdm_txbuf ofdm_tb __aligned(16) ESP_SDR_DATA(STATE, ofdm_tb);
+static ESP_SDR_DATA(BULK, ofdm_txw) struct ofdm_fwork ofdm_txw, ofdm_rxw;
+static ESP_SDR_DATA(BULK, ofdm_rx_data) uint8_t ofdm_rx_data[OFDM_FRAME_CAP_MAX];
 /* OFDM ACKs, built by the MAC thread (the builder may be using ofdm_tb meanwhile). */
-static struct ofdm_txbuf ofdm_ack_tb __aligned(16);
+static struct ofdm_txbuf ofdm_ack_tb __aligned(16) ESP_SDR_DATA(STATE, ofdm_ack_tb);
 /* The second half of an OFDM payload is demodulated on the other CPU with this worker. */
-static struct ofdm_worker ofdm_wk2 __aligned(16);
+static struct ofdm_worker ofdm_wk2 __aligned(16) ESP_SDR_DATA(STATE, ofdm_wk2);
 
 static struct mac_stats stats;
 static struct k_spinlock stats_lock;
@@ -168,7 +170,7 @@ static struct {
  */
 #define SEQ_WINDOW 64
 
-static EXT_RAM_BSS_ATTR struct {
+static ESP_SDR_DATA(BULK, srcs) struct {
 	bool seen;
 	uint16_t max_seq;
 	uint64_t got;
@@ -1199,6 +1201,7 @@ static void stream_run(void)
 	}
 }
 
+ESP_SDR_CODE(EVENT, mac_loop)
 static void mac_loop(void *p1, void *p2, void *p3)
 {
 	int ret;

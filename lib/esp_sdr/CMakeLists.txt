@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+# The placement rules of include/esp_sdr/esp_sdr_place.h.
+include(${CMAKE_CURRENT_LIST_DIR}/place.cmake)
+
 if(NOT CONFIG_ESP_SDR_AS_EXTENSION)
   include(${CMAKE_CURRENT_LIST_DIR}/sources.cmake)
   zephyr_library()

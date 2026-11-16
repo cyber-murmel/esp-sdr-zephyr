@@ -260,6 +260,56 @@ config ESP_SDR_RING_FIR
 	  1 KiB of IRAM, which on the S3 comes out of the same SRAM as the
 	  DRAM image.
 
+config ESP_SDR_CPU_PROF
+	bool "Profile of the other CPU, sampled by the ring (ESP32-S3)"
+	depends on ESP_SDR_RING && SMP && ESP_SPIRAM && !ESP_SDR_AS_EXTENSION
+	help
+	  esp_sdr_prof.h: while esp_sdr_ring_run() runs, its CPU records the
+	  other CPU's program counter (the debug assist's PC recorder), its
+	  current thread and interrupt state once a period, into PSRAM, 12
+	  bytes a sample. The sampled CPU takes no interrupt for it, and the
+	  code that masks interrupts is sampled as well; there are no stacks,
+	  and no samples while the ring is stopped. For those, Zephyr's perf
+	  (PROFILING_PERF) samples stacks in a timer interrupt; its record
+	  command's CPU mask can leave the ring's CPU out. Some 120 bytes of
+	  IRAM; the ring checks the period in its poll loop and before every
+	  sink call. The "prof" shell command of apps/common
+	  (CONFIG_APP_PROF_SHELL) drives it; scripts/place/prof_map.py and
+	  hot_text.py read its dumps.
+
+config ESP_SDR_CPU_PROF_SAMPLES
+	int "Profiler samples"
+	depends on ESP_SDR_CPU_PROF
+	range 1024 1048576
+	default 131072
+	help
+	  The buffer in samples of 12 bytes, in PSRAM: at a 64 us period the
+	  default holds 8.4 s. apps/common's "prof dump" prints 54 bytes a
+	  sample: 7 MB for the default, 11 s over CDC-ACM.
+
+config ESP_SDR_HOT_TEXT
+	bool "Hot flash code as one block at a fixed instruction cache position"
+	depends on SOC_SERIES_ESP32S3
+	help
+	  The app's hottest flash functions (its list, esp_sdr_hot_text() in
+	  lib/esp_sdr/place.cmake, which scripts/place/hot_text.py writes from
+	  profiles) and the code its rules place in ESP_SDR_HOTBLOCK
+	  (esp_sdr_place.h) as one block of flash text aligned to the
+	  instruction cache's way: its lines keep their cache sets whatever
+	  code comes before or after it (doc/code-placement.md). Needs the
+	  TEXT_SECTIONS hook of the ESP32-S3 linker script (Zephyr commit
+	  "soc: espressif: let applications place code in esp32s3 flash
+	  text"); the build stops without it.
+
+config ESP_SDR_HOT_TEXT_BUDGET
+	int "Hot block size limit in bytes, text and literals"
+	depends on ESP_SDR_HOT_TEXT
+	default 12288
+	help
+	  The link stops when the block is larger, and hot_text.py fills its
+	  list up to it. At 12 KB of a 16 KB cache of 8 ways the block takes
+	  6 ways of each set and leaves 2 to the rest of the flash code.
+
 config ESP_SDR_CHANCAP
 	bool "Channelized burst capture"
 	depends on ESP_SDR_RING && ESP_SPIRAM && SMP && SCHED_CPU_MASK

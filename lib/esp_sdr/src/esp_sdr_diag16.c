@@ -33,6 +33,7 @@
 #include <soc/gpio_sig_map.h>
 #include <soc/interrupts.h>
 
+#include <esp_sdr/esp_sdr_place.h>
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_diag16.h>
 
@@ -137,7 +138,8 @@ bool esp_sdr_diag16_node_valid(uint64_t index)
 	return esp_sdr_diag16_produced() - index < (NODES - 1U) * ESP_SDR_DIAG16_PAYLOAD;
 }
 
-static IRAM_ATTR void ring_isr(void *arg)
+ESP_SDR_CODE(PACED_CHUNK, ring_isr)
+static void ring_isr(void *arg)
 {
 	axi_dma_dev_t *dma = AXI_DMA_LL_GET_HW(0);
 	uint32_t status = axi_dma_ll_rx_get_interrupt_status(dma, DMA_CH, false);

@@ -3,6 +3,7 @@
  */
 
 #include <zephyr/sys/util.h>
+#include <esp_sdr/esp_sdr_place.h>
 
 #include "iq_pack.h"
 
@@ -24,6 +25,7 @@ static inline uint32_t item(int32_t x, int32_t shift, int32_t lim, uint32_t mask
 	return (uint32_t)CLAMP(x, -lim, lim - 1) & mask;
 }
 
+ESP_SDR_CODE(SAMPLE, iq_pack)
 size_t iq_pack(const struct esp_sdr_iq16 *s, size_t n, unsigned int bits, int32_t full_scale,
 	       uint32_t *words)
 {

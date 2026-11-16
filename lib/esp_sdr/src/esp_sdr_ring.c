@@ -32,13 +32,15 @@
 
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_dsp.h>
+#include <esp_sdr/esp_sdr_place.h>
 #include <esp_sdr/esp_sdr_ring.h>
 #include <esp_sdr/esp_sdr_xtensa.h>
 
 #include "esp_sdr_mark.h"
 #include "esp_sdr_priv.h"
+#include "esp_sdr_prof_priv.h"
 
-#define HOT IRAM_ATTR __attribute__((optimize("O3")))
+#define HOT(cat, fn) ESP_SDR_CODE(cat, fn) __attribute__((optimize("O3")))
 
 #define DUMP_WRITE_INDEX_REG 0x60033d60U
 
@@ -151,7 +153,8 @@ static inline void select_bank(uint32_t saved, uint32_t mask)
 /* ---- sentinel windows ---- */
 
 /* Ring indices [at, at + count) of bank b, wrapping; 128-bit stores (eSpDR). */
-HOT static void fill_sentinels(unsigned int b, unsigned int at, unsigned int count)
+HOT(PACED_CHUNK, fill_sentinels)
+static void fill_sentinels(unsigned int b, unsigned int at, unsigned int count)
 {
 	at &= RING_MASK;
 	while (count != 0U) {
@@ -188,13 +191,15 @@ HOT static void fill_sentinels(unsigned int b, unsigned int at, unsigned int cou
 }
 
 /* First written pair in [origin, origin + guard): sentinels up to the unit start. */
-HOT static uint32_t find_first(unsigned int b, unsigned int origin, unsigned int guard)
+HOT(PACED_CHUNK, find_first)
+static uint32_t find_first(unsigned int b, unsigned int origin, unsigned int guard)
 {
 	return esp_sdr_mark_first(bank_ptr(b), RING_MASK, origin, guard);
 }
 
 /* One past the last written pair in [origin, origin + guard), from the last index seen. */
-HOT static uint32_t find_end(unsigned int b, unsigned int origin, unsigned int wi,
+HOT(PACED_CHUNK, find_end)
+static uint32_t find_end(unsigned int b, unsigned int origin, unsigned int wi,
 			     unsigned int guard)
 {
 	return esp_sdr_mark_end(bank_ptr(b), RING_MASK, origin, wi, guard);
@@ -259,18 +264,18 @@ BUILD_ASSERT(IS_ENABLED(CONFIG_ESP_SDR_RING_FIR) || IS_ENABLED(CONFIG_ESP_SDR_RI
 	     IS_ENABLED(CONFIG_ESP_SDR_RING_BOX4), "ring: no decimation mode enabled");
 
 /* Internal RAM for the vector loads: the high region above the capture bank. */
-static int16_t fs1_wi[FS1_CAP] __aligned(16) ESP_SDR_HIGH_RAM;
-static int16_t fs1_wq[FS1_CAP] __aligned(16) ESP_SDR_HIGH_RAM;
+static int16_t fs1_wi[FS1_CAP] __aligned(16) ESP_SDR_DATA_F(STATE, fs1_wi, NOINIT);
+static int16_t fs1_wq[FS1_CAP] __aligned(16) ESP_SDR_DATA_F(STATE, fs1_wq, NOINIT);
 #if defined(CONFIG_ESP_SDR_RING_FIR) || defined(CONFIG_ESP_SDR_RING_BOX4)
 /* The decimated output of a chunk (the raw path hands the window itself to the sink). */
-static int16_t out_i[OUT_MAX] __aligned(16) ESP_SDR_HIGH_RAM;
-static int16_t out_q[OUT_MAX] __aligned(16) ESP_SDR_HIGH_RAM;
+static int16_t out_i[OUT_MAX] __aligned(16) ESP_SDR_DATA_F(SCRATCH, out_i, NOINIT);
+static int16_t out_q[OUT_MAX] __aligned(16) ESP_SDR_DATA_F(SCRATCH, out_q, NOINIT);
 #endif
 #if defined(CONFIG_ESP_SDR_RING_FIR)
-static int16_t fs1_h[FS1_L] __aligned(16) ESP_SDR_HIGH_RAM;
-static int16_t fs2_h[FS2_LMAX] __aligned(16) ESP_SDR_HIGH_RAM;
-static int16_t fs2_wi[FS2_CAP] __aligned(16) ESP_SDR_HIGH_RAM;
-static int16_t fs2_wq[FS2_CAP] __aligned(16) ESP_SDR_HIGH_RAM;
+static int16_t fs1_h[FS1_L] __aligned(16) ESP_SDR_DATA_F(STATE, fs1_h, NOINIT);
+static int16_t fs2_h[FS2_LMAX] __aligned(16) ESP_SDR_DATA_F(STATE, fs2_h, NOINIT);
+static int16_t fs2_wi[FS2_CAP] __aligned(16) ESP_SDR_DATA_F(STATE, fs2_wi, NOINIT);
+static int16_t fs2_wq[FS2_CAP] __aligned(16) ESP_SDR_DATA_F(STATE, fs2_wq, NOINIT);
 
 static struct fstage fs1 = {.h = fs1_h, .wi = fs1_wi, .wq = fs1_wq};
 static struct fstage fs2 = {.h = fs2_h, .wi = fs2_wi, .wq = fs2_wq};
@@ -279,7 +284,7 @@ static struct fstage fs2 = {.h = fs2_h, .wi = fs2_wi, .wq = fs2_wq};
 static struct fstage fs1 = {.wi = fs1_wi, .wq = fs1_wq};
 #endif
 static bool fir_rot;
-static const int16_t rot_masks[24] __aligned(16) = {
+static const int16_t rot_masks[24] __aligned(16) ESP_SDR_DATA(TABLE, rot_masks) = {
 	1, 0, -1, 0, 1, 0, -1, 0, 0, -1, 0, 1, 0, -1, 0, 1, 0, 1, 0, -1, 0, 1, 0, -1,
 };
 
@@ -360,7 +365,8 @@ static void fstage_reset(struct fstage *s, uint64_t start)
  * samples before their start with tap set 1, the filter shifted by 4 taps: the kernel alternates
  * the sets, the aligned start moving 16 q bytes after a set 0 output and 16 (q + 1) after a set 1.
  */
-HOT static void fstage_two(const struct fstage *s, uint32_t off, uint32_t no, int16_t *oi,
+HOT(PACED_SAMPLE, fstage_two)
+static void fstage_two(const struct fstage *s, uint32_t off, uint32_t no, int16_t *oi,
 			   int16_t *oq)
 {
 	const uint32_t q = s->d / 8U, ph = off & 7U;
@@ -374,7 +380,8 @@ HOT static void fstage_two(const struct fstage *s, uint32_t off, uint32_t no, in
 }
 
 /* All complete outputs to oi/oq; returns their count; drops consumed history. */
-HOT static uint32_t fstage_run(struct fstage *s, int16_t *oi, int16_t *oq)
+HOT(PACED_SAMPLE, fstage_run)
+static uint32_t fstage_run(struct fstage *s, int16_t *oi, int16_t *oq)
 {
 	uint32_t no = 0, keep;
 
@@ -415,7 +422,8 @@ HOT static uint32_t fstage_run(struct fstage *s, int16_t *oi, int16_t *oq)
 #endif /* CONFIG_ESP_SDR_RING_FIR */
 
 /* One ring word into stage 1 (the unaligned head and tail of a chunk). */
-HOT static void fir_scalar(uint32_t w)
+HOT(PACED_SAMPLE, fir_scalar)
+static void fir_scalar(uint32_t w)
 {
 	int16_t i = (int16_t)(((int32_t)(w << 22) >> 22) * 64);
 	int16_t q = (int16_t)(((int32_t)(w << 12) >> 22) * 64);
@@ -487,7 +495,7 @@ static struct {
 	bool burst_ok;
 	/* Slowest waveform slice seen. */
 	uint32_t gen_cost;
-} rs ESP_SDR_HIGH_RAM; /* cleared at each run or bench start */
+} rs ESP_SDR_DATA_F(STATE, rs, NOINIT); /* cleared at each run or bench start */
 
 /*
  * The run's position for other CPUs (esp_sdr_ring_now()): pair index @c index
@@ -639,9 +647,11 @@ static inline void b4_reset(void)
  * over the budget at 16 MS/s once a sink runs too; cfg->subsample takes only
  * the phase-0 pairs for about 1 cycle.
  */
-static const int16_t sum4_ones[8] __aligned(16) = {1, 1, 1, 1, 1, 1, 1, 1};
+static const int16_t sum4_ones[8] __aligned(16) ESP_SDR_DATA(TABLE, sum4_ones) = {
+	1, 1, 1, 1, 1, 1, 1, 1};
 
-HOT static void box4_feed(const uint32_t *p, uint32_t a, uint32_t m)
+HOT(PACED_SAMPLE, box4_feed)
+static void box4_feed(const uint32_t *p, uint32_t a, uint32_t m)
 {
 	const uint32_t *w = p + a;
 	uint32_t k2 = 0;
@@ -676,6 +686,7 @@ HOT static void box4_feed(const uint32_t *p, uint32_t a, uint32_t m)
 				oi[k] = (int16_t)(((int32_t)(v << 12) >> 22) * 16);
 				oq[k] = (int16_t)(((int32_t)(v << 22) >> 22) * 16);
 			}
+			cpu_prof_tick();
 			sink(user, out_i, out_q, c, at);
 			at += c;
 			w += 4U * c;
@@ -708,6 +719,7 @@ HOT static void box4_feed(const uint32_t *p, uint32_t a, uint32_t m)
 			PROF(0, t);
 			/* Outputs left from the pair-by-pair path: out to the sink, back on the grid. */
 			if ((k2 & 7U) != 0U && g >= 4U) {
+				cpu_prof_tick();
 				rs.cfg->sink(rs.cfg->user, out_i, out_q, k2, rs.out_index);
 				rs.out_index += k2;
 				rs.st->samples += k2;
@@ -737,6 +749,7 @@ HOT static void box4_feed(const uint32_t *p, uint32_t a, uint32_t m)
 					k2++;
 				}
 				if (k2 == OUT_MAX) {
+					cpu_prof_tick();
 					rs.cfg->sink(rs.cfg->user, out_i, out_q, k2, rs.out_index);
 					rs.out_index += k2;
 					rs.st->samples += k2;
@@ -791,6 +804,7 @@ HOT static void box4_feed(const uint32_t *p, uint32_t a, uint32_t m)
 			out_q[k2] = (int16_t)(b4.aq * 4);
 			b4_reset();
 			if (++k2 == OUT_MAX) {
+				cpu_prof_tick();
 				rs.cfg->sink(rs.cfg->user, out_i, out_q, k2, rs.out_index);
 				rs.out_index += k2;
 				rs.st->samples += k2;
@@ -799,6 +813,7 @@ HOT static void box4_feed(const uint32_t *p, uint32_t a, uint32_t m)
 		}
 	}
 	if (k2 != 0U) {
+		cpu_prof_tick();
 		rs.cfg->sink(rs.cfg->user, out_i, out_q, k2, rs.out_index);
 		rs.out_index += k2;
 		rs.st->samples += k2;
@@ -817,7 +832,8 @@ BUILD_ASSERT(ESP_SDR_RING_RAW_HISTORY + 8U + FIR_CHUNK <= FS1_CAP, "ring: raw wi
  * the next 4-byte boundary. Not memmove(): that is the ROM's, at about 12 cycles a byte, 6 per
  * pair here.
  */
-HOT static inline void raw_move(int16_t *dst, const int16_t *src, uint32_t n)
+HOT(PACED_SAMPLE, raw_move)
+static inline void raw_move(int16_t *dst, const int16_t *src, uint32_t n)
 {
 	uint32_t *d = (uint32_t *)dst;
 	const uint32_t *s = (const uint32_t *)src;
@@ -843,7 +859,8 @@ static void raw_reset(uint64_t start)
  * ESP_SDR_RING_RAW_HISTORY pairs stay in front of the next chunk, for a sink that filters in
  * place.
  */
-HOT static void raw_feed(const uint32_t *p, uint32_t a, uint32_t m)
+HOT(PACED_SAMPLE, raw_feed)
+static void raw_feed(const uint32_t *p, uint32_t a, uint32_t m)
 {
 	while (m != 0U) {
 		uint32_t take = MIN(m, FIR_CHUNK), done = 0, g, n;
@@ -876,6 +893,7 @@ HOT static void raw_feed(const uint32_t *p, uint32_t a, uint32_t m)
 			uint32_t drop = raw_hist + n - h;
 
 			/* Lanes swapped as in the FIR path: wq holds I. */
+			cpu_prof_tick();
 			rs.cfg->sink(rs.cfg->user, fs1.wq + raw_hist, fs1.wi + raw_hist, n,
 				     rs.out_index);
 			/* Stage 1's slot (unused in raw mode): the sink alone, the history after. */
@@ -896,7 +914,8 @@ HOT static void raw_feed(const uint32_t *p, uint32_t a, uint32_t m)
 #endif /* CONFIG_ESP_SDR_RING_RAW */
 
 /* m contiguous ring pairs from position a (no wrap) through both stages. */
-HOT static void fir_feed(const uint32_t *p, uint32_t a, uint32_t m)
+HOT(PACED_SAMPLE, fir_feed)
+static void fir_feed(const uint32_t *p, uint32_t a, uint32_t m)
 {
 #if defined(CONFIG_ESP_SDR_RING_RAW)
 	if (rs.log2d == 0U) {
@@ -941,6 +960,7 @@ HOT static void fir_feed(const uint32_t *p, uint32_t a, uint32_t m)
 		PROF(2, t);
 		if (k2 != 0U) {
 			/* Undo the I/Q swap of the lanes (see above). */
+			cpu_prof_tick();
 			rs.cfg->sink(rs.cfg->user, out_q, out_i, k2, rs.out_index);
 			rs.out_index += k2;
 			rs.st->samples += k2;
@@ -998,14 +1018,16 @@ static void fir_setup(unsigned int d)
 #endif
 }
 
-HOT static void unit_abandon(struct unit *u)
+HOT(PACED_CHUNK, unit_abandon)
+static void unit_abandon(struct unit *u)
 {
 	rs.st->lost_pairs += u->count - u->pos;
 	rs.st->abandoned++;
 	rs.next_pair = ~0ULL;
 }
 
-HOT static void queue_pop(void)
+HOT(PACED_CHUNK, queue_pop)
+static void queue_pop(void)
 {
 	rs.q_len--;
 	for (unsigned int k = 0; k < rs.q_len; k++) {
@@ -1014,7 +1036,8 @@ HOT static void queue_pop(void)
 }
 
 /* Bank b is about to be overwritten: drop what it still holds. */
-HOT static void release_bank(unsigned int b)
+HOT(PACED_CHUNK, release_bank)
+static void release_bank(unsigned int b)
 {
 	for (unsigned int k = 0; k < rs.q_len;) {
 		if (rs.q[k].bank == b) {
@@ -1040,7 +1063,8 @@ static inline bool bank_idle(unsigned int b)
 }
 
 /* A unit that does not continue the filtered stream restarts it on the decimation grid. */
-HOT static bool unit_begin(struct unit *u)
+HOT(PACED_CHUNK, unit_begin)
+static bool unit_begin(struct unit *u)
 {
 	/* Raw: on the vector groups' grid of 8, for the mix's phase. */
 	uint32_t dec = MAX(1U << rs.log2d, 8U);
@@ -1079,7 +1103,8 @@ HOT static bool unit_begin(struct unit *u)
 }
 
 /* Filter up to n pairs of the oldest unit; returns whether work remains. */
-HOT static bool fir_slice(uint32_t n)
+HOT(PACED_CHUNK, fir_slice)
+static bool fir_slice(uint32_t n)
 {
 	struct unit *u;
 	const uint32_t *p;
@@ -1128,7 +1153,8 @@ static inline void fail(enum esp_sdr_ring_status code, uint32_t detail)
 }
 
 /* Prepare bank nb for the unit after the one now expected at e. */
-HOT static void prepare(unsigned int nb, uint32_t e, uint32_t *start_probe, uint32_t *end_probe)
+HOT(PACED_CHUNK, prepare)
+static void prepare(unsigned int nb, uint32_t e, uint32_t *start_probe, uint32_t *end_probe)
 {
 	/* Two banks: nb still holds the unit before, released at the switch. */
 	if (rs.nbanks == RING_BANKS) {
@@ -1160,8 +1186,8 @@ static struct {
 	esp_sdr_ring_gen_t gen;
 	void *user;
 	uint32_t from, words;
-} burst ESP_SDR_HIGH_RAM;
-static struct esp_sdr_ring_burst_stats bst ESP_SDR_HIGH_RAM;
+} burst ESP_SDR_DATA_F(STATE, burst, NOINIT);
+static struct esp_sdr_ring_burst_stats bst ESP_SDR_DATA_F(STATE, bst, NOINIT);
 
 uint32_t *esp_sdr_ring_burst_buf(size_t *words)
 {
@@ -1211,6 +1237,7 @@ void esp_sdr_ring_burst_get_stats(struct esp_sdr_ring_burst_stats *stats)
 }
 
 /* One waveform slice; returns whether more is left. */
+ESP_SDR_CODE(PACED_EVENT, gen_slice)
 static __attribute__((noinline)) bool gen_slice(uint32_t *pos, uint32_t n)
 {
 	n = MIN(n, burst.words - *pos);
@@ -1226,6 +1253,7 @@ static __attribute__((noinline)) bool gen_slice(uint32_t *pos, uint32_t n)
  * it is fired in time, and leave the front end in RX.
  */
 /* Not in IRAM (internal RAM is short): only its spin to the fire pair is timed, from the cache. */
+ESP_SDR_CODE(PACED_EVENT, burst_run)
 static __attribute__((noinline, optimize("O3"))) void burst_run(uint32_t cpp, uint32_t saved, uint64_t p_stop, uint32_t t_stop,
 			  uint32_t *gen_pos)
 {
@@ -1249,9 +1277,14 @@ static __attribute__((noinline, optimize("O3"))) void burst_run(uint32_t cpp, ui
 	esp_sdr_tx_front_end();
 	bst.ready_last_pairs = (int32_t)(PAIR_NOW() - burst.end_pair);
 	bst.ready_max_pairs = MAX(bst.ready_max_pairs, bst.ready_last_pairs);
+	/*
+	 * The verdict wait; the profiler samples here only, the fire spin and the DAC wait are
+	 * timed.
+	 */
 	for (;;) {
 		uint32_t tw = esp_sdr_ccount();
 
+		cpu_prof_tick();
 		(void)stall_poll();
 		(void)irq_window(&lines);
 		bst.window_max_cyc = MAX(bst.window_max_cyc, esp_sdr_ccount() - tw);
@@ -1321,6 +1354,7 @@ static __attribute__((noinline, optimize("O3"))) void burst_run(uint32_t cpp, ui
  * A burst the run has not taken yet: armed, or already fired or cancelled
  * before the run saw it armed. Returns whether it is now the run's.
  */
+ESP_SDR_CODE(PACED_EVENT, burst_pickup)
 static __attribute__((noinline)) bool burst_pickup(uint64_t index, uint32_t *gen_pos)
 {
 	if (atomic_get(&burst_state) == BURST_CANCEL) {
@@ -1336,6 +1370,7 @@ static __attribute__((noinline)) bool burst_pickup(uint64_t index, uint32_t *gen
 }
 
 /* Fresh sentinels in every bank of the rotation and the engine running into bank 0. */
+ESP_SDR_CODE(PACED_EVENT, engine_start)
 static __attribute__((noinline)) void engine_start(uint32_t ctrl, uint32_t saved, uint32_t *epoch, uint32_t *w0)
 {
 	for (unsigned int k = 0; k < rs.nbanks; k++) {
@@ -1350,7 +1385,8 @@ static __attribute__((noinline)) void engine_start(uint32_t ctrl, uint32_t saved
 	*w0 = write_index();
 }
 
-HOT static void ring_loop(void)
+HOT(PACED_CHUNK, ring_loop)
+static void ring_loop(void)
 {
 	const uint32_t cpp = sys_clock_hw_cycles_per_sec() / ESP_SDR_RING_RATE_HZ;
 	const uint32_t max_age = (RING_PAIRS - 128U) * cpp;
@@ -1379,6 +1415,7 @@ HOT static void ring_loop(void)
 
 		/* 1. Poll, with filter and waveform slices between polls. */
 		for (;;) {
+			cpu_prof_tick();
 			if (stall_poll()) {
 				st->stalls++;
 			}

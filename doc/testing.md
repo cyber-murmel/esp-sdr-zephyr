@@ -137,6 +137,9 @@ pins them (with PyYAML, pyelftools and numpy) elsewhere. The tools are loaded by
 compiler and is skipped without one. `tests/host/coveragerc` sets what counts: the build and CI
 tools under `apps/multiapp/`, `scripts/` and `doc/registers/`, files
 no test imports included; the bench tools under `apps/*/tools` need boards and stay out.
+`test_place_lint.py` fails on a placement attribute or section named outside
+`include/esp_sdr/esp_sdr_place.h` and its exceptions, `test_place_macros.py` runs the placement
+macros through the host preprocessor with stub headers.
 
 ## Integration tests (one board)
 
@@ -362,6 +365,13 @@ is also checked with the boards 10 MHz apart, both ways round. The scenario chec
 ## Other tools
 
 Measuring tools, not pass/fail gates (the host tables are in the unit tests, above):
+
+- `scripts/place/`: where code and data went and how hot it is
+  ([code-placement.md](code-placement.md)). `place_report.py` (each build's
+  `zephyr/place_report.txt`), `place_diff.py` (proves a change moved nothing, or names what moved),
+  `prof_map.py` (profiles from `prof dump` or Zephyr's `perf printbuf` to functions),
+  `hot_text.py` (the hot block's list from profiles) and `icache.py` (the ESP32-S3 instruction
+  cache's counters through the devmem shell).
 
 - `apps/rfprobe` and its `tools/rfprobe.py`: LO pair sweeps with a tone between two boards, raw PLL
   sweeps, PLL register scans, analog register dumps and diffs, the receive noise floor.

@@ -41,8 +41,8 @@
 
 /*
  * Attributes of every function here, none by default. The C6 sink writes with interrupts off:
- * it defines this as ESP_SDR_GAPLESS_HOT (IRAM, optimized as hot) before the include, so that
- * a function the compiler keeps out of line does not run from flash.
+ * it defines this as paced code (esp_sdr_place.h: SRAM on the C6, optimized as hot) before the
+ * include, so that a function the compiler keeps out of line does not run from flash.
  */
 #ifndef ESDR_SEG_HOT
 #define ESDR_SEG_HOT

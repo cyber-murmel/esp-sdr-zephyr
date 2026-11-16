@@ -6,6 +6,8 @@
  * guard around the two filter kernels: vector kernels of the ring's
  * decimating FIR (src/esp_sdr_ring.c). Upstream's comments follow.
  */
+
+#include <esp_sdr/esp_sdr_place.h>
 /*
  * ESP32-S3 PIE kernels for the IQS decimating FIR (split I / Q arrays).
  *
@@ -21,7 +23,7 @@
  *        +28 oi, +32 oq (int16 outputs, any alignment).
  *   For each output: oi[k] = (sum h[j] * xi[k*step/2 + j]) >> shift, same for Q.
  */
-    .section .iram1.s3_firdot, "ax"
+    ESP_SDR_ASM_SECTION(PACED_SAMPLE, s3_firdot)
     .align  4
     .global esp_sdr_ring_unpack_iq10
     .type   esp_sdr_ring_unpack_iq10, @function

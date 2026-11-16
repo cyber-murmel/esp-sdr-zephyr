@@ -21,10 +21,14 @@
 #include <esp_attr.h>
 
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_place.h>
 #include <esp_sdr/esp_sdr_tx.h>
 #include <esp_sdr/esp_sdr_xtensa.h>
 
 #include "esp_sdr_priv.h"
+
+/* Pins of this file: ESP_SDR_PIN_DATA_tx_dac_<name> (esp_sdr_place.h). */
+#define ESP_SDR_PLACE_FILE tx_dac
 
 LOG_MODULE_DECLARE(esp_sdr, CONFIG_ESP_SDR_LOG_LEVEL);
 
@@ -34,7 +38,7 @@ LOG_MODULE_DECLARE(esp_sdr, CONFIG_ESP_SDR_LOG_LEVEL);
 BUILD_ASSERT(IS_POWER_OF_TWO(RING_SIZE), "ring size must be a power of two");
 
 /* Packed input samples, I in the upper half word. PSRAM: written by the network thread. */
-ESP_SDR_PSRAM_BUF_DEFINE(uint32_t, ring, [RING_SIZE], 4);
+ESP_SDR_BUF_DEFINE(BULK, uint32_t, ring, [RING_SIZE], 4, NONE);
 
 #define NFILL       2
 /* One full bank per block. */
@@ -165,7 +169,7 @@ static bool pie_ok;
 
 #if defined(CONFIG_ESP_SDR_TX_DAC_SIMD)
 /* Lane starts and steps for the vector ramp, then its two constant masks. */
-static int32_t pie_vec[24] __aligned(16) = {
+static int32_t pie_vec[24] __aligned(16) ESP_SDR_DATA(TABLE, pie_vec) = {
 	[16] = 0x3ff, 0x3ff, 0x3ff, 0x3ff, 0xffc00, 0xffc00, 0xffc00, 0xffc00,
 };
 #endif
@@ -175,26 +179,18 @@ static int32_t pie_vec[24] __aligned(16) = {
  * while the other core runs a flash operation the shared cache is suspended,
  * and code or data behind it (flash, PSRAM) stalls for milliseconds.
  */
-#define HOT IRAM_ATTR __attribute__((optimize("O3")))
-
-/* Buffers and stacks in the SRAM above the capture bank, or in the DRAM image. */
-#if defined(CONFIG_ESP_SDR_TX_DAC_HIGH_RAM)
-#define DAC_RAM   ESP_SDR_HIGH_RAM
-#define DAC_STACK ESP_SDR_HIGH_RAM
-#else
-#define DAC_RAM
-#define DAC_STACK __kstackmem
-#endif
+#define HOT(cat, fn) ESP_SDR_CODE(cat, fn) __attribute__((optimize("O3")))
 
 /* Input for the block being filled, copied from the PSRAM ring. */
 #define STAGE_WORDS 512U
-static uint32_t stage[STAGE_WORDS] DAC_RAM;
+static uint32_t stage[STAGE_WORDS] ESP_SDR_DATA_F(SCRATCH, stage, NOINIT);
 /* Where fill() reads input index i: src[(i - src_base) & src_mask]. */
 static const uint32_t *src;
 static uint32_t src_base, src_mask;
 
 /* cnt DAC words of one linear segment: start (ai, aq), step (di, dq) per sample. */
-HOT static void ramp(uint32_t *dst, uint32_t cnt, int32_t ai,
+HOT(PACED_SAMPLE, ramp)
+static void ramp(uint32_t *dst, uint32_t cnt, int32_t ai,
 						 int32_t aq, int32_t di, int32_t dq)
 {
 #if defined(CONFIG_ESP_SDR_TX_DAC_SIMD)
@@ -244,7 +240,8 @@ scalar:
  * sample o lies between input samples o / interp and o / interp + 1. One
  * division for the start, then segment by segment.
  */
-HOT static void fill(uint32_t *dst, uint64_t out, uint32_t n)
+HOT(PACED_SAMPLE, fill)
+static void fill(uint32_t *dst, uint64_t out, uint32_t n)
 {
 	if (gen_fn != NULL) {
 		gen_fn(gen_user, dst, out, n);
@@ -303,7 +300,8 @@ static inline uint64_t out_now(void)
 }
 
 /* Output samples [out, out + n) into bank at offset s % BLOCK_WORDS, wrapping. */
-HOT static void fill_wrapped(uint32_t *bank, uint64_t s, uint32_t n, bool zero)
+HOT(PACED_SAMPLE, fill_wrapped)
+static void fill_wrapped(uint32_t *bank, uint64_t s, uint32_t n, bool zero)
 {
 	uint32_t off = (uint32_t)(s % BLOCK_WORDS);
 
@@ -329,13 +327,15 @@ static struct {
 } half_job;
 
 /* Loop samples [s, s + n) with input for the first `data` of them, zeros after. */
-HOT static void fill_part(uint32_t *bank, uint64_t s, uint32_t n, uint32_t data)
+HOT(PACED_SAMPLE, fill_part)
+static void fill_part(uint32_t *bank, uint64_t s, uint32_t n, uint32_t data)
 {
 	data = MIN(data, n);
 	fill_wrapped(bank, s, data, false);
 	fill_wrapped(bank, s + data, n - data, true);
 }
 
+ESP_SDR_CODE(PACED_CHUNK, timed_fill)
 static void timed_fill(int f, uint32_t *bank, uint64_t s, uint32_t n, uint32_t data)
 {
 	uint32_t c = k_cycle_get_32();
@@ -374,6 +374,7 @@ static void timed_fill(int f, uint32_t *bank, uint64_t s, uint32_t n, uint32_t d
  * output sample needs input o / interp + 1), zeros for the rest. Returns the
  * zero filled count.
  */
+ESP_SDR_CODE(PACED_CHUNK, fill_block)
 static uint32_t fill_block(uint32_t *bank, uint64_t s, uint32_t n)
 {
 	if (gen_fn != NULL) {
@@ -439,7 +440,8 @@ static uint32_t fill_block(uint32_t *bank, uint64_t s, uint32_t n)
 }
 
 /* Spin on this core's cycle counter until t; IRAM, so a flash operation cannot stall it. */
-HOT static void spin_until(uint32_t t)
+HOT(PACED_CHUNK, spin_until)
+static void spin_until(uint32_t t)
 {
 	while ((int32_t)(t - esp_sdr_ccount()) > 0) {
 	}
@@ -450,6 +452,7 @@ HOT static void spin_until(uint32_t t)
  * CPU); returns with interrupts locked (the key) so the caller's register
  * write lands on time.
  */
+ESP_SDR_CODE(PACED_CHUNK, wait_until_locked)
 static unsigned int wait_until_locked(uint32_t t)
 {
 	unsigned int key;
@@ -473,6 +476,7 @@ static unsigned int wait_until_locked(uint32_t t)
  * Start a loop whose sample 0 is output sample `out` (a multiple of 4), at
  * the real time that output sample is due. Block 0 has no lead.
  */
+ESP_SDR_CODE(PACED_CHUNK, loop_start)
 static bool loop_start(uint64_t out)
 {
 	size_t words;
@@ -625,6 +629,7 @@ static void helper(void)
 	}
 }
 
+ESP_SDR_CODE(PACED_CHUNK, filler)
 static void filler(void *p1, void *p2, void *p3)
 {
 	int f = (int)(intptr_t)p1;
@@ -644,6 +649,7 @@ static void filler(void *p1, void *p2, void *p3)
 }
 
 /* Session manager: front end and lock around the fillers' run. */
+ESP_SDR_CODE(PACED_CHUNK, player)
 static void player(void *p1, void *p2, void *p3)
 {
 	ARG_UNUSED(p1);
@@ -691,12 +697,14 @@ static void player(void *p1, void *p2, void *p3)
 	}
 }
 
-static Z_KERNEL_STACK_DEFINE_IN(player_stack, CONFIG_ESP_SDR_TX_DAC_STACK_SIZE, DAC_STACK);
+static Z_KERNEL_STACK_DEFINE_IN(player_stack, CONFIG_ESP_SDR_TX_DAC_STACK_SIZE,
+				ESP_SDR_DATA_F(STACK, player_stack, NOINIT));
 static struct k_thread player_thread;
 
 /* The fill loop needs little stack; internal RAM is tight. */
 #define FILLER_STACK_SIZE 1536
-static Z_KERNEL_STACK_ARRAY_DEFINE_IN(filler_stacks, NFILL, FILLER_STACK_SIZE, DAC_STACK);
+static Z_KERNEL_STACK_ARRAY_DEFINE_IN(filler_stacks, NFILL, FILLER_STACK_SIZE,
+				      ESP_SDR_DATA_F(STACK, filler_stacks, NOINIT));
 static struct k_thread filler_threads[NFILL];
 
 #if defined(CONFIG_ESP_SDR_TX_DAC_SIMD)

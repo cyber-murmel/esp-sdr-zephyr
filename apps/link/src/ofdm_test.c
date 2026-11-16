@@ -16,6 +16,7 @@
 #include <zephyr/sys/util.h>
 
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_place.h>
 
 #include <esp_attr.h>
 
@@ -34,10 +35,10 @@
 #define HDR_BITS  64U
 
 /* FFT tables and buffers above the capture bank: internal SRAM, outside the libc heap. */
-static ESP_SDR_HIGH_RAM struct ofdm_ctx ctx __aligned(16);
+static ESP_SDR_DATA_F(STATE, ctx, NOINIT) struct ofdm_ctx ctx __aligned(16);
 /* Transmit builds are not timed: PSRAM will do. */
-static EXT_RAM_BSS_ATTR struct ofdm_txbuf txb __aligned(16);
-static EXT_RAM_BSS_ATTR uint8_t ref_bits[BITS_MAX], rx_bits[BITS_MAX];
+static ESP_SDR_DATA(BULK, txb) struct ofdm_txbuf txb __aligned(16);
+static ESP_SDR_DATA(BULK, ref_bits) uint8_t ref_bits[BITS_MAX], rx_bits[BITS_MAX];
 static uint8_t ref_hdr[HDR_BITS / 8U], rx_hdr[HDR_BITS / 8U];
 static enum ofdm_mod mod = OFDM_QPSK;
 
@@ -290,6 +291,7 @@ static void print_channel(const struct shell *sh)
 	}
 }
 
+ESP_SDR_CODE(COLD, cmd_rx)
 static int cmd_rx(const struct shell *sh, size_t argc, char **argv)
 {
 	uint32_t n = 100, found = 0, bad = 0, hbad = 0;
@@ -352,7 +354,7 @@ static int cmd_rx(const struct shell *sh, size_t argc, char **argv)
 		bad += e != 0U;
 		if (cmp) {
 			/* The same samples through the float decoder (a diagnostic pointer forces it). */
-			static EXT_RAM_BSS_ATTR float dummy[OFDM_CH_MAX];
+			static ESP_SDR_DATA(BULK, dummy) float dummy[OFDM_CH_MAX];
 			uint32_t ef = 0;
 
 			ctx.w0.trk = sv_trk;
@@ -458,7 +460,7 @@ static int cmd_rx(const struct shell *sh, size_t argc, char **argv)
  * n in its header and bits that are a function of n; the receiver regenerates
  * them and counts what it saw, what it lost and the bit errors.
  */
-static EXT_RAM_BSS_ATTR uint8_t stream_bits[BITS_MAX];
+static ESP_SDR_DATA(BULK, stream_bits) uint8_t stream_bits[BITS_MAX];
 
 static uint32_t stream_seed(uint32_t seq)
 {
@@ -476,7 +478,7 @@ static void stream_hdr(uint8_t *hdr, uint32_t seq)
 /* SNR per subcarrier from the decision errors of QPSK frames (always decided right), in dB. */
 static int cmd_snr(const struct shell *sh, size_t argc, char **argv)
 {
-	static EXT_RAM_BSS_ATTR float sc[OFDM_CH_MAX];
+	static ESP_SDR_DATA(BULK, sc) float sc[OFDM_CH_MAX];
 	uint32_t n = 50, found = 0;
 	enum ofdm_mod keep = mod;
 	char line[100];

@@ -14,6 +14,7 @@
 #include <stddef.h>
 #include <string.h>
 
+#include <esp_sdr/esp_sdr_place.h>
 #include <esp_sdr/ieee154_phy.h>
 
 /* CALIBRATE: one of 0, 0x55555555, 0xAAAAAAAA, 0xFFFFFFFF.
@@ -96,6 +97,7 @@ static const uint16_t crc16_nibble[16] = {
 	0x8408, 0x9489, 0xa50a, 0xb58b, 0xc60c, 0xd68d, 0xe70e, 0xf78f,
 };
 
+ESP_SDR_CODE(EVENT, crc16)
 static uint16_t crc16(const uint8_t *p, int n)
 {
 	uint16_t c = 0;
@@ -149,6 +151,7 @@ void ieee154_phy_set_rx_cb(ieee154_phy_frame_cb_t cb, void *user)
  * chips_msk[k + 8] == ~chips_msk[k] & DMASK, and its errors are 31 less those of k. Half the
  * popcounts, the same winner, ties to the lowest symbol as before.
  */
+ESP_SDR_CODE(SAMPLE, match)
 static int match(uint32_t w, int *err)
 {
 	int best = 0, be = 33, e[8];
@@ -182,6 +185,7 @@ static void trk_reset(struct ieee154_phy_trk *t)
  * one goes to the all-frames callback only, once: both trackers may complete it, a sample or two
  * apart (a good copy from the sibling still follows: ieee154_phy_all_cb_t).
  */
+ESP_SDR_CODE(EVENT, frame_done)
 static void frame_done(struct ieee154_phy_rx *rx, struct ieee154_phy_trk *t)
 {
 	struct ieee154_phy_trk *sib = t == &rx->trk[0] ? &rx->trk[1] : &rx->trk[0];
@@ -215,6 +219,7 @@ static void frame_done(struct ieee154_phy_rx *rx, struct ieee154_phy_trk *t)
  * Everything but a preamble miss while hunting: t->win and t->nchip already
  * hold the new chip (ieee154_phy_rx_block_i() keeps the common case inline).
  */
+ESP_SDR_CODE(SAMPLE, trk_chip_slow)
 static __attribute__((noinline)) void trk_chip_slow(struct ieee154_phy_rx *rx,
 						    struct ieee154_phy_trk *t)
 {
@@ -397,6 +402,7 @@ static inline int hunt_close(uint32_t x)
 		w_ = (w_ << 1) | (uint32_t)(d > 0);                                          \
 	} while (0)
 
+ESP_SDR_CODE(SAMPLE, hunt_pairs)
 static __attribute__((noinline, optimize("O2"))) size_t hunt_pairs(struct hunt_st *st,
 								   const int16_t *iq,
 								   size_t pairs, int *hit)
@@ -485,6 +491,7 @@ static __attribute__((noinline, optimize("O2"))) size_t hunt_pairs(struct hunt_s
 		}                                                                            \
 	} while (0)
 
+ESP_SDR_CODE(SAMPLE, ieee154_phy_rx_block_i)
 void ieee154_phy_rx_block_i(struct ieee154_phy_rx *rx, const int16_t *iq, size_t n)
 {
 	int32_t dci = rx->dc_i, dcq = rx->dc_q, i1 = rx->pi1, q1 = rx->pq1, i2 = rx->pi2,

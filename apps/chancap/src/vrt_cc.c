@@ -25,6 +25,7 @@
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_chancap.h>
 #include <esp_sdr/esp_sdr_ring.h>
+#include <esp_sdr/esp_sdr_place.h>
 
 #include <vrt/vrt_init.h>
 #include <vrt/vrt_string.h>
@@ -56,7 +57,7 @@ struct block {
 };
 
 /* USB DMA needs internal RAM. */
-ESP_SDR_HIGH_BUF_DEFINE(struct block, blocks, [CONFIG_APP_USB_BLOCKS], 16);
+ESP_SDR_BUF_DEFINE(STATE, struct block, blocks, [CONFIG_APP_USB_BLOCKS], 16, NOINIT);
 K_MSGQ_DEFINE(free_q, sizeof(struct block *), CONFIG_APP_USB_BLOCKS, 4);
 static struct block *cur;
 static K_MUTEX_DEFINE(cur_lock);
@@ -69,8 +70,8 @@ static struct {
 } stream[CHANNELS];
 static struct vrt_cc_stats stats;
 /* Above the capture bank: the DRAM image below the ring banks has no room. */
-static struct vrt_packet pkt ESP_SDR_HIGH_RAM;
-static uint32_t body[SAMPLES_PER_PACKET] ESP_SDR_HIGH_RAM;
+static struct vrt_packet pkt ESP_SDR_DATA_F(SCRATCH, pkt, NOINIT);
+static uint32_t body[SAMPLES_PER_PACKET] ESP_SDR_DATA_F(SCRATCH, body, NOINIT);
 
 static void pair_time(uint64_t pair, struct vrt_fields *f)
 {

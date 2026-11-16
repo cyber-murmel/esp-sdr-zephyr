@@ -25,6 +25,7 @@
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_gapless.h>
 #include <esp_sdr/esp_sdr_paced.h>
+#include <esp_sdr/esp_sdr_place.h>
 #include <esp_sdr/esp_sdr_rx.h>
 
 #define ESP_SDR_SORT_INLINE static ALWAYS_INLINE
@@ -214,7 +215,11 @@ struct staged {
 	bool bad;
 };
 
-static uint32_t stage[STAGE_WORDS] __aligned(16) ESP_SDR_HIGH_RAM;
+/* Pins of this file: ESP_SDR_PIN_*_gapless_<name>; GL_HOT: the run's code (esp_sdr_place.h). */
+#define ESP_SDR_PLACE_FILE gapless
+#define GL_HOT(cat, fn) ESP_SDR_CODE(cat, fn) __attribute__((hot))
+
+static uint32_t stage[STAGE_WORDS] __aligned(16) ESP_SDR_DATA_F(STATE, stage, NOINIT);
 
 /* A staging store: a ring of words whose runs never wrap. */
 struct store {
@@ -320,7 +325,7 @@ static struct {
 	uint32_t cpp, pairs_us, inputs_per;
 	uint32_t settle_cyc, max_age_cyc, prep_pairs;
 	bool wide;
-} rs;
+} rs ESP_SDR_DATA(STATE, rs);
 
 /* Quiet baseline, window power per sample, Q8 (a plain integer IIR stalls at small values). */
 static uint32_t baseline_q8;
@@ -348,7 +353,8 @@ static ALWAYS_INLINE void select_blocks(uint32_t saved, unsigned int mask)
 
 /* ---- markers ---- */
 
-static ESP_SDR_GAPLESS_HOT void fill_marks(unsigned int b, uint32_t at, uint32_t count)
+GL_HOT(PACED_CHUNK, fill_marks)
+static void fill_marks(unsigned int b, uint32_t at, uint32_t count)
 {
 	at &= RING_MASK;
 	while (count != 0U) {
@@ -375,20 +381,23 @@ static ESP_SDR_GAPLESS_HOT void fill_marks(unsigned int b, uint32_t at, uint32_t
 }
 
 /* The first written sample in [origin, origin + guard): markers up to the unit's start, data on. */
-static ESP_SDR_GAPLESS_HOT uint32_t find_first(unsigned int b, uint32_t origin, uint32_t guard)
+GL_HOT(PACED_CHUNK, find_first)
+static uint32_t find_first(unsigned int b, uint32_t origin, uint32_t guard)
 {
 	return esp_sdr_mark_first(bank_ptr(b), RING_MASK, origin, guard);
 }
 
 /* One past the last written sample in [origin, origin + guard), from the last index seen on. */
-static ESP_SDR_GAPLESS_HOT uint32_t find_end(unsigned int b, uint32_t origin, uint32_t wi,
+GL_HOT(PACED_CHUNK, find_end)
+static uint32_t find_end(unsigned int b, uint32_t origin, uint32_t wi,
 					     uint32_t guard)
 {
 	return esp_sdr_mark_end(bank_ptr(b), RING_MASK, origin, wi, guard);
 }
 
 /* Markers into block @p b where the unit after the one from @p expected on starts and ends. */
-static ESP_SDR_GAPLESS_HOT void prepare(unsigned int b, uint32_t expected, uint32_t *start_probe,
+GL_HOT(PACED_CHUNK, prepare)
+static void prepare(unsigned int b, uint32_t expected, uint32_t *start_probe,
 					uint32_t *end_probe)
 {
 	rs.u[b].valid = false;
@@ -422,7 +431,8 @@ static ALWAYS_INLINE void est_read(struct est *e, uint32_t ref, uint64_t ref_abs
  * (a little more where the reciprocal rounds m the other way). A window's sums stay far
  * below 2^31 (up to 4096 inputs of 10 bits).
  */
-static ESP_SDR_GAPLESS_HOT uint32_t est_power(const struct est *a, const struct est *b,
+GL_HOT(PACED_CHUNK, est_power)
+static uint32_t est_power(const struct est *a, const struct est *b,
 					      int32_t *mi, int32_t *mq)
 {
 	uint32_t n = MIN((uint32_t)(b->abs - a->abs) * rs.inputs_per, 4096U);
@@ -448,7 +458,8 @@ static ESP_SDR_GAPLESS_HOT uint32_t est_power(const struct est *a, const struct 
 /* ---- numbers ---- */
 
 /* Does DC @p dc plus CREST rms of a window of @p power per sample stay within @p lim? */
-static ESP_SDR_GAPLESS_HOT bool peak_within(uint32_t power, int32_t dc, int32_t lim)
+GL_HOT(PACED_CHUNK, peak_within)
+static bool peak_within(uint32_t power, int32_t dc, int32_t lim)
 {
 	int32_t room = lim - (dc < 0 ? -dc : dc);
 
@@ -460,7 +471,8 @@ static ESP_SDR_GAPLESS_HOT bool peak_within(uint32_t power, int32_t dc, int32_t 
  * The int8 shift for a window of @p power per sample about its mean and DC @p dc_i, @p dc_q:
  * the smallest that keeps the DC plus CREST rms per component below full scale.
  */
-static ESP_SDR_GAPLESS_HOT unsigned int seg_shift(uint32_t power, int32_t dc_i, int32_t dc_q)
+GL_HOT(PACED_CHUNK, seg_shift)
+static unsigned int seg_shift(uint32_t power, int32_t dc_i, int32_t dc_q)
 {
 	int32_t dc = MAX(dc_i < 0 ? -dc_i : dc_i, dc_q < 0 ? -dc_q : dc_q);
 
@@ -497,10 +509,11 @@ static ALWAYS_INLINE int32_t msb32(uint32_t v)
 }
 
 /* @p power per sample (raw units squared) in dB below full scale, times 10. */
-static ESP_SDR_GAPLESS_HOT int16_t dbfs_x10(uint32_t power)
+GL_HOT(PACED_CHUNK, dbfs_x10)
+static int16_t dbfs_x10(uint32_t power)
 {
 	/* log2(1 + k / 16) in Q8. */
-	static const DRAM_ATTR uint8_t frac[16] = {0, 22, 43, 63, 82, 101, 118, 135,
+	static const ESP_SDR_DATA(TABLE, frac) uint8_t frac[16] = {0, 22, 43, 63, 82, 101, 118, 135,
 						   151, 167, 182, 196, 210, 224, 237, 249};
 	int32_t msb, l2;
 
@@ -516,7 +529,7 @@ static ESP_SDR_GAPLESS_HOT int16_t dbfs_x10(uint32_t power)
 /* ---- packing ---- */
 
 /* Shifts 0 and 1 through tables of the saturated value of each 10-bit code, built once. */
-static uint8_t sat_lut[2][1024];
+static uint8_t sat_lut[2][1024] ESP_SDR_DATA(TABLE, sat_lut);
 
 static void sat_lut_init(void)
 {
@@ -555,7 +568,8 @@ static ALWAYS_INLINE uint32_t iq8_high(uint32_t v)
 	return ((v & IQ8_FIELDS) * IQ8_SPREAD) & 0xffff0000U;
 }
 
-static ESP_SDR_GAPLESS_HOT __attribute__((optimize("O3"))) void
+GL_HOT(PACED_SAMPLE, pack_run)
+static __attribute__((optimize("O3"))) void
 pack_run(const uint32_t *w, uint32_t n, uint16_t *o, unsigned int shift)
 {
 	uint32_t *o32;
@@ -602,7 +616,8 @@ pack_run(const uint32_t *w, uint32_t n, uint16_t *o, unsigned int shift)
 
 /* ---- servos ---- */
 
-static ESP_SDR_GAPLESS_HOT void thr_update(void)
+GL_HOT(PACED_CHUNK, thr_update)
+static void thr_update(void)
 {
 	if (rs.cfg->level != 0U) {
 		rs.thr = rs.quiet = rs.cfg->level;
@@ -616,7 +631,8 @@ static ESP_SDR_GAPLESS_HOT void thr_update(void)
 	rs.quiet = (uint32_t)MIN((uint64_t)baseline_q8 * rs.thr_floor_q8 >> 16, UINT32_MAX);
 }
 
-static ESP_SDR_GAPLESS_HOT void baseline_update(uint32_t pw)
+GL_HOT(PACED_CHUNK, baseline_update)
+static void baseline_update(uint32_t pw)
 {
 	if (rs.cfg->level != 0U) {
 		return;
@@ -652,7 +668,8 @@ static ESP_SDR_GAPLESS_HOT void baseline_update(uint32_t pw)
 }
 
 /* Once per unit of @p count samples: the threshold against the link's budget. */
-static ESP_SDR_GAPLESS_HOT void thr_servo(uint32_t count, uint32_t lo, uint32_t hi)
+GL_HOT(PACED_CHUNK, thr_servo)
+static void thr_servo(uint32_t count, uint32_t lo, uint32_t hi)
 {
 	enum thr_step step;
 	uint32_t budget, kept, bytes, lost;
@@ -693,7 +710,8 @@ static ESP_SDR_GAPLESS_HOT void thr_servo(uint32_t count, uint32_t lo, uint32_t 
 }
 
 /* A window's peak against the limits; the gain servo's input. */
-static ESP_SDR_GAPLESS_HOT void gain_watch(uint32_t pw)
+GL_HOT(PACED_CHUNK, gain_watch)
+static void gain_watch(uint32_t pw)
 {
 	int32_t dc = MAX(abs(rs.dc_i), abs(rs.dc_q)) >> 4;
 
@@ -713,7 +731,8 @@ static ESP_SDR_GAPLESS_HOT void gain_watch(uint32_t pw)
 }
 
 /* Once per unit: is a step up due? (Steps down come from gain_watch().) */
-static ESP_SDR_GAPLESS_HOT void gain_servo(void)
+GL_HOT(PACED_CHUNK, gain_servo)
+static void gain_servo(void)
 {
 	rs.since_warm++;
 	rs.since_step++;
@@ -730,7 +749,8 @@ static ESP_SDR_GAPLESS_HOT void gain_servo(void)
 }
 
 /* Apply a due step, if @p room cycles allow it. */
-static ESP_SDR_GAPLESS_HOT bool gain_step(uint32_t room)
+GL_HOT(PACED_CHUNK, gain_step)
+static bool gain_step(uint32_t room)
 {
 	int g;
 	uint32_t dt;
@@ -819,7 +839,8 @@ static void canaries_set(void)
  * Block @p k came back from the engine: are its upper half's canaries intact? Both blocks once:
  * the halves go into service. Any later failure takes them out (the samples in them are suspect).
  */
-static ESP_SDR_GAPLESS_HOT void canaries_check(unsigned int k)
+GL_HOT(PACED_CHUNK, canaries_check)
+static void canaries_check(unsigned int k)
 {
 	const volatile uint32_t *half = bank_ptr(k) + ESP_SDR_GAPLESS_RING;
 	bool ok = true;
@@ -852,7 +873,8 @@ static ESP_SDR_GAPLESS_HOT void canaries_check(unsigned int k)
 
 /* ---- keep decision ---- */
 
-static ESP_SDR_GAPLESS_HOT bool job_add(uint64_t s, uint64_t e, unsigned int shift, uint8_t flags,
+GL_HOT(PACED_CHUNK, job_add)
+static bool job_add(uint64_t s, uint64_t e, unsigned int shift, uint8_t flags,
 					uint32_t power)
 {
 	struct job *last = &rs.jobs[(rs.job_tail - 1U) % JOBS];
@@ -896,7 +918,8 @@ static ESP_SDR_GAPLESS_HOT bool job_add(uint64_t s, uint64_t e, unsigned int shi
 }
 
 /* Decide window @p w (all windows up to w + pre are in), queueing it if kept. */
-static ESP_SDR_GAPLESS_HOT void decide(uint32_t w, uint32_t pre, uint32_t span)
+GL_HOT(PACED_CHUNK, decide)
+static void decide(uint32_t w, uint32_t pre, uint32_t span)
 {
 	/* Bit k of loud_bits is window nwin - 1 - k: window w is bit nwin - 1 - w. */
 	uint32_t at = rs.nwin - 1U - w;
@@ -953,7 +976,8 @@ static ESP_SDR_GAPLESS_HOT void decide(uint32_t w, uint32_t pre, uint32_t span)
 	}
 }
 
-static ESP_SDR_GAPLESS_HOT void window_done(const struct est *a, const struct est *b)
+GL_HOT(PACED_CHUNK, window_done)
+static void window_done(const struct est *a, const struct est *b)
 {
 	struct window *win = &rs.hist[rs.nwin % WIN_HIST];
 	uint32_t pre = MIN(rs.cfg->pre, PREPOST_MAX);
@@ -991,7 +1015,8 @@ enum slice_result {
 };
 
 /* Contiguous free words at store @p s's write position; runs never wrap. */
-static ESP_SDR_GAPLESS_HOT uint32_t stage_contig(struct store *s)
+GL_HOT(PACED_CHUNK, stage_contig)
+static uint32_t stage_contig(struct store *s)
 {
 	if (s->used == 0U) {
 		s->head = s->tail = 0;
@@ -1009,7 +1034,8 @@ static ESP_SDR_GAPLESS_HOT uint32_t stage_contig(struct store *s)
 	return s->head >= s->tail ? s->words - s->head : s->tail - s->head;
 }
 
-static ESP_SDR_GAPLESS_HOT __attribute__((optimize("O3"))) void
+GL_HOT(PACED_SAMPLE, copy_words)
+static __attribute__((optimize("O3"))) void
 copy_words(uint32_t *dst, const uint32_t *src, uint32_t n)
 {
 	for (; n >= 8U; n -= 8U, src += 8, dst += 8) {
@@ -1035,7 +1061,8 @@ copy_words(uint32_t *dst, const uint32_t *src, uint32_t n)
  * the first sample of the unit being written, which cannot be read yet. This is the step
  * with a deadline: a unit's block is readable until it is prepared again.
  */
-static ESP_SDR_GAPLESS_HOT enum slice_result copy_slice(uint32_t budget, uint64_t cur_abs)
+GL_HOT(PACED_CHUNK, copy_slice)
+static enum slice_result copy_slice(uint32_t budget, uint64_t cur_abs)
 {
 	struct job *j;
 	const struct unit *u = NULL;
@@ -1149,7 +1176,8 @@ static ESP_SDR_GAPLESS_HOT enum slice_result copy_slice(uint32_t budget, uint64_
  * is a window's length, judged once that many samples are staged (or the run is complete:
  * not the last one staged, or no job continues it); a run too short for a point is narrow.
  */
-static ESP_SDR_GAPLESS_HOT enum slice_result sort_slice(struct staged *e, uint32_t budget)
+GL_HOT(PACED_CHUNK, sort_slice)
+static enum slice_result sort_slice(struct staged *e, uint32_t budget)
 {
 	struct sort_result res;
 	uint32_t t0, dt, max, before;
@@ -1216,7 +1244,8 @@ static ESP_SDR_GAPLESS_HOT enum slice_result sort_slice(struct staged *e, uint32
  * The judged chunk at the front of @p e is wide: its record goes out, its samples go. The
  * sink's reserve() costs what a pack slice's fixed part does (it may finish a block).
  */
-static ESP_SDR_GAPLESS_HOT enum slice_result wide_slice(struct staged *e, uint32_t budget)
+GL_HOT(PACED_CHUNK, wide_slice)
+static enum slice_result wide_slice(struct staged *e, uint32_t budget)
 {
 	struct esp_sdr_gapless_seg seg = {
 		.index = e->index,
@@ -1268,7 +1297,8 @@ static ESP_SDR_GAPLESS_HOT enum slice_result wide_slice(struct staged *e, uint32
 }
 
 /* The front run is in a half whose canaries failed: dropped unread, its successor marked. */
-static ESP_SDR_GAPLESS_HOT void drop_front(struct staged *e)
+GL_HOT(PACED_CHUNK, drop_front)
+static void drop_front(struct staged *e)
 {
 	rs.st.dropped_pairs += e->pairs;
 	rs.sto[e->store].tail = e->at + e->pairs;
@@ -1284,7 +1314,8 @@ static ESP_SDR_GAPLESS_HOT void drop_front(struct staged *e)
 }
 
 /* Pack from the front staged run into the sink as far as @p budget cycles go: no deadline. */
-static ESP_SDR_GAPLESS_HOT enum slice_result pack_slice(uint32_t budget)
+GL_HOT(PACED_CHUNK, pack_slice)
+static enum slice_result pack_slice(uint32_t budget)
 {
 	struct staged *e;
 	struct esp_sdr_gapless_seg seg;
@@ -1368,7 +1399,8 @@ static ESP_SDR_GAPLESS_HOT enum slice_result pack_slice(uint32_t budget)
 }
 
 /* Nothing waits for unit @p u any more: no job and no undecided window reaches into it. */
-static ESP_SDR_GAPLESS_HOT bool unit_done(const struct unit *u)
+GL_HOT(PACED_CHUNK, unit_done)
+static bool unit_done(const struct unit *u)
 {
 	uint64_t end = u->abs + u->count;
 
@@ -1443,7 +1475,8 @@ static void run_init(const struct esp_sdr_gapless_cfg *cfg, const struct esp_sdr
 }
 
 /* All of the run is hot: with interrupts off a flash cache miss stalls the ring's deadlines. */
-ESP_SDR_GAPLESS_HOT int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cfg,
+GL_HOT(PACED_CHUNK, esp_sdr_gapless_run)
+int esp_sdr_gapless_run(const struct esp_sdr_gapless_cfg *cfg,
 					    const struct esp_sdr_gapless_sink *sink,
 					    struct esp_sdr_gapless_stats *stats)
 {
@@ -1753,7 +1786,8 @@ out:
 }
 
 /* From the sink's callbacks too, with interrupts off: what the run's end fills in, now. */
-ESP_SDR_GAPLESS_HOT void esp_sdr_gapless_peek(struct esp_sdr_gapless_stats *stats)
+GL_HOT(PACED_EVENT, esp_sdr_gapless_peek)
+void esp_sdr_gapless_peek(struct esp_sdr_gapless_stats *stats)
 {
 	*stats = rs.st;
 	stats->baseline = baseline_q8 >> 8;

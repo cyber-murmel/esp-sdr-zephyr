@@ -13,6 +13,7 @@
 #include <zephyr/sys/util.h>
 
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_place.h>
 
 /* Upstream helpers, used unmodified. */
 #include "rx_bandwidth.h"
@@ -84,6 +85,7 @@ static void gain_apply(void)
  */
 #define GAIN_REFRESH_MS 20
 
+ESP_SDR_CODE(PACED_CHUNK, esp_sdr_rx_gain_refresh_after)
 bool esp_sdr_rx_gain_refresh_after(uint32_t ms)
 {
 #if defined(CONFIG_ESP_SDR_RFTEST)
@@ -98,7 +100,7 @@ bool esp_sdr_rx_gain_refresh_after(uint32_t ms)
 	return false;
 }
 
-bool esp_sdr_rx_gain_refresh(void)
+ESP_SDR_CODE(PACED_CHUNK, esp_sdr_rx_gain_refresh) bool esp_sdr_rx_gain_refresh(void)
 {
 	return esp_sdr_rx_gain_refresh_after(GAIN_REFRESH_MS);
 }
@@ -145,7 +147,7 @@ void esp_sdr_rx_prepare(void)
 	rx_front_end(true, SDR_RETUNE_SETTLE_US);
 }
 
-void esp_sdr_rx_resume(void)
+ESP_SDR_CODE(PACED_EVENT, esp_sdr_rx_resume) void esp_sdr_rx_resume(void)
 {
 	rx_front_end(esp_sdr_turn_retune, esp_sdr_turn_settle_us);
 }

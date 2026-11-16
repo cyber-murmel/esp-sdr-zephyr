@@ -28,6 +28,7 @@
 
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_dumpring.h>
+#include <esp_sdr/esp_sdr_place.h>
 
 #include "esp_sdr_priv.h"
 
@@ -66,13 +67,13 @@ BUILD_ASSERT(RING * 4U <= 0x8000U,
 #define G3 ((volatile uint32_t *)__esp_sdr_bank_start)
 
 /* A unit lands at copy_buf + (its start & 3), so that both sides share their alignment. */
-static uint32_t copy_buf[COPY_MAX + 3U] __aligned(16);
+static uint32_t copy_buf[COPY_MAX + 3U] __aligned(16) ESP_SDR_DATA(STATE, copy_buf);
 static atomic_t stop_req;
 static bool running;
 /* The run is on CPU 1, the S31's only core with PIE: copies and marks 4 words a load or store. */
 static bool use_pie;
 /* In DRAM, not flash: the turn reads it. */
-static uint32_t marks4[4] __aligned(16) = {MARK, MARK, MARK, MARK};
+static uint32_t marks4[4] __aligned(16) ESP_SDR_DATA(TABLE, marks4) = {MARK, MARK, MARK, MARK};
 
 static const struct {
 	enum esp_sdr_rate rate;
@@ -189,7 +190,8 @@ static ALWAYS_INLINE uint32_t to_align(const void *p, uint32_t n)
 }
 
 /* As copy(), d and s with the same alignment: the middle 16 words at a time. */
-static IRAM_ATTR __noinline void copy_fast(uint32_t *d, const uint32_t *s, uint32_t n)
+ESP_SDR_CODE(PACED_SAMPLE, copy_fast)
+static __noinline void copy_fast(uint32_t *d, const uint32_t *s, uint32_t n)
 {
 	uint32_t head = to_align(s, n), blocks;
 
@@ -206,7 +208,8 @@ static IRAM_ATTR __noinline void copy_fast(uint32_t *d, const uint32_t *s, uint3
 	copy(d + 16U * blocks, s + 16U * blocks, n - 16U * blocks);
 }
 
-static IRAM_ATTR __noinline void fill_fast(uint32_t *d, uint32_t n)
+ESP_SDR_CODE(PACED_SAMPLE, fill_fast)
+static __noinline void fill_fast(uint32_t *d, uint32_t n)
 {
 	uint32_t head = to_align(d, n), blocks;
 
@@ -270,7 +273,8 @@ struct turn {
  * core's interrupts are off, the other core waits, and this code, its data and its stack are below
  * group 2. -EIO when the unit's ends are not where the marks say.
  */
-static IRAM_ATTR __noinline int turn(struct turn *t)
+ESP_SDR_CODE(PACED_CHUNK, turn)
+static __noinline int turn(struct turn *t)
 {
 	unsigned int key = esp_sdr_s31_group_take();
 	uint32_t t0 = cycles(), at;
@@ -305,7 +309,8 @@ static IRAM_ATTR __noinline int turn(struct turn *t)
 }
 
 /* Words at g[from], n of them around the ring's end, to the sink. */
-static IRAM_ATTR void give(const struct esp_sdr_dumpring_cfg *cfg, volatile uint32_t *g,
+ESP_SDR_CODE(PACED_CHUNK, give)
+static void give(const struct esp_sdr_dumpring_cfg *cfg, volatile uint32_t *g,
 			   uint32_t from, uint32_t n)
 {
 	while (n > 0U) {
@@ -317,10 +322,14 @@ static IRAM_ATTR void give(const struct esp_sdr_dumpring_cfg *cfg, volatile uint
 	}
 }
 
-/* In IRAM like its sink should be: the other core's work through the shared cache slows code in
- * flash (the turns would not wait for it, the units would). */
-static IRAM_ATTR int run_locked(const struct esp_sdr_dumpring_cfg *cfg, uint32_t hz,
-				unsigned int code, struct esp_sdr_dumpring_stats *st)
+/*
+ * In IRAM like its sink should be: the other core's work through the shared cache slows code in
+ * flash (the turns would not wait for it, the units would). Not inlined into its flash caller,
+ * which IRAM_ATTR alone allows (give() may be, into this).
+ */
+ESP_SDR_CODE(PACED_CHUNK, run_locked)
+static __noinline int run_locked(const struct esp_sdr_dumpring_cfg *cfg, uint32_t hz,
+				 unsigned int code, struct esp_sdr_dumpring_stats *st)
 {
 	struct turn t = {.expected = 0U, .cycles_per_word = ESP_SDR_CPU_HZ / hz, .first = true};
 	const uint32_t stall = STALL_US * (ESP_SDR_CPU_HZ / 1000000U);

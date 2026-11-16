@@ -5,6 +5,8 @@
 # across resets (app_crash.h).
 
 include(${ZEPHYR_BASE}/samples/subsys/usb/common/common.cmake)
+# The placement rules (esp_sdr_place.h), also where the library is not built.
+include(${CMAKE_CURRENT_LIST_DIR}/../../lib/esp_sdr/place.cmake)
 
 target_include_directories(app PRIVATE ${CMAKE_CURRENT_LIST_DIR}/include)
 target_sources(app PRIVATE
@@ -17,4 +19,7 @@ target_sources(app PRIVATE
 # stays safe to include from a RISC-V (C6) app as well.
 if(CONFIG_XTENSA)
   target_sources(app PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src/app_crash_dx.S)
+endif()
+if(CONFIG_APP_PROF_SHELL)
+  target_sources(app PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src/app_prof.c)
 endif()

@@ -9,7 +9,10 @@
 
 #include <xtensa/corebits.h>
 
-	.section .iram1.app_crash_dx, "ax"
+#include <esp_sdr/esp_sdr_place.h>
+
+	/* The double exception vector runs it whatever the cache's state. */
+	ESP_SDR_ASM_SECTION(NOCACHE, app_crash_dx)
 	.literal_position
 	.global xtensa_triple_fault_breadcrumb
 	.type xtensa_triple_fault_breadcrumb, @function

@@ -23,6 +23,7 @@
 
 #if defined(CONFIG_APP_TX)
 #include <esp_sdr/esp_sdr_tx.h>
+#include <esp_sdr/esp_sdr_place.h>
 
 #include "vrt_tx.h"
 #endif
@@ -55,7 +56,7 @@ static int cmd_mem(const struct shell *sh, size_t argc, char **argv)
 #define TX_RATE        ESP_SDR_RATE_40MSPS
 #define TX_BUF_SAMPLES 2048U /* 51 us at 40 MS/s; RAM below the capture bank is tight */
 /* PSRAM: only CPU copies read it, the DAC plays from the bank. */
-static EXT_RAM_BSS_ATTR uint32_t tx_buf[TX_BUF_SAMPLES];
+static ESP_SDR_DATA(BULK, tx_buf) uint32_t tx_buf[TX_BUF_SAMPLES];
 
 static enum esp_sdr_rate tx_rate_arg(size_t argc, char **argv, size_t idx)
 {

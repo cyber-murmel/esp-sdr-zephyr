@@ -16,6 +16,7 @@
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_cal.h>
 #include <esp_sdr/esp_sdr_lte.h>
+#include <esp_sdr/esp_sdr_place.h>
 #include <esp_sdr/esp_sdr_rx.h>
 
 #include "esp_sdr_priv.h"
@@ -45,8 +46,10 @@ LOG_MODULE_DECLARE(esp_sdr, CONFIG_ESP_SDR_LOG_LEVEL);
  * the SRAM above the capture bank, as the image leaves little DRAM below it.
  */
 #define LTE_STATIC_NFFT 1024U
-static float lte_mem[ESP_SDR_LTE_WORK_FLOATS(LTE_STATIC_NFFT)] __aligned(4) ESP_SDR_HIGH_RAM;
-static struct esp_sdr_iq16 lte_buf[LTE_STATIC_NFFT] __aligned(4) ESP_SDR_HIGH_RAM;
+static float lte_mem[ESP_SDR_LTE_WORK_FLOATS(LTE_STATIC_NFFT)] __aligned(4)
+	ESP_SDR_DATA_F(SCRATCH, lte_mem, NOINIT);
+static struct esp_sdr_iq16 lte_buf[LTE_STATIC_NFFT] __aligned(4)
+	ESP_SDR_DATA_F(SCRATCH, lte_buf, NOINIT);
 #endif
 
 struct lte_ctx {
@@ -218,6 +221,7 @@ static size_t search_order(const float *pw, size_t steps, uint16_t *order, size_
 	return n;
 }
 
+ESP_SDR_CODE(COLD, esp_sdr_lte_calibrate)
 int esp_sdr_lte_calibrate(const struct esp_sdr_lte_scan *scan, struct esp_sdr_lte_result *res)
 {
 	static const struct esp_sdr_lte_scan defaults = ESP_SDR_LTE_SCAN_DEFAULT;

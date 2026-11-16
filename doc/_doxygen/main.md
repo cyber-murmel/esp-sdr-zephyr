@@ -7,8 +7,9 @@ replay on the ESP32-C5), and the IEEE 802.15.4 software PHY and radio driver
 built on it. See the [topics](topics.html) for the parts:
 
 - @ref esp_sdr : @ref esp_sdr_radio, @ref esp_sdr_rx, @ref esp_sdr_tx,
-  @ref esp_sdr_ring, @ref esp_sdr_chancap, @ref esp_sdr_paced, @ref esp_sdr_trig,
-  @ref esp_sdr_gapless, @ref esp_sdr_diag, @ref esp_sdr_diag16, @ref esp_sdr_replay and @ref esp_sdr_dsp.
+  @ref esp_sdr_ring, @ref esp_sdr_chancap, @ref esp_sdr_place, @ref esp_sdr_prof,
+  @ref esp_sdr_paced, @ref esp_sdr_trig, @ref esp_sdr_gapless, @ref esp_sdr_diag,
+  @ref esp_sdr_diag16, @ref esp_sdr_replay and @ref esp_sdr_dsp.
 - @ref ieee154 : @ref ieee154_phy and @ref ieee154_esp_sdr.
 
 The Zigbee stack of `lib/zigbee` (`include/zigbee/`, portable C behind the

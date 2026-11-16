@@ -13,6 +13,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/util.h>
 
+#include <esp_sdr/esp_sdr_place.h>
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_dsp.h>
 
@@ -73,7 +74,7 @@ void esp_sdr_tx_prepare(void)
 	k_busy_wait(esp_sdr_turn_settle_us);
 }
 
-void esp_sdr_tx_front_end(void)
+ESP_SDR_CODE(PACED_EVENT, esp_sdr_tx_front_end) void esp_sdr_tx_front_end(void)
 {
 	if (esp_sdr_turn_retune) {
 		esp_sdr_tune();
@@ -243,7 +244,7 @@ uint32_t *esp_sdr_dac_buf(int idx, size_t *words)
 	return (uint32_t *)__esp_sdr_bank_start;
 }
 
-IRAM_ATTR void esp_sdr_dac_select(int idx)
+ESP_SDR_CODE(PACED_CHUNK, esp_sdr_dac_select) void esp_sdr_dac_select(int idx)
 {
 	uint32_t usage = idx == 0 ? dac_usage : BIT(1) << SENSITIVE_INTERNAL_SRAM_MAC_DUMP_USAGE_S;
 
@@ -263,12 +264,12 @@ void esp_sdr_dac_loop(int idx, size_t count)
 	REG_WRITE(DAC_TRIG_REG, ctrl | DUMP_CTRL_TRIGGER);
 }
 
-IRAM_ATTR void esp_sdr_dac_halt(void)
+ESP_SDR_CODE(PACED_EVENT, esp_sdr_dac_halt) void esp_sdr_dac_halt(void)
 {
 	REG_WRITE(DAC_TRIG_REG, 0);
 }
 
-void esp_sdr_dac_end(void)
+ESP_SDR_CODE(PACED_EVENT, esp_sdr_dac_end) void esp_sdr_dac_end(void)
 {
 	REG_WRITE(DAC_TRIG_REG, 0);
 	REG_WRITE(DUMP_CTRL_REG, 0);
@@ -315,6 +316,7 @@ static void sweep_fill(volatile uint32_t *bank, size_t n, double t, double fs, d
 	}
 }
 
+ESP_SDR_CODE(COLD, esp_sdr_tx_sweep)
 int esp_sdr_tx_sweep(enum esp_sdr_rate rate, float f0_hz, float f1_hz, uint32_t duration_ms,
 		  int amp, struct esp_sdr_tx_sweep_stats *stats)
 {

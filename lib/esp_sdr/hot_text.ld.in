@@ -1,0 +1,18 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * Generated from lib/esp_sdr/hot_text.ld.in (place.cmake): the hot flash block
+ * (CONFIG_ESP_SDR_HOT_TEXT) in the ESP32-S3 linker script's TEXT_SECTIONS, ahead of the flash
+ * text's catch-all. Aligned to the instruction cache's way, its lines keep their cache sets
+ * whatever code comes before or after it. The app's list first (esp_sdr_hot_text()), then what
+ * the rules place in ESP_SDR_HOTBLOCK; no label or assignment in between, as the Xtensa linker
+ * pools the literals of the statements up to the next one at the block's start.
+ */
+
+. = ALIGN(CONFIG_ESP32S3_INSTRUCTION_CACHE_SIZE / CONFIG_ESP32S3_ICACHE_ASSOCIATED_WAYS);
+__esp_sdr_hot_text_start = ABSOLUTE(.);
+@ESP_SDR_HOT_TEXT_INCLUDE@
+    *(.literal.esp_sdr_hot.* .text.esp_sdr_hot.*)
+__esp_sdr_hot_text_end = ABSOLUTE(.);
+ASSERT(__esp_sdr_hot_text_end - __esp_sdr_hot_text_start <= CONFIG_ESP_SDR_HOT_TEXT_BUDGET,
+       "esp_sdr: the hot flash block is larger than CONFIG_ESP_SDR_HOT_TEXT_BUDGET");

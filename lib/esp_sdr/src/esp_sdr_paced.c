@@ -18,6 +18,7 @@
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_dsp.h>
 #include <esp_sdr/esp_sdr_paced.h>
+#include <esp_sdr/esp_sdr_place.h>
 
 #include "esp_sdr_priv.h"
 
@@ -36,11 +37,6 @@ extern void esp_phy_wifi_tx_tone(uint32_t start, uint32_t chan, uint32_t backoff
 #endif
 
 /* The S31 runs the transmit poll from RAM: a flash cache miss would move a DAC write. */
-#if defined(CONFIG_SOC_SERIES_ESP32S31)
-#define TX_POLL_ATTR IRAM_ATTR
-#else
-#define TX_POLL_ATTR
-#endif
 
 static struct esp_sdr_paced_stats stats;
 static bool tx_on;
@@ -164,7 +160,7 @@ int esp_sdr_rx_paced_start(uint32_t rate_hz)
 	return 0;
 }
 
-bool esp_sdr_rx_paced_poll(int32_t *i, int32_t *q)
+ESP_SDR_CODE(PACED_SAMPLE, esp_sdr_rx_paced_poll) bool esp_sdr_rx_paced_poll(int32_t *i, int32_t *q)
 {
 	uint32_t now = esp_sdr_paced_cycles();
 	int32_t si, sq, q1;
@@ -215,7 +211,8 @@ static inline uint32_t sat8(int32_t v)
  * (catching up with short windows would skew the next dozens of them). In RAM: a cache miss
  * would move samples.
  */
-IRAM_ATTR __attribute__((optimize("O3"))) uint32_t esp_sdr_rx_paced_fill_iq8(int8_t *out, size_t n, unsigned int shift)
+ESP_SDR_CODE(PACED_SAMPLE, esp_sdr_rx_paced_fill_iq8) __attribute__((optimize("O3")))
+uint32_t esp_sdr_rx_paced_fill_iq8(int8_t *out, size_t n, unsigned int shift)
 {
 	uint16_t *pair = (uint16_t *)out;
 	uint32_t target = rxp.target, step = rxp.step, left = rxp.left, late = 0;
@@ -434,7 +431,7 @@ static inline uint32_t iq10(int32_t i, int32_t q)
 	return esp_sdr_tx_word((int16_t)CLAMP(i, -511, 511), (int16_t)CLAMP(q, -511, 511));
 }
 
-TX_POLL_ATTR bool esp_sdr_tx_paced_poll(void)
+ESP_SDR_CODE(PACED_SAMPLE, esp_sdr_tx_paced_poll) bool esp_sdr_tx_paced_poll(void)
 {
 	uint32_t now = esp_sdr_paced_cycles();
 	const int16_t *c, *xi, *xq;

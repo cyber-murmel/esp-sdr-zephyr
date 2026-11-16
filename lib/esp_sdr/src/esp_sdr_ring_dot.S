@@ -18,7 +18,9 @@
  * 16-byte aligned address below any other).
  */
 
-	.section .iram1.esp_sdr_ring_dot, "ax"
+#include <esp_sdr/esp_sdr_place.h>
+
+	ESP_SDR_ASM_SECTION(PACED_SAMPLE, esp_sdr_ring_dot)
 	.align	4
 	.global	esp_sdr_ring_dot
 	.type	esp_sdr_ring_dot, @function

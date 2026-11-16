@@ -16,6 +16,7 @@
 
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_cal.h>
+#include <esp_sdr/esp_sdr_place.h>
 #include <esp_sdr/esp_sdr_rx.h>
 
 #if defined(CONFIG_ESP_SDR_PHY_ONLY)
@@ -154,6 +155,7 @@ static struct esp_sdr_cal_record corr_model;
 static struct k_spinlock corr_lock;
 bool esp_sdr_corr_frozen;
 
+ESP_SDR_CODE(EVENT, esp_sdr_corr_refresh)
 void esp_sdr_corr_refresh(void)
 {
 	int16_t dc;
