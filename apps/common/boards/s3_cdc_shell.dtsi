@@ -1,5 +1,8 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * The ESP32-S3 apps' console and shell on a CDC-ACM port of the USB OTG controller. An app's
+ * overlay defines APP_SHELL_LABEL, the interface name the host shows, and includes this file.
  */
 
 / {
@@ -15,6 +18,6 @@ zephyr_udc0: &usb_otg {
 	/* Console, shell and logs while OTG owns the USB port. */
 	cdc_acm_uart0: cdc_acm_uart0 {
 		compatible = "zephyr,cdc-acm-uart";
-		label = "ESP-SDR probe shell";
+		label = APP_SHELL_LABEL;
 	};
 };

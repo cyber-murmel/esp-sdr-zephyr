@@ -5,8 +5,8 @@
 # this test's whole job is to regress what that application actually ships,
 # not a rebuilt stand-in. src/main.c is built from there by path, and
 # APPLICATION_CONFIG_DIR points Zephyr's own board-aware config lookup at
-# that same directory, so prj.conf and the per-board boards/*.conf and
-# *.overlay come from there too, unmodified. Only sysbuild.conf is a plain
+# that same directory, so prj.conf, the per-chip socs/*.conf and *.overlay
+# and the per-board boards/* come from there too, unmodified. Only sysbuild.conf is a plain
 # copy here: its own lookup (done by the outer sysbuild pass, before this
 # file runs) is rooted at this directory, not APPLICATION_CONFIG_DIR, and
 # the file is one static line anyway.
