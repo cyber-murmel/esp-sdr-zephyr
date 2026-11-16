@@ -6,14 +6,15 @@
  * through carrier offset, optional multipath, noise and 10 bit quantization,
  * and decodes it; or decodes a real capture (link_perf.py dump).
  *
- *   cc -O2 -Wall -Isrc -I../../include src/ofdm.c src/ofdm_frame.c src/qam.c src/rs.c src/hamming.c \
- *      tools/ofdm_sim.c -lm -o /tmp/ofdm_sim
+ *   cc -O2 -Wall -Isrc -I../../include src/ofdm.c src/ofdm_frame.c src/qam.c src/rs.c src/bch.c \
+ *      src/hamming.c tools/ofdm_sim.c -lm -o /tmp/ofdm_sim
  *   BW=16 CH=52 MOD=64qam /tmp/ofdm_sim [capture.bin]
  *
  * Environment: BW (MHz), CH, CPDIV, MOD (bpsk .. 64qam, default all), AMP,
  * SYMS, CFO (Hz), MP (1: multipath), GAIN (receive scale), RXDIV (1, 2:
- * receive at 40 MS/s), PILOTS, SMOOTH, HDR (header bits), TRIALS. SNR is over
- * the receive bandwidth.
+ * receive at 40 MS/s), PILOTS, SMOOTH, HDR (header bits), TRIALS, FEC (the
+ * frames' code: rs, none, bch<t>-<bytes>), CHAVG and FINEROT (0: the channel per frame,
+ * measured again after the fine timing). SNR is over the receive bandwidth.
  */
 
 #include <math.h>
@@ -185,7 +186,7 @@ int main(int argc, char **argv)
 		.cp_div = (unsigned int)env_f("CPDIV", 8),
 		.amp = (int)env_f("AMP", 90),
 		.symbols = (unsigned int)env_f("SYMS", 0),
-		.max_samples = (size_t)env_f("MAXS", (WIN + 1U) / 2U),
+		.max_samples = (size_t)env_f("MAXS", WIN - OFDM_RX_WRAP_MARGIN(OFDM_NFFT_MAX, OFDM_NFFT_MAX / 4U)),
 		.rx_div = (unsigned int)env_f("RXDIV", 1),
 		.pilots = (unsigned int)env_f("PILOTS", 1),
 		.smooth = env_f("SMOOTH", 0) != 0.0,
@@ -194,6 +195,10 @@ int main(int argc, char **argv)
 	};
 	int m0 = 0, m1 = OFDM_MODS - 1;
 
+	/* The channel model has no sample clock drift: no correction for it. */
+	ofdm_sfo = (int)env_f("SFO", 0);
+	ofdm_chavg = env_f("CHAVG", 0) != 0.0;
+	ofdm_finerot = env_f("FINEROT", 1) != 0.0;
 	srand(1);
 	if (ms) {
 		for (int m = 0; m < OFDM_MODS; m++) {
@@ -272,7 +277,7 @@ int main(int argc, char **argv)
 
 	if (getenv("ACK")) {
 		struct ofdm_fhdr h = {.type = 1, .mod = OFDM_BPSK, .dst = 0x80, .src = 0x00};
-		size_t al = ofdm_hdr_samples(&ctx), n = 2U * ofdm_hdr_rsamples(&ctx) + ctx.rnfft;
+		size_t al = ofdm_hdr_samples(&ctx), n = ofdm_rx_window(&ctx, ofdm_hdr_rsamples(&ctx));
 		const double snrs[] = {6, 9, 12, 18, 24, 30};
 		int trials = (int)env_f("TRIALS", 50);
 
@@ -309,14 +314,27 @@ int main(int argc, char **argv)
 	}
 
 	if (getenv("FRAME")) {
+		const char *fname = getenv("FEC") ? getenv("FEC") : "rs";
+		int fec = ofdm_fec_parse(fname);
+
+		if (fec < 0) {
+			printf("no code %s\n", fname);
+			return 1;
+		}
 		rs_init();
 		for (int m = m0; m <= m1; m++) {
-			struct ofdm_fhdr h = {.type = 0, .mod = (enum ofdm_mod)m, .dst = 2, .src = 1};
-			size_t user = ofdm_frame_user_bytes(&ctx, h.mod);
+			struct ofdm_fhdr h = {.type = 0, .mod = (enum ofdm_mod)m, .fec = (uint8_t)fec,
+					      .dst = 2, .src = 1};
+			size_t user = ofdm_frame_user_bytes(&ctx, h.mod, h.fec);
 			const double snrs[] = {12, 15, 18, 21, 24, 27, 30};
 			int trials = (int)env_f("TRIALS", 20);
 
-			printf("%s frames: %zu user bytes = %.1f Mbit/s on air\n", mod_names[m], user,
+			if (user == 0U) {
+				printf("%s: no %s frame\n", mod_names[m], fname);
+				continue;
+			}
+			printf("%s frames, %s: %zu user bytes of %zu = %.1f Mbit/s on air\n", mod_names[m],
+			       fname, user, ofdm_frame_bits(&ctx, h.mod) / 8U,
 			       (double)user * 8.0 / ((double)ctx.len / FS) / 1e6);
 			for (size_t s = 0; s < sizeof(snrs) / sizeof(snrs[0]); s++) {
 				int ok = 0, hdr_err = 0, data_err = 0, none = 0, fixed = 0;
@@ -336,13 +354,13 @@ int main(int argc, char **argv)
 					channel(ctx.len, (unsigned int)rand() % ctx.len, snrs[s],
 						env_f("CFO", 20000.0) * (0.5 + rand() / (double)RAND_MAX),
 						(int)env_f("MP", 0), env_f("GAIN", 0.6), cfg.rx_div, &clipped);
-					ret = ofdm_frame_begin(&ctx, win, WIN, &g, &info);
+					ret = ofdm_frame_begin(&ctx, win, ofdm_rx_window(&ctx, ctx.rlen), &g, &info);
 					if (ret == -1) {
 						none++;
 						continue;
 					}
-					if (ret != 0 || g.seq != h.seq || g.mod != h.mod || g.dst != h.dst ||
-					    g.src != h.src) {
+					if (ret != 0 || g.seq != h.seq || g.mod != h.mod || g.fec != h.fec ||
+					    g.dst != h.dst || g.src != h.src) {
 						hdr_err++;
 						continue;
 					}
@@ -354,7 +372,7 @@ int main(int argc, char **argv)
 					ok++;
 					fixed += corr;
 				}
-				printf("  snr %4.0f dB: ok %3d/%d, none %d, header %d, data %d, RS fixed %.1f B/frame\n",
+				printf("  snr %4.0f dB: ok %3d/%d, none %d, header %d, data %d, fixed %.1f/frame\n",
 				       snrs[s], ok, trials, none, hdr_err, data_err,
 				       ok ? (double)fixed / ok : 0.0);
 			}
@@ -385,7 +403,7 @@ int main(int argc, char **argv)
 				double c = cfo * (0.5 + rand() / (double)RAND_MAX);
 
 				channel(ctx.len, off, snrs[s], c, mp, gain, cfg.rx_div, &clipped);
-				if (ofdm_rx_begin(&ctx, win, WIN, hgot, &info) != 0) {
+				if (ofdm_rx_begin(&ctx, win, ofdm_rx_window(&ctx, ctx.rlen), hgot, &info) != 0) {
 					errs += (long)nbits;
 					continue;
 				}

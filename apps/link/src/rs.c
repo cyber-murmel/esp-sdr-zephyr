@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * RS(255,231) codec. The encoder runs the parity register a word at a time
+ * RS(255,223) codec. The encoder runs the parity register a word at a time
  * from a 256 x 32 byte table; the decoder first checks the codeword with the
  * same register (a clean one costs no more than encoding) and only computes
  * syndromes, Berlekamp-Massey, Chien search and Forney for a dirty one,

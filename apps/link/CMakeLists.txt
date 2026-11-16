@@ -13,6 +13,7 @@ target_sources(app PRIVATE
   src/perf.c
   src/qam.c
   src/rs.c
+  src/bch.c
   src/hamming.c
   src/ofdm.c
   src/ofdm_frame.c
@@ -21,7 +22,7 @@ target_compile_definitions(app PRIVATE QAM_SPS=${CONFIG_APP_SPS})
 # Per-sample and per-byte loops of the modem and the codec. Zephyr's ISO C
 # mode turns contraction off: fused multiply-adds halve the FPU work.
 set_source_files_properties(src/qam.c src/ofdm.c PROPERTIES COMPILE_OPTIONS "-O3;-ffp-contract=fast")
-set_source_files_properties(src/rs.c src/hamming.c PROPERTIES COMPILE_OPTIONS -O3)
+set_source_files_properties(src/rs.c src/bch.c src/hamming.c PROPERTIES COMPILE_OPTIONS -O3)
 
 # Only the ESP32-S3 float FFT kernel of esp-dsp: its IDF scaffolding stays out.
 if(CONFIG_APP_OFDM_ESP_DSP)

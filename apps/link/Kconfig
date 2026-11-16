@@ -132,11 +132,14 @@ config APP_OFDM_ESP_DSP
 config APP_RS_PARITY
 	int "Reed-Solomon parity bytes per 255-byte unit"
 	range 8 64
-	default 24
+	default 32
 	help
-	  Multiple of 4. The unit corrects half as many byte errors. 24 is RS(255,231),
-	  32 is RS(255,223), 16 is RS(255,239). The 64-QAM link at 24 dB needs about 4.7
-	  corrections per unit with a tail: 16 loses 21 % of the frames, 24 about 1 %.
+	  Multiple of 4. The unit corrects half as many byte errors. 32 is RS(255,223),
+	  24 is RS(255,231), 16 is RS(255,239). The 64-QAM link needs about 4.7
+	  corrections per unit at an MER of 23.5 dB and twice that at 22.3 (the MER
+	  drifts that much in a session): 24 carries 3.6 % more and decodes faster at
+	  the top of the drift but loses half the frames at the bottom, 16 a fifth
+	  at the top.
 
 config APP_MAC_PRIORITY
 	int "MAC thread priority"

@@ -20,7 +20,7 @@ throughput test on the USB shell.
   symbols, estimates the carrier offset (and from it the sample clock
   offset), trains an 11 tap equalizer by least squares and tracks phase and
   taps decision directed.
-- **Error correction** per frame: RS(255,231), extended Hamming (128,120),
+- **Error correction** per frame: RS(255,223), extended Hamming (128,120),
   or none. Full frames fill the whole capture window with a short last unit
   (a shortened RS codeword, fewer Hamming blocks).
 - **Pairs**: two half length frames looped together. The receiver decodes
@@ -72,9 +72,11 @@ the same ``ofdm set`` settings on both).
   pilot symbols, a BPSK header (type, modulation, addresses, sequence
   number, CRC-16; its bits repeated over the subcarriers and combined soft),
   the payload with another pilot in its middle, each symbol with a cyclic
-  prefix. The payload is RS(255,231) in equally shortened units, byte
-  interleaved over the frame, with a CRC-32. The frame loops in the DAC and
-  fills half the capture window, so a whole copy always fits.
+  prefix. The payload carries the user data and a CRC-32 under the code the
+  header names (``-f``, see "Light error correction"): RS(255,223) in
+  equally shortened units byte interleaved over the frame, BCH blocks, or
+  none. The frame loops in the DAC and fills the capture window (read
+  around the period, see "Frames of a whole window").
 - Receiver, on the raw capture words: an integer sliding Schmidl-Cox search
   (coarse at twice the stride when its peak is clear, then at full
   resolution), the carrier offset from its phase, the channel from the two
@@ -126,8 +128,8 @@ Where the time goes
 
 The rate is set by the CPUs, not the air (a frame is on air for 0.2 ms of each
 10 ms exchange). Per frame at 26 MHz, 64-QAM, RS (both CPUs; the receiver in ms): search
-1.1, channel and header 0.85, payload 1.2, Reed-Solomon and CRC 1.8 to 2.3 (13 units at
-about 0.28 ms with the typical 3 or 4 corrections, more when the MER drops); the sender
+0.8, channel and header 0.85, payload 0.8, Reed-Solomon and CRC 1.3 to 1.9 (11 units,
+more when the MER drops); the sender
 builds the next frame in 4.6 on the other CPU, ACKs 0.3 each way.
 
 - **16-bit FFT.** The receiver's payload FFT and the transmitter's inverse FFT run on
@@ -152,9 +154,80 @@ builds the next frame in 4.6 on the other CPU, ACKs 0.3 each way.
   and falls back to the float decoder for a frame whose weakest subcarrier does not fit.
   ``ofdm vec 0|1`` switches it; ``ofdm rx -c`` decodes every capture twice, vector and
   float: 10 635 against 10 632 bit errors in 300 frames, the same for 16-QAM and 30 MHz.
-- Per payload symbol (26 MHz, one CPU): derotate 17 us, FFT 11, tracking 10, equalize and
-  decide 10; before: 12 + 41 + 26 + 34. A frame's payload takes 2.7 ms on one CPU instead
-  of 5.7 (1.1 to 1.2 ms with both).
+- **Vector derotation** (``derot_kernel()``): the payload symbol's samples go from the
+  capture words (any alignment: ``ee.ld.128.usar`` and ``ee.src.q.qup``) to the 16-bit FFT
+  input in one pass of the vector unit, four samples per step: I and Q unpacked by two shifts
+  and a mask, the DC subtracted, clipped so that the rotation fits, and one complex multiply
+  by the rotation in Q15 (``ctx->rot16``). 17 us per symbol became 3. Measured on chip
+  first: ``ee.vmul.s16`` truncates, SAR takes a new value for the next vector instruction
+  without a sync, ``ee.src.q.qup`` writes the shifted chunk and moves the second one up.
+  ``ofdm derot 0|1`` switches it; ``ofdm rx -c`` also decodes each capture with the scalar
+  one: 21 811 against 21 843 bit errors in 200 frames (rounding goes the other way).
+- Per payload symbol (26 MHz, one CPU): derotate 3 us, FFT 11, tracking 10, equalize and
+  decide 10; before: 12 + 41 + 26 + 34. A frame's payload takes 1.6 ms on one CPU instead
+  of 5.7 (0.8 ms with both).
+- **Preamble search on both CPUs.** The coarse Schmidl-Cox scan (every 4th sample, about 2000
+  steps of 70 to 150 cycles, mostly the float metric) is cut in half at the middle of the
+  window; the second half runs on the other CPU's ``link_rx2`` thread (``ofdm_scan_async()``,
+  a semaphore each way, 12 us to hand over) while this one scans the first. Search 1.12 ->
+  0.82 ms (not 0.6: the fine scan, DC estimate and the halves' own cost stay). Stream at
+  6 ms: 3.61 against 3.43 Mbit/s and 0.5 against 5.3 % lost in one pair, 3.46 against 3.33
+  in the next; MAC 2.81 against 2.66 to 2.74. ``ofdm split 0|1`` switches it.
+- **Frames of a whole window.** The transmitter loops a frame without a gap (measured: the
+  received period equals the frame, correlation 0.98 between copies), so one period
+  anywhere holds every sample once, rotated. The receiver captures one frame plus a margin
+  (``ofdm_rx_window()``: an FFT, a prefix, the search's step) instead of two frames and
+  reads a slot past the window's end one period earlier, turned by the carrier's phase over
+  one period, which the window's overlap with itself measures (``rx.cw``). Frames grow from
+  8064 to 15984 samples (106 data symbols, 53 424 bits at 64-QAM, 26 MHz).
+- **Sample clock drift.** Each chip's crystal drives its carrier and its sample clock, so the
+  window drifts against the frame by the carrier offset over the carrier (9 ppm here):
+  subcarrier k of a symbol t slots from the pilots turns by k t times 6.6e-5 rad. The 400 us
+  frame lost 4 dB of MER to it (26 dB next to the pilots, 20.7 in the middle; a wrapped slot
+  lies before the pilots in time). Each symbol is turned back by its capture time (the vector
+  decoder's equalizer rebuilt per worker when the band edge moved 0.02 rad): the MER is
+  flat at 26.3 dB over the frame, 64-QAM BER 1.7e-3 -> 3e-6. ``ofdm sfo -1|0|1`` (the sign;
+  0 off).
+- Blind stream with both (64-QAM, RS, 26 MHz): 4.35 Mbit/s with 0.1 % lost at a 10 ms
+  period, 3.64 loss-free at 12 ms; RS fixes about 1.5 bytes per frame.
+- **The sender.** The long frame took 10.1 ms to build on one CPU (RS coding 2.4 ms, then
+  per symbol 30 us of mapping, 7 of FFT, 27 of output) while the MAC thread spun until the
+  next bank switch: the sender was the limit. Now:
+
+  - the MAC thread helps (``ofdm_tx_help()``) until 100 us before the deadline: the frame's
+    symbols are claimed one by one from a shared counter (generation and next slot in one
+    word, compare and swap; the build closes the word before it reuses the fields, a race a
+    host stress test found) and built in either CPU's FFT buffer (``ofdm txhelp 0|1``);
+  - a subcarrier's bits map through a table straight to its packed 16-bit point, one store
+    per subcarrier (30 -> 8 us per symbol);
+  - the output loop runs per shift with the shift a constant, without index arithmetic or
+    reloads (27 -> 19 us);
+  - the BCH codes' coding takes 0.43 ms instead of RS's 2.4.
+
+  The build: 10.1 -> 2.85 ms (``link status``: build stages, coding and symbols), built
+  frames checked bit for bit against the same frame built alone. Blind stream, 64-QAM,
+  ``bch2-256``, 26 MHz: 7.5 to 7.7 Mbit/s at a 6 ms period (6 to 8 % lost), 6.8 at 7 ms
+  (4 %); over the MAC with ACKs 5.5 Mbit/s. The receiver is the limit again: per frame
+  capture 0.4, search 1.5, channel and header 1.05, payload 2.2 (both CPUs), FEC 0.55 ms.
+- **Channel stage.** The search lands on the preamble plateau's early edge and the window
+  is then moved to the middle of the prefix, almost always by some samples: the channel was
+  measured a second time. A whole-sample move only turns subcarrier f by 2 pi f shift / N
+  (and all of them by the carrier offset's turn), so the estimate is turned instead
+  (``equalizer()``); and the vector equalizer is rounded inline instead of by ``lrintf()``.
+  Channel and header 0.95 -> 0.55 ms. Averaging the channel over frames (``ofdm chavg 1``:
+  a complex gain and a phase slope fitted per frame) gains 2 dB in the simulator but
+  nothing on the bench, where the 27 to 29 dB are not set by the pilots' noise: off by
+  default.
+- **Search.** The float metric is about 40 % of a coarse step; an integer pre-test
+  (``|pr| + |pi|`` against ``sqrt(best) min(Ra, Rb)``, rounded to never skip a better step) skips
+  most of them: 116 -> 101 cycles per step, the same peaks. Tried and dropped: a metric
+  every 8 samples with 8 correlation terms (frames missed at 12 dB, 15 times the errors at
+  27 dB), the DC offset from every 16th sample (aliases with the 144-sample slot), rings of
+  products and energies (slower than the multiplies they save).
+- **Drift reference.** The sample clock drift is now timed against when the pilots were
+  captured (a pilot read one period earlier counts as such), and the phase tracker turns its
+  subcarriers for it too: frames that start in the last 270 samples of a period lost their
+  payload (1.8 % of random captures). Minimum MER over 200 captures 26.1 dB (was 13 to 18).
 - **Frame assembly** (``ofdm_frame.c``) used two integer divisions per byte with divisors
   that vary (units, bytes per unit): about 0.4 ms at each end. Nested loops now, and a byte
   table for the CRC-32 (the nibble table cost 90 us per frame).
@@ -199,43 +272,86 @@ decodes what it catches, skips a frame it already has after the header (``dup``)
 reports as usual; the client's "acked" counts frames sent. Frame n carries bytes that depend
 on n, and the RS and CRC-32 check them.
 
-64-QAM, RS, 26 MHz, 30 dB (received by the server, 8 s, vector decoder):
+64-QAM, RS, 26 MHz, 30 dB (received by the server, 8 s; MER 23.3 to 23.5 dB):
 
 ======== ========== =========== ====== ======
 Period   Offered    Received    Lost   Dups
 ======== ========== =========== ====== ======
-7000 us  3.19       3.00        0      236
-6500 us  3.43       3.10        3.7 %  8
-6000 us  3.72       3.04        12.5 % 0
-5500 us  4.05       3.01        20 %   0
+7000 us  3.19       3.00        0      658
+6000 us  3.72       3.50        0      96
+5500 us  4.05       3.50        7.8 %  3
+5000 us  4.46       3.38        18.7 % 0
 ======== ========== =========== ====== ======
 
-(Mbit/s.) The receiver's cycle is about 6 ms (capture 0.4, the stages above, and the
-captures that straddle a bank switch, about 8 %): a shorter period only loses frames, a
-longer one repeats them (the repeats are skipped after the header). With the float decoder
+(Mbit/s; before the search split and the vector derotation: 3.04 with 12.5 % lost at 6000
+us.) The receiver's cycle is about 5.5 ms (capture 0.4, the stages above, and the captures
+that straddle a bank switch): a shorter period only loses frames, a longer one repeats them
+(the repeats are skipped after the header). With the float decoder
 the same boards reached 2.66 Mbit/s with 10 % lost at 7 ms, over the MAC (stop and wait,
 CSMA) 2.3 to 2.4. The MER of the link drifts by a dB or more during a session (22.3 to 23.7
 dB); more errors per RS unit make the FEC stage slower (1.8 to 2.8 ms).
 
-Parity (``CONFIG_APP_RS_PARITY``, default 24 bytes per unit, RS(255,231), 12 corrections): the
-unit needs 4.7 corrections on average, so the 16 of the earlier RS(255,223) were far more than
-needed. Fewer parity bytes carry 3.6 % more payload per frame and cut the FEC stage to 1.3 to
-1.9 ms. Blind stream on the same bench (64-QAM, 26 MHz, received Mbit/s and lost; the RS(255,223)
-column was measured earlier the same day, within the 22.3 to 23.7 dB MER drift):
+Parity (``CONFIG_APP_RS_PARITY``, 32 bytes per unit by default, RS(255,223), 16
+corrections): the unit needs about 4.7 corrections at an MER of 23.5 dB and twice that at
+22.3, and the MER drifts that much within a session (it fell from 23.6 to 22.2 dB over four
+hours of bench runs, the carrier offset from -22 to -28 kHz). 24 parity bytes carry 3.6 %
+more payload and cut the FEC stage to 1.3 to 1.9 ms, which at 23.5 dB is a better link, and
+at 22.3 dB loses half the frames (blind stream, 64-QAM, 26 MHz, received Mbit/s and lost):
 
-======== ============= =============
-Period   RS(255,223)   RS(255,231)
-======== ============= =============
-7000 us  3.00, 0       3.11, 0
+======== ============= ============= ============= =============
+Period   32, 23.5 dB   24, 23.5 dB   32, 22.4 dB   24, 22.3 dB
+======== ============= ============= ============= =============
+7000 us  3.00, 0       3.11, 0       2.98, 0.4 %   1.57, 47 %
 6500 us  3.10, 3.7 %   3.34, 0.2 %
-6000 us  3.04, 12.5 %  3.46, 4.1 %
-======== ============= =============
+6000 us  3.04, 12.5 %  3.46, 4.1 %   3.10, 10.7 %  1.19, 66 %
+======== ============= ============= ============= =============
 
-RS(255,239) (16 parity bytes) is too weak here: 21 % of the frames fail. The edge carriers
-(19 to 20 dB) produce most of the errors; a static 16-QAM zone on the outer carriers would
-trade rate for fewer errors, but a model on the measured SNR shows no net gain over simply
-lowering the parity. Over the MAC (ACKs, 50 us turnaround) the client sends 2.78 Mbit/s,
-up from 2.3 to 2.4.
+16 parity bytes lose a fifth of the frames at 23.5 dB. The edge carriers (19 to 20 dB)
+produce most of the errors; a model on the measured SNR gives a static 16-QAM zone on the
+outer carriers, or bit loading in general, only 4 % over flat 64-QAM at equal error rate,
+so neither is built. What the lower MER needs is 16-QAM (2.3 Mbit/s loss-free in the same
+state): a rate adaptation, not more parity.
+
+Light error correction
+======================
+
+With the sample clock drift corrected the 64-QAM payload arrives with a raw bit error rate
+around 3e-6 (MER 26 to 27 dB): about one bit error in five long frames, so RS(255,223)
+(12.5 % parity, 16 byte errors per 255) carries far more protection than the channel needs.
+The frames name their code in the header (4 bits, ``link client ... -f <code>``):
+
+- ``rs``: RS(255,223) as before, for raw error rates up to a few 1e-3.
+- ``none``: the CRC-32 alone.
+- ``bch<t>-<bytes>``: binary BCH codes (``src/bch.c``) on contiguous blocks of up to 64, 128
+  or 256 bytes (GF(2^9), 2^10, 2^11), correcting t = 1 to 4 bit errors per block with m t
+  parity bits: ``bch2-128`` is 20 parity bits per 1024, 2.3 %. ``bch1-8`` is a Hamming
+  code of 56 data bits per 64.
+
+The receiver checks the CRC-32 first (four bytes per lookup step, slicing by 4); only a
+frame that fails it is decoded, block by block: the remainder register (a reflected CRC
+with the code's generator, also four bytes per step while r <= 32), and for a block whose
+remainder is not zero the syndromes, Berlekamp-Massey and a Chien search. The sender's
+parity is the same register. The blocks are not interleaved: a 1024-bit block already spans
+every subcarrier twice, and a symbol that goes wrong as a whole would sink an interleaved
+frame of t-error blocks just the same.
+
+Simulated (``tools/ofdm_sim.c``, ``FRAME=1 FEC=<code>``, 64-QAM, 26 MHz, the 80 MS/s frame
+of 3213 payload bytes; frames decoded of 20):
+
+=========== ========== ======= ======= =======
+Code        User bytes 24 dB   27 dB   30 dB
+=========== ========== ======= ======= =======
+rs          2791       20      20      20
+bch1-8      2803       5       20      20
+bch2-128    3121       0       20      20
+bch2-256    3168       0       20      20
+bch4-64     2954       20      20      20
+none        3209       0       8       20
+=========== ========== ======= ======= =======
+
+``bch2-256`` carries 13.5 % more than ``rs`` where the link runs (the board's MER, about the
+simulator's 27 to 30 dB); ``bch4-64`` keeps RS's margin at 24 dB with 6 % more. A Hamming
+code of 64-bit blocks costs what RS costs and corrects far less.
 
 Building and running
 ********************

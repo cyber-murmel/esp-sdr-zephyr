@@ -1,8 +1,8 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * Unit test of apps/link/src/rs.c: RS(255,231) by default (24 parity bytes,
- * CONFIG_APP_RS_PARITY), should correct up to 12 byte errors per codeword and
+ * Unit test of apps/link/src/rs.c: RS(255,223) by default (32 parity bytes,
+ * CONFIG_APP_RS_PARITY), should correct up to 16 byte errors per codeword and
  * reliably flag more as uncorrectable. Runs on native_sim.
  */
 #include <string.h>

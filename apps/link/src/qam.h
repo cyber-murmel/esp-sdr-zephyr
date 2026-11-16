@@ -11,7 +11,7 @@
  *   preamble  2 x 64 QPSK, the same PN sequence twice (timing, frequency
  *             offset, equalizer training)
  *   header    32 QPSK: 8 bytes with a CRC-16
- *   payload   ncw units (RS(255,231), Hamming or uncoded), byte
+ *   payload   ncw units (RS(255,223), Hamming or uncoded), byte
  *             interleaved, in QPSK to 4096-QAM (Gray coded per axis); the
  *             data bytes end in a CRC-32
  */
@@ -49,7 +49,7 @@
 #define QAM_CRC_BYTES   4
 
 /*
- * Error correction per unit of QAM_UNIT bytes on air: RS(255,231), 15
+ * Error correction per unit of QAM_UNIT bytes on air: RS(255,223), 15
  * extended Hamming (128,120) blocks (240 bytes, 225 data), or none (255 data).
  */
 enum qam_fec {
@@ -258,5 +258,11 @@ float qam_rx_power(const uint32_t *words, size_t n);
 uint16_t qam_crc16(const uint8_t *p, size_t n);
 
 uint32_t qam_crc32(const uint8_t *p, size_t n);
+
+/* The CRC-32 of a stream in parts: qam_crc32_cont(qam_crc32(a), b) = CRC-32 of a, b; 0 starts one. */
+uint32_t qam_crc32_cont(uint32_t crc, const uint8_t *p, size_t n);
+
+/* Build the CRC-32 tables (else on first use, which two CPUs must not race). */
+void qam_crc_init(void);
 
 #endif /* LINK_QAM_H_ */

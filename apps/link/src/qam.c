@@ -205,26 +205,62 @@ static const uint32_t crc32_nibble[16] = {
 	0x9b64c2b0, 0x86d3d2d4, 0xa00ae278, 0xbdbdf21c,
 };
 
-/* The byte table (1 KB), built from the nibble one on first use: a lookup per byte. */
-static uint32_t crc32_byte[256];
+#if __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
+#error "the CRC-32 reads four bytes as a little endian word"
+#endif
+
+/*
+ * Byte tables (4 KB), built from the nibble one: crc32_tab[0] a byte, [k] the
+ * same followed by k zero bytes, so four bytes are four lookups (slicing by 4)
+ * from an aligned word.
+ */
+static uint32_t crc32_tab[4][256];
 static bool crc32_ready;
+
+void qam_crc_init(void)
+{
+	for (unsigned int b = 0; b < 256U; b++) {
+		uint32_t v = b;
+
+		v = (v >> 4) ^ crc32_nibble[v & 15U];
+		v = (v >> 4) ^ crc32_nibble[v & 15U];
+		crc32_tab[0][b] = v;
+	}
+	for (unsigned int k = 1; k < 4U; k++) {
+		for (unsigned int b = 0; b < 256U; b++) {
+			uint32_t v = crc32_tab[k - 1U][b];
+
+			crc32_tab[k][b] = (v >> 8) ^ crc32_tab[0][v & 0xffU];
+		}
+	}
+	crc32_ready = true;
+}
 
 static uint32_t crc32_update(uint32_t crc, const uint8_t *p, size_t n)
 {
 	if (!crc32_ready) {
-		for (unsigned int b = 0; b < 256U; b++) {
-			uint32_t v = b;
-
-			v = (v >> 4) ^ crc32_nibble[v & 15U];
-			v = (v >> 4) ^ crc32_nibble[v & 15U];
-			crc32_byte[b] = v;
-		}
-		crc32_ready = true;
+		qam_crc_init();
 	}
-	for (size_t i = 0; i < n; i++) {
-		crc = (crc >> 8) ^ crc32_byte[(crc ^ p[i]) & 0xffU];
+	/* Bytes to a word boundary, words, the rest. */
+	while (n > 0U && ((uintptr_t)p & 3U) != 0U) {
+		crc = (crc >> 8) ^ crc32_tab[0][(crc ^ *p++) & 0xffU];
+		n--;
+	}
+	for (; n >= 4U; n -= 4U, p += 4) {
+		uint32_t w = crc ^ *(const uint32_t *)(const void *)p;
+
+		crc = crc32_tab[3][w & 0xffU] ^ crc32_tab[2][(w >> 8) & 0xffU] ^
+		      crc32_tab[1][(w >> 16) & 0xffU] ^ crc32_tab[0][w >> 24];
+	}
+	while (n-- > 0U) {
+		crc = (crc >> 8) ^ crc32_tab[0][(crc ^ *p++) & 0xffU];
 	}
 	return crc;
+}
+
+uint32_t qam_crc32_cont(uint32_t crc, const uint8_t *p, size_t n)
+{
+	return ~crc32_update(~crc, p, n);
 }
 
 uint32_t qam_crc32(const uint8_t *p, size_t n)

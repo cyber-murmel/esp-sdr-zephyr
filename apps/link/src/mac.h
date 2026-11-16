@@ -113,6 +113,9 @@ struct mac_stats {
 	/* Frame builds (background and retries). */
 	uint64_t build_us_sum;
 	uint32_t build_n;
+	/* OFDM builds' stages: the coding (CRC, FEC), the symbols; summed in us. */
+	uint64_t build_prof_us[2];
+	uint32_t build_prof_n;
 	/* Decoder stages (qam_rx_info.prof), summed in us. */
 	uint64_t prof_us[6];
 	/* Capture engine time of the last sense slot and full window, in us. */
@@ -140,8 +143,10 @@ int link_mac_calibrate(void);
  * both banks without leaving TX, each looped for @p stream_us, no carrier sense, no ACK
  * (the receiver takes what it catches; use a broadcast @p dst). Counted as ACKed when sent;
  * a frame whose successor was not built in time stays on air longer and counts as dropped.
+ *
+ * @p fec is an enum qam_fec on the QAM PHY, an OFDM code id (ofdm_fec_parse()) on OFDM.
  */
-int link_mac_client_start(uint8_t dst, enum qam_mod mod, enum qam_fec fec, unsigned int ncw,
+int link_mac_client_start(uint8_t dst, enum qam_mod mod, unsigned int fec, unsigned int ncw,
 			  unsigned int window, uint32_t duration_ms, uint32_t rate_kbps,
 			  uint32_t stream_us);
 void link_mac_client_stop(void);
@@ -162,6 +167,14 @@ int link_mac_bench_decode(enum qam_mod mod, struct qam_rx_info *info, uint32_t *
 /* Park the MAC thread (radio idle) for measurements. */
 void link_mac_pause(bool pause);
 
+/* The MAC thread helps build a blind stream's next OFDM frame (default on). */
+void link_mac_tx_help(bool on);
+bool link_mac_tx_help_get(void);
+
+/* Split the OFDM preamble search over both CPUs (default on with two). */
+void link_mac_scan_split(bool on);
+bool link_mac_scan_split_get(void);
+
 /*
  * Run @p fn(@p arg) on the paused MAC thread (link_mac_pause()) and wait for
  * it: the decoders need about 3.5 KB of stack, more than the shell has.
@@ -180,6 +193,8 @@ void link_mac_dump_release(void);
 
 /* User bytes per data frame at @p mod with the current PHY settings, 0 if none fit. */
 size_t link_mac_frame_bytes(enum qam_mod mod);
+/* The same under @p fec (an enum qam_fec, or an OFDM code id on OFDM). */
+size_t link_mac_frame_bytes_fec(enum qam_mod mod, unsigned int fec);
 
 struct ofdm_ctx;
 

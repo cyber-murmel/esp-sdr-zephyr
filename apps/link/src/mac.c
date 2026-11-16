@@ -92,7 +92,10 @@ static EXT_RAM_BSS_ATTR struct qam_tx ack_tx_ctx;
 static struct qam_rx qam_rx_ctx, qam_rx2_ctx;
 static EXT_RAM_BSS_ATTR uint8_t rx_cw[2][QAM_RX_CW_BYTES];
 /* Test data, only copied into the codewords: PSRAM is fast enough. */
-static EXT_RAM_BSS_ATTR uint8_t payload[WIN_MAX][QAM_NCW_MAX * QAM_UNIT];
+/* User data of the frames being built: a QAM pair, or one OFDM frame. */
+#define PAYLOAD_MAX                                                                                \
+	(QAM_NCW_MAX * QAM_UNIT > OFDM_FRAME_CAP_MAX ? QAM_NCW_MAX * QAM_UNIT : OFDM_FRAME_CAP_MAX)
+static EXT_RAM_BSS_ATTR uint8_t payload[WIN_MAX][PAYLOAD_MAX];
 /*
  * OFDM frames: transmit buffers for the builder, receive ones for the MAC
  * thread. The FFT buffer in internal RAM (in PSRAM a build took 20 ms), the
@@ -120,7 +123,8 @@ static struct {
 	bool active;
 	uint8_t dst;
 	enum qam_mod mod;
-	enum qam_fec fec;
+	/* enum qam_fec, or an OFDM code id. */
+	unsigned int fec;
 	unsigned int ncw;
 	unsigned int window;
 	int64_t end_ms;
@@ -228,9 +232,17 @@ static size_t frame_bytes(const struct qam_hdr *h)
 	if (cfg.phy == MAC_PHY_OFDM) {
 		enum ofdm_mod m = ofdm_mod_of(h->mod);
 
-		return m < OFDM_MODS ? ofdm_frame_user_bytes(link_ofdm(), m) : 0U;
+		/* The OFDM code's id rides in the QAM header's fec field (0: RS for both). */
+		return m < OFDM_MODS ? ofdm_frame_user_bytes(link_ofdm(), m, h->fec) : 0U;
 	}
 	return qam_hdr_payload_bytes(h);
+}
+
+size_t link_mac_frame_bytes_fec(enum qam_mod mod, unsigned int fec)
+{
+	struct qam_hdr h = {.mod = (uint8_t)mod, .fec = (uint8_t)fec, .full = 1};
+
+	return frame_bytes(&h);
 }
 
 size_t link_mac_frame_bytes(enum qam_mod mod)
@@ -274,6 +286,7 @@ static void apply_cfg(void)
 	/* Sample clock tracking follows the carrier offset. */
 	qam_rx_ctx.carrier_hz = (float)cfg.freq_mhz * 1e6f;
 	qam_rx2_ctx.carrier_hz = qam_rx_ctx.carrier_hz;
+	ofdm_carrier_hz = qam_rx_ctx.carrier_hz;
 	qam_rx_ctx.avg = cfg.avg;
 	qam_rx2_ctx.avg = cfg.avg;
 }
@@ -451,6 +464,11 @@ static struct {
 	uint32_t us;
 	/* Or the second half of an OFDM payload (ofdm set), or of its RS units. */
 	bool ofdm, fec;
+	/* Or a slice of the preamble search (ofdm_scan_async()). */
+	bool scan;
+	struct ofdm_ctx *sctx;
+	int s_t0, s_t1, s_st, s_dci, s_dcq;
+	struct ofdm_sc_best *s_best;
 	const uint32_t *words;
 	enum ofdm_mod mod;
 	float err;
@@ -474,6 +492,12 @@ static void rx2_loop(void *p1, void *p2, void *p3)
 
 		(void)k_sem_take(&rx2_req, K_FOREVER);
 		t0 = now_cyc();
+		if (rx2.scan) {
+			ofdm_sc_scan(rx2.sctx, rx2.words, rx2.s_t0, rx2.s_t1, rx2.s_st, rx2.s_dci,
+				     rx2.s_dcq, rx2.s_best);
+			k_sem_give(&rx2_done);
+			continue;
+		}
 		if (rx2.ofdm) {
 			struct ofdm_ctx *o = link_ofdm();
 			size_t off = (size_t)o->mid * o->cfg.channels * ofdm_mod_bits(rx2.mod) / 8U;
@@ -497,6 +521,27 @@ static void rx2_loop(void *p1, void *p2, void *p3)
 		rx2.us = cyc_us(now_cyc() - t0);
 		k_sem_give(&rx2_done);
 	}
+}
+
+static void scan_async(struct ofdm_ctx *ctx, const uint32_t *w, int t0, int t1, int st, int dci,
+		       int dcq, struct ofdm_sc_best *b)
+{
+	rx2.scan = true;
+	rx2.sctx = ctx;
+	rx2.words = w;
+	rx2.s_t0 = t0;
+	rx2.s_t1 = t1;
+	rx2.s_st = st;
+	rx2.s_dci = dci;
+	rx2.s_dcq = dcq;
+	rx2.s_best = b;
+	k_sem_give(&rx2_req);
+}
+
+static void scan_wait(void)
+{
+	(void)k_sem_take(&rx2_done, K_FOREVER);
+	rx2.scan = false;
 }
 
 static void count_decode(int ret, const struct qam_rx_info *info, uint32_t us, uint32_t engine_us)
@@ -573,7 +618,7 @@ static void dump_hand_out(const struct esp_sdr_rx_burst *b)
 }
 
 /*
- * OFDM data frames: a window of two frames at the OFDM receive rate, the
+ * OFDM data frames: a window of one frame and a margin (it loops) at the OFDM receive rate, the
  * header, the payload if the frame is for us, and the ACK (a QAM frame).
  */
 static void receive_ofdm(void)
@@ -586,7 +631,7 @@ static void receive_ofdm(void)
 	int ret, corr = 0;
 	bool dupb;
 
-	if (esp_sdr_rx_capture(link_ofdm_rx_rate(), MIN(WINDOW_SAMPLES, 2U * o->rlen + o->rnfft),
+	if (esp_sdr_rx_capture(link_ofdm_rx_rate(), MIN(WINDOW_SAMPLES, ofdm_rx_window(o, o->rlen)),
 			       &b) != 0) {
 		return;
 	}
@@ -622,7 +667,7 @@ static void receive_ofdm(void)
 		}
 		t2 = now_cyc();
 		oi.prof[2] = t2 - t1;
-		if (arch_num_cpus() > 1) {
+		if (arch_num_cpus() > 1 && fh.fec == OFDM_FEC_RS) {
 			/* RS units split between the CPUs, then the CRC. */
 			unsigned int nu = ofdm_frame_units(o, fh.mod);
 
@@ -681,7 +726,7 @@ static void receive_ofdm(void)
 	}
 	{
 		struct qam_hdr h = {.type = fh.type, .mod = (uint8_t)qam_mod_of(fh.mod),
-				    .dst = fh.dst, .src = fh.src, .seq = fh.seq};
+				    .fec = fh.fec, .dst = fh.dst, .src = fh.src, .seq = fh.seq};
 
 		(void)on_data(&h);
 		if (h.dst == cfg.addr) {
@@ -701,7 +746,7 @@ static void receive_ofdm_ack(void)
 	int ret;
 
 	if (esp_sdr_rx_capture(link_ofdm_rx_rate(),
-			       MIN(WINDOW_SAMPLES, 2U * ofdm_hdr_rsamples(o) + o->rnfft), &b) != 0) {
+			       MIN(WINDOW_SAMPLES, ofdm_rx_window(o, ofdm_hdr_rsamples(o))), &b) != 0) {
 		return;
 	}
 	t0 = now_cyc();
@@ -873,10 +918,16 @@ static size_t build(const struct qam_hdr *h, unsigned int n)
 
 	if (cfg.phy == MAC_PHY_OFDM) {
 		struct ofdm_fhdr fh = {.type = h[0].type, .mod = ofdm_mod_of(h[0].mod),
-				       .dst = h[0].dst, .src = h[0].src, .seq = h[0].seq};
+				       .fec = h[0].fec, .dst = h[0].dst, .src = h[0].src,
+				       .seq = h[0].seq};
+
+		size_t len;
 
 		fill_payload(payload[0], h[0].seq, frame_bytes(&h[0]));
-		return ofdm_frame_build(link_ofdm(), &ofdm_tb, &ofdm_txw, &fh, payload[0], bank);
+		len = ofdm_frame_build(link_ofdm(), &ofdm_tb, &ofdm_txw, &fh, payload[0], bank);
+		STAT(stats.build_prof_us[0] += cyc_us(ofdm_tb.prof[0]);
+		     stats.build_prof_us[1] += cyc_us(ofdm_tb.prof[1]); stats.build_prof_n++);
+		return len;
 	}
 
 	if (qam_tx_ctx.mod != (int)h[0].mod || qam_tx_ctx.amp != cfg.amp) {
@@ -909,10 +960,13 @@ static void build_loop(void *p1, void *p2, void *p3)
 /* Header of a new test frame. */
 static struct qam_hdr new_hdr(bool pair)
 {
+	/* A code of the PHY in use (the PHY may have changed since the client started). */
+	unsigned int fecs = cfg.phy == MAC_PHY_OFDM ? OFDM_FECS : QAM_FECS;
+
 	return (struct qam_hdr){
 		.type = MAC_DATA,
 		.mod = (uint8_t)client.mod,
-		.fec = (uint8_t)client.fec,
+		.fec = (uint8_t)(client.fec < fecs ? client.fec : 0U),
 		.full = client.ncw == 0,
 		.ncw = (uint8_t)client.ncw,
 		.pair = pair,
@@ -1059,18 +1113,41 @@ static void retry_or_drop(bool timeout)
 	out.quiet = 0;
 }
 
+/* The MAC thread builds symbols of the next frame while a stream frame plays (ofdm_tx_help()). */
+static bool tx_help = true;
+
+void link_mac_tx_help(bool on)
+{
+	tx_help = on;
+}
+
+bool link_mac_tx_help_get(void)
+{
+	return tx_help;
+}
+
+/* Help while the deadline is more than two symbols' build away. */
+static bool before_deadline(void *arg)
+{
+	uint32_t deadline = *(const uint32_t *)arg;
+
+	return (int32_t)(deadline - now_cyc()) > (int32_t)k_us_to_cyc_ceil32(100U);
+}
+
 /*
  * A blind stream (client.stream_us): the radio stays in TX and plays one frame after the
  * other, each from its own bank, switching by one DAC retrigger every stream_us; the next
- * frame is built on the other CPU meanwhile. No sense, no ACK. Returns when the client
- * stops, its time is up, or the MAC is paused.
+ * frame is built on the other CPU meanwhile, with this thread's help while it waits
+ * (ofdm_tx_help()). No sense, no ACK. Returns when the client stops, its time is up, or the
+ * MAC is paused.
  */
 static void stream_run(void)
 {
 	const uint32_t period = k_us_to_cyc_ceil32(client.stream_us);
 	int bank = DATA_BANK;
 	uint32_t deadline;
-	size_t len, bytes = frame_bytes(&(struct qam_hdr){.mod = (uint8_t)client.mod});
+	size_t len, bytes = frame_bytes(&(struct qam_hdr){.mod = (uint8_t)client.mod,
+							   .fec = (uint8_t)client.fec});
 
 	build_discard();
 	build_bank = bank;
@@ -1093,6 +1170,10 @@ static void stream_run(void)
 		/* The idle bank gets the next frame, on the other CPU. */
 		build_bank = bank ^ 1;
 		build_next();
+		if (tx_help && cfg.phy == MAC_PHY_OFDM) {
+			/* The ACK buffer is this thread's, and a stream sends no ACKs. */
+			ofdm_tx_help(&ofdm_ack_tb, before_deadline, &deadline);
+		}
 		while ((int32_t)(deadline - now_cyc()) > 0) {
 		}
 		if (!build_wait() || !job.ready) {
@@ -1127,6 +1208,14 @@ static void mac_loop(void *p1, void *p2, void *p3)
 	ARG_UNUSED(p3);
 
 	rs_init();
+	qam_crc_init();
+	/* PSRAM is not cleared at boot: no BCH code set up yet. */
+	ofdm_txw.bch_key = 0;
+	ofdm_rxw.bch_key = 0;
+#if !defined(MULTIAPP_NAME)
+	/* (An extension's statics are in PSRAM, where the hand-over's atomics do not hold.) */
+	ofdm_tx_share(&ofdm_tb);
+#endif
 	ham_init();
 	qam_clock = now_cyc;
 	qam_rx_ctx.cw = rx_cw[0];
@@ -1327,7 +1416,19 @@ int link_mac_init(void)
 	k_thread_start(&mac_thread);
 	k_thread_start(&build_thread);
 	k_thread_start(&rx2_thread);
+	link_mac_scan_split(arch_num_cpus() > 1);
 	return 0;
+}
+
+void link_mac_scan_split(bool on)
+{
+	ofdm_scan_async = on ? scan_async : NULL;
+	ofdm_scan_wait = on ? scan_wait : NULL;
+}
+
+bool link_mac_scan_split_get(void)
+{
+	return ofdm_scan_async != NULL;
 }
 
 void link_mac_get_cfg(struct mac_cfg *c)
@@ -1363,33 +1464,36 @@ int link_mac_calibrate(void)
 	return k_sem_take(&cal_done, K_SECONDS(5));
 }
 
-int link_mac_client_start(uint8_t dst, enum qam_mod mod, enum qam_fec fec, unsigned int ncw,
+int link_mac_client_start(uint8_t dst, enum qam_mod mod, unsigned int fec, unsigned int ncw,
 			  unsigned int window, uint32_t duration_ms, uint32_t rate_kbps,
 			  uint32_t stream_us)
 {
-	struct qam_hdr h = {.mod = mod, .fec = fec, .ncw = ncw, .full = ncw == 0,
+	struct qam_hdr h = {.mod = mod, .fec = (uint8_t)fec, .ncw = ncw, .full = ncw == 0,
 			    .pair = window == 2};
 
 	if (stream_us != 0U && (cfg.phy != MAC_PHY_OFDM || stream_us < 500U || stream_us > 100000U)) {
 		return -EINVAL;
 	}
 	if (cfg.phy == MAC_PHY_OFDM) {
-		/* One frame per transmission, the layout from "ofdm set"; -n and -f do not apply. */
-		size_t bytes = link_mac_frame_bytes(mod);
+		/*
+		 * One frame per transmission, the layout from "ofdm set"; -n does not apply,
+		 * fec is an OFDM code (ofdm_fec_parse()).
+		 */
+		struct qam_hdr oh = {.mod = (uint8_t)mod, .fec = (uint8_t)fec, .full = 1};
+		size_t bytes = (unsigned int)fec < OFDM_FECS ? frame_bytes(&oh) : 0U;
 
 		if (bytes == 0U || bytes > sizeof(payload[0])) {
 			return -EINVAL;
 		}
 		window = 1;
-		fec = QAM_FEC_RS;
 		ncw = 0;
 	} else if (window < 1 || window > WIN_MAX || qam_hdr_payload_bytes(&h) == 0) {
 		return -EINVAL;
 	}
 	/* ncw 0: full frames (as many units as fit, the last one short). */
 	if (cfg.phy != MAC_PHY_OFDM &&
-	    (mod >= QAM_MODS || fec >= QAM_FECS || ncw > qam_ncw_max(mod, fec) ||
-	     (ncw == 0 && qam_full_payload_bytes(mod, fec) == 0))) {
+	    (mod >= QAM_MODS || fec >= QAM_FECS || ncw > qam_ncw_max(mod, (enum qam_fec)fec) ||
+	     (ncw == 0 && qam_full_payload_bytes(mod, (enum qam_fec)fec) == 0))) {
 		return -EINVAL;
 	}
 	client_req = (typeof(client_req)){
