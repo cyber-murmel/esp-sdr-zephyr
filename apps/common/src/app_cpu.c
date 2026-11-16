@@ -44,6 +44,42 @@ static void find_system_thread(const struct k_thread *thread, void *user_data)
 }
 #endif
 
+#if defined(CONFIG_SCHED_CPU_MASK)
+static struct {
+	k_tid_t tid;
+	int cpu;
+	struct k_sem done;
+	struct k_work work;
+} pin_self;
+
+static void pin_self_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	while (k_thread_cpu_pin(pin_self.tid, pin_self.cpu) != 0) {
+		k_sleep(K_MSEC(1));
+	}
+	k_sem_give(&pin_self.done);
+}
+#endif
+
+void app_cpu_pin_self(int cpu)
+{
+#if defined(CONFIG_SCHED_CPU_MASK)
+	if (cpu < 0 || arch_num_cpus() < 2) {
+		return;
+	}
+	pin_self.tid = k_current_get();
+	pin_self.cpu = cpu;
+	k_sem_init(&pin_self.done, 0, 1);
+	k_work_init(&pin_self.work, pin_self_handler);
+	/* Only a thread that waits can be pinned, so this one waits while the work queue does it. */
+	(void)k_work_submit(&pin_self.work);
+	(void)k_sem_take(&pin_self.done, K_FOREVER);
+#else
+	ARG_UNUSED(cpu);
+#endif
+}
+
 /* Pinning only takes while a thread is not runnable: retry until it waits. */
 void app_cpu_pin_system_threads(int cpu)
 {

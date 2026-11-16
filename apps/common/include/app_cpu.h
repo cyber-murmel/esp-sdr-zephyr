@@ -15,4 +15,11 @@
  */
 void app_cpu_pin_system_threads(int cpu);
 
+/*
+ * Pin the calling thread to @p cpu, for good. It waits for the system work queue to do this. Without
+ * it, a thread can come back from any wait on the other CPU, and what it then allocates an interrupt
+ * for lands there. No-op without CONFIG_SCHED_CPU_MASK or on one CPU.
+ */
+void app_cpu_pin_self(int cpu);
+
 #endif /* APP_CPU_H_ */
