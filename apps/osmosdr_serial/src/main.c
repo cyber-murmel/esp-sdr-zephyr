@@ -849,10 +849,17 @@ static int radio_apply(void)
 	int64_t hz = (int64_t)want.freq_hz - (int64_t)want.freq_hz * want.corr_ppb / 1000000000LL;
 	int ret;
 
-	lo_mhz = (uint32_t)(hz / 1000000);
-	lo_khz = (int32_t)((hz - (int64_t)lo_mhz * 1000000 + 500) / 1000);
+	/*
+	 * The nearest MHz and the rest in kHz (either sign): truncated, a correction just under a
+	 * whole MHz made it (MHz - 1) + 999 kHz. The offset goes in whenever it differs from the one
+	 * the library keeps, also back to 0: esp_sdr_set_freq() retunes with the kept one, so a
+	 * whole MHz after a fractional one would land off by it while centre_hz said otherwise.
+	 */
+	lo_mhz = (uint32_t)((hz + 500000) / 1000000);
+	lo_khz = (int32_t)(hz - (int64_t)lo_mhz * 1000000);
+	lo_khz = lo_khz >= 0 ? (lo_khz + 500) / 1000 : -((-lo_khz + 500) / 1000);
 	ret = esp_sdr_set_freq(lo_mhz);
-	if (ret == 0 && lo_khz != 0) {
+	if (ret == 0 && lo_khz != esp_sdr_get_freq_offset()) {
 		ret = esp_sdr_set_freq_offset(lo_khz);
 	}
 	if (ret == 0) {

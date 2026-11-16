@@ -435,6 +435,11 @@ uint32_t esp_sdr_get_freq(void)
 	return esp_sdr_freq_mhz;
 }
 
+int32_t esp_sdr_get_freq_offset(void)
+{
+	return esp_sdr_fofs_khz;
+}
+
 int esp_sdr_set_freq_offset(int32_t khz)
 {
 	int ret;

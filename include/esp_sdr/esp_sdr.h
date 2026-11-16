@@ -145,6 +145,12 @@ int esp_sdr_set_freq(uint32_t mhz);
 uint32_t esp_sdr_get_freq(void);
 
 /**
+ * @return The LO's offset in kHz (esp_sdr_set_freq_offset()), which esp_sdr_set_freq() keeps: a
+ *         caller that tunes to a new MHz with the same offset needs no second retune.
+ */
+int32_t esp_sdr_get_freq_offset(void);
+
+/**
  * @brief Set an offset in kHz from the whole MHz (esp_sdr_set_freq()) and retune.
  *
  * An offset at the RF: below 2210 MHz, where the LO is the PLL through a 5/6 divider, the PLL
