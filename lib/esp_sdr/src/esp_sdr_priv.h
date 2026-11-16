@@ -447,7 +447,22 @@ extern struct k_mutex esp_sdr_lock;
 extern bool esp_sdr_ready;
 extern uint32_t esp_sdr_freq_mhz;
 extern int32_t esp_sdr_fofs_khz;
+/* Crystal correction (esp_sdr_set_freq_corr_ppb()). */
+extern int32_t esp_sdr_corr_ppb;
 
+/* The PLL setting in whole kHz above base_khz for a PLL frequency of want_hz, with the crystal
+ * correction; exact_hz gets the setting before the rounding. */
+int32_t esp_sdr_pll_khz(uint64_t want_hz, uint32_t base_khz, int64_t *exact_hz);
+/* Every tuning notes what it programmed less the exact setting (Hz at the PLL) and whether the
+ * RF is the PLL through the 5/6 divider, for esp_sdr_get_lo_residual_hz(). */
+void esp_sdr_tuned(int64_t pll_err_hz, bool divided);
+/* Set esp_sdr_corr_ppb from the temperature model, if any: full retunes only (it may read
+ * the sensor), lock held, outside regi2c critical sections. */
+void esp_sdr_corr_refresh(void);
+/* A calibration run holds esp_sdr_corr_ppb where it is (esp_sdr_lte.c). */
+extern bool esp_sdr_corr_frozen;
+/* Load the stored correction into esp_sdr_corr_ppb (esp_sdr_calstore.c). */
+void esp_sdr_cal_apply_stored(void);
 /* Tune the LO to esp_sdr_freq_mhz (plus offset). */
 void esp_sdr_tune(void);
 /* The LO plan puts esp_sdr_freq_mhz behind the 5/6 divider (below 2210 MHz). */
