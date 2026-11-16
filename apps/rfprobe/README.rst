@@ -53,6 +53,8 @@ Shell
                                and transmissions; the LO divider stays as the last
                                "probe f" left it (on below 2210 MHz: LO = PLL / 1.2)
    probe lpf <rx> [txa [txb]]  low-pass codes, -1 the PHY's, 0 the widest
+   probe cbw <0..2>            the PHY's channel bandwidth mode, applied by retuning: 0 20 MHz,
+                               2 40 MHz (the analog filters open to about +-18 MHz)
    probe gain <rx|-1> [tx]     fixed receive gain index or AGC; transmit step (S3)
    probe tone on <Hz> [amp] [rate 0|1]
                                S3: loop a tone at the LO + Hz (80 or 40 MS/s DAC), gapless,
@@ -92,7 +94,18 @@ Shell
                                receive parts back on (1 power, 2 clock, 4 pbus work mode)
    probe tx cost <reg> [n]     CPU cycles per store and load of a register, the paced loop's
                                parts
-   probe tx stop               stop a replay or carrier
+   probe tx paint size <w> <h> a blank image for a receiver's waterfall, up to 256 x 128
+   probe tx paint row <r> <hex>
+                               row r's pixels as hex digits, the leftmost in the most
+                               significant bit
+   probe tx paint run <row ms> [amp] [rate 0|1] [n] [scale] [gap ms]
+                               play the image until "probe tx stop": a row at a time, the
+                               bottom row first (a waterfall scrolling down shows it upright),
+                               every set pixel a tone, column j at (j - w / 2) x rate / n (125
+                               kHz for n 320 at 40 MS/s, 3125 Hz for n 12800); the transmitter
+                               stays off for gap ms after each pass
+   probe tx paint state        rows played, the longest row change (transmitter off meanwhile)
+   probe tx stop               stop a replay, carrier or painting
    probe sleep <ms>            C6: deep sleep with a timer wakeup (USB drops meanwhile)
 
 Host tool
