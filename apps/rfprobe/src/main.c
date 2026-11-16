@@ -15,6 +15,7 @@
 
 #include <zephyr/app_version.h>
 #include <zephyr/kernel.h>
+#include <esp_attr.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/base64.h>
@@ -33,9 +34,19 @@
 #if defined(CONFIG_ESP_SDR_DIAG)
 #include <esp_sdr/esp_sdr_diag.h>
 #endif
-#if defined(CONFIG_ESP_SDR_REPLAY)
+#if defined(CONFIG_ESP_SDR_PACED)
 #include <esp_sdr/esp_sdr_paced.h>
+#endif
+#if defined(CONFIG_ESP_SDR_REPLAY)
 #include <esp_sdr/esp_sdr_replay.h>
+#endif
+
+/* "probe tx": the paced TX DC path (C5, S31) and the DAC engine's replay (C5). */
+#if defined(CONFIG_ESP_SDR_REPLAY) || \
+	(defined(CONFIG_ESP_SDR_PACED) && defined(CONFIG_SOC_SERIES_ESP32S31))
+#define TX_BENCH 1
+#else
+#define TX_BENCH 0
 #endif
 
 #if defined(CONFIG_USB_DEVICE_STACK_NEXT)
@@ -63,6 +74,10 @@ extern void phy_set_rxclk_en(unsigned int en);
 #elif defined(CONFIG_SOC_SERIES_ESP32S31)
 extern unsigned int phy_i2c_readReg(unsigned int block, unsigned int host, unsigned int reg);
 #define rom_chip_i2c_readReg phy_i2c_readReg
+/* Receive side power and clock (ROM), for the duplex probe. */
+extern void phy_pbus_workmode(void);
+extern void phy_pbus_xpd_rx_on(unsigned int en);
+extern void phy_set_rxclk_en(unsigned int en);
 #else
 extern unsigned int rom_chip_i2c_readReg(unsigned int block, unsigned int host, unsigned int reg);
 #endif
@@ -661,6 +676,29 @@ SHELL_STATIC_SUBCMD_SET_CREATE(diag_cmds,
 	SHELL_SUBCMD_SET_END);
 #endif
 
+#if TX_BENCH
+/*
+ * The tone tables of the paced commands, and the TX DC value's address: the idle replay buffer
+ * on the C5, the idle capture bank on the S31 (the paced path holds the radio meanwhile).
+ */
+#if defined(CONFIG_ESP_SDR_REPLAY)
+#define TXDC_REG_BENCH 0x600a0c08U
+
+static uint32_t *tx_table(size_t *words)
+{
+	return esp_sdr_replay_buf(words);
+}
+#else
+#define TXDC_REG_BENCH 0x20100c08U
+extern uint32_t __esp_sdr_bank_start[];
+
+static uint32_t *tx_table(size_t *words)
+{
+	*words = 16384U;
+	return __esp_sdr_bank_start;
+}
+#endif
+
 #if defined(CONFIG_ESP_SDR_REPLAY)
 /*
  * tx replay <Hz> [amp] [rate 0|1] [passes] [n] [power] [extra] [scale]: a tone of a
@@ -758,6 +796,7 @@ static int cmd_tx_rearm(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "rearm ret %d restarts %u last pass cycles %u", ret, restarts, dt);
 	return 0;
 }
+#endif /* CONFIG_ESP_SDR_REPLAY */
 
 /* The TX DC table: I in the low half, Q in the high half, full scale 32767. */
 static struct {
@@ -803,7 +842,7 @@ static int cmd_tx_dc(const struct shell *sh, size_t argc, char **argv)
 		shell_error(sh, "dc: rate > 0, |Hz| below rate / 2, amp 1..32767");
 		return -EINVAL;
 	}
-	tab = esp_sdr_replay_buf(&words);
+	tab = tx_table(&words);
 	dc.len = esp_sdr_tone_period((double)hz, (double)rate, 16U, MIN(words, 16000U), &cycles);
 	for (size_t k = 0; k < dc.len; k++) {
 		double ph = esp_sdr_tone_phase(cycles, k, dc.len);
@@ -842,7 +881,6 @@ static int cmd_tx_dc(const struct shell *sh, size_t argc, char **argv)
  * the transmit chain brought up by the paced backend. Bench only: the ceiling
  * of the TX DC path with content made on the chip.
  */
-#define TXDC_REG_BENCH 0x600a0c08U
 static int cmd_tx_dcraw(const struct shell *sh, size_t argc, char **argv)
 {
 	long rate = arg(argv, argc, 1, 4000000);
@@ -867,7 +905,7 @@ static int cmd_tx_dcraw(const struct shell *sh, size_t argc, char **argv)
 		return -EINVAL;
 	}
 	/* Whole cycles in at most 16000 words: the rate's divisor of the tone. */
-	tab = esp_sdr_replay_buf(&words);
+	tab = tx_table(&words);
 	len = MIN(words, 16000U);
 	cycles = lround((double)hz * (double)len / (double)rate);
 	dc.tab = tab;
@@ -889,8 +927,8 @@ static int cmd_tx_dcraw(const struct shell *sh, size_t argc, char **argv)
 	for (size_t k = 0; k < len; k++) {
 		double ph = esp_sdr_tone_phase(cycles, k, len);
 
-		tab[k] = upper | esp_sdr_replay_word(lround((double)amp * cos(ph)),
-						     lround((double)amp * sin(ph)));
+		tab[k] = upper | esp_sdr_tx_word((int16_t)lround((double)amp * cos(ph)),
+						 (int16_t)lround((double)amp * sin(ph)));
 	}
 	step = cpu / (uint32_t)rate;
 	dt = (uint32_t)((uint64_t)ms * (cpu / 1000U));
@@ -942,7 +980,7 @@ static int cmd_tx_carrier(const struct shell *sh, size_t argc, char **argv)
 	if (busy(sh) || carrier_on) {
 		return -EBUSY;
 	}
-	tab = esp_sdr_replay_buf(&words);
+	tab = tx_table(&words);
 	tab[0] = (uint32_t)(uint16_t)(i * 64) | ((uint32_t)(uint16_t)(q * 64) << 16);
 	dc.tab = tab;
 	dc.len = 1;
@@ -1005,7 +1043,7 @@ static int cmd_tx_cost(const struct shell *sh, size_t argc, char **argv)
 		int16_t i, q;
 		uint32_t t[2];
 
-		dc.tab = (const uint32_t *)esp_sdr_replay_buf(&dc.len);
+		dc.tab = (const uint32_t *)tx_table(&dc.len);
 		dc.pos = 0;
 		key = irq_lock();
 		c0 = esp_sdr_paced_cycles();
@@ -1026,6 +1064,93 @@ static int cmd_tx_cost(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+/* Gaps from 64 cycles, by octave. */
+#define GAP_BINS 6U
+
+/* The gap loop's body; the two callers below place it in flash (through the cache) and IRAM. */
+static ALWAYS_INLINE uint32_t gap_loop(volatile uint32_t *r, uint32_t dt, uint32_t *hist,
+				       uint32_t *max)
+{
+	uint32_t v = r != NULL ? *r : 0U, c0, prev, now, gap, turns = 0;
+
+	c0 = esp_sdr_paced_cycles();
+	prev = c0;
+	do {
+		if (r != NULL) {
+			*r = v;
+		}
+		now = esp_sdr_paced_cycles();
+		gap = now - prev;
+		prev = now;
+		*max = MAX(*max, gap);
+		for (size_t k = 0; k < GAP_BINS && gap >= (64U << k); k++) {
+			hist[k]++;
+		}
+		turns++;
+	} while (now - c0 < dt);
+	return turns;
+}
+
+static __noinline uint32_t gap_loop_flash(volatile uint32_t *r, uint32_t dt, uint32_t *hist,
+					  uint32_t *max)
+{
+	return gap_loop(r, dt, hist, max);
+}
+
+static IRAM_ATTR __noinline uint32_t gap_loop_iram(volatile uint32_t *r, uint32_t dt,
+						   uint32_t *hist, uint32_t *max)
+{
+	return gap_loop(r, dt, hist, max);
+}
+
+/*
+ * tx gap <reg|0> <ms> [chain] [iram]: where the paced loop's stalls come from. Spins on the cycle
+ * counter, interrupts locked, storing the value the register holds once a turn (0: no store),
+ * and counts the gaps between successive reads by size; chain 1 turns the transmit chain on
+ * first, iram 1 runs the loop from IRAM instead of flash. Bench only.
+ */
+static int cmd_tx_gap(const struct shell *sh, size_t argc, char **argv)
+{
+	uintptr_t reg = (uintptr_t)strtoul(argc > 1 ? argv[1] : "0", NULL, 0);
+	uint32_t ms = (uint32_t)arg(argv, argc, 2, 2000);
+	long chain = arg(argv, argc, 3, 0);
+	long iram = arg(argv, argc, 4, 0);
+	uint32_t hist[GAP_BINS] = {0};
+	uint32_t dt = (uint32_t)((uint64_t)ms * (ESP_SDR_CPU_HZ / 1000U)), max = 0, turns;
+	volatile uint32_t *r = reg != 0U ? (volatile uint32_t *)reg : NULL;
+	unsigned int key;
+	int ret;
+
+	if (busy(sh) || carrier_on) {
+		return -EBUSY;
+	}
+	if (chain != 0) {
+		uint32_t *tab = tx_table(&dc.len);
+
+		tab[0] = 0;
+		dc.tab = tab;
+		dc.len = 1;
+		dc.pos = 0;
+		ret = esp_sdr_tx_paced_start(1000000, 1, 2, dc_input, NULL);
+		if (ret != 0) {
+			shell_error(sh, "gap: start %d", ret);
+			return ret;
+		}
+	}
+	key = irq_lock();
+	turns = iram != 0 ? gap_loop_iram(r, dt, hist, &max) : gap_loop_flash(r, dt, hist, &max);
+	irq_unlock(key);
+	if (chain != 0) {
+		esp_sdr_tx_paced_stop();
+	}
+	shell_print(sh, "gap %08lx chain %ld iram %ld: turns %u (%u cycles) max %u, >=64 %u "
+		    ">=128 %u >=256 %u >=512 %u >=1024 %u >=2048 %u", (unsigned long)reg, chain,
+		    iram, turns, dt / turns, max, hist[0], hist[1], hist[2], hist[3], hist[4],
+		    hist[5]);
+	return 0;
+}
+
+#if defined(CONFIG_ESP_SDR_REPLAY)
 /*
  * tx paint: an image in a receiver's waterfall (spectrum painting). One row at a time, bottom
  * row first, each pixel set in it a tone: column j at (j - w / 2) whole cycles in n words, so
@@ -1292,13 +1417,16 @@ SHELL_STATIC_SUBCMD_SET_CREATE(paint_cmds,
 		      cmd_tx_paint_run, 2, 5),
 	SHELL_CMD(state, NULL, "rows played", cmd_tx_paint_state),
 	SHELL_SUBCMD_SET_END);
+#endif /* CONFIG_ESP_SDR_REPLAY */
 
 static int cmd_tx_stop(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
+#if defined(CONFIG_ESP_SDR_REPLAY)
 	paint_stop();
 	esp_sdr_replay_stop();
+#endif
 	if (carrier_on) {
 		esp_sdr_tx_paced_stop();
 		carrier_on = false;
@@ -1307,22 +1435,34 @@ static int cmd_tx_stop(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+/* The paced commands; the C5 adds its DAC engine's. */
+#define TX_PACED_CMDS                                                                              \
+	SHELL_CMD_ARG(dc, NULL, "<rate> <Hz> [ms] [amp] [interp] [power]: paced TX DC tone",       \
+		      cmd_tx_dc, 3, 4),                                                            \
+	SHELL_CMD_ARG(dcraw, NULL, "<rate> <Hz> [ms] [amp]: TX DC from a tight loop",              \
+		      cmd_tx_dcraw, 3, 2),                                                         \
+	SHELL_CMD_ARG(carrier, NULL, "<i> <q> [rx]: constant TX DC value until tx stop",           \
+		      cmd_tx_carrier, 1, 3),                                                       \
+	SHELL_CMD_ARG(cost, NULL, "<reg> [n]: cycles per store and load", cmd_tx_cost, 1, 2),      \
+	SHELL_CMD_ARG(gap, NULL, "<reg|0> <ms> [chain] [iram]: store loop stalls", cmd_tx_gap,     \
+		      1, 4),                                                                       \
+	SHELL_CMD(stop, NULL, "stop the replay or the carrier", cmd_tx_stop)
+
+#if defined(CONFIG_ESP_SDR_REPLAY)
 SHELL_STATIC_SUBCMD_SET_CREATE(tx_cmds,
 	SHELL_CMD_ARG(replay, NULL,
 		      "<Hz> [amp] [rate 0|1] [passes] [n] [power] [extra] [scale]: DAC engine loop",
 		      cmd_tx_replay, 1, 8),
-	SHELL_CMD_ARG(dc, NULL, "<rate> <Hz> [ms] [amp] [interp] [power]: paced TX DC tone",
-		      cmd_tx_dc, 3, 4),
-	SHELL_CMD_ARG(dcraw, NULL, "<rate> <Hz> [ms] [amp]: TX DC from a tight loop", cmd_tx_dcraw,
-		      3, 2),
-	SHELL_CMD_ARG(carrier, NULL, "<i> <q> [rx]: constant TX DC value until tx stop", cmd_tx_carrier,
-		      1, 3),
-	SHELL_CMD_ARG(cost, NULL, "<reg> [n]: cycles per store and load", cmd_tx_cost, 1, 2),
 	SHELL_CMD_ARG(rearm, NULL, "<ms>: restart a finite replay back to back", cmd_tx_rearm,
 		      1, 1),
 	SHELL_CMD(paint, &paint_cmds, "an image in a waterfall, row by row", NULL),
-	SHELL_CMD(stop, NULL, "stop the replay", cmd_tx_stop),
+	TX_PACED_CMDS,
 	SHELL_SUBCMD_SET_END);
+#else
+SHELL_STATIC_SUBCMD_SET_CREATE(tx_cmds,
+	TX_PACED_CMDS,
+	SHELL_SUBCMD_SET_END);
+#endif
 #endif
 
 /* A temperature in 0.1 degC as text, "?" when unknown. */
@@ -1469,8 +1609,8 @@ SHELL_STATIC_SUBCMD_SET_CREATE(probe_cmds,
 		      "<rate MS/s> <seconds> [falling] [nodes] [pad] [pad] [dc]: gapless ring (S31)",
 		      cmd_ring, 3, 5),
 #endif
-#if defined(CONFIG_ESP_SDR_REPLAY)
-	SHELL_CMD(tx, &tx_cmds, "DAC engine replay (C5)", NULL),
+#if TX_BENCH
+	SHELL_CMD(tx, &tx_cmds, "paced TX DC (C5, S31), DAC engine replay (C5)", NULL),
 #endif
 #if defined(CONFIG_SOC_SERIES_ESP32S31)
 	SHELL_CMD(dc, NULL, "DC servo at the fixed gain", cmd_dc),

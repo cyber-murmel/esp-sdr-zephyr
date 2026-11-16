@@ -446,7 +446,8 @@ esp-phy-lib b88e4b76e090, the blob this repo fetches. The `lib/esp_sdr` code is 
   against that board's crystal. librftest's `fedump_wr_txmem()` may be the S3's replay memory
   under another name, untried.
 - **Transmit, samples: the TX DC value register (`0x20100c08`, I 9:0, Q 19:10), paced by the CPU**
-  (`esp_sdr_tx_paced_*()`). Measured on the VIEWE board (rfprobe), heard on a XIAO ESP32-S3 a few cm away
+  (`esp_sdr_tx_paced_*()`). Measured on the VIEWE board (rfprobe and
+  `tests/integration/esp_sdr_tx_paced_api`), heard on a XIAO ESP32-S3 a few cm away
   (`tmp/s31/tx/paced4.py` to `paced6.py` in the workspace):
   - Chain on is the carrier's start at the LO as tuned, then libphy's `phy_stop_tx_tone_new()`:
     both tones' enables off and the DAC's source back to data, which hands the DAC to the TX DC
@@ -463,7 +464,8 @@ esp-phy-lib b88e4b76e090, the blob this repo fetches. The `lib/esp_sdr` code is 
     the highest interpolated rates, 250 kS/s x8 falls behind (181k inputs a second).
   - **Keep the timed loop in IRAM.** rfprobe's loops and input callback run from flash and see
     late writes now and then, up to 2255 cycles (7 us) with interrupts locked; the same loop in
-    IRAM shows none in 40 s. The C5's unexplained stalls above came from flash code as well; that
+    IRAM shows none in 40 s, and the integration test's IRAM stream keeps every rate with a worst
+    lateness of 27 cycles. The C5's unexplained stalls above came from flash code as well; that
     they are the same cause is untested.
   - The clock and the sign check out: a 100 kHz tone at 2 MS/s lands 100.08 kHz above the S31's
     own LO line in the same capture (a 300 MHz clock would put it at 93.75), on the + side; I and

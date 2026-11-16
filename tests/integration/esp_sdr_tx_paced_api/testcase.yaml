@@ -1,0 +1,14 @@
+common:
+  tags:
+    - esp-sdr
+    - hardware
+  harness: ztest
+  timeout: 120
+
+tests:
+  # The S31 first, flashed over its UART bridge, without the Wi-Fi driver; the C5 and C6 run
+  # the same stream once their TX DC register is in src/main.c.
+  integration.esp_sdr.tx_paced_api.s31:
+    platform_allow:
+      - esp32s31_function_coreboard/esp32s31/hpcore
+      - ues31s043h800v480c_u/esp32s31/hpcore

@@ -106,20 +106,27 @@ Shell
    probe diag regs             0x600a9000, 0x600a9400 and 0x600a9c00 (64 words each) as the
                                last run had them right after the pokes
    probe tx replay <Hz> [amp] [rate 0|1] [passes] [n] [power] [extra] [scale]
-                               a whole-cycle tone played by the DAC engine (80 or 40 MS/s);
+                               C5: a whole-cycle tone played by the DAC engine (80 or 40 MS/s);
                                passes 0 loops until "probe tx stop", otherwise prints the
                                cycles the passes took and holds the radio for "probe tx rearm"
    probe tx rearm <ms>         restart the finite replay back to back for ms (restart hole)
    probe tx dc <rate> <Hz> [ms] [amp] [interp] [power]
-                               the paced TX DC path fed from a tone table on the chip: rate
-                               kept, lateness
+                               C5, S31: the paced TX DC path fed from a tone table on the
+                               chip: rate kept, lateness (the table takes about a second to
+                               build before the tone starts)
    probe tx dcraw <rate> <Hz> [ms] [amp]
-                               the TX DC register from a tight loop: the path's rate ceiling
+                               C5, S31: the TX DC register from a tight loop: the path's rate
+                               ceiling
    probe tx carrier <i> <q> [rx]
-                               a constant TX DC value until "probe tx stop"; rx bits turn
-                               receive parts back on (1 power, 2 clock, 4 pbus work mode)
-   probe tx cost <reg> [n]     CPU cycles per store and load of a register, the paced loop's
-                               parts
+                               C5, S31: a constant TX DC value until "probe tx stop"; rx bits
+                               turn receive parts back on (1 power, 2 clock, 4 pbus work mode)
+   probe tx cost <reg> [n]     C5, S31: CPU cycles per store and load of a register, the paced
+                               loop's parts
+   probe tx gap <reg|0> <ms> [chain] [iram]
+                               C5, S31: the longest gaps between cycle-counter reads in a loop
+                               storing to reg (0: none), with the transmit chain on (chain 1),
+                               from IRAM (iram 1) or flash: where a paced loop's stalls come
+                               from
    probe tx paint size <w> <h> a blank image for a receiver's waterfall, up to 256 x 128
    probe tx paint row <r> <hex>
                                row r's pixels as hex digits, the leftmost in the most

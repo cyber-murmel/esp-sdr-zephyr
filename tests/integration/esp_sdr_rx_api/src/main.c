@@ -8,6 +8,7 @@
  */
 #include <errno.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <zephyr/init.h>
 #include <zephyr/ztest.h>
@@ -232,6 +233,99 @@ ZTEST(esp_sdr_rx_api, test_s31_dc_calibrate)
 	zassert_ok(esp_sdr_rx_set_gain(ESP_SDR_RX_GAIN_AUTO));
 	zassert_ok(esp_sdr_set_freq(2412));
 }
+
+#if defined(CONFIG_SMP)
+#include <zephyr/drivers/flash.h>
+
+/*
+ * With two cores a burst parks the other one, and so does a flash write: each may find the other
+ * holding the pause and has to let itself be parked while it waits. Bursts on one core and flash
+ * writes on the other, then the other way round; the image stays whole and both make progress.
+ */
+#define SMP_FLASH_OFFSET 0x3fe000
+#define SMP_PHASE_MS     2000
+#define SMP_STACK        2048
+
+static const struct device *const smp_flash = DEVICE_DT_GET(DT_CHOSEN(zephyr_flash_controller));
+static K_THREAD_STACK_DEFINE(smp_burst_stack, SMP_STACK);
+static K_THREAD_STACK_DEFINE(smp_flash_stack, SMP_STACK);
+static struct k_thread smp_burst_thread, smp_flash_thread;
+static uint8_t smp_wbuf[1024], smp_rbuf[1024];
+static atomic_t smp_stop;
+static uint32_t smp_bursts, smp_burst_errs, smp_crc_errs, smp_writes, smp_write_errs;
+
+static void smp_burst_fn(void *a, void *b, void *c)
+{
+	size_t len = (size_t)(_iram_end - _iram_start);
+	uint32_t before = crc32_ieee((const uint8_t *)_iram_start, len);
+
+	ARG_UNUSED(a);
+	ARG_UNUSED(b);
+	ARG_UNUSED(c);
+	while (!atomic_get(&smp_stop)) {
+		struct esp_sdr_rx_burst burst = {0};
+
+		/* The longest burst there is: 4.2 ms with the group the engine's. */
+		if (esp_sdr_rx_capture(ESP_SDR_RATE_4MSPS, ESP_SDR_SAMPLES_MAX, &burst) != 0) {
+			smp_burst_errs++;
+		}
+		if (crc32_ieee((const uint8_t *)_iram_start, len) != before) {
+			smp_crc_errs++;
+		}
+		smp_bursts++;
+	}
+}
+
+static void smp_flash_fn(void *a, void *b, void *c)
+{
+	ARG_UNUSED(a);
+	ARG_UNUSED(b);
+	ARG_UNUSED(c);
+	for (uint32_t round = 0; !atomic_get(&smp_stop); round++) {
+		for (size_t i = 0; i < sizeof(smp_wbuf); i++) {
+			smp_wbuf[i] = (uint8_t)(i * 7U + round);
+		}
+		if (flash_erase(smp_flash, SMP_FLASH_OFFSET, 4096) != 0 ||
+		    flash_write(smp_flash, SMP_FLASH_OFFSET, smp_wbuf, sizeof(smp_wbuf)) != 0 ||
+		    flash_read(smp_flash, SMP_FLASH_OFFSET, smp_rbuf, sizeof(smp_rbuf)) != 0 ||
+		    memcmp(smp_wbuf, smp_rbuf, sizeof(smp_wbuf)) != 0) {
+			smp_write_errs++;
+		}
+		smp_writes++;
+	}
+}
+
+static void smp_phase(int burst_cpu)
+{
+	smp_bursts = smp_burst_errs = smp_crc_errs = smp_writes = smp_write_errs = 0U;
+	atomic_set(&smp_stop, 0);
+	k_thread_create(&smp_burst_thread, smp_burst_stack, K_THREAD_STACK_SIZEOF(smp_burst_stack),
+			smp_burst_fn, NULL, NULL, NULL, K_PRIO_PREEMPT(6), 0, K_FOREVER);
+	k_thread_create(&smp_flash_thread, smp_flash_stack, K_THREAD_STACK_SIZEOF(smp_flash_stack),
+			smp_flash_fn, NULL, NULL, NULL, K_PRIO_PREEMPT(6), 0, K_FOREVER);
+	zassert_ok(k_thread_cpu_pin(&smp_burst_thread, burst_cpu));
+	zassert_ok(k_thread_cpu_pin(&smp_flash_thread, 1 - burst_cpu));
+	k_thread_start(&smp_burst_thread);
+	k_thread_start(&smp_flash_thread);
+	k_msleep(SMP_PHASE_MS);
+	atomic_set(&smp_stop, 1);
+	zassert_ok(k_thread_join(&smp_burst_thread, K_SECONDS(2)));
+	zassert_ok(k_thread_join(&smp_flash_thread, K_SECONDS(5)));
+	TC_PRINT("bursts on CPU%d: %u bursts, %u flash rounds\n", burst_cpu, smp_bursts, smp_writes);
+	zassert_equal(smp_burst_errs, 0U, "%u bursts failed", smp_burst_errs);
+	zassert_equal(smp_crc_errs, 0U, "the image changed %u times", smp_crc_errs);
+	zassert_equal(smp_write_errs, 0U, "%u flash rounds failed", smp_write_errs);
+	zassert_true(smp_bursts > 10U && smp_writes > 5U, "no progress: %u bursts, %u rounds",
+		     smp_bursts, smp_writes);
+}
+
+ZTEST(esp_sdr_rx_api, test_s31_smp_bursts_beside_flash_writes)
+{
+	zassert_true(device_is_ready(smp_flash));
+	smp_phase(0);
+	smp_phase(1);
+}
+#endif /* CONFIG_SMP */
 #endif
 
 ZTEST(esp_sdr_rx_api, test_gain_bounds)
