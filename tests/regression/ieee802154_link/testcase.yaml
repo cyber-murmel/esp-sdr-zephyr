@@ -24,6 +24,21 @@ tests:
     sysbuild: true
     build_only: true
 
+  # The driver as a Zephyr L2 network interface (doc/ieee802154.md, "Open"): built only, so
+  # that the path keeps compiling. The L2 takes about 400 bytes more DRAM than the image has
+  # below the ring banks; the kernel heap gives them up here, as the image is not run.
+  regression.esp_sdr.ieee802154_link.s3_l2:
+    tags:
+      - esp-sdr
+      - regression
+    platform_allow:
+      - xiao_esp32s3/esp32s3/procpu
+    sysbuild: true
+    extra_configs:
+      - CONFIG_NET_L2_IEEE802154=y
+      - CONFIG_HEAP_MEM_POOL_SIZE=15360
+    build_only: true
+
   regression.esp_sdr.ieee802154_link:
     tags:
       - esp-sdr

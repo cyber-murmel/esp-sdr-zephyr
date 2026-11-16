@@ -495,7 +495,6 @@ static int set_ack(const struct shell *sh, const char *value)
 }
 #endif
 
-#if defined(CONFIG_ESP_SDR_IEEE802154_RING)
 static int set_unit(const struct shell *sh, const char *value)
 {
 	long pairs;
@@ -505,7 +504,6 @@ static int set_unit(const struct shell *sh, const char *value)
 	}
 	return ieee154_esp_sdr_set_ring_unit((uint32_t)pairs);
 }
-#endif
 #endif
 
 static const struct setting {
@@ -527,7 +525,7 @@ static const struct setting {
 #if defined(CONFIG_ESP_SDR_IEEE802154_AUTO_ACK)
 	{"ack", "<delay us>[,<limit us>]: ACK start after the frame (192,512)", set_ack},
 #endif
-#if defined(CONFIG_ESP_SDR_IEEE802154_RING)
+#if defined(CONFIG_ESP_SDR_IEEE802154)
 	{"unit", "<pairs>: ring unit length, 1024..12288 in steps of 64 (0: default, 1024)",
 	 set_unit},
 #endif
@@ -658,10 +656,9 @@ static void print_sdr_status(const struct shell *sh)
 			    tx_invert, lo_above ? "above" : "below");
 	}
 	shell_print(sh,
-		    "captures %u errors %u frames %u dropped %u tx %u tx errors %u filter %u us"
-		    " phy %u us",
+		    "captures %u errors %u frames %u dropped %u tx %u tx errors %u phy %u us",
 		    s.captures, s.capture_errors, s.frames, s.frames_dropped, s.tx_frames, s.tx_errors,
-		    s.filter_us, s.phy_us);
+		    s.phy_us);
 	shell_print(sh, "ring status %u units %u lost pairs %u, phy read %u skipped %u",
 		    s.ring_status, s.ring_units, s.ring_lost, s.phy_read, s.phy_skipped);
 	shell_print(sh, "ring last run: %u.%02u cycles/pair, slice max %u cycles, abandoned %u",
