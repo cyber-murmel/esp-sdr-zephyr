@@ -168,7 +168,8 @@ enum esdr_mode {
 	 * input without a gap, pruned to what the link carries. The receiver keeps the
 	 * 10 us windows whose power passes the threshold (ESDR_REQ_SET_GAPLESS), with
 	 * windows before and after them, and sends them as ESDR_BLK_SEG blocks. Every
-	 * sample keeps its index on the 80 MS/s axis, so the host sees what was left out.
+	 * sample keeps its index on the run's axis (80 MS/s, 40 with ESDR_GAPLESS_F_HALF),
+	 * so the host sees what was left out.
 	 */
 	ESDR_MODE_GAPLESS = 4,
 	/* Throughput tests: IN sends counting blocks as fast as the bus takes them, OUT sinks. */
@@ -401,6 +402,14 @@ static inline bool esdr_block_hdr_ok(const void *p, uint16_t accept)
 #define ESDR_SEG_RESTART 0x02U
 /* The segment's first window passed the threshold (else it is a window before or after one). */
 #define ESDR_SEG_LOUD    0x04U
+/*
+ * A width record (ESDR_GAPLESS_F_WIDE): the segment's ESDR_SEG_WIDE_PAIRS pairs hold a struct
+ * esdr_seg_wide, not samples. The samples it stands for (its span, from the segment's index
+ * on) carried a signal wider than some 10 MHz (Wi-Fi) and were not sent; a reader that finds
+ * the flag on a segment of another length drops the segment.
+ */
+#define ESDR_SEG_WIDE    0x08U
+#define ESDR_SEG_WIDE_PAIRS 4U
 /* Gain index of a segment taken with the receiver's automatic gain. */
 #define ESDR_SEG_GAIN_AUTO 0xffU
 
@@ -423,6 +432,24 @@ struct esdr_seg_hdr {
 	uint8_t reserved[3];
 } __attribute__((packed));
 
+/*
+ * A width record's payload: the correlations of the samples it stands for (less their DC),
+ * summed at points evenly spaced over them.
+ */
+struct esdr_seg_wide {
+	/* Samples the record stands for, from the segment's index on. */
+	uint16_t span;
+	/*
+	 * The correlation one sample apart, scaled so that the larger component is +-127: its
+	 * angle is the signal's mean frequency in radians a sample (80 MHz a turn).
+	 */
+	int8_t r1_i, r1_q;
+	/* Correlations 4, 6 and 10 samples apart over the power above the noise, 255 for 1. */
+	uint8_t rho4, rho6, rho10;
+	/* Points the correlations summed. */
+	uint8_t points;
+} __attribute__((packed));
+
 /* Pairs in a gapless block whose payload is one segment. */
 #define ESDR_SEG_PAIRS_MAX ((ESDR_BLOCK_PAYLOAD - sizeof(struct esdr_seg_hdr)) / 2U)
 #define ESDR_GAPLESS_RATE_HZ 80000000U
@@ -434,6 +461,20 @@ struct esdr_seg_hdr {
 #define ESDR_GAPLESS_F_GAIN_SERVO 0x0001U
 /* Keep the threshold where ratio_x16 puts it: no servo against the link's budget. */
 #define ESDR_GAPLESS_F_FIXED_THR  0x0002U
+/*
+ * Width sorting: kept samples that carry a signal wider than some 10 MHz (their correlations
+ * 50 to 125 ns apart below half their power) go as width records (ESDR_SEG_WIDE) instead, so
+ * the budget goes to the narrow ones.
+ */
+#define ESDR_GAPLESS_F_WIDE       0x0004U
+/*
+ * The dump engine at 40 MS/s (its own rate bit): segment indices, pair counts and the stats'
+ * pairs count 40 MS/s samples, a window is ESDR_GAPLESS_WINDOW_PAIRS / 2; width sorting is off.
+ */
+#define ESDR_GAPLESS_F_HALF       0x0008U
+
+/* CPU activities of a gapless run (esdr_gapless_stats.cycles), esp_sdr_gapless.h's order. */
+#define ESDR_GAPLESS_ACTIVITIES 7U
 
 struct esdr_gapless_cfg {
 	/* Threshold over the quiet baseline in sixteenths, the servo's floor (0: 64, 6 dB). */
@@ -475,6 +516,28 @@ struct esdr_gapless_stats {
 	 * 0 for none), its CPU cycles and the cycles it had before the deadline.
 	 */
 	uint32_t overrun_activity, overrun_cycles, overrun_room;
+	/* Width sorting: chunks sent as width records, and the samples they stood for. */
+	uint32_t wide_chunks, reserved;
+	uint64_t wide_pairs;
+	/*
+	 * CPU cycles over the runs by activity: copy, pack, service, windows, prep, switch, sort
+	 * (esp_sdr_gapless.h). A unit has 12288 samples' time: units * 12288 * CPU MHz / 80, or
+	 * / 40 for ESDR_GAPLESS_F_HALF runs (the counters add up the runs of both rates).
+	 */
+	uint64_t cycles[ESDR_GAPLESS_ACTIVITIES];
+	/*
+	 * Width sorting: chunks judged, and the loud ones by their largest correlation (bin k:
+	 * up to (k + 1) / 8 of their power above the noise; bins 0 to 3 went as width records).
+	 */
+	uint32_t sort_chunks;
+	uint32_t sort_hist[8];
+	/*
+	 * Bursts (runs of kept windows) begun; refused at their start for want of room in
+	 * staging; cut short later (their rest went, up to what a window's staging can reach; what
+	 * goes on past that counts as a new burst). Canary checks of the dump blocks' upper halves
+	 * (extra staging) that failed.
+	 */
+	uint32_t bursts, bursts_refused, bursts_cut, spare_errors;
 } __attribute__((packed));
 
 /* Channel block flags. */
