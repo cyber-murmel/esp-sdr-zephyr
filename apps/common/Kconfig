@@ -20,7 +20,7 @@ config APP_USB_START_DELAY_MS
 config APP_USB_DFU
 	bool "USB DFU into the MCUboot secondary slot"
 	default y
-	depends on BOOTLOADER_MCUBOOT
+	depends on BOOTLOADER_MCUBOOT && USB_DEVICE_STACK_NEXT
 	select USBD_DFU
 	select FLASH
 	select FLASH_MAP
