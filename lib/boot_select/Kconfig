@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+config ESP_SDR_BOOT_SELECT
+	bool "MCUboot starts the image a flash sector asks for, until a power-on"
+	help
+	  For MCUboot itself (CONFIG_BOOT_GO_HOOKS, CONFIG_BOOT_FLASH_AREA_HOOKS,
+	  CONFIG_FLASH_RUNTIME_SOURCES), with several complete images in the
+	  flash, in slot0_partition upward: see boot_select.c.
