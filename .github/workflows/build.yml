@@ -31,8 +31,16 @@ jobs:
             platforms: -p xiao_esp32s3/esp32s3/procpu
             toolchains: xtensa-espressif_esp32s3_zephyr-elf
             twister-args: --build-only
+          - name: Build communicator_badge
+            platforms: -p communicator_badge/esp32s3/procpu
+            toolchains: xtensa-espressif_esp32s3_zephyr-elf
+            twister-args: --build-only
           - name: Build xiao_esp32c6
             platforms: -p xiao_esp32c6/esp32c6/hpcore
+            toolchains: riscv64-zephyr-elf
+            twister-args: --build-only
+          - name: Build why2025_badge
+            platforms: -p why2025_badge/esp32c6/hpcore -p why2025_badge/esp32p4/hpcore
             toolchains: riscv64-zephyr-elf
             twister-args: --build-only
           - name: Build waveshare_esp32c5_zero

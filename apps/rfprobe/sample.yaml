@@ -11,6 +11,7 @@ tests:
   sample.esp_sdr.rfprobe.c6:
     platform_allow:
       - xiao_esp32c6/esp32c6/hpcore
+      - why2025_badge/esp32c6/hpcore
     integration_platforms:
       - xiao_esp32c6/esp32c6/hpcore
   sample.esp_sdr.rfprobe.c5:
@@ -22,5 +23,6 @@ tests:
     sysbuild: true
     platform_allow:
       - xiao_esp32s3/esp32s3/procpu
+      - communicator_badge/esp32s3/procpu
     integration_platforms:
       - xiao_esp32s3/esp32s3/procpu

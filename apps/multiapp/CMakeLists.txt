@@ -65,11 +65,15 @@ function(multiapp_extension name)
     set(app_config ${ext_dir}/${name}_config.h)
     set(app_confs ${EXT_APP}/Kconfig ${EXT_APP}/prj.conf)
     set(conf_args --conf ${EXT_APP}/prj.conf)
-    # multiapp is built for the XIAO ESP32-S3 only.
-    if(EXISTS ${EXT_APP}/boards/xiao_esp32s3_procpu.conf)
-      list(APPEND app_confs ${EXT_APP}/boards/xiao_esp32s3_procpu.conf)
-      list(APPEND conf_args --conf ${EXT_APP}/boards/xiao_esp32s3_procpu.conf)
-    endif()
+    # The app's board fragment, named with or without the SoC like Zephyr's own lookup.
+    string(REGEX REPLACE "^/[^/]+/" "" cpu_cluster "${BOARD_QUALIFIERS}")
+    foreach(board_conf ${NORMALIZED_BOARD_TARGET} ${BOARD}_${cpu_cluster})
+      if(EXISTS ${EXT_APP}/boards/${board_conf}.conf)
+        list(APPEND app_confs ${EXT_APP}/boards/${board_conf}.conf)
+        list(APPEND conf_args --conf ${EXT_APP}/boards/${board_conf}.conf)
+        break()
+      endif()
+    endforeach()
     execute_process(
       COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/appconfig.py
               --kconfig ${EXT_APP}/Kconfig --host-config ${DOTCONFIG} ${conf_args}
