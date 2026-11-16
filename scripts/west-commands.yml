@@ -6,3 +6,8 @@ west-commands:
       - name: dfu
         class: Dfu
         help: update a running esp-sdr board over USB DFU and confirm the image
+  - file: scripts/west_commands/rp2040.py
+    commands:
+      - name: rp2040
+        class: Rp2040
+        help: flash, back up, roll back the MCH2022 badge's RP2040; read its log and counters

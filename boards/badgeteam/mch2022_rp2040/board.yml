@@ -1,0 +1,6 @@
+board:
+  name: mch2022_rp2040
+  full_name: MCH2022 badge (RP2040 coprocessor)
+  vendor: badgeteam
+  socs:
+    - name: rp2040

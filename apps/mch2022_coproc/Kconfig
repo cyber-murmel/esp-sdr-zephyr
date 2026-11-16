@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+config APP_MCH2022_COPROC
+	bool
+	default y
+	# The UARTs' receive rings: the hal's DMA, directly (Zephyr's driver has no ring mode).
+	select PICOSDK_USE_DMA
+	select PICOSDK_USE_CLAIM
+
+config APP_COPROC_RESET_MODE
+	int "How DTR and RTS reset the ESP32 at boot (enum coproc_reset_mode)"
+	range 0 1
+	default 0
+
+source "Kconfig.zephyr"

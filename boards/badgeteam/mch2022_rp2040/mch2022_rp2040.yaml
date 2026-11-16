@@ -1,0 +1,17 @@
+identifier: mch2022_rp2040
+name: MCH2022 badge (RP2040 coprocessor)
+type: mcu
+arch: arm
+flash: 1984
+ram: 264
+toolchain:
+  - zephyr
+supported:
+  - adc
+  - gpio
+  - hwinfo
+  - i2c
+  - pwm
+  - uart
+  - usbd
+  - watchdog
