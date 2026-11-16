@@ -118,7 +118,7 @@ receive gain steps so that the loudest windows' peaks stay short of full scale.
 On the badge the ring ran 120 s (9.6 G samples) without an error. The CPU packs some 1000
 samples a unit while kept windows come in, about the link's 11 MB/s; a burst longer than the
 staging ring keeps its start and drops its tail. ``../osmosdr/tools/esdr_usb gapless`` records
-the blocks, ``tools/gapless.py`` checks them (with a carrier on
+the blocks through ``apps/osmosdr_bridge``, ``tools/gapless.py`` checks them (with a carrier on
 air, its phase across the gaps proves every segment's index).
 
 Building and flashing
