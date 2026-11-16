@@ -191,7 +191,10 @@ tagged `COLD` never go in. Every list is an A/B on the board.
   samples the interrupted stack in the timer interrupt on CPU 0 and, through IPIs, on the other CPU
   (`perf record`, `perf printbuf`). The zsdr fork adds an Xtensa backend
   (`PROFILING_PERF_BACKEND_XTENSA`) and a CPU mask, `perf record <ms> <Hz> [thread [cpus]]`:
-  `perf record 3000 1000 0 1` samples CPU 0 alone and sends the ring's CPU no IPI.
+  `perf record 3000 1000 0 1` samples CPU 0 alone and sends the ring's CPU no IPI. perf prints
+  the end of a recording from the system work queue, where a CDC-ACM shell transmits too unless
+  `CONFIG_USBD_CDC_ACM_WORKQUEUE` gives it a queue of its own: the print then waits for itself until
+  the liveness watchdog resets the board, so apps/common turns that option on in builds with perf.
 - **Functions.** `scripts/place/prof_map.py <elf> <capture>...` maps either capture to functions,
   samples per byte and section, or to collapsed stacks for a flame graph.
 - **The cache.** `scripts/place/icache.py <port>` reads the I-cache's access and miss counters

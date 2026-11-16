@@ -106,3 +106,9 @@ config APP_PROF_SHELL
 # transmit buffer, 11 s through 1 KB.
 configdefault SHELL_BACKEND_SERIAL_TX_RING_BUFFER_SIZE
 	default 1024 if APP_PROF_SHELL
+
+# perf (subsys/profiling/perf) prints the end of a recording from the system work queue, and a
+# CDC-ACM shell transmits on the CDC-ACM work queue, by default the system work queue as well: the
+# print then waits for itself until the liveness watchdog resets the board.
+configdefault USBD_CDC_ACM_WORKQUEUE
+	default y if PROFILING_PERF
