@@ -75,6 +75,15 @@ extern "C" {
 	static type name dims __aligned(align) ESP_SDR_HIGH_RAM
 #endif
 
+/**
+ * `static type name dims __aligned(align)` in PSRAM. An extension's bss may be in internal RAM,
+ * so that an image loading the library as one defines it elsewhere (apps/multiapp).
+ */
+#ifndef ESP_SDR_PSRAM_BUF_DEFINE
+#define ESP_SDR_PSRAM_BUF_DEFINE(type, name, dims, align)                                         \
+	static type name dims __aligned(align) EXT_RAM_BSS_ATTR
+#endif
+
 /** A kernel thread stack of an app in the high region, as ESP_SDR_HIGH_BUF_DEFINE(). */
 #ifndef ESP_SDR_HIGH_STACK_DEFINE
 #define ESP_SDR_HIGH_STACK_DEFINE(name, size)                                                     \

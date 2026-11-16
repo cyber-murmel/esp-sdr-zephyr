@@ -34,7 +34,7 @@ LOG_MODULE_DECLARE(esp_sdr, CONFIG_ESP_SDR_LOG_LEVEL);
 BUILD_ASSERT(IS_POWER_OF_TWO(RING_SIZE), "ring size must be a power of two");
 
 /* Packed input samples, I in the upper half word. PSRAM: written by the network thread. */
-static EXT_RAM_BSS_ATTR uint32_t ring[RING_SIZE];
+ESP_SDR_PSRAM_BUF_DEFINE(uint32_t, ring, [RING_SIZE], 4);
 
 #define NFILL       2
 /* One full bank per block. */

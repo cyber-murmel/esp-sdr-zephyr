@@ -20,7 +20,12 @@
 
 #if defined(CONFIG_ESP_SDR_PHY_ONLY)
 #include <esp_phy_init.h>
+#if defined(CONFIG_SOC_SERIES_ESP32C6)
 #include <esp_private/esp_modem_clock.h>
+#else
+#include <esp_private/periph_ctrl.h>
+#include <hal/clk_gate_ll.h>
+#endif
 #include <esp_timer.h>
 #else
 #include <esp_wifi.h>
@@ -299,8 +304,15 @@ static int radio_up(void)
 		return -EIO;
 	}
 	esp_wifi_bt_power_domain_on();
+#if defined(CONFIG_SOC_SERIES_ESP32C6)
 	modem_clock_module_mac_reset(PERIPH_WIFI_MODULE);
 	modem_clock_module_enable(PERIPH_WIFI_MODULE);
+#else
+	/* wifi_module_enable(), which the hal builds only with the Wi-Fi driver. */
+	PERIPH_RCC_ATOMIC() {
+		periph_ll_wifi_module_enable_clk_clear_rst();
+	}
+#endif
 	esp_phy_enable(PHY_MODEM_WIFI);
 	phy_wifi_enable_set(1);
 	return 0;

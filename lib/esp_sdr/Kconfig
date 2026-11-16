@@ -1,14 +1,21 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 config ESP_SDR_PHY_ONLY
-	bool "Radio without the Wi-Fi driver (ESP32-C6)"
-	depends on SOC_SERIES_ESP32C6 && !WIFI_ESP32
+	bool "Radio without the Wi-Fi driver (ESP32-C6, ESP32-S3)"
+	depends on (SOC_SERIES_ESP32C6 || SOC_SERIES_ESP32S3) && !WIFI_ESP32
 	help
 	  Brings the PHY up through the HAL's esp_phy_enable() instead of the
 	  Wi-Fi driver, and links only the PHY and RF test libraries. Frees
-	  the Wi-Fi driver's code, its heap and its share of SRAM blocks 0
-	  and 1 (the gapless ring takes block 1), and drops the blob's
-	  periodic receive glitch.
+	  the Wi-Fi driver's code and its heap (on the C6 its share of SRAM
+	  blocks 0 and 1, the gapless ring takes block 1), and drops the
+	  blob's periodic receive glitch.
+
+config ESP_SDR_AS_EXTENSION
+	bool "The library and its PHY built as extensions"
+	help
+	  Leaves only the dump banks' linker snippet in the image: the
+	  application builds the library, the 802.15.4 driver and the PHY's
+	  blobs as loadable modules (apps/multiapp, sources.cmake).
 
 config ESP_SDR
 	bool "ESP-SDR raw I/Q receiver"
