@@ -1,6 +1,6 @@
 sample:
   name: ESP-SDR capture
-  description: Raw I/Q burst captures from the ESP32-S3/C6/C5 Wi-Fi receiver
+  description: Raw I/Q burst captures from the ESP32-S3/C6/C5/S31 Wi-Fi receiver
 common:
   tags: esp-sdr
   platform_allow:
@@ -10,10 +10,13 @@ common:
     - why2025_badge/esp32c6/hpcore
     - waveshare_esp32c5_zero/esp32c5/hpcore
     - mch2022/esp32/procpu
+    - esp32s31_function_coreboard/esp32s31/hpcore
+    - ues31s043h800v480c_u/esp32s31/hpcore
   integration_platforms:
     - xiao_esp32s3/esp32s3/procpu
     - xiao_esp32c6/esp32c6/hpcore
     - waveshare_esp32c5_zero/esp32c5/hpcore
+    - esp32s31_function_coreboard/esp32s31/hpcore
   harness: console
   harness_config:
     type: multi_line

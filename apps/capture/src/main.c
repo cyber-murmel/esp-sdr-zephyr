@@ -6,6 +6,7 @@
  */
 
 #include <math.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -108,6 +109,11 @@ static int capture_step(const struct survey_step *step)
 		return 0;
 	}
 	ret = esp_sdr_set_freq(step->mhz);
+	/* The S31 has no divided LO: its PLL does not come down this far. */
+	if (ret == -ERANGE && IS_ENABLED(CONFIG_SOC_SERIES_ESP32S31) && step->mhz < 2200U) {
+		printf("esp-sdr rx: %u MHz out of this chip's reach, skipped\n", step->mhz);
+		return 0;
+	}
 	if (ret == 0 && step->bandwidth_mhz) {
 		uint32_t min, max;
 
