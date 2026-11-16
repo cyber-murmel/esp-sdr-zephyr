@@ -537,6 +537,24 @@ static ALWAYS_INLINE uint32_t pack_lut(uint32_t v, const uint8_t *lut)
 	return lut[(v >> 10) & 0x3ffU] | ((uint32_t)lut[v & 0x3ffU] << 8);
 }
 
+/*
+ * esp_sdr_rx_iq8() of a word into the low or the high half: masked to I[9:2] and Q[9:2], the
+ * multiply's shifts by 4 and 22 put I at bits 16..23 and Q at 24..31 with nothing in between to
+ * carry. 3 operations a sample instead of 5; the same for every one of the 2^32 words (checked).
+ */
+#define IQ8_FIELDS 0xff3fcU
+#define IQ8_SPREAD 0x400010U
+
+static ALWAYS_INLINE uint32_t iq8_low(uint32_t v)
+{
+	return ((v & IQ8_FIELDS) * IQ8_SPREAD) >> 16;
+}
+
+static ALWAYS_INLINE uint32_t iq8_high(uint32_t v)
+{
+	return ((v & IQ8_FIELDS) * IQ8_SPREAD) & 0xffff0000U;
+}
+
 static ESP_SDR_GAPLESS_HOT __attribute__((optimize("O3"))) void
 pack_run(const uint32_t *w, uint32_t n, uint16_t *o, unsigned int shift)
 {
@@ -552,8 +570,8 @@ pack_run(const uint32_t *w, uint32_t n, uint16_t *o, unsigned int shift)
 		for (; n >= 4U; n -= 4U, w += 4) {
 			uint32_t a = w[0], b = w[1], c = w[2], d = w[3];
 
-			o32[0] = esp_sdr_rx_iq8(a) | (esp_sdr_rx_iq8(b) << 16);
-			o32[1] = esp_sdr_rx_iq8(c) | (esp_sdr_rx_iq8(d) << 16);
+			o32[0] = iq8_low(a) | iq8_high(b);
+			o32[1] = iq8_low(c) | iq8_high(d);
 			o32 += 2;
 		}
 		o = (uint16_t *)o32;
