@@ -284,6 +284,17 @@ int esp_sdr_diag_level(uint8_t *lsb)
 	return 0;
 }
 
+/*
+ * The CIC at -O2 and out of line: inlined into the -Os loop below it kept its integrators on the
+ * stack, a store and a load each at every box (the C5 is the diagnostic ring's one core).
+ */
+static __noinline __attribute__((optimize("O2"))) size_t cic_run(struct diag_cic *c,
+								 const uint32_t *w, size_t nbytes,
+								 int32_t *out)
+{
+	return diag_cic_run(c, w, nbytes, out);
+}
+
 int esp_sdr_diag_run(const struct esp_sdr_diag_cfg *cfg, struct esp_sdr_diag_stats *stats)
 {
 	struct esp_sdr_diag_stats s = {0};
@@ -425,7 +436,7 @@ int esp_sdr_diag_run(const struct esp_sdr_diag_cfg *cfg, struct esp_sdr_diag_sta
 			if (cfg->decim != 0U) {
 				/* In chunks, so that the sink can serve a slow consumer such as a USB FIFO often. */
 				for (size_t off = 0; off < ESP_SDR_DIAG_BLOCK; off += IQ_CHUNK) {
-					size_t n = diag_cic_run(
+					size_t n = cic_run(
 						&cic, (const uint32_t *)(ring + (cons % ESP_SDR_DIAG_RING) + off),
 						IQ_CHUNK, iq);
 

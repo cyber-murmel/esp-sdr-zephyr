@@ -58,56 +58,62 @@ static inline void diag_cic_init(struct diag_cic *c, uint32_t r)
  * Feed @p nbytes (a multiple of DIAG_BOX, 4-byte aligned) of the ring. Appends the CIC outputs as
  * interleaved I, Q to @p out (unscaled: the sum through the three boxcars, see diag_norm()) and
  * returns their number of pairs. The first three outputs after diag_cic_init() are dropped.
+ *
+ * The state lives in locals for the call: out is int32_t and the state uint32_t, which may alias,
+ * so through *c every store to out reloaded it. The boxes up to the next output go in a loop of
+ * their own, without the phase's test.
  */
 static inline size_t diag_cic_run(struct diag_cic *c, const uint32_t *w, size_t nbytes, int32_t *out)
 {
 	size_t n = 0;
 	uint32_t i1 = c->i1, i2 = c->i2, i3 = c->i3, q1 = c->q1, q2 = c->q2, q3 = c->q3;
+	uint32_t di1 = c->di1, di2 = c->di2, di3 = c->di3, dq1 = c->dq1, dq2 = c->dq2,
+		 dq3 = c->dq3;
+	const uint32_t r = c->r;
+	uint32_t phase = c->phase, settle = c->settle;
+	const uint32_t *p = w;
+	size_t boxes = nbytes / DIAG_BOX;
 
-	for (size_t k = 0; k < nbytes / 4U; k += 4U) {
-		int32_t si, sq;
+	while (boxes > 0U) {
+		const uint32_t m = (uint32_t)(boxes < r - phase ? boxes : r - phase);
 
-		diag_box16(&w[k], &si, &sq);
-		i1 += (uint32_t)si;
-		i2 += i1;
-		i3 += i2;
-		q1 += (uint32_t)sq;
-		q2 += q1;
-		q3 += q2;
-		if (++c->phase == c->r) {
-			uint32_t ti, tq;
+		for (uint32_t j = 0; j < m; j++, p += 4) {
+			int32_t si, sq;
 
-			c->phase = 0;
+			diag_box16(p, &si, &sq);
+			i1 += (uint32_t)si;
+			i2 += i1;
+			i3 += i2;
+			q1 += (uint32_t)sq;
+			q2 += q1;
+			q3 += q2;
+		}
+		boxes -= m;
+		phase += m;
+		if (phase == r) {
 			/* Three combs, x minus its previous value, three times. */
-			ti = i3 - c->di1;
-			c->di1 = i3;
-			tq = q3 - c->dq1;
-			c->dq1 = q3;
-			{
-				uint32_t ui = ti - c->di2, uq = tq - c->dq2;
+			const uint32_t ti = i3 - di1, tq = q3 - dq1;
+			const uint32_t ui = ti - di2, uq = tq - dq2;
 
-				c->di2 = ti;
-				c->dq2 = tq;
-				ti = ui - c->di3;
-				tq = uq - c->dq3;
-				c->di3 = ui;
-				c->dq3 = uq;
-			}
-			if (c->settle != 0U) {
-				c->settle--;
+			phase = 0;
+			di1 = i3;
+			dq1 = q3;
+			di2 = ti;
+			dq2 = tq;
+			if (settle != 0U) {
+				settle--;
 			} else {
-				out[2U * n] = (int32_t)ti;
-				out[2U * n + 1U] = (int32_t)tq;
+				out[2U * n] = (int32_t)(ui - di3);
+				out[2U * n + 1U] = (int32_t)(uq - dq3);
 				n++;
 			}
+			di3 = ui;
+			dq3 = uq;
 		}
 	}
-	c->i1 = i1;
-	c->i2 = i2;
-	c->i3 = i3;
-	c->q1 = q1;
-	c->q2 = q2;
-	c->q3 = q3;
+	*c = (struct diag_cic){.i1 = i1, .i2 = i2, .i3 = i3, .q1 = q1, .q2 = q2, .q3 = q3,
+			       .di1 = di1, .di2 = di2, .di3 = di3, .dq1 = dq1, .dq2 = dq2,
+			       .dq3 = dq3, .r = r, .phase = phase, .settle = settle};
 	return n;
 }
 
