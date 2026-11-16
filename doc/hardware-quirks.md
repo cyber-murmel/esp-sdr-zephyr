@@ -402,6 +402,50 @@ XIAO ESP32-C6 on the other end of a 30 dB coax attenuator.
 - **RS(255,223) decoding cost.** About 49 us for a clean codeword, 220 us
   with 2 errors and 400 us with 10. With many corrections, RS decoding
   dominates a receiver.
+- **The ESP32-P4's PIE SIMD** (128-bit vectors q0 .. q7, the 40-bit lane
+  accumulators QACC, the scalar XACC) needs Espressif's assembler
+  (`-march=..._xespv2p1`, the PIE of the P4 before v3; older binutils called it
+  `xesppie`); the Zephyr SDK's knows no PIE. Rules found on the
+  WHY2025 badge's P4 (v1.0), all applied in `apps/common/src/esdr_pfbq_pie.S`:
+  - PIE and the hardware loops are off until their state CSRs are set
+    (0x7f2 and 0x7f1 to 1: illegal instruction otherwise); unaligned vector
+    access needs bit 1 of `esp.movx.w.cfg`, and costs 3 to 4 cycles.
+  - PIE instructions take x8 .. x15 and x24 .. x31 only, `esp.movx.w.sar`
+    included (`t0` is "illegal operands").
+  - `esp.lp.setup` with a label needs a relocation only Espressif's linker
+    knows (Zephyr's links it as another type, even with `-mno-relax`): write
+    it as a word, `0x402b | id << 7 | rs1 << 15 | ((end - .) >> 1) << 20`.
+    Binutils 16.2 with `xesploop` resolves the offset itself and emits none.
+  - `esp.srcmb.s16.qacc` shifts with floor and saturates only with select 1
+    (0 wraps); `esp.cmul.s16` modes 0 and 1 write the low and the high two
+    complex lanes (so it works in place), exact sums floored by SAR;
+    `vadd`/`vsub`/`vmul` saturate. Loading QACC (`esp.ldqa`, `esp.mov.s16.qacc`)
+    gives a rounding addend for free.
+  - Nearly every PIE instruction issues in one cycle, a multiply-add with a
+    fused load too (the core issues one instruction a cycle, so fusing halves
+    the cost); a vector used by the next instruction stalls one.
+  - The vector state is in no thread context: one thread per core may use it.
+- **The ESP32-S31's PIE is CPU1's only, and version 2.2** (`-march=..._xesploop_xespv2p2`,
+  binutils 16.2; ESP-IDF says the same in its `vectors.S`). On CPU0 the state CSR 0x7f2 reads
+  0 whatever is written and a PIE instruction is illegal; on CPU1 it reads 0x22000000 plus the
+  state. The P4's encodings (2.1) and 3.0's are other instructions there: misaligned stores and
+  exception 31. So PIE needs SMP and a thread pinned to CPU1. The hardware loops (0x7f1, their
+  state in `mstatus.XS`) work on both cores. On the VIEWE board's S31 (rev v0.0), esp-dsp's P4
+  kernels assembled for 2.2 against its C versions (`tmp/s31/viewe/apps/piecheck`, 1024 points):
+  the 16-bit dot product exact and 24 times faster; the float FFTs, which use the FPU and the
+  hardware loops only, exact on either core and 1.5 times faster (radix 4: 88000 cycles); but
+  the 16-bit FFT off by up to 146 counts against a float reference where the C version is off by
+  2, and the decimating FIR wrong in every output (it also returns a register it never sets):
+  some instruction differs from the P4's, not found yet.
+- **The ESP32-P4's memcpy, memmove and memset are ROM routines** (the
+  `esp32p4.rom.libc*.ld` scripts) at some 5.5 cycles a byte. Moving the
+  channelizer's 1.5 kB history cost 13 cycles a sample until a PIE copy took
+  over; copy hot data with words or vectors.
+- **The in-order P4 core waits on float results.** An independent `fmul.s`
+  issues every cycle, a dependent `fadd.s` waits 4. Interleave independent
+  chains (the detector's decisions: four channels as written-out scalars, a
+  per-channel threshold instead of byte flags) and keep loop bounds in locals:
+  with `-fno-strict-aliasing` every float store reloads struct fields.
 
 ## Building and flashing
 

@@ -1,0 +1,11 @@
+tests:
+  unit.esp_sdr.esdr_pfbq:
+    tags:
+      - esp-sdr
+      - esdr
+    platform_allow:
+      - native_sim
+      - native_sim/native/64
+      - why2025_badge/esp32p4/hpcore
+    integration_platforms:
+      - native_sim

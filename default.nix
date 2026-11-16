@@ -122,12 +122,37 @@ let
   # SoapySDRUtil and friends with the plugins.
   soapysdr = pkgs.soapysdr.override { extraPackages = soapyPlugins; };
 
+  # Espressif's RISC-V binutils: their assembler knows the PIE vector instructions, the Zephyr
+  # SDK's does not. Each PIE version encodes them differently, -march picks one: xespv2p1 for
+  # the ESP32-P4 before v3 (the WHY2025 badge's), xespv2p2 for the ESP32-S31 (CPU1 only),
+  # xespv3p0 for the P4 v3. apps/common assembles the P4 channelizer's SIMD kernels with it
+  # (src/esdr_pfbq_pie.S); a build without it runs the C reference kernels, some 40 times slower.
+  riscv32-esp-binutils = pkgs.stdenv.mkDerivation rec {
+    pname = "riscv32-esp-elf-binutils";
+    version = "16.2.0_20260914";
+    src = pkgs.fetchurl {
+      url = "https://github.com/espressif/crosstool-NG/releases/download/esp-${version}/riscv32-esp-elf-${version}-x86_64-linux-gnu.tar.xz";
+      sha256 = "1vp7idp43a9x9qcicr3z9bazsf0z8yhqahshfx37dbzkylb0m6qz";
+    };
+    nativeBuildInputs = [ pkgs.autoPatchelfHook ];
+    buildInputs = [ pkgs.stdenv.cc.cc.lib pkgs.zlib pkgs.zstd ];
+    dontConfigure = true;
+    dontBuild = true;
+    # as and objdump run one binary per PIE version, next to them.
+    installPhase = ''
+      mkdir -p $out/bin
+      cp bin/riscv32-esp-elf-as bin/riscv32-esp-elf-as-xespv* bin/riscv32-esp-elf-objdump \
+        bin/riscv32-esp-elf-objdump-xespv* bin/riscv32-esp-elf-readelf $out/bin/
+    '';
+  };
+
   # What a firmware build needs.
   build = [
     pkgs.cmake
     pkgs.esptool
     pkgs.ninja
     python
+    riscv32-esp-binutils
     zephyr-sdk
   ];
 
@@ -352,7 +377,8 @@ pkgs.symlinkJoin {
   name = "esp-sdr-zephyr-${version}";
   paths = lib.concatMap lib.attrValues (lib.attrValues firmware) ++ [ tools ];
   passthru = {
-    inherit pkgs dev shell firmware tools host-tools soapy-esdr soapysdr westWorkspace;
+    inherit pkgs dev shell firmware tools host-tools soapy-esdr soapysdr westWorkspace
+      riscv32-esp-binutils;
     west2nix = west2nix-update;
   };
 }
