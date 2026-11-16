@@ -314,19 +314,6 @@ static const int16_t rot_masks[24] __aligned(16) = {
 };
 
 #if defined(CONFIG_ESP_SDR_RING_FIR)
-static float bessel_i0(float x)
-{
-	float s = 1.0f, t = 1.0f;
-
-	for (int k = 1; k < 30; k++) {
-		float q = x / (2.0f * (float)k);
-
-		t *= q * q;
-		s += t;
-	}
-	return s;
-}
-
 static float kaiser_tap(uint32_t i, uint32_t l, float fc)
 {
 	float m = (float)i - 0.5f * (float)(l - 1U);
@@ -334,8 +321,8 @@ static float kaiser_tap(uint32_t i, uint32_t l, float fc)
 	float sinc = esp_sdr_sincf(x);
 	float r = 2.0f * m / (float)(l - 1U);
 
-	return 2.0f * fc * sinc * bessel_i0(5.65f * sqrtf(fmaxf(0.0f, 1.0f - r * r))) /
-	       bessel_i0(5.65f);
+	return 2.0f * fc * sinc * esp_sdr_bessel_i0f(5.65f * sqrtf(fmaxf(0.0f, 1.0f - r * r))) /
+	       esp_sdr_bessel_i0f(5.65f);
 }
 
 static void fstage_init(struct fstage *s, uint32_t d, uint32_t l, uint32_t shift)

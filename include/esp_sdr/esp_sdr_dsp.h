@@ -7,9 +7,9 @@
  * @brief Small signal processing helpers shared by the library, the apps, the tests and the
  * host tools.
  *
- * The turn constant, windows, sinc, an in-place radix-2 FFT and whole-cycle tone tables. Header
- * only, plain C and libm without Zephyr, so that host builds (apps/link/tools,
- * apps/osmosdr/tools) and the native_sim unit tests use the same code.
+ * The turn constant, windows, sinc, the Kaiser window's I0 and beta, an in-place radix-2 FFT and
+ * whole-cycle tone tables. Header only, plain C and libm without Zephyr, so that host builds
+ * (apps/link/tools, apps/osmosdr/tools) and the native_sim unit tests use the same code.
  */
 
 #ifndef ESP_SDR_ESP_SDR_DSP_H_
@@ -99,6 +99,51 @@ static inline double esp_sdr_sinc(double x)
 	double a = ESP_SDR_TAU / 2.0 * x;
 
 	return fabs(x) < 1e-9 ? 1.0 : sin(a) / a;
+}
+
+/**
+ * @brief Modified Bessel function of the first kind, order 0, for Kaiser windows.
+ *
+ * The power series, stopped once a term no longer changes a float sum (the window betas in use
+ * need some 20 terms).
+ *
+ * @param x Argument.
+ * @return I0(@p x).
+ */
+static inline float esp_sdr_bessel_i0f(float x)
+{
+	float s = 1.0f, t = 1.0f;
+
+	for (int k = 1; k < 50; k++) {
+		float q = x / (2.0f * (float)k);
+
+		t *= q * q;
+		s += t;
+		if (t < 1e-9f * s) {
+			break;
+		}
+	}
+	return s;
+}
+
+/**
+ * @brief Kaiser's beta for a stop band attenuation.
+ *
+ * A Kaiser window coefficient is I0(beta sqrt(1 - r^2)) / I0(beta), r from -1 to 1 over the
+ * window (esp_sdr_bessel_i0f()).
+ *
+ * @param db Stop band attenuation, dB.
+ * @return beta (0 below 21 dB: a rectangular window).
+ */
+static inline float esp_sdr_kaiser_beta(float db)
+{
+	if (db > 50.0f) {
+		return 0.1102f * (db - 8.7f);
+	}
+	if (db >= 21.0f) {
+		return 0.5842f * powf(db - 21.0f, 0.4f) + 0.07886f * (db - 21.0f);
+	}
+	return 0.0f;
 }
 
 /**

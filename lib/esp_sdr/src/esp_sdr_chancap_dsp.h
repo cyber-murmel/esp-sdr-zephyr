@@ -50,20 +50,6 @@ static inline int16_t chancap_sat16(int64_t v)
 
 /* ---- prototype filter design (Kaiser window), float on the host and at start ---- */
 
-static inline float chancap_bessel_i0(float x)
-{
-	float s = 1.0f, t = 1.0f;
-
-	for (int k = 1; k < 40; k++) {
-		t *= (x / (2.0f * (float)k)) * (x / (2.0f * (float)k));
-		s += t;
-		if (t < 1e-9f * s) {
-			break;
-		}
-	}
-	return s;
-}
-
 /*
  * Kaiser-windowed sinc low pass of @p l taps: cutoff @p fc (fraction of the input rate, 0.5 =
  * Nyquist), window parameter @p beta; the taps are scaled to a DC gain of CHANCAP_H_ONE as
@@ -72,14 +58,14 @@ static inline float chancap_bessel_i0(float x)
 static inline void chancap_design_lowpass(int16_t *h, unsigned int l, float fc, float beta)
 {
 	float w[CHANCAP_L_MAX], sum = 0.0f;
-	float i0b = chancap_bessel_i0(beta), mid = ((float)l - 1.0f) / 2.0f;
+	float i0b = esp_sdr_bessel_i0f(beta), mid = ((float)l - 1.0f) / 2.0f;
 	int32_t isum = 0;
 
 	for (unsigned int n = 0; n < l; n++) {
 		float t = (float)n - mid, r = 2.0f * t / ((float)l - 1.0f);
 		float sinc = t == 0.0f ? 2.0f * fc : sinf(ESP_SDR_TAU_F * fc * t) /
 								((ESP_SDR_TAU_F / 2.0f) * t);
-		float win = chancap_bessel_i0(beta * sqrtf(1.0f - r * r)) / i0b;
+		float win = esp_sdr_bessel_i0f(beta * sqrtf(1.0f - r * r)) / i0b;
 
 		w[n] = sinc * win;
 		sum += w[n];
@@ -97,18 +83,6 @@ static inline void chancap_design_lowpass(int16_t *h, unsigned int l, float fc, 
 		h[l / 2 - 1] = (int16_t)(h[l / 2 - 1] + half);
 		h[l / 2] = (int16_t)(h[l / 2] + (e - half));
 	}
-}
-
-/* Kaiser beta for a stop band attenuation in dB (Kaiser's formula). */
-static inline float chancap_kaiser_beta(float atten_db)
-{
-	if (atten_db > 50.0f) {
-		return 0.1102f * (atten_db - 8.7f);
-	}
-	if (atten_db >= 21.0f) {
-		return 0.5842f * powf(atten_db - 21.0f, 0.4f) + 0.07886f * (atten_db - 21.0f);
-	}
-	return 0.0f;
 }
 
 /* ---- polyphase filter bank ---- */
@@ -161,7 +135,7 @@ static inline bool chancap_pfb_init(struct chancap_pfb *p, unsigned int m, unsig
 	p->k = k;
 	p->l = k * m;
 	p->odd = odd;
-	chancap_design_lowpass(h, p->l, fc, chancap_kaiser_beta(atten_db));
+	chancap_design_lowpass(h, p->l, fc, esp_sdr_kaiser_beta(atten_db));
 	for (unsigned int kk = 0; kk < k; kk++) {
 		for (unsigned int i = 0; i < m; i++) {
 			int16_t t = h[(m - 1U - i) + kk * m];
@@ -552,7 +526,7 @@ static inline bool chancap_ddc_init(struct chancap_ddc *c, int num, unsigned int
 		c->cr[n] = (int16_t)lround(cos(w) * CHANCAP_TW_ONE);
 		c->ci[n] = (int16_t)lround(sin(w) * CHANCAP_TW_ONE);
 	}
-	chancap_design_lowpass(h, CHANCAP_DDC_L, fc, chancap_kaiser_beta(atten_db));
+	chancap_design_lowpass(h, CHANCAP_DDC_L, fc, esp_sdr_kaiser_beta(atten_db));
 	/* h is symmetric; kept in window order for the dot product with the input. */
 	for (unsigned int n = 0; n < CHANCAP_DDC_L; n++) {
 		c->h[n] = h[CHANCAP_DDC_L - 1U - n];
