@@ -1,0 +1,17 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * The shell on USB-Serial-JTAG: a raw capture in base64 over the UART's 115200 baud would take
+ * seconds. The UART keeps esptool and the ROM's messages.
+ */
+
+/ {
+	chosen {
+		zephyr,console = &usb_serial;
+		zephyr,shell-uart = &usb_serial;
+	};
+};
+
+&usb_serial {
+	status = "okay";
+};

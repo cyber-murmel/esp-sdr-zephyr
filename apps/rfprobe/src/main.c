@@ -26,6 +26,9 @@
 #include <esp_sdr/esp_sdr_cal.h>
 #include <esp_sdr/esp_sdr_dsp.h>
 #include <esp_sdr/esp_sdr_rx.h>
+#if defined(CONFIG_ESP_SDR_DIAG16)
+#include <esp_sdr/esp_sdr_diag16.h>
+#endif
 #include <esp_sdr/esp_sdr_tx.h>
 #if defined(CONFIG_ESP_SDR_DIAG)
 #include <esp_sdr/esp_sdr_diag.h>
@@ -57,6 +60,9 @@ extern unsigned char phy_param[];
 extern void phy_pbus_workmode(void);
 extern void phy_pbus_xpd_rx_on(unsigned int en);
 extern void phy_set_rxclk_en(unsigned int en);
+#elif defined(CONFIG_SOC_SERIES_ESP32S31)
+extern unsigned int phy_i2c_readReg(unsigned int block, unsigned int host, unsigned int reg);
+#define rom_chip_i2c_readReg phy_i2c_readReg
 #else
 extern unsigned int rom_chip_i2c_readReg(unsigned int block, unsigned int host, unsigned int reg);
 #endif
@@ -276,9 +282,9 @@ static int cmd_rx(const struct shell *sh, size_t argc, char **argv)
 		shell_print(sh, "rx ret %d", ret);
 		return 0;
 	}
-	shell_print(sh, "rx n %u f %u fs %u lpf %d gain %d", (unsigned int)b.count,
+	shell_print(sh, "rx n %u f %u fs %u lpf %d gain %d us %u", (unsigned int)b.count,
 		    esp_sdr_get_freq(), esp_sdr_rx_rate_hz(rate), esp_sdr_rx_get_lpf(),
-		    esp_sdr_rx_get_gain());
+		    esp_sdr_rx_get_gain(), b.elapsed_us);
 	for (size_t w = 0; w < b.count; w += 12) {
 		size_t words = MIN(12U, b.count - w), olen;
 
@@ -290,6 +296,122 @@ static int cmd_rx(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "end");
 	return 0;
 }
+
+#if defined(CONFIG_ESP_SDR_DIAG16)
+/*
+ * ring <rate MS/s> <seconds> [falling edge] [nodes] [pad] [pad] [dc]: the gapless ring, then its
+ * numbers and a base64 dump of the nodes straight after the first 100 ms, whose samples are bytes, I then Q.
+ */
+#define RING_DUMP_NODES 4U
+static uint8_t ring_dump[RING_DUMP_NODES * ESP_SDR_DIAG16_PAYLOAD];
+
+struct ring_check {
+	uint64_t expect;
+	uint64_t dump_from;
+	uint32_t gaps;
+	uint32_t dumped;
+	uint32_t nodes;
+	/* Nodes looked at, and large samples in them: on a quiet band at a mid gain, about none. */
+	uint32_t scanned;
+	uint32_t outliers;
+};
+
+/* One node in 64 of the run: enough to see a phase that goes bad, cheap at any rate. */
+#define RING_SCAN_MASK 63U
+#define RING_OUTLIER   32
+
+static void ring_sink(void *user, uint8_t *node, uint64_t index)
+{
+	struct ring_check *c = user;
+
+	if (index != c->expect) {
+		c->gaps++;
+	}
+	c->expect = index + ESP_SDR_DIAG16_PAYLOAD;
+	if (((index / ESP_SDR_DIAG16_PAYLOAD) & RING_SCAN_MASK) == 0U) {
+		const int8_t *s = (const int8_t *)(node + ESP_SDR_DIAG16_HOLE);
+
+		for (size_t j = 0; j < ESP_SDR_DIAG16_PAYLOAD; j++) {
+			if (s[j] >= RING_OUTLIER || s[j] <= -RING_OUTLIER) {
+				c->outliers++;
+			}
+		}
+		c->scanned++;
+	}
+	if (index >= c->dump_from && c->dumped < c->nodes) {
+		memcpy(&ring_dump[c->dumped * ESP_SDR_DIAG16_PAYLOAD], node + ESP_SDR_DIAG16_HOLE,
+		       ESP_SDR_DIAG16_PAYLOAD);
+		c->dumped++;
+	}
+}
+
+static int cmd_ring(const struct shell *sh, size_t argc, char **argv)
+{
+	uint32_t mhz = (uint32_t)arg(argv, argc, 1, 20);
+	struct ring_check c = {
+		.dump_from = (uint64_t)mhz * 1000000U * 2U / 10U,
+		.nodes = MIN((uint32_t)arg(argv, argc, 4, RING_DUMP_NODES), RING_DUMP_NODES),
+	};
+	/*
+	 * Bench on the Function CoreBoard: the two lines that have the choice of a pad, here or on
+	 * USB-Serial-JTAG's. A pad of -1 keeps the board's pads, for the arguments after it.
+	 */
+	int8_t pins[ESP_SDR_DIAG16_PINS] = {20, 21, 22, 23, 24, 25,
+					    (int8_t)arg(argv, argc, 5, 47),
+					    (int8_t)arg(argv, argc, 6, 48),
+					    36, 37, 38, 39, 40, 42, 43, 44};
+	struct esp_sdr_diag16_cfg cfg = {
+		.pins = argc > 5 && pins[6] >= 0 && pins[7] >= 0 ? pins : NULL,
+		.rate_hz = mhz * 1000000U,
+		.seconds = (uint32_t)arg(argv, argc, 2, 1),
+		.falling_edge = arg(argv, argc, 3, 0) != 0,
+		.sink = ring_sink,
+		.user = &c,
+		.dc_correct = arg(argv, argc, 7, 0) != 0,
+	};
+	struct esp_sdr_diag16_stats s = {0};
+	char line[80];
+	int ret;
+
+	if (busy(sh)) {
+		return -EBUSY;
+	}
+	ret = esp_sdr_diag16_run(&cfg, &s);
+	shell_print(sh, "ring ret %d rate %u bytes %llu consumed %llu skips %u nodes %u gaps %u "
+		    "overrun %d ppm_x100 %d sink_x100 %u isrs %u raw %x phase %u bad %d scanned %u "
+		    "outliers %u", ret, cfg.rate_hz, s.bytes, s.consumed, s.skips, s.skipped_nodes,
+		    c.gaps, s.overrun, s.ppm_x100, s.sink_cycles_x100, s.isrs, s.dma_raw, s.phase_tries,
+		    s.phase_bad, c.scanned, c.outliers);
+	if (cfg.dc_correct) {
+		shell_print(sh, "ringdc ret %d before %d %d after %d %d", s.dc_ret, s.dc_before[0],
+			    s.dc_before[1], s.dc_after[0], s.dc_after[1]);
+	}
+	for (size_t w = 0; w < c.dumped * ESP_SDR_DIAG16_PAYLOAD; w += 48U) {
+		size_t olen;
+
+		(void)base64_encode((uint8_t *)line, sizeof(line), &olen, &ring_dump[w], 48U);
+		line[olen] = '\0';
+		shell_print(sh, "d %s", line);
+	}
+	shell_print(sh, "end");
+	return 0;
+}
+#endif
+
+#if defined(CONFIG_SOC_SERIES_ESP32S31)
+/* dc: the DC servo at the current fixed gain; means in 1/256 of an 8-bit step. */
+static int cmd_dc(const struct shell *sh, size_t argc, char **argv)
+{
+	struct esp_sdr_rx_dc d;
+	int ret = esp_sdr_rx_dc_calibrate(&d);
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	shell_print(sh, "dc ret %d before %d %d after %d %d steps %u", ret, d.before[0], d.before[1],
+		    d.after[0], d.after[1], d.steps);
+	return 0;
+}
+#endif
 
 /* dump <block> [regs]: analog I2C registers 0..regs-1 of one block, read only. */
 static int cmd_dump(const struct shell *sh, size_t argc, char **argv)
@@ -1342,8 +1464,16 @@ SHELL_STATIC_SUBCMD_SET_CREATE(probe_cmds,
 #if defined(CONFIG_ESP_SDR_DIAG)
 	SHELL_CMD(diag, &diag_cmds, "gapless ring through the diagnostic bus (C5)", NULL),
 #endif
+#if defined(CONFIG_ESP_SDR_DIAG16)
+	SHELL_CMD_ARG(ring, NULL,
+		      "<rate MS/s> <seconds> [falling] [nodes] [pad] [pad] [dc]: gapless ring (S31)",
+		      cmd_ring, 3, 5),
+#endif
 #if defined(CONFIG_ESP_SDR_REPLAY)
 	SHELL_CMD(tx, &tx_cmds, "DAC engine replay (C5)", NULL),
+#endif
+#if defined(CONFIG_SOC_SERIES_ESP32S31)
+	SHELL_CMD(dc, NULL, "DC servo at the fixed gain", cmd_dc),
 #endif
 	SHELL_CMD_ARG(dump, NULL, "<block> [regs]: analog I2C registers", cmd_dump, 2, 1),
 	SHELL_CMD(cal, &cal_cmds, "crystal calibration", NULL),

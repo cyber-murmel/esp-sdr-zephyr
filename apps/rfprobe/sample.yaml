@@ -19,6 +19,12 @@ tests:
       - waveshare_esp32c5_zero/esp32c5/hpcore
     integration_platforms:
       - waveshare_esp32c5_zero/esp32c5/hpcore
+  sample.esp_sdr.rfprobe.s31:
+    platform_allow:
+      - esp32s31_function_coreboard/esp32s31/hpcore
+      - ues31s043h800v480c_u/esp32s31/hpcore
+    integration_platforms:
+      - esp32s31_function_coreboard/esp32s31/hpcore
   sample.esp_sdr.rfprobe.s3:
     sysbuild: true
     platform_allow:

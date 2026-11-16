@@ -1,0 +1,18 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * This board has no connector on USB-Serial-JTAG: the shell stays on the UART (socs/ moves it).
+ */
+
+#include "../../common/viewe_diag16_pads.dtsi"
+
+/ {
+	chosen {
+		zephyr,console = &uart0;
+		zephyr,shell-uart = &uart0;
+	};
+};
+
+&usb_serial {
+	status = "disabled";
+};

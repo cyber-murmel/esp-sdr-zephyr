@@ -68,7 +68,7 @@ Shell
    probe tone off
    probe rx [n] [rate 0..6]    one capture, printed as base64 lines ("d ...") of the raw
                                little-endian words, then "end" (S3: 0, 1, 6; C6: 0 only,
-                               80 MS/s; C5: 0 to 5, 80 to 4 MS/s)
+                               80 MS/s; C5 and S31: 0 to 5, 80 to 4 MS/s)
    probe dump <block> [regs]   analog I2C registers 0..regs-1 of one block (read only)
    probe cal lte [start MHz] [stop MHz] [gain|-1]
                                measure the crystal's error against an LTE cell (default band
@@ -82,6 +82,14 @@ Shell
    probe cal set <ppb>         apply and store a constant correction (drops the points)
    probe cal clear             correction 0, nothing stored
    probe temp                  the die temperature
+
+   S31 only:
+   probe ring <MS/s> <s> [edge] [nodes] [pad] [pad] [dc]
+                               the gapless ring: its numbers, large samples in one node of 64,
+                               the DC servo to choose, then a dump of some nodes in base64, bytes,
+                               I then Q. A pad of -1 keeps the board's pads; a pad number chooses
+                               two lines' pads, the others as on the Function CoreBoard
+   probe dc                    the DC servo at the fixed gain
 
    C5 only:
    probe diag level            the nibble window (lsb) the signal needs
