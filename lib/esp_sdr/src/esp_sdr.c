@@ -98,8 +98,8 @@ bool esp_sdr_lo_divided(void)
 
 static bool pll_in_window(void)
 {
-#if defined(CONFIG_SOC_SERIES_ESP32C5)
-	/* The C5's PLL status bits are not mapped yet. */
+#if defined(CONFIG_SOC_SERIES_ESP32C5) || defined(CONFIG_SOC_SERIES_ESP32)
+	/* The PLL status bits of the C5 and the ESP32 are not mapped yet. */
 	return true;
 #else
 	unsigned int status;
@@ -136,6 +136,21 @@ void esp_sdr_tune(void)
 	if (!channel) {
 		set_rf_freq_offset(0, plan.mhz, plan.offset_khz + esp_sdr_fofs_khz);
 	}
+#elif defined(CONFIG_SOC_SERIES_ESP32)
+	set_chanfreq(channel ? esp_sdr_freq_mhz : CAL_CHANNEL_MHZ, sdr_cbw);
+	if (!channel) {
+		int32_t khz = plan.offset_khz + esp_sdr_fofs_khz;
+		unsigned int cap;
+
+		/* The channel setup holds its capacitor code; released, the PLL locks anew. */
+		regi2c_enter_critical();
+		cap = ram_chip_i2c_readReg(RFPLL_BLOCK, RFPLL_HOST, RFPLL_CAP_REG);
+		ram_chip_i2c_writeReg(RFPLL_BLOCK, RFPLL_HOST, RFPLL_CAP_REG,
+				      cap & ~RFPLL_CAP_HOLD);
+		regi2c_exit_critical();
+		/* 40 MHz crystal; the ROM takes 1/1024 MHz. */
+		rom_set_rf_freq_offset(0, plan.mhz, (khz * 1024 + (khz < 0 ? -500 : 500)) / 1000);
+	}
 #else
 	/* The channel call goes through mhz2ieee and loses off-grid requests. */
 	chip_v7_set_chan(channel ? esp_sdr_freq_mhz : CAL_CHANNEL_MHZ, sdr_cbw);
@@ -155,7 +170,11 @@ int esp_sdr_bank_usage(uint32_t *usage)
 	    bank >= DUMP_BANKS) {
 		return -ENOMEM;
 	}
+#if defined(CONFIG_SOC_SERIES_ESP32)
+	*usage = FIELD_PREP(DUMP_USAGE_M, DUMP_USAGE_MODE);
+#else
 	*usage = (BIT(bank) << DUMP_USAGE_S) | DUMP_USAGE_ALLOC;
+#endif
 	return 0;
 }
 

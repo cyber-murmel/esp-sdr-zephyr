@@ -219,12 +219,79 @@
 #define DAC_SCALE_REG    0x600a0c04U
 #define DAC_SCALE_M      GENMASK(23, 8)
 
+#elif defined(CONFIG_SOC_SERIES_ESP32)
+#include <soc/dport_access.h>
+#include <soc/dport_reg.h>
+
+#if defined(CONFIG_ESP32_REGION_1_NOINIT)
+#error "esp_sdr: the capture bank in SRAM1 needs CONFIG_ESP32_REGION_1_NOINIT=n"
+#endif
+
+/*
+ * ESP32 dump engine (librftest adctrig() and mac_init(), upstream
+ * targets/esp32): the S3's control bits 0x34 higher in the MAC block, a
+ * 15-bit count, the write index in the next register and a lane selector of
+ * four bytes. The ESP32 reaches the block through 0x6000xxxx as well.
+ */
+#define DUMP_CTRL_REG     0x60033d90U
+#define DUMP_CTRL_RUN     BIT(31)
+#define DUMP_CTRL_TRIGGER BIT(19)
+#define DUMP_CTRL_DONE    BIT(18)
+#define DUMP_CTRL_16MSPS  BIT(16)
+#define DUMP_CTRL_40MSPS  BIT(15)
+#define DUMP_CTRL_COUNT   GENMASK(14, 0)
+#define DUMP_CONFIG_REG   0x60033dc4U
+/* The value mac_init() leaves: lanes 0..3 on receive I/Q. */
+#define DUMP_CONFIG_IQ    0x03020100U
+#define DUMP_TIMEOUT_US   20000U
+
+/*
+ * The engine writes SRAM1's 64 KiB from 0x3ffe8000 (the IRAM alias
+ * 0x400a8000..0x400b7fff), given to the MAC by MAC_DUMP_MODE 3; mode 2 gives
+ * only 32 KiB. Not one-hot: one bank.
+ */
+#define DUMP_BANK0_ADDR 0x3ffe8000U
+#define DUMP_BANK_SIZE  0x10000U
+#define DUMP_BANKS      1U
+#define DUMP_USAGE_REG  DPORT_IRAM_DRAM_AHB_SEL_REG
+#define DUMP_USAGE_M    DPORT_MAC_DUMP_MODE_M
+#define DUMP_USAGE_S    DPORT_MAC_DUMP_MODE_S
+#define DUMP_USAGE_MODE 3U
+
+/* BBTOP: the I/Q low-pass capacitor codes in registers 1 and 2. */
+#define BBTOP_BLOCK    0x67U
+#define BBTOP_HOST     1U
+#define BBTOP_LPF_REG  1U
+#define BBTOP_LPF_DCAP GENMASK(6, 0)
+
+/* RF PLL: bit 7 of register 0 holds the capacitor code the channel setup chose. */
+#define RFPLL_HOST     1U
+#define RFPLL_CAP_REG  0U
+#define RFPLL_CAP_HOLD BIT(7)
+
+/* Wi-Fi AGC as on the S3; forced without librftest. */
+#define AGC_FORCE_REG      0x3ff5c02cU
+#define AGC_FORCE_INDEX    GENMASK(31, 24)
+#define AGC_FORCE_EN       BIT(23)
+#define AGC_GAIN_MAX       GENMASK(14, 8)
+/* Not measured: the PHY's maximum is taken as it is. */
+#define AGC_GAIN_MAX_VALID 127U
+
 #else
 #error "esp_sdr: unsupported SoC"
 #endif
 
 #ifndef DUMP_USAGE_ALLOC
 #define DUMP_USAGE_ALLOC 0U
+#endif
+
+#if defined(CONFIG_SOC_SERIES_ESP32)
+/* DPORT registers want the read workaround while the other CPU runs. */
+#define DUMP_USAGE_READ()   DPORT_REG_READ(DUMP_USAGE_REG)
+#define DUMP_USAGE_WRITE(v) DPORT_REG_WRITE(DUMP_USAGE_REG, (v))
+#else
+#define DUMP_USAGE_READ()   REG_READ(DUMP_USAGE_REG)
+#define DUMP_USAGE_WRITE(v) REG_WRITE(DUMP_USAGE_REG, (v))
 #endif
 
 #define SENTINEL 0xa5a0055aU
@@ -272,6 +339,26 @@ extern void phy_i2c_writeReg(unsigned int block, unsigned int host, unsigned int
 			     unsigned int val);
 #define rom_chip_i2c_readReg  phy_chip_i2c_readReg
 #define rom_chip_i2c_writeReg phy_i2c_writeReg
+#elif defined(CONFIG_SOC_SERIES_ESP32)
+extern void rom_pbus_workmode(void);
+extern void rom_pbus_xpd_rx_on(unsigned int en);
+extern void rom_pbus_xpd_tx_off(void);
+extern void rom_set_rxclk_en(unsigned int en);
+extern unsigned int rom_chip_i2c_readReg(unsigned int block, unsigned int host, unsigned int reg);
+extern void rom_chip_i2c_writeReg(unsigned int block, unsigned int host, unsigned int reg,
+				  unsigned int val);
+/* libphy: the I2C hosts the ROM versions do not reach (the RF PLL's). */
+extern unsigned int ram_chip_i2c_readReg(unsigned int block, unsigned int host, unsigned int reg);
+extern void ram_chip_i2c_writeReg(unsigned int block, unsigned int host, unsigned int reg,
+				  unsigned int val);
+/* libphy: channel setup on a Wi-Fi channel. */
+extern void set_chanfreq(unsigned int mhz, unsigned int bw);
+/* ROM: offset in 1/1024 MHz; xtal 0 = 40 MHz, 1 = 26 MHz, 2 = 24 MHz. */
+extern void rom_set_rf_freq_offset(unsigned int xtal, unsigned int mhz, int offset);
+#define phy_pbus_workmode   rom_pbus_workmode
+#define phy_pbus_xpd_rx_on  rom_pbus_xpd_rx_on
+#define phy_pbus_xpd_tx_off rom_pbus_xpd_tx_off
+#define phy_set_rxclk_en    rom_set_rxclk_en
 #else
 extern void pbus_workmode(void);
 extern void ram_pbus_xpd_rx_on(unsigned int en);

@@ -32,8 +32,12 @@ extern "C" {
 
 /** Low-pass filter code that restores the PHY-calibrated setting. */
 #define ESP_SDR_RX_LPF_AUTO (-1)
-/** Largest raw low-pass filter capacitor code. */
-#define ESP_SDR_RX_LPF_MAX  63
+/** Largest raw low-pass filter capacitor code: seven bits on the ESP32, six on the others. */
+#if defined(CONFIG_SOC_SERIES_ESP32)
+#define ESP_SDR_RX_LPF_MAX 127
+#else
+#define ESP_SDR_RX_LPF_MAX 63
+#endif
 
 /** Decimation factor limits for esp_sdr_rx_capture_decimated(). */
 #define ESP_SDR_RX_DECIM_MIN 2U

@@ -48,6 +48,8 @@ if(CONFIG_SOC_SERIES_ESP32C6)
 elseif(CONFIG_SOC_SERIES_ESP32C5)
   # Among the RAM sections, so that .noinit and .bss follow the bank.
   zephyr_linker_sources(RAM_SECTIONS esp_sdr_bank_c5.ld)
+elseif(CONFIG_SOC_SERIES_ESP32)
+  zephyr_linker_sources(RAM_SECTIONS esp_sdr_bank_esp32.ld)
 elseif(CONFIG_ESP_SDR_RING)
   zephyr_linker_sources(SECTIONS esp_sdr_bank_ring.ld)
 elseif(CONFIG_ESP_SDR_BANK1)

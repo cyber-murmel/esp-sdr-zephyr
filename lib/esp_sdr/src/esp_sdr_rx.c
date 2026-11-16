@@ -52,6 +52,15 @@ static void gain_apply(void)
 	force_rx_gain(manual, index, 0);
 	esp_sdr_counters.gain_apply_us = k_cyc_to_us_ceil32(k_cycle_get_32() - t0);
 	gain_applied_ms = k_uptime_get();
+#elif defined(CONFIG_SOC_SERIES_ESP32)
+	/* As upstream: the force bit and the index in the AGC register itself. */
+	uint32_t agc = REG_READ(AGC_FORCE_REG) & ~(AGC_FORCE_INDEX | AGC_FORCE_EN);
+
+	if (gain_index >= 0) {
+		agc |= FIELD_PREP(AGC_FORCE_INDEX, MIN((unsigned int)gain_index, gain_max())) |
+		       AGC_FORCE_EN;
+	}
+	REG_WRITE(AGC_FORCE_REG, agc);
 #endif
 }
 
@@ -89,7 +98,10 @@ static void rx_front_end(bool retune, uint32_t settle_us)
 	if (retune) {
 		esp_sdr_tune();
 	}
+#if !defined(CONFIG_SOC_SERIES_ESP32)
+	/* The ESP32 never transmits here. */
 	phy_stop_tx_tone(1);
+#endif
 #if defined(CONFIG_ESP_SDR_RFTEST) && defined(CONFIG_SOC_SERIES_ESP32S3)
 	force_txon_mode(0, 0, 0);
 #endif
@@ -165,7 +177,8 @@ int esp_sdr_rx_set_gain(int index)
 	if (index < ESP_SDR_RX_GAIN_AUTO) {
 		return -EINVAL;
 	}
-	if (index >= 0 && !IS_ENABLED(CONFIG_ESP_SDR_RFTEST)) {
+	if (index >= 0 && !IS_ENABLED(CONFIG_ESP_SDR_RFTEST) &&
+	    !IS_ENABLED(CONFIG_SOC_SERIES_ESP32)) {
 		return -ENOTSUP;
 	}
 	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
@@ -236,7 +249,7 @@ uint32_t esp_sdr_rx_rate_hz(enum esp_sdr_rate rate)
 	switch (rate) {
 	case ESP_SDR_RATE_80MSPS:
 		return 80000000U;
-#if defined(CONFIG_SOC_SERIES_ESP32S3)
+#if defined(CONFIG_SOC_SERIES_ESP32S3) || defined(CONFIG_SOC_SERIES_ESP32)
 	case ESP_SDR_RATE_40MSPS:
 		return 40000000U;
 	case ESP_SDR_RATE_16MSPS:
@@ -258,7 +271,7 @@ uint32_t esp_sdr_rx_rate_hz(enum esp_sdr_rate rate)
 	}
 }
 
-#if defined(CONFIG_SOC_SERIES_ESP32S3)
+#if defined(CONFIG_SOC_SERIES_ESP32S3) || defined(CONFIG_SOC_SERIES_ESP32)
 static uint32_t rate_bits(enum esp_sdr_rate rate)
 {
 	switch (rate) {
@@ -275,12 +288,12 @@ static uint32_t rate_bits(enum esp_sdr_rate rate)
 /* Point the engine at the receive I/Q; returns the saved bank usage. */
 uint32_t esp_sdr_dump_arm(uint32_t usage)
 {
-	uint32_t saved = REG_READ(DUMP_USAGE_REG);
+	uint32_t saved = DUMP_USAGE_READ();
 
 	REG_WRITE(DUMP_CTRL_REG, 0);
-#if defined(CONFIG_SOC_SERIES_ESP32S3)
+#if defined(CONFIG_SOC_SERIES_ESP32S3) || defined(CONFIG_SOC_SERIES_ESP32)
 	REG_WRITE(DUMP_CONFIG_REG, DUMP_CONFIG_IQ);
-	REG_WRITE(DUMP_USAGE_REG, (saved & ~DUMP_USAGE_M) | usage);
+	DUMP_USAGE_WRITE((saved & ~DUMP_USAGE_M) | usage);
 #else
 #if defined(CONFIG_SOC_SERIES_ESP32C5)
 	REG_WRITE(DUMP_CLK_FORCE_REG, UINT32_MAX);
@@ -307,8 +320,12 @@ uint32_t esp_sdr_dump_arm(uint32_t usage)
 void esp_sdr_dump_disarm(uint32_t saved)
 {
 	REG_WRITE(DUMP_CTRL_REG, 0);
-	REG_WRITE(DUMP_USAGE_REG, saved);
-#if !defined(CONFIG_SOC_SERIES_ESP32S3)
+#if defined(CONFIG_SOC_SERIES_ESP32)
+	/* As upstream: the engine lets go of SRAM1 before the CPUs get it back. */
+	k_busy_wait(10);
+#endif
+	DUMP_USAGE_WRITE(saved);
+#if !defined(CONFIG_SOC_SERIES_ESP32S3) && !defined(CONFIG_SOC_SERIES_ESP32)
 	__asm__ volatile("fence rw, rw" ::: "memory");
 	(void)REG_READ(DUMP_USAGE_REG);
 #endif
@@ -334,7 +351,7 @@ static int capture_locked(enum esp_sdr_rate rate, size_t count, volatile uint32_
 	start = (uint32_t)*t0;
 	saved = esp_sdr_dump_arm(usage);
 
-#if defined(CONFIG_SOC_SERIES_ESP32S3)
+#if defined(CONFIG_SOC_SERIES_ESP32S3) || defined(CONFIG_SOC_SERIES_ESP32)
 	ctrl = DUMP_CTRL_RUN | rate_bits(rate) | FIELD_PREP(DUMP_CTRL_COUNT, count);
 #else
 #if defined(CONFIG_SOC_SERIES_ESP32C5)
