@@ -95,6 +95,8 @@ repos:
           -p esp32p4_function_ev_board/esp32c6/hpcore
           -p esp32p4_function_ev_board/esp32p4/hpcore
           -p waveshare_esp32c5_zero/esp32c5/hpcore
+          -p esp32s31_function_coreboard/esp32s31/hpcore
+          -p ues31s043h800v480c_u/esp32s31/hpcore
           -p mch2022/esp32/procpu
           -p mch2022_rp2040/rp2040
         language: system

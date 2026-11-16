@@ -8,7 +8,7 @@ radio bench probe
 Overview
 ********
 
-A bench tool for the radio itself, on the ESP32-S3, the ESP32-C6 and the ESP32-C5: tune
+A bench tool for the radio itself, on the ESP32-S3, the ESP32-C6, the ESP32-C5 and the ESP32-S31: tune
 through the library's frequency plan or program the PLL directly, loop a tone
 (S3), dump raw captures and read the analog I2C registers; on the C5 also the
 diagnostic-bus ring and the transmit paths. The firmware only

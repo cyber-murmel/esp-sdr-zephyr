@@ -8,17 +8,33 @@ have host tests of their own (pytest). Five tiers:
 | --- | --- | --- | --- |
 | Unit | `tests/unit/` | host (`native_sim/native/64`), no board | Portable code as ztest suites: the 802.15.4 PHY (`ieee154_phy`), the driver's signal processing (`ieee154_dsp`), the link's codecs and modems (`link`: suites `link_rs` for RS(255,223), `link_bch` for BCH, `link_hamming` for Hamming(128,120), `link_qam` and `link_ofdm` for the QAM and OFDM modems, frames through a simulated channel and decoded as the host simulators in `apps/link/tools` do), the `stream` app's I/Q packing (`iq_pack`), the diagnostic-bus ring's box16 and CIC decimator (`diag_dsp`, bit-exact against naive references), the shared signal processing helpers of `esp_sdr_dsp.h` (`dsp`: windows, sinc, the Kaiser window's I0 and beta, the FFT against a direct DFT, whole-cycle tones), the LTE crystal calibration's estimator and temperature model (`lte`: cells decoded from synthetic synchronization signals in noise, offsets, the reference signals' fine offset to a few Hz, a 1 ms window, a search window shorter than the capture, noise rejected, the ppb arithmetic, the points and fit of `esp_sdr_cal.h`), the channelized burst capture's filter bank, decimator bank and detector (`chancap_dsp`, against a direct floating point model), the P4's channelizer and burst detector of the gapless stream (`esdr_pfb`: the tests' float reference bank against numpy, `esdr_pfbq`: the fixed-point bank and its PIE kernels against that reference), the host side of the serial transport to the C6 (`esdr_link_host`: requests, replies and the splitter of the radio's stream), the gapless block's segment codec against a model of the format (`esdr_seg`, also under ASan), the osmosdr protocol's request checks, GET_INFO reply and block header check (`esdr_dev`), the Zigbee stack of `lib/zigbee` (`zigbee_crypto` and `zigbee_frame` against independent implementations, `zigbee_znp`, `zigbee_mac`, `zigbee_stack`). With `IEEE154_TABLES` set, `ieee154_phy` and `ieee154_dsp` also print their sweep tables (`scripts/unit-tables.sh`). |
 | Host | `tests/host/` | host (CPython), no board | The Python tools that run in builds and CI: multiapp's build steps (`mkfat.py`, read back by a FAT reader written from the spec; `apptrail.py`, `appconfig.py`, `buildid.py`, `exports.py`), the register page tools, `twister-flash.py` and `coverage-summary.py`. |
-| Integration | `tests/integration/` | one real board | ztest on the radio itself. `esp_sdr_rx_api`: the receive API's contract (error codes, bounds, one real capture per supported rate); on the S3, C6 and C5. `esp_sdr_diag_api`: the C5's gapless diagnostic-bus ring (argument contract, a 10 s run's byte rate and integrity, every step of the decimation ladder, stop and restart). Need no antenna, peer or host tool and never transmit. `esp_sdr_replay_api`: the C5's DAC-engine replay (argument contract, pass time at 80 and 40 MS/s, repeat count, restarts, receive afterwards); plays all-zero words, so only the LO leaks out: keep the board on its coax link. `esp_sdr_chancap_api`: the S3's channelized burst capture (start contract and LO plan, the channelizer's timing on synthetic data with the vector kernels checked bit for bit against the C reference, short live runs on whatever is on the air); deployed by hand like the S3 variant of `esp_sdr_rx_api`. `display_transpose`: the WHY2025 badge's turned panel, every write transposed into the framebuffer, read back pixel for pixel over sizes and positions (blocks 32 n + 1 rows high among them), by the PPA (`integration.display.transpose`) and by the CPU (`.cpu`), blocks of earlier frames kept through the double buffering, and a full screen's time in LVGL's bands (9.3 against 26 ms). `esdr_fpga`: the MCH2022 badge's FPGA with a bitstream from `gateware/` (loaded at boot, the SPI link, the panel behind it, the DSP chain on a tone), deployed as below. |
+| Integration | `tests/integration/` | one real board | ztest on the radio itself. `esp_sdr_rx_api`: the receive API's contract (error codes, bounds, one real capture per supported rate); on the S3, C6, C5 and S31. `esp_sdr_diag16_api`: the S31's gapless ring (rates, sampling phase, stops, a sink too slow for the DMA). `esp_sdr_diag_api`: the C5's gapless diagnostic-bus ring (argument contract, a 10 s run's byte rate and integrity, every step of the decimation ladder, stop and restart). Need no antenna, peer or host tool and never transmit. `esp_sdr_replay_api`: the C5's DAC-engine replay (argument contract, pass time at 80 and 40 MS/s, repeat count, restarts, receive afterwards); plays all-zero words, so only the LO leaks out: keep the board on its coax link. `esp_sdr_chancap_api`: the S3's channelized burst capture (start contract and LO plan, the channelizer's timing on synthetic data with the vector kernels checked bit for bit against the C reference, short live runs on whatever is on the air); deployed by hand like the S3 variant of `esp_sdr_rx_api`. `display_transpose`: the WHY2025 badge's turned panel, every write transposed into the framebuffer, read back pixel for pixel over sizes and positions (blocks 32 n + 1 rows high among them), by the PPA (`integration.display.transpose`) and by the CPU (`.cpu`), blocks of earlier frames kept through the double buffering, and a full screen's time in LVGL's bands (9.3 against 26 ms). `esdr_fpga`: the MCH2022 badge's FPGA with a bitstream from `gateware/` (loaded at boot, the SPI link, the panel behind it, the DSP chain on a tone), deployed as below. |
 | Regression | `tests/regression/` | two real boards | pytest through twister's multi-board harness. `ieee802154_link`: the C6 native radio and the S3 software radio exchange `apps/wpan` test frames both ways on channels 11, 15, 20 and 25, plus ACK requests. Guards against the two bugs that only ever showed as lost frames between real boards (`doc/hardware-quirks.md`). `lo_tuning`: the S3 sends tones to the C6 at overlapping LO frequencies, through the 5/6 divider and directly tuned; guards the transmit divider and `-ERANGE`. `stream_gapless`: the C6 and the C5 on a coax link stream a tone to each other through `apps/osmosdr_serial` (receive by the CPU-paced estimator or by the C5's diagnostic-bus ring); no gap may be found in the recording. |
 | Smoke | `apps/*/sample.yaml` | build, and one board | Every app builds for its boards; `apps/capture` also boots on the S3 and the C6 and must print `esp-sdr rx: ready` (console harness); `apps/multiapp` boots into an app from its file on the FAT volume (pytest, `sample.esp_sdr.multiapp.hil`). |
+
+## The ESP32-S31 on the desk
+
+`esp_sdr_rx_api` and `esp_sdr_diag16_api` run over the board's UART bridge, whose RTS resets it
+(`s3pty.py` is the workspace's console bridge, not part of this repository):
+
+```console
+west twister -p esp32s31_function_coreboard/esp32s31/hpcore -T esp-sdr-zephyr/tests/integration/esp_sdr_diag16_api \
+  --device-testing --flash-before --device-serial-pty "python3 .claude/skills/esp32s3-console/s3pty.py <UART>" \
+  --west-flash=--esp-device=<UART> --runtime-artifact-cleanup pass -j 1
+```
+
+`esp_sdr_diag16_api` wants the 16 pads of `doc/hardware-quirks.md` free on J2. The VIEWE board
+(`ues31s043h800v480c_u/esp32s31/hpcore`, its CH340 as `<UART>`) runs both the same way; its ring uses the
+panel's data lines.
 
 ## Continuous integration
 
 `.github/workflows/build.yml` runs on every push and pull request. It builds every app and test
 for each board it allows (`xiao_esp32s3/esp32s3/procpu`, `communicator_badge/esp32s3/procpu`,
 `xiao_esp32c6/esp32c6/hpcore`, `why2025_badge/esp32c6/hpcore` with `why2025_badge/esp32p4/hpcore`,
-`waveshare_esp32c5_zero/esp32c5/hpcore`, `mch2022/esp32/procpu` and `mch2022_rp2040/rp2040`, one job
-per board) and
+`waveshare_esp32c5_zero/esp32c5/hpcore`, `esp32s31_function_coreboard/esp32s31/hpcore`,
+`ues31s043h800v480c_u/esp32s31/hpcore`, `mch2022/esp32/procpu` and `mch2022_rp2040/rp2040`, one job per
+board) and
 builds and runs the unit tests on
 `native_sim` and `native_sim/native/64`. A GitHub runner has no boards, so the integration and
 regression tests and the console smoke test are only built there; run them on the desk as below.
@@ -124,9 +140,9 @@ no test imports included; the bench tools under `apps/*/tools` need boards and s
 
 ## Integration tests (one board)
 
-Each test has one id per board: `integration.esp_sdr.rx_api.c6`, `.c5` and `.s3`;
-`integration.esp_sdr.diag_api.c5` (the SoCs with a gapless diagnostic-bus ring; another SoC adds
-its id and `boards/<board>.conf` to that test); `integration.esp_sdr.replay_api.c5` (the same for
+Each test has one id per board: `integration.esp_sdr.rx_api.c6`, `.c5`, `.s3` and `.s31`;
+`integration.esp_sdr.diag_api.c5` (the C5's 4-bit ring) and `integration.esp_sdr.diag16_api.s31`
+(the S31's 16-lane one); `integration.esp_sdr.replay_api.c5` (the same for
 the DAC-engine replay). The C5 and the C6 both have a USB-Serial-JTAG
 console, deployed the same way:
 

@@ -51,6 +51,14 @@ jobs:
             platforms: -p waveshare_esp32c5_zero/esp32c5/hpcore
             toolchains: riscv64-zephyr-elf
             twister-args: --build-only
+          - name: Build esp32s31_function_coreboard
+            platforms: -p esp32s31_function_coreboard/esp32s31/hpcore
+            toolchains: riscv64-zephyr-elf
+            twister-args: --build-only
+          - name: Build ues31s043h800v480c_u
+            platforms: -p ues31s043h800v480c_u/esp32s31/hpcore
+            toolchains: riscv64-zephyr-elf
+            twister-args: --build-only
           - name: Build mch2022
             platforms: -p mch2022/esp32/procpu
             toolchains: xtensa-espressif_esp32_zephyr-elf

@@ -82,9 +82,12 @@ Contents
    * - ``scripts/``
      - ``west dfu`` (``west_commands/``), test runners
    * - ``boards/``
-     - ``waveshare/esp32c5_zero``: Waveshare ESP32-C5-Zero. The badges are Zephyr boards
-       (``modules/zephyr``): ``hackaday/communicator_badge`` (Hackaday Communicator, ESP32-S3)
-       and ``why2025/why2025_badge`` (WHY2025, ESP32-P4 with an ESP32-C6)
+     - ``waveshare/esp32c5_zero``: Waveshare ESP32-C5-Zero, ``badgeteam/mch2022_rp2040``: the
+       MCH2022 badge's RP2040. These are Zephyr boards (``modules/zephyr``):
+       ``hackaday/communicator_badge`` (Hackaday Communicator, ESP32-S3),
+       ``why2025/why2025_badge`` (WHY2025, ESP32-P4 with an ESP32-C6),
+       ``badgeteam/mch2022`` (the MCH2022 badge's ESP32),
+       ``espressif/esp32s31_function_coreboard`` and ``viewe/ues31s043h800v480c_u`` (ESP32-S31)
    * - ``zephyr/``
      - ``module.yml`` and the ``librftest.a`` blobs
    * - ``west.yml``
@@ -134,17 +137,23 @@ The library
   through its DAC engine at 80 or 40 MS/s (``esp_sdr_replay.h``,
   ``CONFIG_ESP_SDR_REPLAY``). ``capture``, ``rfprobe``, ``wpan`` (C6),
   ``zstack`` (C6) and ``osmosdr_serial`` run on them; the classic ESP32
-  (MCH2022 badge) takes bursts.
+  (MCH2022 badge) takes bursts. ESP32-S31 (ESP32-S31-Function-CoreBoard-1, the
+  VIEWE 4.3 inch touch display board): bursts, and a gapless 8+8 bit ring up to
+  40 MS/s through the modem diagnostic bus (``esp_sdr_diag16.h``,
+  ``CONFIG_ESP_SDR_DIAG16``), receive only, without the Wi-Fi driver;
+  ``capture`` and ``rfprobe`` run on them.
 - **Tuning:** 100 to 6000 MHz in the API, but the PLL locks over a
   chip-specific range (about 1.8 to 2.8 GHz on the S3); below 2210 MHz
-  through the 5/6 divider. ``-ERANGE`` when the VCO is out of range.
+  through the 5/6 divider (2.2 to 2.9 GHz on the S31, which has none).
+  ``-ERANGE`` when the VCO is out of range.
 - **Capture:** 256 to 16380 samples at 80, 40 or 16 MS/s, analog
   low-pass filter, optional CIC decimation; gapless ring receive, and on
   it the channelized burst capture (``esp_sdr_chancap.h``,
   ``CONFIG_ESP_SDR_CHANCAP``): a grid of channels, one capture per packet.
 - **Gain:** AGC or a fixed index; the fixed gain and TX power steps use
   ``librftest.a`` (``west blobs fetch esp-sdr-zephyr``, or
-  ``CONFIG_ESP_SDR_RFTEST=n``, which leaves transmit out).
+  ``CONFIG_ESP_SDR_RFTEST=n``, which leaves transmit out; the ESP32-S31 always
+  needs it).
 - **Transmit:** sample playback at 40 or 80 MS/s, gapless streaming at
   40 MS/s / n (``CONFIG_ESP_SDR_TX``, needs ``librftest.a`` and PSRAM),
   18 power steps.

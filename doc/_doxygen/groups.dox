@@ -51,6 +51,13 @@
  */
 
 /**
+ * @defgroup esp_sdr_diag16 Diagnostic-bus ring on the ESP32-S31
+ * @ingroup esp_sdr
+ * @brief Gapless 8+8 bit receive up to 40 MS/s through the modem diagnostic bus and PARLIO, a ring
+ * with room for a block header (esp_sdr_diag16.h, CONFIG_ESP_SDR_DIAG16).
+ */
+
+/**
  * @defgroup esp_sdr_replay DAC-engine replay
  * @ingroup esp_sdr
  * @brief Waveform loops at 80 or 40 MS/s through the modem DAC engine, ESP32-C5

@@ -365,6 +365,162 @@ XIAO ESP32-C6 on the other end of a 30 dB coax attenuator.
     kS/s is the reliable rate on both chips. `ESP_SDR_RFTEST` links the C5 librftest for
     `force_rx_gain()`.
 
+## ESP32-S31
+
+The VIEWE board is at the end of this section. Measured on one ESP32-S31-Function-CoreBoard-1 (ESP32-S31 rev v0.0, 40 MHz crystal, 16 MB flash,
+16 MB octal PSRAM, PCB antenna), board `esp32s31_function_coreboard/esp32s31/hpcore`, single core
+(Zephyr holds CPU1 in reset), simple boot. Receive only. The method is ESPARGOS esp-sdr's S31
+firmware at 9b61e7465, where noted otherwise it differs from it. Its PHY offsets belong to
+esp-phy-lib b88e4b76e090, the blob this repo fetches. The `lib/esp_sdr` code is `esp_sdr_s31.c` and
+`esp_sdr_diag16.c`.
+
+- **`0x20104ddc` bit 4 turns the receiver on.** Without it the ADC gives only its own noise, rms 1
+  to 2 counts at any gain, and nothing else looks wrong: the PHY calibrates, the AGC register
+  reads back the forced index, bursts have the right length. Upstream never writes it because its
+  Wi-Fi driver's start does; without the driver it must be set. librftest's `mac_init()` does, among
+  much that the receive path does not need (the last thing it writes, `0x20104c5c`, takes the signal
+  away again). Do not call `rftest_init()`: it stops the system timer under Zephyr.
+- **Bursts:** the engine stays in its circular mode and a burst stops before it wraps: the finite
+  mode writes at TCM offset 0, over the image (`esp_sdr_rx_api` checks the code's CRC around bursts).
+  It owns the TCM's whole upper 128 KiB group while it writes, ROM data at the top included: hence
+  interrupts off, code and stack below the group, no ROM or PHY calls, up to 4.2 ms at 4 MS/s. No done
+  flag: the write index counts. The first 256 samples are the engine settling. Rates: rate field 0, 1,
+  3, 5, 7, 9 for 80, 40, 20, 10, 8, 4 MS/s, whose durations match to the microsecond.
+- **Tuning:** 2200 to some 2900 MHz; no divided LO, so `-ERANGE` below. A retune rebuilds the gain
+  tables at the LO, keeping the IQ correction from startup, whose loopback would transmit. The
+  crystal's harmonics land within a few kHz of where they belong from 2280 to 2800 MHz.
+- **Gain:** a forced index only reads as itself when its low-table word is mirrored into the high
+  table. Quiet-band noise rises monotonically with the index, 22 dB over the table (max 71 here).
+- **DC:** `esp_sdr_rx_dc_calibrate()` and the ring's `dc_correct` move the two baseband DC DACs,
+  whose effect on I and Q is measured each time, down to about half an 8-bit step. Any gain change,
+  retune or ring start undoes it: the ring's phase check passes through gain 0.
+- **Ring:** the modem's diagnostic bus carries I[9:2] and Q[9:2], looped through 16 pads into
+  PARLIO, into an AXI GDMA ring in TCM. 60 s at each of 40, 20, 10, 5 MS/s: no skips, no gaps, 0 ppm
+  against the system timer. The nodes leave a 16-byte hole for a block header, with burst 16 (a frame
+  ends mid-ring: its length field holds 65535 bytes, less than the ring, and nothing is lost there).
+  Lower rates are every n-th sample, so 10 and 5 MS/s alias under a 13 MHz floor of the low-pass.
+- **Pads:** GPIO 20 to 25, 36 to 40, 42 to 44, 47, 48. Upstream's GPIO 33 and 34 instead of 47 and
+  48 are USB-Serial-JTAG's, so it would go away while streaming. Not 35, 45, 46 or 49: lines on them
+  come out mixed with others, so Q's rms reaches 2.5 times I's whatever the phase.
+- **The sampling phase, which upstream does not handle:** PARLIO's clock comes from 160 MHz, the bus
+  runs at 80 MHz, so about one start in two samples it on its edge, at every rate and on either
+  clock edge. Some lines then take the next sample's bit, Q's bits 5 and 3 above all: under signal Q's
+  rms reaches 2.5 to 12 times I's, and a value crossing zero comes out around +-34 and +-42.
+  Restarting the divider nearly always lands on the same phase; one period of the divider plus one
+  comes 6.25 ns late, half a bus period, which moves it, about every other time.
+  `esp_sdr_diag16_run()` looks first with the receiver off (`0x20104ddc` bit 4 clear), where the ADC
+  gives its noise alone, under a step rms, whatever is on the air. Only Q's zero crossings show the
+  fault, about 85 % of them: at LO 2403, where the DC is near zero, 8160 pairs on a wrong phase show
+  1235 to 3289 values of 32 and up, the right one none, at every gain tried. 16 crossings with at most
+  2 large values decide; I's do not count. The DC depends on the LO, though (-2.0 on I and +0.85 on Q
+  at 2437), and a look with Q on one side of zero proves nothing. Then it looks with the receiver on,
+  at gains where Q crosses, in moments with nothing on the air: a Wi-Fi frame hides the wrong values.
+  Over 15 LOs from 2300 to 2800 MHz that took 5 of 16 starts: 4 passed, one ended in
+  `stats.phase_bad` (`-EIO` with `cfg.phase_required`). On its own,
+  as this did at first, the look on air gave up on 3 starts in 24 on a busy channel.
+- **HS USB:** the only OTG connector is the USB-A socket J4, VBUS always driven. Zephyr's DWC2 driver works, buffer DMA
+  from TCM included. The stream's IN endpoint needs more than the SoC's one packet of TX FIFO: with
+  `DIEPTXF1` at 128 words every IN token during a refill gets a NAK, and the link stops at exactly
+  16.384 MB/s, 4 packets a microframe. From 256 words it carries 40.157 MB/s, 20 MS/s plus block
+  headers, without a gap. DMA burst length and `USBTRDTIM` (0, 5 and 9 tried, the driver's value left
+  alone) hardly matter. The FIFOs' power-on depth is 512 words and
+  896 words are free in all (`GHWCFG3`). A freshly reset core reads 0 in `DIEPTXFn`: it is in host
+  mode until forced.
+- **The AGC idles high:** on a quiet band it winds up to `AGC_THRESH_REG`'s index, which the PHY sets to
+  the table's top (71 here): noise at 10 8-bit steps rms, -22 dBFS, with the DC 5 to 9 steps off. The
+  library caps it at index 60: 2.5 steps rms, -34 dBFS, DC some 2 steps. `AGC_GAIN_MAX` and `AGC_INIT_INDEX`
+  change nothing there.
+- **A marginal cable looks like a dead PHY:** the host reports high speed, then `-71` at every
+  transaction, because the chirp is slow enough to survive what the data is not. The tell is
+  `GINTSTS.SOF` (sticky, nothing clears it) staying 0, and full speed working (`DCFG.DEVSPD` 1 and a
+  soft reconnect, possible over JTAG). `adj_vref_sq` boots as 8 where the HAL's header says 2:
+  lowering it lets a bad cable decode some packets, but a good cable needs no change. Host mode over
+  JTAG with a USB stick in J4 tests the chip's path with no cable at all.
+
+
+### VIEWE PLCM-UES31S043H800V480C-U
+
+The same chip on a 4.3 inch 800x480 module (`ues31s043h800v480c_u/esp32s31/hpcore`): CH340C on the USB-C
+socket, no USB-Serial-JTAG connector: OpenOCD needs a cable wired to GPIO 33 and 34 on header H1, not tried.
+The panel was first read back on the pads, not
+looked at: at a pixel clock of 500 kHz the CPU can follow PCLK and compare all 384000 pixels of a pattern.
+
+- **PCLK:** the vendor's `pclk_active_neg` means data changes on PCLK's rising edge and the panel takes it
+  on the falling one (`lcd_ck_out_edge` set: PCLK is high in a data cycle's first half): in Zephyr's terms
+  `pixelclk-active = <1>`.
+- **VSYNC_END comes as the VSYNC pulse starts**, at the frame's first clock and not at its last pixel.
+- **An underrun moves the picture for good.** The DMA and the controller only meet at the start: pixels the
+  panel missed are still in the DMA's stream, and every later frame shows that much later (IDF's restart only
+  exists on the S3). The panel driver restarts both in the next VSYNC event. Less than all of it does not do:
+  a DMA and FIFO reset under a running controller, as on the S3, left the picture 1328 pixels off, and a
+  stop and start without `lcd_reset` 44 to 48 off.
+- **Start the controller first.** In IDF's order (DMA, 1 us, controller) the picture was right with idle
+  PSRAM at 200 MHz, and one pixel late with PSRAM at 40 MHz (10 us did not help) or with the CPU in PSRAM at
+  200 MHz. With the controller first, the FIFO fills in the first blanking and all of these are exact.
+- **The underrun interrupt fires per pixel**, 190000 a second with PSRAM at 40 MHz under load, which took 19 %
+  of a copy's speed. It stays off until the restart.
+- **PSRAM:** at 200 MHz the CPU reads 81 MB/s through the cache and copies 42.8 MB/s within PSRAM, with the
+  panel taking its 50 MB/s and no underrun; at 40 MHz 18.6 and 7.8 MB/s, an underrun in every frame. The
+  tuning runs with the cache off, so its DQS scheme must be in RAM (`mspi_timing_by_dqs` in the linker
+  script): out of it the boot hangs at "Enter psram timing tuning".
+- **Pads for the ring:** GPIO 41 is not bonded. The library's defaults are the RS485 transceiver, the touch
+  controller and the ADC keys here, and with GPIO 47 and 48 (the amplifier's enable, the codec's MCLK) Q's top
+  two bits come out late, 1.6 % of them wrong and no clean phase found. GPIO 2 to 17, the panel's data lines,
+  are clean: `esp_sdr_diag16_api` 11 of 11, 20 MS/s over USB without a gap, which leaves the panel dark.
+- **The ring or the panel, not both:** every run resets the whole AXI GDMA group, which takes the panel's channel
+  off the LCD, leaves the ring's pads undriven and, on these pads, drives the panel's data lines: the panel gets
+  no pixels until a reboot. `esp_sdr_diag16.c` refuses to build with the panel driver. Lines 12 to 15 of the
+  ring would also leave on `LCD_DATA_OUT_PAD_OUT0..3`, the panel's blue bits. Not tried.
+- **A display's stream:** what is on the panel comes from bursts. The analog filter is all that stands before
+  their rate, so the band's image at the input rate's distance arrives at full level. At 8 MS/s with the
+  LO 2 MHz off, the line at 2400 MHz showed at 2408 and at 2392 as strong as at 2400 (-45 dBFS, floor -83),
+  and LO - 6 MHz is inside the filter's narrowest setting. So: 20 MS/s, the LO 5 MHz below the centre, the
+  filter at 13 MHz. The filter, from that line at a fixed gain and 80 MS/s, dB below its level in the pass band:
+
+  | Setting | 6 MHz | 7 | 8 | 9 | 10 | 12 | 14 | 16 | 20 |
+  |---|---|---|---|---|---|---|---|---|---|
+  | 13 MHz | 2 | 10 | 19 | 23 | 31 | over 40 (the floor) | | | |
+  | 15 MHz | 0 | 1 | 5 | 14 | 19 | 31 | over 40 | | |
+  | 17 MHz | 0 | 1 | 1 | 0 | 7 | 20 | 26 | 36 | |
+  | 21 MHz | 0 | 2 | 0 | 2 | 1 | 8 | 18 | 28 | over 40 |
+  | AUTO | 0 | 1 | 1 | 1 | 2 | 8 | 18 | 28 | 31 |
+
+  AUTO, the PHY's own setting, therefore cuts the outer parts of a 40 or 80 MS/s burst. The widest, 54 MHz, keeps
+  a line within some 3 dB out to 25 MHz and some 7 dB down at 30 (one burst each, with a few dB of scatter).
+- **The panel is in the receiver's band.** The board takes the pixel clock from the audio PLL (APLL) at 25.1 MHz
+  (`clock-source = "apll"`), which leaves the APLL's own setting a fraction. Its sigma-delta noise takes the
+  clock's multiples down to the floor; what it does past 250 kHz was not measured. dBFS over 250 kHz at a fixed
+  gain of 48, the clocks interleaved, two to three rounds each (`tmp/s31/viewe/f22.out` to `f24.out`):
+
+  | Pixel clock | Its multiples (2350, 2375 MHz) | Between them (2337 to 2512 MHz) |
+  |---|---|---|
+  | PLL_F160M, 25 MHz (160 / 3.2 / 2) | lines, -52 and -55 | -64 to -67 |
+  | APLL, exactly 25 MHz (no fraction) | humps of -59 and -61, some +-0.4 MHz wide | -65 to -66 |
+  | APLL with a fraction (25.1 MHz, and four others) | the floor, -62 to -65 | 0 to 3 dB higher |
+
+  From PLL_F160M the fractional divider's pattern adds weaker lines every 5 MHz (2355 MHz: -68); from the APLL
+  there are none. Under the AGC, PLL_F160M's 2350 MHz line read -37, the APLL's window -58. The lines at 2400
+  and 2600 MHz (-46 to -52 and -57) do not follow the pixel clock and drop 10 to 12 dB when the panel's DMA
+  stops: likely the PSRAM's 200 MHz under the panel's reads. 2400 MHz is also the crystal's 60th harmonic, -55
+  with the panel stopped.
+
+  The panel's 22 pads run at the weakest drive (`drive-strength = <5>` in the board's pinctrl), the picture
+  unchanged. Measured from PLL_F160M, three interleaved rounds each:
+
+  | Panel's pads | 2350 MHz | 2375 MHz | 2355 MHz | Floor, gain 48 | Floor, AGC |
+  |---|---|---|---|---|---|
+  | Default drive (20 mA) | -47 (-28) | -48 (-29) | -60 | -58 to -66 | -46 to -47 |
+  | Weakest drive (5 mA) | -52 (-39) | -55 (-46) | -68 | -64 to -67 | -54 to -57 |
+  | Controller stopped | under -85 (-79) | under -85 (-80) | | -67 to -69 | -56 to -62 |
+
+  (Lines at gain 48, under the AGC in brackets.) With the DMA stopped and the clocks running (PLL_F160M, default
+  drive) the floor came back 0 to 5 dB and the pixel clock's lines stayed. Moving the clock at each tuning would
+  add nothing to the APLL's fraction: any move needs one.
+
+  Stopping the controller for every burst, at a frame's start, and restarting it after gave back up to 3.5 dB
+  of floor (0 to 3.5 between 2337 and 2687 MHz) and took 2400 and 2600 MHz down 6 to 7 dB, but the panel
+  glitched and faded in and out while it ran: not usable.
+
 ## CPU and toolchain
 
 - **No hardware float divide.** A float `/` calls `__divsf3`. In hot loops,
