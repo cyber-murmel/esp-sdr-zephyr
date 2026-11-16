@@ -369,7 +369,7 @@ XIAO ESP32-C6 on the other end of a 30 dB coax attenuator.
 
 The VIEWE board is at the end of this section. Measured on one ESP32-S31-Function-CoreBoard-1 (ESP32-S31 rev v0.0, 40 MHz crystal, 16 MB flash,
 16 MB octal PSRAM, PCB antenna), board `esp32s31_function_coreboard/esp32s31/hpcore`, single core
-(Zephyr holds CPU1 in reset), simple boot. Receive only. The method is ESPARGOS esp-sdr's S31
+(Zephyr holds CPU1 in reset), simple boot. Receive, a carrier and the CPU-paced transmit. The method is ESPARGOS esp-sdr's S31
 firmware at 9b61e7465, where noted otherwise it differs from it. Its PHY offsets belong to
 esp-phy-lib b88e4b76e090, the blob this repo fetches. The `lib/esp_sdr` code is `esp_sdr_s31.c` and
 `esp_sdr_diag16.c`.
@@ -436,6 +436,48 @@ esp-phy-lib b88e4b76e090, the blob this repo fetches. The `lib/esp_sdr` code is 
   soft reconnect, possible over JTAG). `adj_vref_sq` boots as 8 where the HAL's header says 2:
   lowering it lets a bad cable decode some packets, but a good cable needs no change. Host mode over
   JTAG with a USB stick in J4 tests the chip's path with no cable at all.
+- **Transmit, a carrier:** `esp_sdr_tx_tone_start()` runs the vendor's carrier test (librftest's
+  `wifiscwout()`) without its Wi-Fi channel: the ROM's `phy_txcal_debuge_mode_()` (the PHY bus in
+  debug mode, the TX front end on, a TX gain), then libphy's `phy_start_tx_tone_step_new(1, kHz, att,
+  0, 0, 0)` at the LO the library tunes. `phy_txcal_work_mode()` ends it, and the next capture
+  receives as before (the floor within 1.5 dB). Attenuation is in quarter dB, from the vendor's least,
+  24, to the generator's most, 127. Heard on a XIAO ESP32-S3 a few cm from the VIEWE board: 1.4 dB a
+  step of 6, 21 dB from the strongest to the weakest, carriers from 2420 to 2700 MHz, all 21 ppm low
+  against that board's crystal. librftest's `fedump_wr_txmem()` may be the S3's replay memory
+  under another name, untried.
+- **Transmit, samples: the TX DC value register (`0x20100c08`, I 9:0, Q 19:10), paced by the CPU**
+  (`esp_sdr_tx_paced_*()`). Measured on the VIEWE board (rfprobe), heard on a XIAO ESP32-S3 a few cm away
+  (`tmp/s31/tx/paced4.py` to `paced6.py` in the workspace):
+  - Chain on is the carrier's start at the LO as tuned, then libphy's `phy_stop_tx_tone_new()`:
+    both tones' enables off and the DAC's source back to data, which hands the DAC to the TX DC
+    value, the chain left on. No retune. The ROM's `phy_stop_tx_tone()` tail-calls
+    `phy_dac_scale_set(1)` and is not used. Chain off is the carrier's stop, then receive as at
+    startup: at a fixed gain the floor afterwards is within 1.5 dB of before.
+  - The level follows the samples only: neither `0x20100c04` (the DAC scale bytes) nor the tone's
+    attenuation changes it. Sample I 100 is -21.6 dBFS on the XIAO at gain 10, the same on Q and
+    for -100.
+  - A store to `0x20100c08` costs 48 CPU cycles at 320 MHz, a load too (TCM 6 and 5, the cycle
+    counter 8). A loop writing prepacked words keeps 2 MS/s exactly and 5 MS/s with a few late
+    writes; at 8 MS/s a store no longer fits its 40 cycles. The library's poll, at -O2 from IRAM,
+    costs about 220 cycles a write at x8: 250 kS/s x4 (320 cycles a write) and 125 kS/s x8 are
+    the highest interpolated rates, 250 kS/s x8 falls behind (181k inputs a second).
+  - **Keep the timed loop in IRAM.** rfprobe's loops and input callback run from flash and see
+    late writes now and then, up to 2255 cycles (7 us) with interrupts locked; the same loop in
+    IRAM shows none in 40 s. The C5's unexplained stalls above came from flash code as well; that
+    they are the same cause is untested.
+  - The clock and the sign check out: a 100 kHz tone at 2 MS/s lands 100.08 kHz above the S31's
+    own LO line in the same capture (a 300 MHz clock would put it at 93.75), on the + side; I and
+    Q need no swap.
+  - Spectrum, a 31.25 kHz tone at 8000 of 32767 (dBc): the I/Q image at -f -25 at every rate,
+    factor and level (no TX IQ correction acts on this path, so it is the largest spur from x2
+    on); input-rate images -17 at x1, -53 to -57 from x4; the DAC-rate hold images (1 MHz at 250
+    kS/s x4 and 125 kS/s x8) -30, as a zero-order hold predicts; LO leakage -43 to -54; third
+    order -46 to -57.
+  - Compression is the S31's: the knee has the same shape at two XIAO gains 10 dB apart. From
+    24000 to 32767 the tone grows 0.5 dB and the third-order product at -3f rises from -31 to
+    -20 dBc (-41 at 16000). Full scale is 16384 (256 DAC counts); the library maps 32767 to 511.
+  - Pacing the TX DC store from the CPU is the only way found: ETM has no task that writes a
+    register value.
 
 
 ### VIEWE PLCM-UES31S043H800V480C-U

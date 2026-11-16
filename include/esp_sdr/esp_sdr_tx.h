@@ -14,7 +14,9 @@
  *
  * The one-shot, power and loop calls exist on the ESP32-S3 only, the streaming
  * interface with CONFIG_ESP_SDR_TX; the ESP32-C6 has esp_sdr_tx_set_lpf()
- * (returning -ENOTSUP) and esp_sdr_tx_word() only.
+ * (returning -ENOTSUP) and esp_sdr_tx_word() only, the ESP32-S31 a carrier
+ * from the PHY's tone generator (esp_sdr_tx_tone_start()); samples go out
+ * through the CPU-paced TX DC path (esp_sdr_paced.h) on the C5, C6 and S31.
  */
 
 #ifndef ESP_SDR_ESP_SDR_TX_H_
@@ -60,6 +62,31 @@ int esp_sdr_tx_gain_max(void);
  * dBm; measured 4.24 units per dB over the ladder), INT_MIN if out of range.
  */
 int esp_sdr_tx_gain_power(int index);
+#endif
+
+#if defined(CONFIG_SOC_SERIES_ESP32S31)
+/** Strongest attenuation esp_sdr_tx_tone_start() takes, in quarter dB. */
+#define ESP_SDR_TX_TONE_ATT_MAX 127U
+
+/**
+ * @brief Transmit a carrier from the PHY's tone generator.
+ *
+ * As the vendor's carrier test (librftest's wifiscwout()) makes one, but at the LO that
+ * esp_sdr_set_freq() and esp_sdr_set_freq_offset() set rather than on a Wi-Fi channel. It runs
+ * until esp_sdr_tx_tone_stop(); the next capture after that puts the radio back to receive.
+ *
+ * @param offset_khz The carrier's offset from the LO, in kHz.
+ * @param att Attenuation in quarter dB (the vendor's test adds 24 to its backoff), at most
+ *            ESP_SDR_TX_TONE_ATT_MAX.
+ * @retval 0 on success.
+ * @retval -EINVAL if out of range.
+ * @retval -EAGAIN before esp_sdr_init().
+ * @retval -EBUSY while a paced transmit stream (esp_sdr_tx_paced_start()) runs.
+ */
+int esp_sdr_tx_tone_start(int offset_khz, unsigned int att);
+
+/** @brief Stop the carrier esp_sdr_tx_tone_start() started; nothing if none runs. */
+void esp_sdr_tx_tone_stop(void);
 #endif
 
 /**

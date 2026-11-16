@@ -279,6 +279,16 @@
 #define AGC_THRESH_REG     0x2010713cU
 #define AGC_THRESH_INDEX   GENMASK(24, 18)
 
+/*
+ * TX DC value, the C5's register: I 9:0, Q 19:10 drive the DAC once the tone path has turned the
+ * chain on and phy_stop_tx_tone_new() has given the DAC back. Always injected (bit 26 is no
+ * enable here). Linear to some 250 counts, flat from 400; neither the DAC scale (0x20100c04) nor
+ * the tone's attenuation acts on it.
+ */
+#define TXDC_REG         0x20100c08U
+#define TXDC_IQ          GENMASK(19, 0)
+#define TXDC_INJECT      0U
+
 #elif defined(CONFIG_SOC_SERIES_ESP32)
 #include <soc/dport_access.h>
 #include <soc/dport_reg.h>
@@ -487,6 +497,16 @@ extern void phy_i2c_writeReg(unsigned int block, unsigned int host, unsigned int
 extern void phy_chip_set_chan(unsigned int mhz, unsigned int mode);
 extern void phy_set_rx_gain_table(unsigned int mhz, unsigned int mode);
 extern unsigned char phy_param[];
+/*
+ * Transmit, as librftest's wifiscwout(): the ROM's TX calibration debug mode (the PHY bus in
+ * debug mode, the TX front end on, a TX gain) and back to work mode, and libphy's tone generator:
+ * tone 1 on/off, its offset (kHz) and attenuation, the same for tone 2.
+ */
+extern void phy_txcal_debuge_mode_(void);
+extern void phy_txcal_work_mode(void);
+extern void phy_start_tx_tone_step_new(int en1, int khz1, int att1, int en2, int khz2, int att2);
+/* libphy: both tones' enables off, the DAC's source back to data, the chain left on. */
+extern void phy_stop_tx_tone_new(void);
 #elif defined(CONFIG_SOC_SERIES_ESP32C6)
 extern void pbus_workmode(void);
 extern void ram_pbus_xpd_rx_on(unsigned int en);
@@ -607,8 +627,8 @@ uint32_t esp_sdr_dump_arm(uint32_t usage);
 void esp_sdr_dump_disarm(uint32_t saved);
 /*
  * Transmit chain on through the vendor CW, its tone stopped so that the DAC
- * takes data, at esp_sdr_freq_mhz and a power step 0 to 15 (esp_sdr_paced.c);
- * off again, back to receive. Lock held.
+ * takes data, at esp_sdr_freq_mhz and a power step 0 to 15 (esp_sdr_paced.c,
+ * the S31's in esp_sdr_s31.c); off again, back to receive. Lock held.
  */
 int esp_sdr_tx_chain_on(unsigned int power);
 void esp_sdr_tx_chain_off(void);

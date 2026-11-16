@@ -1,8 +1,8 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * CPU-paced streaming on the ESP32-C6 (esp_sdr_paced.h). Timing comes from the
- * CPU cycle counter; the caller polls with interrupts locked.
+ * CPU-paced streaming on the ESP32-C6 and C5, transmit only on the ESP32-S31 (esp_sdr_paced.h).
+ * Timing comes from the CPU cycle counter; the caller polls with interrupts locked.
  */
 
 #include <errno.h>
@@ -28,13 +28,22 @@ LOG_MODULE_DECLARE(esp_sdr, CONFIG_ESP_SDR_LOG_LEVEL);
 #define FIR_TAPS 8U
 #define FIR_MAX_L 8U
 #define TX_POWER_MAX 15U
+#if !defined(CONFIG_SOC_SERIES_ESP32S31)
 /* librftest: tone backoff in quarter dB; the tone path also turns the TX chain on. */
 #define TX_BACKOFF_STEP 8U
 
 extern void esp_phy_wifi_tx_tone(uint32_t start, uint32_t chan, uint32_t backoff);
+#endif
+
+/* The S31 runs the transmit poll from RAM: a flash cache miss would move a DAC write. */
+#if defined(CONFIG_SOC_SERIES_ESP32S31)
+#define TX_POLL_ATTR IRAM_ATTR
+#else
+#define TX_POLL_ATTR
+#endif
 
 static struct esp_sdr_paced_stats stats;
-static bool rx_on, tx_on;
+static bool tx_on;
 
 static inline void note_late(uint32_t late, uint32_t step)
 {
@@ -45,6 +54,10 @@ static inline void note_late(uint32_t late, uint32_t step)
 		stats.late++;
 	}
 }
+
+/* Receive: the IQ estimator's running sums, which the S31 does not have. */
+#if defined(IQE_CTRL1_REG)
+static bool rx_on;
 
 static struct {
 	uint32_t step, target, rearm_every, left, ctrl1;
@@ -275,6 +288,7 @@ void esp_sdr_rx_paced_stop(void)
 	rx_on = false;
 	k_mutex_unlock(&esp_sdr_lock);
 }
+#endif /* IQE_CTRL1_REG */
 
 static struct {
 	uint32_t step, target, ph, l, pos, upper, next, orig;
@@ -310,6 +324,7 @@ unsigned int esp_sdr_tx_paced_power_max(void)
 	return TX_POWER_MAX;
 }
 
+#if !defined(CONFIG_SOC_SERIES_ESP32S31)
 /* Transmit range in MHz: what the vendor tone path tunes (C6 2.4 GHz, C5 also 5 GHz). */
 static void tx_range(uint32_t *min_mhz, uint32_t *max_mhz)
 {
@@ -374,6 +389,7 @@ void esp_sdr_tx_chain_off(void)
 	/* Back to receive at the frequency in use. */
 	(void)esp_sdr_retune();
 }
+#endif /* !CONFIG_SOC_SERIES_ESP32S31 */
 
 int esp_sdr_tx_paced_start(uint32_t rate_hz, unsigned int interp, unsigned int power,
 			   esp_sdr_tx_paced_input_t input, void *user)
@@ -418,7 +434,7 @@ static inline uint32_t iq10(int32_t i, int32_t q)
 	return esp_sdr_tx_word((int16_t)CLAMP(i, -511, 511), (int16_t)CLAMP(q, -511, 511));
 }
 
-bool esp_sdr_tx_paced_poll(void)
+TX_POLL_ATTR bool esp_sdr_tx_paced_poll(void)
 {
 	uint32_t now = esp_sdr_paced_cycles();
 	const int16_t *c, *xi, *xq;
@@ -478,7 +494,9 @@ void esp_sdr_paced_sync(void)
 		txp.target = esp_sdr_paced_cycles() + txp.step;
 		return;
 	}
+#if defined(IQE_CTRL1_REG)
 	rxp.target = esp_sdr_paced_cycles() + rxp.step;
+#endif
 }
 
 uint32_t esp_sdr_paced_deadline(void)
@@ -486,7 +504,11 @@ uint32_t esp_sdr_paced_deadline(void)
 	if (tx_on) {
 		return txp.target;
 	}
+#if defined(IQE_CTRL1_REG)
 	return rxp.target;
+#else
+	return esp_sdr_paced_cycles();
+#endif
 }
 
 void esp_sdr_paced_get_stats(struct esp_sdr_paced_stats *s)

@@ -73,6 +73,10 @@ if(CONFIG_ESP_SDR_TRIG)
   # The snapshot packing loop.
   set_source_files_properties(${esp_sdr_src}/esp_sdr_trig.c PROPERTIES COMPILE_OPTIONS "-O3")
 endif()
+if(CONFIG_ESP_SDR_PACED AND CONFIG_SOC_SERIES_ESP32S31)
+  # The poll's FIR: at 320 cycles a write (250 kS/s x4) the default -Os leaves little slack.
+  set_source_files_properties(${esp_sdr_src}/esp_sdr_paced.c PROPERTIES COMPILE_OPTIONS "-O2")
+endif()
 if(CONFIG_ESP_SDR_GAPLESS)
   # The run's hot path (the default -Os costs it a third of its free time).
   set_source_files_properties(${esp_sdr_src}/esp_sdr_gapless.c PROPERTIES COMPILE_OPTIONS "-O2")

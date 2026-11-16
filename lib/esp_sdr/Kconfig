@@ -74,13 +74,15 @@ config ESP_SDR_RX_DECIM
 	  can leave it out.
 
 config ESP_SDR_PACED
-	bool "CPU-paced streaming (ESP32-C6, ESP32-C5)"
+	bool "CPU-paced streaming (ESP32-C6, ESP32-C5, ESP32-S31)"
 	default y
-	depends on (SOC_SERIES_ESP32C6 || SOC_SERIES_ESP32C5) && ESP_SDR_RFTEST
+	depends on (SOC_SERIES_ESP32C6 || SOC_SERIES_ESP32C5 || SOC_SERIES_ESP32S31) && \
+		   ESP_SDR_RFTEST
 	help
 	  esp_sdr_rx_paced_*() and esp_sdr_tx_paced_*(): continuous receive
 	  through the modem's IQ estimator and continuous transmit through the
-	  TX DC value register, paced by the CPU from the caller's loop.
+	  TX DC value register, paced by the CPU from the caller's loop. The
+	  ESP32-S31 has no IQ estimator: transmit only.
 
 config ESP_SDR_TRIG
 	bool "Triggered 80 MS/s snapshots (ESP32-C6)"

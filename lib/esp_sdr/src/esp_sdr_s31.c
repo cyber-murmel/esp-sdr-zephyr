@@ -20,6 +20,12 @@
 #include <esp_private/esp_clk.h>
 #include <modem/modem_widgets_reg.h>
 
+#include <esp_sdr/esp_sdr_tx.h>
+
+#if defined(CONFIG_SMP)
+#include <esp_mp_stall.h>
+#endif
+
 #include "esp_sdr_priv.h"
 
 /* phy_param: the PHY's calibration state word. */
@@ -290,6 +296,76 @@ void esp_sdr_s31_rx_on(void)
 	phy_force_rx_gain(gain_agc ? 0U : 1U, gain_agc ? 0U : gain_code);
 }
 
+/* Transmitting: a capture or a stop takes the radio back to receive. */
+static bool tx_tone_on;
+/* The paced stream's chain (esp_sdr_tx_chain_on()): the tone and the stream exclude each other. */
+static bool tx_chain_on;
+
+/* What the S31 tunes, and so transmits at. */
+#define TX_MIN_MHZ 2200U
+#define TX_MAX_MHZ 2900U
+
+int esp_sdr_tx_tone_start(int offset_khz, unsigned int att)
+{
+	if (att > ESP_SDR_TX_TONE_ATT_MAX) {
+		return -EINVAL;
+	}
+	if (!esp_sdr_ready) {
+		return -EAGAIN;
+	}
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+	if (tx_chain_on) {
+		k_mutex_unlock(&esp_sdr_lock);
+		return -EBUSY;
+	}
+	phy_txcal_debuge_mode_();
+	phy_start_tx_tone_step_new(1, offset_khz, (int)att, 0, 0, 0);
+	tx_tone_on = true;
+	k_mutex_unlock(&esp_sdr_lock);
+	return 0;
+}
+
+void esp_sdr_tx_tone_stop(void)
+{
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+	if (tx_tone_on) {
+		phy_start_tx_tone_step_new(0, 0, 0, 0, 0, 0);
+		phy_txcal_work_mode();
+		tx_tone_on = false;
+	}
+	k_mutex_unlock(&esp_sdr_lock);
+}
+
+/*
+ * The paced stream's chain (esp_sdr_paced.c), lock held: the tone path turns the transmit chain
+ * on at the LO as tuned, then phy_stop_tx_tone_new() stops the tone and hands the DAC to the TX DC
+ * value. No retune: the tone path keeps the LO. The power step does nothing here; the level
+ * follows the samples alone (doc/hardware-quirks.md).
+ */
+int esp_sdr_tx_chain_on(unsigned int power)
+{
+	ARG_UNUSED(power);
+	if (tx_tone_on) {
+		return -EBUSY;
+	}
+	if (esp_sdr_freq_mhz < TX_MIN_MHZ || esp_sdr_freq_mhz > TX_MAX_MHZ) {
+		return -ERANGE;
+	}
+	phy_txcal_debuge_mode_();
+	phy_start_tx_tone_step_new(1, 0, ESP_SDR_TX_TONE_ATT_MAX, 0, 0, 0);
+	phy_stop_tx_tone_new();
+	tx_chain_on = true;
+	return 0;
+}
+
+void esp_sdr_tx_chain_off(void)
+{
+	phy_start_tx_tone_step_new(0, 0, 0, 0, 0, 0);
+	phy_txcal_work_mode();
+	esp_sdr_s31_rx_on();
+	tx_chain_on = false;
+}
+
 void esp_sdr_s31_rx_mute(bool mute)
 {
 	if (mute) {
@@ -350,12 +426,34 @@ static ALWAYS_INLINE void dump_regs(void)
 }
 
 /*
+ * While the engine owns the upper group, nothing may touch it, the ROM data in it included: this
+ * core runs with interrupts off and, with two, the other waits in its stall interrupt, which spins
+ * in IRAM. The pause comes first, interrupts still open: the other core may hold it and have to
+ * park this one before it lets go.
+ */
+static ALWAYS_INLINE unsigned int group_take(void)
+{
+#if defined(CONFIG_SMP)
+	soc_mp_pause_others();
+#endif
+	return irq_lock();
+}
+
+static ALWAYS_INLINE void group_give(unsigned int key)
+{
+	irq_unlock(key);
+#if defined(CONFIG_SMP)
+	soc_mp_resume_others();
+#endif
+}
+
+/*
  * The engine's clocks and lanes, once. Nothing here may touch ROM data, the PHY or the scheduler:
  * their memory is the engine's meanwhile.
  */
 static IRAM_ATTR __noinline void dump_setup(void)
 {
-	unsigned int key = irq_lock();
+	unsigned int key = group_take();
 
 	REG_WRITE(DUMP_USAGE_REG, DUMP_USAGE_OWN);
 	__asm__ volatile("fence" ::: "memory");
@@ -365,7 +463,7 @@ static IRAM_ATTR __noinline void dump_setup(void)
 	REG_WRITE(DUMP_CTRL_REG, dump_reset_ctrl | DUMP_CAPACITY | DUMP_CTRL_CIRCULAR);
 	REG_WRITE(DUMP_USAGE_REG, 0U);
 	__asm__ volatile("fence" ::: "memory");
-	irq_unlock(key);
+	group_give(key);
 }
 
 #if defined(CONFIG_ESP_SDR_DIAG16)
@@ -380,7 +478,7 @@ static IRAM_ATTR __noinline void dump_setup(void)
 /* The engine running with its bank handed back: the bus still carries its word. */
 IRAM_ATTR void esp_sdr_s31_diag_start(void)
 {
-	unsigned int key = irq_lock();
+	unsigned int key = group_take();
 	uint32_t ctrl;
 
 	REG_WRITE(DUMP_USAGE_REG, DUMP_USAGE_OWN);
@@ -402,7 +500,7 @@ IRAM_ATTR void esp_sdr_s31_diag_start(void)
 	}
 	REG_WRITE(DUMP_USAGE_REG, 0U);
 	__asm__ volatile("fence" ::: "memory");
-	irq_unlock(key);
+	group_give(key);
 }
 
 void esp_sdr_s31_diag_stop(void)
@@ -472,7 +570,7 @@ static IRAM_ATTR __noinline bool dump_run(size_t words, unsigned int rate_field,
 {
 	uint32_t ctrl = dump_reset_ctrl | DUMP_CAPACITY | DUMP_CTRL_CIRCULAR;
 	uint32_t at = 0U;
-	unsigned int key = irq_lock();
+	unsigned int key = group_take();
 	uint32_t start;
 
 	REG_WRITE(DUMP_USAGE_REG, DUMP_USAGE_OWN);
@@ -494,7 +592,7 @@ static IRAM_ATTR __noinline bool dump_run(size_t words, unsigned int rate_field,
 	REG_CLR_BIT(DUMP_CTRL_REG, DUMP_CTRL_RUN);
 	REG_WRITE(DUMP_USAGE_REG, 0U);
 	__asm__ volatile("fence" ::: "memory");
-	irq_unlock(key);
+	group_give(key);
 	return at >= words && at < DUMP_CAPACITY;
 }
 

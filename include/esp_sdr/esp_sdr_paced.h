@@ -4,8 +4,9 @@
 
 /**
  * @file
- * @brief ESP-SDR CPU-paced streaming (ESP32-C6, ESP32-C5): continuous
- * receive and transmit, one sample at a time from the caller's loop.
+ * @brief ESP-SDR CPU-paced streaming (ESP32-C6, ESP32-C5; transmit only on the
+ * ESP32-S31, which has no IQ estimator): continuous receive and transmit, one
+ * sample at a time from the caller's loop.
  *
  * The C6 has no dump path that runs gapless at a low rate and no DAC buffer
  * the CPU can refill while it plays, so the CPU paces both directions:
@@ -23,6 +24,13 @@
  * that sample's instant (esp_sdr_rx_paced_fill_iq8() spreads a poll whole
  * periods late over the samples it missed instead); the stats count it. One
  * direction at a time.
+ *
+ * On the ESP32-S31 the poll runs from IRAM and costs about 220 CPU cycles a
+ * write (a TX DC store alone 48): rate times factor up to 1 MHz, such as
+ * 250 kS/s x4 or 125 kS/s x8, keeps every write on time. Keep the input
+ * callback and the polling loop in IRAM with their data in internal RAM; code
+ * fetched through the flash cache stalls a write now and then by up to a few
+ * microseconds.
  */
 
 #ifndef ESP_SDR_ESP_SDR_PACED_H_
@@ -106,7 +114,8 @@ typedef bool (*esp_sdr_tx_paced_input_t)(void *user, int16_t *i, int16_t *q);
  * @param rate_hz Input rate; rate times @p interp must divide the CPU clock.
  * @param interp Interpolation factor: 1 (input straight to the DAC), 2, 4 or 8.
  * @param power Power step, 0 weakest to esp_sdr_tx_paced_power_max(). No effect on the
- *        ESP32-C5, whose level follows the samples only (doc/hardware-quirks.md).
+ *        ESP32-C5 and ESP32-S31, whose level follows the samples only
+ *        (doc/hardware-quirks.md).
  * @param input Called once per input sample from esp_sdr_tx_paced_poll().
  * @param user Passed to @p input.
  * @return 0, -EINVAL, -ERANGE outside the transmit range, -EAGAIN before
@@ -124,7 +133,7 @@ bool esp_sdr_tx_paced_poll(void);
 /** @brief Turn the transmit chain off and release the radio; no-op when stopped. */
 void esp_sdr_tx_paced_stop(void);
 
-/** @brief Highest power step: 2 dB per step of the vendor tone's backoff (none on the C5). */
+/** @brief Highest power step: 2 dB per step of the vendor tone's backoff (none on the C5, S31). */
 unsigned int esp_sdr_tx_paced_power_max(void);
 
 /** @brief The CPU cycle counter the paced streams run on (inlined into IRAM loops). */

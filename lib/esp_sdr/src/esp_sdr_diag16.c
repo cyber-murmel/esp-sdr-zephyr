@@ -15,6 +15,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/atomic.h>
+#include <zephyr/sys/barrier.h>
 #include <zephyr/sys/util.h>
 
 #include <esp_attr.h>
@@ -79,8 +80,11 @@ extern uint8_t __esp_sdr_ring_start[];
 static dma_descriptor_align8_t desc[NODES];
 
 static struct {
-	/* Written by the interrupt. */
-	volatile uint32_t prod_lo, prod_hi;
+	/*
+	 * Written by the interrupt. The byte count is two words: prod_seq is odd while they change,
+	 * so that a reader on the other core never pairs a new high word with an old low one.
+	 */
+	volatile uint32_t prod_seq, prod_lo, prod_hi;
 	volatile uint32_t head;
 	volatile uint64_t tick_first, tick_last;
 	volatile uint64_t prod_first, prod_last;
@@ -98,13 +102,26 @@ static K_SEM_DEFINE(ring_sem, 0, 1);
 
 static inline uint64_t prod_get(void)
 {
-	uint32_t hi, lo;
+	uint32_t seq, hi, lo;
 
 	do {
+		seq = st.prod_seq;
+		barrier_dmem_fence_full();
 		hi = st.prod_hi;
 		lo = st.prod_lo;
-	} while (hi != st.prod_hi);
+		barrier_dmem_fence_full();
+	} while ((seq & 1U) != 0U || seq != st.prod_seq);
 	return ((uint64_t)hi << 32) | lo;
+}
+
+static inline void prod_set(uint64_t p)
+{
+	st.prod_seq = st.prod_seq + 1U;
+	barrier_dmem_fence_full();
+	st.prod_hi = (uint32_t)(p >> 32);
+	st.prod_lo = (uint32_t)p;
+	barrier_dmem_fence_full();
+	st.prod_seq = st.prod_seq + 1U;
 }
 
 uint64_t esp_sdr_diag16_produced(void)
@@ -157,8 +174,7 @@ static IRAM_ATTR void ring_isr(void *arg)
 		}
 		st.prod_last = p;
 		st.tick_last = now;
-		st.prod_hi = (uint32_t)(p >> 32);
-		st.prod_lo = (uint32_t)p;
+		prod_set(p);
 		if ((p / st.wake_bytes) != (before / st.wake_bytes) || st.overrun) {
 			k_sem_give(&ring_sem);
 		}
@@ -576,8 +592,7 @@ int esp_sdr_diag16_run(const struct esp_sdr_diag16_cfg *cfg, struct esp_sdr_diag
 		return -EBUSY;
 	}
 	st.running = true;
-	st.prod_lo = 0;
-	st.prod_hi = 0;
+	prod_set(0U);
 	st.head = 0;
 	st.tick_first = st.tick_last = 0;
 	st.prod_first = st.prod_last = 0;
@@ -669,6 +684,7 @@ int esp_sdr_diag16_run(const struct esp_sdr_diag16_cfg *cfg, struct esp_sdr_diag
 		/* A ring's worth at a time: a sink slower than the DMA still sees stop and time. */
 		for (unsigned int n = 0U; n < NODES && cons + ESP_SDR_DIAG16_PAYLOAD <= p; n++) {
 			uint32_t t0;
+			int core;
 
 			if (p - cons >= (NODES - 1U) * ESP_SDR_DIAG16_PAYLOAD) {
 				/* The DMA is about to overwrite the oldest node: on to the newest. */
@@ -678,9 +694,13 @@ int esp_sdr_diag16_run(const struct esp_sdr_diag16_cfg *cfg, struct esp_sdr_diag
 				s.skipped_nodes += (uint32_t)((to - cons) / ESP_SDR_DIAG16_PAYLOAD);
 				cons = to;
 			}
+			/* The cycle counter is per core: a sink that moved to the other goes uncounted. */
+			core = esp_cpu_get_core_id();
 			t0 = (uint32_t)esp_cpu_get_cycle_count();
 			cfg->sink(cfg->user, node_at(cons), cons - first);
-			sink_cycles += (uint32_t)((uint32_t)esp_cpu_get_cycle_count() - t0);
+			if (esp_cpu_get_core_id() == core) {
+				sink_cycles += (uint32_t)((uint32_t)esp_cpu_get_cycle_count() - t0);
+			}
 			cons += ESP_SDR_DIAG16_PAYLOAD;
 			s.consumed += ESP_SDR_DIAG16_PAYLOAD;
 			p = prod_get();
