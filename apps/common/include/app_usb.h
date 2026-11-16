@@ -30,10 +30,24 @@ void app_usb_classes(struct usbd_context *ctx);
 void app_usb_dfu_prepare(void);
 
 /*
+ * Leave the application's USB device for DFU mode, as a detach request from
+ * the host does (app_usb_dfu_prepare() first). False if USB is not up or DFU
+ * is not configured.
+ */
+bool app_usb_dfu_enter(void);
+
+/*
  * After a DFU download: whether it went to the image slot, which MCUboot then
  * test-boots. Weak, true.
  */
 bool app_usb_dfu_was_slot(void);
+
+/*
+ * Take the application's USB device off the bus, and back: the port goes to another chip
+ * meanwhile (the WHY2025 badge's ESP32-C6 on USB-C J8). No-ops before USB is up.
+ */
+void app_usb_detach(void);
+void app_usb_attach(void);
 
 /* The USB thread's stack use in the last DFU download (it writes the flash), or false. */
 bool app_usb_dfu_stack(size_t *used, size_t *size);

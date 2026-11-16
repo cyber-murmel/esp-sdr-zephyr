@@ -34,6 +34,13 @@ config USBD_DFU_FLASH_SLOT0
 config USBD_DFU_FLASH_SLOT1
 	default y
 
+config APP_USB_DFU_VID
+	hex "USB vendor ID in DFU mode"
+	default 0x2fe3
+	help
+	  Independent of the application's own vendor ID (SAMPLE_USBD_VID), which an application may
+	  change to match a host driver; DFU mode keeps this one so west dfu finds it.
+
 config APP_USB_DFU_PID
 	hex "USB product ID in DFU mode"
 	default 0xffff

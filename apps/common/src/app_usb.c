@@ -20,7 +20,7 @@
 #include "app_usb.h"
 
 #include <esp_attr.h>
-#if defined(CONFIG_SHELL)
+#if defined(CONFIG_SHELL) && defined(CONFIG_SOC_SERIES_ESP32S3)
 #include <zephyr/shell/shell.h>
 #include <soc/rtc_cntl_reg.h>
 #endif
@@ -32,7 +32,9 @@ LOG_MODULE_REGISTER(app_usb, LOG_LEVEL_INF);
 static struct k_work_delayable start_work;
 /* The device once started, for "usj". */
 static struct usbd_context *usb_ctx;
+#if defined(CONFIG_APP_USB_DFU)
 static struct k_work_delayable reboot_work;
+#endif
 
 #if defined(CONFIG_APP_TRIAL_WATCHDOG) || defined(CONFIG_APP_LIVENESS_WATCHDOG)
 static const struct device *const app_wdt = DEVICE_DT_GET(DT_ALIAS(watchdog0));
@@ -55,7 +57,7 @@ static void wdt_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
 
-	if (trial && boot_is_img_confirmed()) {
+	if (IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT) && trial && boot_is_img_confirmed()) {
 		trial = false;
 		LOG_INF("image confirmed");
 		if (!IS_ENABLED(CONFIG_APP_LIVENESS_WATCHDOG)) {
@@ -128,12 +130,15 @@ static void app_watchdog_arm(void)
 
 #if defined(CONFIG_APP_USB_DFU)
 /* DFU mode is a separate device with only the DFU class, as in samples/subsys/usb/dfu. */
-USBD_DEVICE_DEFINE(dfu_usbd, DEVICE_DT_GET(DT_NODELABEL(zephyr_udc0)), CONFIG_SAMPLE_USBD_VID,
+USBD_DEVICE_DEFINE(dfu_usbd, DEVICE_DT_GET(DT_NODELABEL(zephyr_udc0)), CONFIG_APP_USB_DFU_VID,
 		   CONFIG_APP_USB_DFU_PID);
 USBD_DESC_LANG_DEFINE(dfu_lang);
 USBD_DESC_PRODUCT_DEFINE(dfu_product, CONFIG_SAMPLE_USBD_PRODUCT " DFU");
 USBD_DESC_CONFIG_DEFINE(dfu_cfg_desc, "DFU FS Configuration");
 USBD_CONFIGURATION_DEFINE(dfu_fs_config, 0, CONFIG_SAMPLE_USBD_MAX_POWER, &dfu_cfg_desc);
+/* A high-speed controller (the ESP32-P4's OTG HS) enumerates with this one. */
+USBD_DESC_CONFIG_DEFINE(dfu_hs_cfg_desc, "DFU HS Configuration");
+USBD_CONFIGURATION_DEFINE(dfu_hs_config, 0, CONFIG_SAMPLE_USBD_MAX_POWER, &dfu_hs_cfg_desc);
 
 static void msg_cb(struct usbd_context *const ctx, const struct usbd_msg *const msg);
 
@@ -161,6 +166,17 @@ static void switch_to_dfu_mode(struct usbd_context *const ctx)
 	}
 	if (err == 0) {
 		usbd_device_set_code_triple(&dfu_usbd, USBD_SPEED_FS, 0, 0, 0);
+	}
+	if (err == 0 && usbd_caps_speed(&dfu_usbd) == USBD_SPEED_HS) {
+		err = usbd_add_configuration(&dfu_usbd, USBD_SPEED_HS, &dfu_hs_config);
+		if (err == 0) {
+			err = usbd_register_class(&dfu_usbd, "dfu_dfu", USBD_SPEED_HS, 1);
+		}
+		if (err == 0) {
+			usbd_device_set_code_triple(&dfu_usbd, USBD_SPEED_HS, 0, 0, 0);
+		}
+	}
+	if (err == 0) {
 		err = usbd_init(&dfu_usbd);
 	}
 	if (err == 0) {
@@ -174,6 +190,20 @@ static void switch_to_dfu_mode(struct usbd_context *const ctx)
 	}
 }
 #endif /* CONFIG_APP_USB_DFU */
+
+bool app_usb_dfu_enter(void)
+{
+#if defined(CONFIG_APP_USB_DFU)
+	if (usb_ctx == NULL) {
+		return false;
+	}
+	app_usb_dfu_prepare();
+	switch_to_dfu_mode(usb_ctx);
+	return true;
+#else
+	return false;
+#endif
+}
 
 static void msg_cb(struct usbd_context *const ctx, const struct usbd_msg *const msg)
 {
@@ -297,6 +327,20 @@ static void start_handler(struct k_work *work)
 	LOG_INF("USB device enabled");
 }
 
+void app_usb_detach(void)
+{
+	if (usb_ctx != NULL) {
+		(void)usbd_disable(usb_ctx);
+	}
+}
+
+void app_usb_attach(void)
+{
+	if (usb_ctx != NULL) {
+		(void)usbd_enable(usb_ctx);
+	}
+}
+
 int app_usb_init(void)
 {
 #if defined(CONFIG_APP_TRIAL_WATCHDOG) || defined(CONFIG_APP_LIVENESS_WATCHDOG)
@@ -311,7 +355,7 @@ int app_usb_init(void)
 	return 0;
 }
 
-#if defined(CONFIG_SHELL)
+#if defined(CONFIG_SHELL) && defined(CONFIG_SOC_SERIES_ESP32S3)
 /*
  * "usj": the USB PHY to the USB-Serial-JTAG (esptool, OpenOCD) until the OTG
  * driver takes it back at its next init. The device leaves the bus first, so
