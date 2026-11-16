@@ -345,6 +345,15 @@ void esp_sdr_dump_disarm(uint32_t saved)
 }
 
 /* One capture into the bank; caller holds esp_sdr_lock. t0 is the cycle count at arming. */
+static void (*capture_hook)(void *user);
+static void *capture_hook_user;
+
+void esp_sdr_rx_set_capture_hook(void (*fn)(void *user), void *user)
+{
+	capture_hook = fn;
+	capture_hook_user = user;
+}
+
 static int capture_locked(enum esp_sdr_rate rate, size_t count, volatile uint32_t *words,
 			  uint32_t usage, uint32_t *elapsed_us, uint64_t *t0)
 {
@@ -381,6 +390,9 @@ static int capture_locked(enum esp_sdr_rate rate, size_t count, volatile uint32_
 	REG_WRITE(DUMP_CTRL_REG, ctrl);
 	REG_WRITE(DUMP_CTRL_REG, ctrl | DUMP_CTRL_TRIGGER);
 	REG_WRITE(DUMP_CTRL_REG, ctrl);
+	if (capture_hook != NULL) {
+		capture_hook(capture_hook_user);
+	}
 	do {
 		done = (REG_READ(DUMP_CTRL_REG) & DUMP_CTRL_DONE) != 0U;
 		elapsed = k_cyc_to_us_floor32(k_cycle_get_32() - start);
@@ -483,7 +495,7 @@ int esp_sdr_rx_capture_bank(enum esp_sdr_rate rate, size_t count, int bank,
 }
 
 #if defined(CONFIG_ESP_SDR_RX_DECIM)
-#define CIC_STAGES 3
+#define CIC_STAGES ESP_SDR_RX_DECIM_SETTLE
 
 /*
  * Third order CIC decimator over the bank, m input samples per output. Wraps
@@ -497,9 +509,19 @@ __attribute__((optimize("O3"))) static size_t cic(const volatile uint32_t *vword
 	const uint32_t *words = (const uint32_t *)vwords;
 	int32_t ii1 = 0, ii2 = 0, ii3 = 0, qi1 = 0, qi2 = 0, qi3 = 0;
 	int32_t ic[CIC_STAGES] = {0}, qc[CIC_STAGES] = {0};
-	/* Output gain m^3 down to 32767 / 512: one int64 multiply per output. */
-	int64_t scale = ((int64_t)64 << 32) / ((int64_t)m * m * m);
+	/*
+	 * Output gain m^3 down to 32767 / 512, by the high word of a 32 by 32 bit multiply: scale
+	 * is normalized to fit, a small m's outputs shifted up to match.
+	 */
+	int64_t scale64 = ((int64_t)64 << 32) / ((int64_t)m * m * m);
+	unsigned int pre = 0;
 	size_t n = 0, outs = count / m;
+
+	while (scale64 > INT32_MAX) {
+		scale64 >>= 1;
+		pre++;
+	}
+	const int32_t scale = (int32_t)scale64;
 
 	for (size_t k = 0; k < outs; k++) {
 		const uint32_t *w = &words[k * m];
@@ -525,8 +547,11 @@ __attribute__((optimize("O3"))) static size_t cic(const volatile uint32_t *vword
 		}
 		/* The first outputs still see the integrators settling. */
 		if (k >= CIC_STAGES && n < max_out) {
-			out[n].i = (int16_t)CLAMP((yi * scale) >> 32, INT16_MIN, INT16_MAX);
-			out[n].q = (int16_t)CLAMP((yq * scale) >> 32, INT16_MIN, INT16_MAX);
+			int32_t vi = (int32_t)(((int64_t)(yi << pre) * scale) >> 32);
+			int32_t vq = (int32_t)(((int64_t)(yq << pre) * scale) >> 32);
+
+			out[n].i = (int16_t)CLAMP(vi, INT16_MIN, INT16_MAX);
+			out[n].q = (int16_t)CLAMP(vq, INT16_MIN, INT16_MAX);
 			n++;
 		}
 	}
