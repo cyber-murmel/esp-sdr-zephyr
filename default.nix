@@ -98,6 +98,8 @@ let
       pyqt5
       # The host tools' serial ports.
       pyserial
+      # The host tools' USB devices (chancap_bridge.py).
+      pyusb
     ];
   };
 

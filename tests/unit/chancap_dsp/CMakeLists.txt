@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Unit test of lib/esp_sdr/src/esp_sdr_chancap_dsp.h (the channelized burst capture's polyphase
+# filter bank, DDC and detector) on native_sim. Header-only.
+
+cmake_minimum_required(VERSION 3.20.0)
+
+find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+project(chancap_dsp_unit)
+
+target_sources(app PRIVATE src/main.c)
+target_include_directories(app PRIVATE
+  ${CMAKE_CURRENT_LIST_DIR}/../../../lib/esp_sdr/src
+  ${CMAKE_CURRENT_LIST_DIR}/../../../include)

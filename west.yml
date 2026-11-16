@@ -27,7 +27,7 @@ manifest:
     # on, the llext and Xtensa changes apps/multiapp needs (doc/multiapp.md,
     # "Zephyr changes"), LVGL allocating from the MicroPython heap,
     # the options that make the USB stack and DWC2
-    # threads preemptible, application code in the S3's flash
+    # threads preemptible (apps/chancap), application code in the S3's flash
     # text and perf on Xtensa, the Hackaday Communicator, WHY2025 and MCH2022
     # badges with their NV3007, ST7703, TCA8418 and RP2040 coprocessor
     # drivers, an SX126x without BUSY and DIO1 lines and the ESP32 SPI timing

@@ -1,0 +1,14 @@
+common:
+  tags:
+    - esp-sdr
+    - chancap
+    - hardware
+  harness: ztest
+
+tests:
+  # The S3 runs an app that owns the USB OTG port: MCUboot and its own USB shell to deploy over
+  # `west dfu` (see Kconfig); the console is CDC-ACM, so run it by hand (doc/testing.md).
+  integration.esp_sdr.chancap_api.s3:
+    platform_allow:
+      - xiao_esp32s3/esp32s3/procpu
+    sysbuild: true
