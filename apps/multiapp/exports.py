@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Export from the multiapp host what its extensions import.
 
-Reads each extension's undefined symbols and writes three C files for the
-host: exports of those symbols by name (group MULTIAPP, through asm labels, so
+Reads each extension's undefined symbols (a shared library's dynamic symbols, a
+relocatable object's symbol table) and writes three C files for the host: exports of those symbols by name (group MULTIAPP, through asm labels, so
 no header has to declare them), the log modules the extensions declare, and
 the objects they describe in .multiapp_host (struct multiapp_host_object). A
 symbol the host lacks fails the host's link. What a module defines comes from
@@ -26,18 +26,25 @@ HOST_POOL = 1
 HOST_AREA = 2
 HOST_PSRAM = 3
 
-# lib<name>_ext_llext_lib.so, from multiapp_extension(<name> ...)
-LIB_NAME = re.compile(r"lib(\w+)_ext_llext_lib\.so$")
+# From multiapp_extension(<name> ...): lib<name>_ext_llext_lib.so, a shared library (Xtensa), or
+# <name>_ext_llext_lib.obj, a relocatable object (RISC-V).
+LIB_NAME = re.compile(r"(?:lib)?(\w+)_ext_llext_lib\.(?:so|obj)$")
+
+
+def symbols(elf):
+    """A shared library's dynamic symbols, a relocatable object's symbol table."""
+    if elf["e_type"] == "ET_REL":
+        section = elf.get_section_by_name(".symtab")
+    else:
+        section = elf.get_section_by_name(".dynsym")
+    return section.iter_symbols() if section is not None else ()
 
 
 def imports(path):
     with open(path, "rb") as f:
-        dynsym = ELFFile(f).get_section_by_name(".dynsym")
-        if dynsym is None:
-            return set()
         return {
             sym.name
-            for sym in dynsym.iter_symbols()
+            for sym in symbols(ELFFile(f))
             if sym.name
             and sym["st_shndx"] == "SHN_UNDEF"
             and sym["st_info"]["bind"] == "STB_GLOBAL"
@@ -45,14 +52,11 @@ def imports(path):
 
 
 def defines(path):
-    """The global symbols a shared library defines."""
+    """The global symbols an extension defines."""
     with open(path, "rb") as f:
-        dynsym = ELFFile(f).get_section_by_name(".dynsym")
-        if dynsym is None:
-            return set()
         return {
             sym.name
-            for sym in dynsym.iter_symbols()
+            for sym in symbols(ELFFile(f))
             if sym.name
             and sym["st_shndx"] != "SHN_UNDEF"
             and sym["st_info"]["bind"] in ("STB_GLOBAL", "STB_WEAK")
@@ -77,8 +81,13 @@ def main():
                         help="bytes in the area the apps share (multiapp_area)")
     parser.add_argument("--module", action="append", default=[], metavar="NAME",
                         help="an extension that is a module: others import from it")
-    parser.add_argument("libs", nargs="+", help="extension shared libraries")
+    parser.add_argument("--psram-section", metavar="NAME",
+                        help="the section that puts a host object in PSRAM, where "
+                        "EXT_RAM_BSS_ATTR does not")
+    parser.add_argument("libs", nargs="+", help="extension shared libraries or objects")
     args = parser.parse_args()
+    psram_attr = (f'__attribute__((section("{args.psram_section}")))' if args.psram_section
+                  else "EXT_RAM_BSS_ATTR")
 
     names = set()
     from_modules = set()
@@ -121,7 +130,7 @@ def main():
             if kind == HOST_AREA:
                 continue
             if kind == HOST_PSRAM:
-                out.write(f"EXT_RAM_BSS_ATTR uint8_t {name}[{arg[0]}] __aligned({arg[1]});\n")
+                out.write(f"{psram_attr} uint8_t {name}[{arg[0]}] __aligned({arg[1]});\n")
                 out.write(f"EXPORT_GROUP_SYMBOL(MULTIAPP, {name});\n")
                 continue
             if kind != HOST_POOL:

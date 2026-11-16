@@ -7,7 +7,8 @@ llext extensions from PSRAM, built from their unchanged sources, one app per boo
 driver, which the small `wifitest` app uses. MicroPython is an app too: on the XIAO with its display, LVGL, knob, SD card and
 two USB drives, on the Communicator with its display and keyboard, on boards without a display headless. The host loads each one from its `<name>.llext` file on a FAT volume in flash,
 which the PC sees as a USB drive in boots without an app; built-in copies are the fallback. It needs
-Zephyr changes that are on the fork `west.yml` pins ("Zephyr changes").
+Zephyr changes that are on the fork `west.yml` pins ("Zephyr changes"). On the ESP32-S31 the
+extensions are RISC-V relocatable objects and the board boots into `osmosdr_hs` ("The ESP32-S31").
 Usage: `apps/multiapp/README.rst`.
 
 ## Constraints
@@ -515,6 +516,63 @@ Over the air against the Communicator, two rounds on the same desk: about -55 dB
 survey, 0 failed; `rfprobe` and `wpan` answer on their shells; `zstack` boots), a damaged image fell back to the SDR,
 and a power-on ended a request.
 
+## The ESP32-S31: RISC-V extensions
+
+On the ESP32-S31-Function-CoreBoard-1 the host has one core, 16 MB of octal PSRAM and the USB 2.0
+HS port J4 for the shell, the drive, DFU and osmosdr_hs's stream; it boots into `osmosdr_hs`, and
+`hello`, `capture` and `rfprobe` are the other apps. Where it differs from the S3:
+
+- **Relocatable objects.** On RISC-V llext loads only those (`ld -r`). A shared object's
+  `.rela.dyn` names no section, so llext skips it, and its PLT reaches `.got.plt` PC-relative across
+  regions llext places apart. `ext/llext_riscv.ld` groups each kind in one section per llext region,
+  makes one `.bss` (llext takes a single NOBITS section; libphy alone has six), collects the
+  IRAM_ATTR code as `.module_fast` and drops `.eh_frame` (its SET6/SUB6 relocations are not
+  llext's). An extension with archives links with `--gc-sections`: what it compiles is kept, of the
+  archives only what it reaches, and so are the hal's sources it compiles, built with a section per
+  function (the PHY glue's antenna helper calls `gpio_config()`, which the host lacks).
+  `exports.py` reads the objects' symbol tables.
+- **No alias.** Code runs where llext writes it: one heap of 2368 KiB in PSRAM
+  (`.ext_ram_noinit`, not zeroed at boot; this SoC's `EXT_RAM_NOINIT_ATTR` is internal RAM, so
+  `esp_sdr_place.h` names the section). `sync_text()` writes the data cache back, invalidates both
+  instruction caches (`Cache_*_Addr()` with this SoC's cache map) and runs `fence.i`. PMA marks
+  PSRAM executable and PMP's entries are unlocked, so the code runs from PSRAM and internal RAM
+  alike.
+- **TLS.** The libc uses thread-local storage, and llext relocates no TLS access:
+  `CONFIG_CURRENT_THREAD_USE_TLS=n` makes `k_current_get()` a call.
+- **The radio as one module**, `sdr`: the hal's PHY glue, the library and the blobs. The PHY
+  library's calls into two ROM functions go to wrappers in the library (`--wrap` in the partial
+  link), which only a module holding both can link; the host links the ROM's PHY symbols. 9.2 KB of
+  it is internal RAM (IRAM_ATTR code, data, bss), the rest PSRAM; it comes up in about 116 ms.
+- **osmosdr_hs**, from its own sources: built `INTERNAL`, so its 104 KB of USB batches, which carry
+  40 MB/s, are internal RAM. `ext/usbd_prelude.h` gives it the host's USB device where it brings up
+  its own, and `CONFIG_APP_USB_MSG_HOOK` passes it the device's messages (a suspend stops the
+  stream). Its crystal calibration lives in settings, a file on the volume: an app's boot mounts the
+  volume read-write before its modules load (a boot with an app never hands it to the PC), and
+  `ext.h` registers settings handlers as the extension loads. `west dfu --storage` writes the volume
+  anew, calibration included.
+- **Memory.** The image ends 12.9 KB below the receive ring at 0x2F040000, with a module heap of
+  120 KB of which the radio and osmosdr_hs take 116 KB.
+
+Measured on the CoreBoard, against the standalone builds on the same board (2026-11-13 and 14):
+
+| | multiapp | standalone |
+| --- | --- | --- |
+| osmosdr_hs, 300 s at 20 MS/s | 5,993 M samples, 0 gaps, 0 bad blocks | 5,986 M samples, 0 gaps |
+| osmosdr_hs, free CPU at 20 MS/s (loadlog) | 83 %, idle reads 102 to 107 % | 79 %, idle reads 96 to 101 % |
+| osmosdr_hs, overflows the device counts | 0 while streaming, 3 to 4 at the stop (0 since, below) | 0 while streaming, 4 at the stop |
+| rfprobe, bursts at the six rates | duration 1.000 of the rate's | 1.000 |
+| rfprobe, ring at 20 and 40 MS/s, 3 s | 0 gaps | 0 gaps |
+
+The overflows at the stop were `esdr_usb`'s: it cancelled its transfers before it turned the device
+off, which then streamed on into nothing. It turns the device off first now: three 10 s runs at
+20 MS/s each way, alternating, counted 2 overflows at every stop before and none after (2026-11-15).
+
+osmosdr_hs under multiapp also ran 30 s at 10 and 5 MS/s with 0 gaps, showed the 2400 MHz crystal
+harmonic at -3.000 MHz from LO 2403 and +5.000 MHz from LO 2395, kept a stored calibration across a
+reboot, streamed through 360 random retunes and a 3 s host stall without a fault, and streamed
+through SoapySDR. Its vendor interface is number 3 there (0 standalone); `esdr_usb` and the SoapySDR
+module find it by its class.
+
 ## Bugs found
 
 - **The standalone app no longer fit the Communicator**, by 32 bytes: "DRAM image overlaps the ring banks",
@@ -622,6 +680,12 @@ application can build LVGL its own way.
 
 On the MicroPython fork, the port's source lists move to `ports/zephyr/sources.cmake`, for
 `micropython.cmake` to use.
+
+The ESP32-S31 adds two, on `zsdr` past the commit `west.yml` pins, as is the S31's support
+itself: `CONFIG_LLEXT_REGION_HEAPS` depends on
+`CONFIG_LLEXT_HEAP_DYNAMIC` alone (the exec alias it required is Xtensa's), and
+`arch/riscv/core/elf.c` checks `R_RISCV_JAL` against the J type's +-1 MiB instead of the
+2 GiB of an `auipc` pair, which let a jump between regions too far apart through.
 
 ## The standalone apps (2026-10-09)
 

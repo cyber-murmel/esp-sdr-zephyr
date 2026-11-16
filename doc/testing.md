@@ -233,6 +233,14 @@ a file written and read back on `/FLASH:`, a ring at 250 kS/s with 0 gaps, a sof
 no crash. On a board with a display it also runs `spectrum` from the launcher and checks that it draws with the
 ring gapless.
 
+`sample.esp_sdr.multiapp.s31.hil` is the ESP32-S31-Function-CoreBoard-1 in its own configuration,
+booting into `osmosdr_hs` (`pytest/test_multiapp_s31.py`): every file on the volume equals its
+built-in copy, the boot ran `osmosdr_hs` from its file with the vendor class, the radio module's
+IRAM_ATTR code is in internal RAM and the rest in PSRAM, and the last reset was clean. It needs the
+board's USB HS port J4 on the PC through a cable with VBUS cut, and its hardware map entry (id
+`1C2904D19880`, the board on this desk). The same command with `-s sample.esp_sdr.multiapp.s31.hil`
+runs it; it leaves the board as it should be.
+
 ## Regression tests (two boards)
 
 Three scenarios, all pytest through twister's multi-board harness, each with its own pair of

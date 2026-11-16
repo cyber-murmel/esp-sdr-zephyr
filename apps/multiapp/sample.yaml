@@ -7,18 +7,24 @@ sample:
 common:
   tags: esp-sdr
   sysbuild: true
-  platform_allow:
-    - xiao_esp32s3/esp32s3/procpu
-    - communicator_badge/esp32s3/procpu
-  integration_platforms:
-    - xiao_esp32s3/esp32s3/procpu
+  # Each scenario names its integration board: twister would add a list here to every scenario's,
+  # and the S31 one cannot have the XIAO.
 tests:
   # The console is on USB CDC-ACM; "multiapp run <name>" there (see README).
   sample.esp_sdr.multiapp:
+    platform_allow:
+      - xiao_esp32s3/esp32s3/procpu
+      - communicator_badge/esp32s3/procpu
+      - esp32s31_function_coreboard/esp32s31/hpcore
     build_only: true
+    integration_platforms:
+      - xiao_esp32s3/esp32s3/procpu
   # On the desk with the boards attached (pytest/test_multiapp.py): the image and
   # its FAT volume (scripts/twister-flash.py), booting into hello from its file.
   sample.esp_sdr.multiapp.hil:
+    platform_allow:
+      - xiao_esp32s3/esp32s3/procpu
+      - communicator_badge/esp32s3/procpu
     harness: pytest
     harness_config:
       pytest_dut_scope: module
@@ -26,9 +32,14 @@ tests:
         - pytest/test_multiapp.py
     extra_args:
       - multiapp_EXTRA_CONF_FILE=hil.conf
+    integration_platforms:
+      - xiao_esp32s3/esp32s3/procpu
     timeout: 600
   # The same, booting into wifitest (pytest/test_wifi.py). Needs an access point in range.
   sample.esp_sdr.multiapp.wifi.hil:
+    platform_allow:
+      - xiao_esp32s3/esp32s3/procpu
+      - communicator_badge/esp32s3/procpu
     harness: pytest
     harness_config:
       pytest_dut_scope: module
@@ -36,9 +47,14 @@ tests:
         - pytest/test_wifi.py
     extra_args:
       - multiapp_EXTRA_CONF_FILE=hil-wifi.conf
+    integration_platforms:
+      - xiao_esp32s3/esp32s3/procpu
     timeout: 600
   # The same, booting into micropython (pytest/test_micropython.py), which then has the REPL.
   sample.esp_sdr.multiapp.micropython.hil:
+    platform_allow:
+      - xiao_esp32s3/esp32s3/procpu
+      - communicator_badge/esp32s3/procpu
     harness: pytest
     harness_config:
       pytest_dut_scope: module
@@ -46,4 +62,19 @@ tests:
         - pytest/test_micropython.py
     extra_args:
       - multiapp_EXTRA_CONF_FILE=hil-micropython.conf
+    integration_platforms:
+      - xiao_esp32s3/esp32s3/procpu
+    timeout: 600
+  # On the ESP32-S31-Function-CoreBoard-1, its USB HS port on the PC (pytest/test_multiapp_s31.py):
+  # the board's own configuration, booting into osmosdr_hs from its file.
+  sample.esp_sdr.multiapp.s31.hil:
+    platform_allow:
+      - esp32s31_function_coreboard/esp32s31/hpcore
+    harness: pytest
+    harness_config:
+      pytest_dut_scope: module
+      pytest_root:
+        - pytest/test_multiapp_s31.py
+    integration_platforms:
+      - esp32s31_function_coreboard/esp32s31/hpcore
     timeout: 600

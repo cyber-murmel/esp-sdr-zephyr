@@ -123,3 +123,53 @@ def test_unknown_kind(tmp_path, run_main, lib, monkeypatch):
     monkeypatch.setattr(exports, "host_objects", lambda path: iter([("odd", 7, [0, 0, 0])]))
     with pytest.raises(SystemExit):
         generate(tmp_path, run_main, lib)
+
+
+@pytest.fixture
+def two_objs(tmp_path):
+    """two_libs as relocatable objects (cc -r), as RISC-V extensions are built."""
+    cc = shutil.which("cc") or shutil.which("gcc")
+    if cc is None:
+        pytest.skip("no host C compiler")
+    built = []
+    for name, code in (("app", "extern int mod_call(void); extern void k_yield(void);"
+                               "static int twice(int v) { return 2 * v; }"
+                               "int app_main(void) { k_yield(); return twice(mod_call()); }"),
+                       ("mod", "extern void k_sleep(void); int mod_call(void) { k_sleep(); return 1; }")):
+        src = tmp_path / f"{name}.c"
+        src.write_text(code)
+        obj = tmp_path / f"{name}.o"
+        subprocess.run([cc, "-c", "-o", obj, src], check=True)
+        out = tmp_path / f"{name}_ext_llext_lib.obj"
+        subprocess.run([cc, "-r", "-nostdlib", "-o", out, obj], check=True)
+        built.append(out)
+    return built
+
+
+def test_relocatable_symbols(two_objs):
+    # From the symbol table: what it leaves undefined, what it defines; statics are neither.
+    assert {"mod_call", "k_yield"} <= exports.imports(two_objs[0])
+    assert "app_main" in exports.defines(two_objs[0])
+    assert "twice" not in exports.defines(two_objs[0]) | exports.imports(two_objs[0])
+    assert exports.defines(two_objs[1]) >= {"mod_call"}
+
+
+def test_relocatable_module(tmp_path, run_main, two_objs):
+    # The module is known by its object's name, <name>_ext_llext_lib.obj.
+    out = generate(tmp_path, run_main, *two_objs, modules=("mod",))["exports"]
+    assert '__asm__("mod_call")' not in out
+    assert '__asm__("k_yield")' in out and '__asm__("k_sleep")' in out
+
+
+def test_psram_section(tmp_path, run_main, lib, monkeypatch):
+    # Where EXT_RAM_BSS_ATTR places nothing in PSRAM (ESP32-S31), the section by name.
+    monkeypatch.setattr(exports, "host_objects",
+                        lambda path: iter([("demo_ring", 3, [4096, 4, 0])]))
+    files = {k: tmp_path / f"{k}.c" for k in ("exports", "logs", "objects")}
+    run_main(exports, "--exports", files["exports"], "--logs", files["logs"],
+             "--objects", files["objects"], "--area-size", 4096,
+             "--psram-section", ".ext_ram.bss", lib)
+    out = files["objects"].read_text()
+    assert ('__attribute__((section(".ext_ram.bss"))) uint8_t demo_ring[4096] __aligned(4);'
+            in out)
+    assert "EXT_RAM_BSS_ATTR" not in out

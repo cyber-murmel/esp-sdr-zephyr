@@ -43,20 +43,38 @@
 
 LOG_MODULE_REGISTER(multiapp, LOG_LEVEL_INF);
 
+#if defined(CONFIG_LLEXT_EXEC_ALIAS)
 /* One MMU table maps both buses: PSRAM at 0x3c000000 + x executes at 0x42000000 + x. */
 #define IBUS_DBUS_OFFSET 0x06000000
+#else
+/* Code runs where it is written (ESP32-S31). */
+#define IBUS_DBUS_OFFSET 0
+#endif
+#if defined(SOC_I_D_OFFSET)
+#define MODULE_EXEC_OFFSET SOC_I_D_OFFSET
+#else
+#define MODULE_EXEC_OFFSET 0
+#endif
 
 #define ROOTS_MAX       4
 #define MODULES_MAX     8
 #define REQUEST_MAGIC   0x6d617070U /* "mapp" */
 #define TRIED_MAGIC     0x74726964U /* "trid": the boot that tried it has started */
 #define REBOOT_DELAY_MS 100
+/* How long an app's sample_usbd_init_device() waits for the host's USB (ext/usbd_prelude.h). */
+#define USBD_WAIT_MS 10000
 
 /* No init: at boot, zeroing what llext zeroes as needed would cost every boot its time. */
+#if defined(CONFIG_HARVARD)
 static ESP_SDR_DATA_F(BULK, instr_heap, NOINIT) uint8_t
 	instr_heap[KB(CONFIG_MULTIAPP_INSTR_HEAP_KB)] __aligned(64);
 static ESP_SDR_DATA_F(BULK, data_heap, NOINIT) uint8_t
 	data_heap[KB(CONFIG_MULTIAPP_DATA_HEAP_KB)] __aligned(64);
+#else
+/* Code and data share their addresses, so one heap holds both. */
+static ESP_SDR_DATA_F(BULK, ext_heap, NOINIT) uint8_t
+	ext_heap[KB(CONFIG_MULTIAPP_INSTR_HEAP_KB + CONFIG_MULTIAPP_DATA_HEAP_KB)] __aligned(64);
+#endif
 
 /*
  * For the modules placed as a standalone image: their IRAM_ATTR code at the instruction
@@ -72,12 +90,12 @@ static struct k_heap module_high_heap;
 
 static const struct llext_region_heap region_heaps[][LLEXT_MEM_COUNT] = {
 	[MULTIAPP_PLACE_INTERNAL] = {
-		[LLEXT_MEM_TEXT_ALT] = {&module_heap, SOC_I_D_OFFSET},
+		[LLEXT_MEM_TEXT_ALT] = {&module_heap, MODULE_EXEC_OFFSET},
 		[LLEXT_MEM_DATA] = {&module_heap, 0},
 		[LLEXT_MEM_BSS] = {&module_heap, 0},
 	},
 	[MULTIAPP_PLACE_INTERNAL_HIGH_BSS] = {
-		[LLEXT_MEM_TEXT_ALT] = {&module_heap, SOC_I_D_OFFSET},
+		[LLEXT_MEM_TEXT_ALT] = {&module_heap, MODULE_EXEC_OFFSET},
 		[LLEXT_MEM_DATA] = {&module_heap, 0},
 		[LLEXT_MEM_BSS] = {&module_high_heap, 0},
 	},
@@ -209,22 +227,41 @@ static int heaps_init(void)
 {
 	k_heap_init(&module_heap, module_heap_mem, sizeof(module_heap_mem));
 	k_heap_init(&module_high_heap, module_high_mem, sizeof(module_high_mem));
+#if defined(CONFIG_HARVARD)
 	return llext_heap_init_harvard_exec(instr_heap, sizeof(instr_heap), data_heap,
 					    sizeof(data_heap), IBUS_DBUS_OFFSET);
+#else
+	return llext_heap_init(ext_heap, sizeof(ext_heap));
+#endif
 }
 SYS_INIT(heaps_init, APPLICATION, 0);
+
+#if DT_HAS_COMPAT_STATUS_OKAY(espressif_esp32_usb_otg_hs)
+/* A high-speed controller (ESP32-S31) has each class in its high-speed configuration too. */
+#define CLASS_DROP_HS(ctx, name)                                                                   \
+	do {                                                                                       \
+		if (usbd_caps_speed(ctx) == USBD_SPEED_HS) {                                       \
+			(void)usbd_unregister_class(ctx, name, USBD_SPEED_HS, 1);                  \
+		}                                                                                  \
+	} while (false)
+#else
+#define CLASS_DROP_HS(ctx, name)
+#endif
 
 /* Only the boot's app's classes: the OTG controller has too few IN endpoints for all. */
 void app_usb_classes(struct usbd_context *ctx)
 {
 	if (IS_ENABLED(CONFIG_USBD_CDC_NCM_CLASS) && (usb_profile & MULTIAPP_USB_NCM) == 0U) {
 		(void)usbd_unregister_class(ctx, "cdc_ncm_0", USBD_SPEED_FS, 1);
+		CLASS_DROP_HS(ctx, "cdc_ncm_0");
 	}
 	if ((usb_profile & MULTIAPP_USB_VENDOR) == 0U) {
 		(void)usbd_unregister_class(ctx, "esp_sdr_usb", USBD_SPEED_FS, 1);
+		CLASS_DROP_HS(ctx, "esp_sdr_usb");
 	}
 	if (IS_ENABLED(CONFIG_USBD_MSC_CLASS) && (usb_profile & MULTIAPP_USB_MSC) == 0U) {
 		(void)usbd_unregister_class(ctx, "msc_0", USBD_SPEED_FS, 1);
+		CLASS_DROP_HS(ctx, "msc_0");
 	}
 }
 
@@ -263,8 +300,15 @@ static void sync_text(const struct llext *ext)
 	uintptr_t text = (uintptr_t)ext->mem[LLEXT_MEM_TEXT];
 	size_t size = ext->mem_size[LLEXT_MEM_TEXT];
 
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
 	Cache_WriteBack_Addr(text, size);
 	Cache_Invalidate_Addr(text + IBUS_DBUS_OFFSET, size);
+#else
+	/* One data cache, an instruction cache per core; the fast code needs the fence alone. */
+	Cache_WriteBack_Addr(CACHE_MAP_L1_DCACHE, text, size);
+	Cache_Invalidate_Addr(CACHE_MAP_L1_ICACHE_MASK, text, size);
+	__asm__ volatile("fence.i" ::: "memory");
+#endif
 }
 
 /* Record how far this boot's app got, until the next "multiapp run" or reset. */
@@ -505,6 +549,14 @@ int multiapp_start(const char *name)
 		return -EBUSY;
 	}
 	boot_step(STEP_LOADING);
+#if defined(CONFIG_SETTINGS_FILE)
+	/*
+	 * The settings file on the volume, read-write for the boot (apps/common/calstore.conf, and
+	 * the PHY's calibration as the hal keeps it there): a boot with an app never gives the volume
+	 * to the PC. The files load through this mount.
+	 */
+	(void)multiapp_drive_mount_rw();
+#endif
 	started = k_uptime_get_32();
 	ret = load_modules(app);
 	if (ret != 0) {
@@ -645,6 +697,37 @@ bool multiapp_boot(void)
 	return ret == 0;
 }
 
+#if defined(CONFIG_APP_USB_MSG_HOOK)
+/* ext/usbd_prelude.h: the app's sample_usbd_init_device() and usbd_enable(). */
+static usbd_msg_cb_t app_msg_cb;
+
+struct usbd_context *multiapp_usbd(usbd_msg_cb_t msg_cb)
+{
+	struct usbd_context *ctx;
+
+	/* The app's main() may start before the host's USB does (src/main.c). */
+	for (int ms = 0; (ctx = app_usb_context()) == NULL && ms < USBD_WAIT_MS; ms += 10) {
+		k_msleep(10);
+	}
+	app_msg_cb = msg_cb;
+	return ctx;
+}
+
+int multiapp_usbd_enable(struct usbd_context *ctx)
+{
+	ARG_UNUSED(ctx);
+	/* The host enables the device. */
+	return 0;
+}
+
+void app_usb_msg(struct usbd_context *ctx, const struct usbd_msg *msg)
+{
+	if (app_msg_cb != NULL) {
+		app_msg_cb(ctx, msg);
+	}
+}
+#endif
+
 void multiapp_usb_up(void)
 {
 	if (main_held) {
@@ -752,10 +835,12 @@ static int proxy_cmd(const char *name, const struct shell *sh, size_t argc, char
 /* Every root command the apps register: hello, rfprobe, wpan, osmosdr and stream, link. */
 PROXY(hello);
 PROXY(probe);
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
 PROXY(wpan);
 PROXY(sdr);
 PROXY(link);
 PROXY(ofdm);
+#endif
 #if defined(CONFIG_MULTIAPP_WIFI)
 PROXY(wifi);
 #endif
@@ -817,6 +902,13 @@ static int cmd_run(const struct shell *sh, size_t argc, char **argv)
 	return ret;
 }
 
+/* Where a region's code runs. */
+#if defined(CONFIG_LLEXT_EXEC_ALIAS)
+#define EXEC_ADDR(ext, r) ((void *)((uintptr_t)(ext)->mem[r] + (ext)->mem_exec_offset[r]))
+#else
+#define EXEC_ADDR(ext, r) ((void *)(ext)->mem[r])
+#endif
+
 static int cmd_info(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc);
@@ -837,12 +929,8 @@ static int cmd_info(const struct shell *sh, size_t argc, char **argv)
 		shell_print(sh, "module %s (%s): text %zu at %p, fast %zu at %p, data %zu at %p, "
 			    "bss %zu at %p, rodata %zu",
 			    modules[i].def->name, modules[i].source,
-			    ext->mem_size[LLEXT_MEM_TEXT],
-			    (void *)((uintptr_t)ext->mem[LLEXT_MEM_TEXT] +
-				     ext->mem_exec_offset[LLEXT_MEM_TEXT]),
-			    ext->mem_size[LLEXT_MEM_TEXT_ALT],
-			    (void *)((uintptr_t)ext->mem[LLEXT_MEM_TEXT_ALT] +
-				     ext->mem_exec_offset[LLEXT_MEM_TEXT_ALT]),
+			    ext->mem_size[LLEXT_MEM_TEXT], EXEC_ADDR(ext, LLEXT_MEM_TEXT),
+			    ext->mem_size[LLEXT_MEM_TEXT_ALT], EXEC_ADDR(ext, LLEXT_MEM_TEXT_ALT),
 			    ext->mem_size[LLEXT_MEM_DATA], ext->mem[LLEXT_MEM_DATA],
 			    ext->mem_size[LLEXT_MEM_BSS], ext->mem[LLEXT_MEM_BSS],
 			    ext->mem_size[LLEXT_MEM_RODATA]);

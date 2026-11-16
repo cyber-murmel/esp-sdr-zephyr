@@ -97,11 +97,36 @@ function(multiapp_extension name)
     OUTPUT  ${ext_dir}/${name}.llext
     SOURCES ${EXT_SOURCES} ${info}
   )
-  if(EXT_MODULE)
+  if(CONFIG_RISCV)
+    # A relocatable object: what it defines it resolves itself, and its sections are grouped for
+    # llext (ext/llext_riscv.ld). The options below for shared objects do not apply.
+    set(riscv_ld ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ext/llext_riscv.ld)
+    llext_link_options(${name}_ext -Wl,-T,${riscv_ld})
+    set_property(TARGET ${name}_ext_llext_lib APPEND PROPERTY LINK_DEPENDS ${riscv_ld})
+    if(EXT_VERSION_SCRIPT OR EXT_DEVICES)
+      message(FATAL_ERROR "multiapp: ${name}: VERSION_SCRIPT and DEVICES are not done on RISC-V")
+    endif()
+    if(EXT_LIBS)
+      # Linked whole, then of the archives only what the extension reaches (ext/llext_riscv.ld).
+      # The partial link wants a root symbol for that: an app's multiapp_info, a module's
+      # multiapp_module_up(), which such a module must define.
+      if(EXT_MODULE)
+        set(root multiapp_module_up)
+      else()
+        set(root multiapp_info)
+      endif()
+      string(REPLACE ";" " " libs "${EXT_LIBS}")
+      llext_link_options(${name}_ext "SHELL:-Wl,--whole-archive ${libs} -Wl,--no-whole-archive"
+                         -Wl,--gc-sections -Wl,-u,${root})
+      add_custom_target(${name}_libs DEPENDS ${EXT_LIBS})
+      add_dependencies(${name}_ext_llext_lib ${name}_libs)
+    endif()
+  endif()
+  if(EXT_MODULE AND NOT CONFIG_RISCV)
     # llext looks a global up in the host first: a module's own must stay its own.
     llext_link_options(${name}_ext -Wl,-Bsymbolic)
   endif()
-  if(EXT_LIBS)
+  if(EXT_LIBS AND NOT CONFIG_RISCV)
     string(REPLACE ";" " " libs "${EXT_LIBS}")
     set(blobs_ld ${EXT_BLOBS_LD})
     if(NOT blobs_ld)
@@ -113,17 +138,17 @@ function(multiapp_extension name)
     add_custom_target(${name}_libs DEPENDS ${EXT_LIBS})
     add_dependencies(${name}_ext_llext_lib ${name}_libs)
   endif()
-  if(EXT_VERSION_SCRIPT)
+  if(EXT_VERSION_SCRIPT AND NOT CONFIG_RISCV)
     llext_link_options(${name}_ext -Wl,--gc-sections -Wl,--version-script=${EXT_VERSION_SCRIPT})
     set_property(TARGET ${name}_ext_llext_lib APPEND PROPERTY LINK_DEPENDS ${EXT_VERSION_SCRIPT})
   endif()
-  if(EXT_INTERNAL)
+  if(EXT_INTERNAL AND NOT CONFIG_RISCV)
     # No relaxation: it would turn calls between the two kinds of code into PC-relative ones.
     set(fast_ld ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ext/module_fast.ld)
     llext_link_options(${name}_ext -Wl,--no-relax -Wl,-T,${fast_ld})
     set_property(TARGET ${name}_ext_llext_lib APPEND PROPERTY LINK_DEPENDS ${fast_ld})
   endif()
-  if(EXT_DEVICES)
+  if(EXT_DEVICES AND NOT CONFIG_RISCV)
     set(devices_ld ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/ext/module_devices.ld)
     llext_link_options(${name}_ext -Wl,-T,${devices_ld})
     set_property(TARGET ${name}_ext_llext_lib APPEND PROPERTY LINK_DEPENDS ${devices_ld})
@@ -293,6 +318,11 @@ endmacro()
 # there need dynamic relocations, which the linker refuses in a read-only section; the module's
 # data is in RAM anyway.
 function(multiapp_blob out archive)
+  if(CONFIG_RISCV)
+    # A relocatable object keeps every relocation: the blob goes in as it is.
+    set(${out} ${archive} PARENT_SCOPE)
+    return()
+  endif()
   get_filename_component(file ${archive} NAME)
   set(copy ${ext_dir}/blobs/${file})
   add_custom_command(
@@ -308,6 +338,7 @@ function(multiapp_blob out archive)
   set(${out} ${copy} PARENT_SCOPE)
 endfunction()
 
+if(CONFIG_SOC_SERIES_ESP32S3)
 # The radio, as modules every app that uses it needs: the PHY's blobs and what the HAL builds
 # around them (the ROM calls some of it with the cache off), the library, and the 802.15.4 driver
 # for wpan alone. The host keeps their Kconfig values and the dump banks' linker snippet
@@ -363,6 +394,49 @@ multiapp_extension(link APP ${apps_dir}/link STACK 2048 REQUIRES sdr
   SOURCES ${LINK_SOURCES} ${esp_dsp_fft})
 llext_compile_definitions(link_ext QAM_SPS=CONFIG_APP_SPS)
 
+# Buffers of the apps that never run the receive ring, in its bank 0.
+zephyr_linker_sources(DATA_SECTIONS multiapp_bank0.ld)
+elseif(CONFIG_SOC_SERIES_ESP32S31)
+# The radio as one module: the PHY's blobs and what the HAL builds around them, and the library.
+# On this chip the PHY library's calls into two ROM functions go to wrappers in the library
+# (esp_sdr_s31.c), which only the module holding both can link. The ROM's PHY functions it calls
+# are the host's (esp32s31.rom.phy.ld).
+include(${apps_dir}/../lib/esp_sdr/sources.cmake)
+multiapp_blob(libphy ${ZEPHYR_HAL_ESPRESSIF_MODULE_DIR}/zephyr/blobs/lib/${CONFIG_SOC_SERIES}/libphy.a)
+multiapp_blob(librftest ${apps_dir}/../zephyr/blobs/lib/${CONFIG_SOC_SERIES}/librftest.a)
+# The hal's PHY sources, a section per function: kept only where reached (ext/llext_riscv.ld).
+set_source_files_properties(${ESP_SDR_PHY_SOURCES} PROPERTIES
+  COMPILE_OPTIONS "-ffunction-sections;-fdata-sections")
+multiapp_module(sdr INTERNAL
+  LIBS ${libphy} ${librftest}
+  WRAP phy_set_channel_rfpll_freq phy_write_gain_mem
+  DEFINES ${ESP_SDR_PHY_DEFINES}
+  INCLUDES ${ESP_SDR_INCLUDES}
+  SOURCES ${ESP_SDR_PHY_SOURCES} ${ESP_SDR_SOURCES} ${CMAKE_CURRENT_LIST_DIR}/ext/sdr_up.c)
+zephyr_link_libraries(
+  -T${ZEPHYR_HAL_ESPRESSIF_MODULE_DIR}/components/esp_rom/${CONFIG_SOC_SERIES}/ld/${CONFIG_SOC_SERIES}.rom.phy.ld)
+
+multiapp_extension(hello REQUIRES sdr SOURCES ${CMAKE_CURRENT_LIST_DIR}/ext/hello.c)
+multiapp_extension(capture STACK 4096 REQUIRES sdr SOURCES ${apps_dir}/capture/src/main.c)
+multiapp_extension(rfprobe STACK 2048 REQUIRES sdr SOURCES ${apps_dir}/rfprobe/src/main.c)
+
+# osmosdr_hs: its vendor USB class, osmosdr's, is in the host (src/osmosdr.c), and the host's USB
+# device stands in for the one it brings up standalone (ext/usbd_prelude.h). Internal RAM for its
+# USB batches, which the stream copies at 40 MB/s, and its main()'s stack.
+set(osmosdr ${apps_dir}/osmosdr/src)
+target_sources(app PRIVATE src/osmosdr.c ${osmosdr}/usb_sdr.c)
+set_source_files_properties(src/osmosdr.c ${osmosdr}/usb_sdr.c PROPERTIES
+  INCLUDE_DIRECTORIES ${osmosdr})
+set(hs_conf)
+if(CONFIG_MULTIAPP_OSMOSDR_HS_LOAD_LOG)
+  set(hs_conf APP_CONF ${apps_dir}/osmosdr_hs/loadlog.conf)
+endif()
+multiapp_extension(osmosdr_hs APP ${apps_dir}/osmosdr_hs ${hs_conf} STACK 4096 USB 2 INTERNAL REQUIRES sdr # MULTIAPP_USB_VENDOR
+  PRELUDE ${CMAKE_CURRENT_LIST_DIR}/ext/usbd_prelude.h
+  INCLUDES ${osmosdr} ${apps_dir}/common/include ${ZEPHYR_BASE}/samples/subsys/usb/common
+  SOURCES ${apps_dir}/osmosdr_hs/src/main.c ${apps_dir}/common/src/esdr_cal.c)
+endif()
+
 # The stock Wi-Fi driver, and a small app to try it. The boot's interface is the host's.
 if(CONFIG_MULTIAPP_WIFI)
   target_sources(app PRIVATE src/wifi_netif.c)
@@ -375,9 +449,6 @@ endif()
 if(CONFIG_MULTIAPP_MICROPYTHON)
   include(${CMAKE_CURRENT_LIST_DIR}/micropython.cmake)
 endif()
-
-# Buffers of the apps that never run the receive ring, in its bank 0.
-zephyr_linker_sources(DATA_SECTIONS multiapp_bank0.ld)
 
 # The FAT volume with the extensions' files (src/drive.c), for west dfu --storage.
 dt_nodelabel(fat_node NODELABEL fat_partition)
@@ -437,6 +508,10 @@ set(module_args)
 foreach(name ${ext_modules})
   list(APPEND module_args --module ${name})
 endforeach()
+if(CONFIG_SOC_SERIES_ESP32S31)
+  # Its EXT_RAM_BSS_ATTR places nothing in PSRAM (esp_sdr_place.h).
+  list(APPEND module_args --psram-section .ext_ram.bss)
+endif()
 add_custom_command(
   OUTPUT ${exports} ${logs} ${objects}
   COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/exports.py

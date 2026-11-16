@@ -31,6 +31,17 @@
   flash_before: true
   flash_timeout: 120
 
+# The ESP32-S31 CoreBoard's id is its USB serial number as the S3's: multiapp's
+# (sample.esp_sdr.multiapp.s31.hil), on its USB HS port J4 through a cable with VBUS cut.
+- id: 1C2904D19880
+  platform: esp32s31_function_coreboard/esp32s31/hpcore
+  product: ESP-SDR
+  runner: esp32
+  serial: /tmp/esp-sdr-tty/1C2904D19880
+  connected: true
+  flash_before: true
+  flash_timeout: 300
+
 - id: A4CB8FD1C700
   platform: xiao_esp32s3/esp32s3/procpu
   product: ESP-SDR

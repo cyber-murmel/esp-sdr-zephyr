@@ -202,9 +202,25 @@
 #define Z_PL_DA_ESP_SDR_DEFAULT
 #define Z_PL_DA_ESP_SDR_HIGH         ESP_SDR_HIGH_RAM
 #define Z_PL_DA_ESP_SDR_PSRAM        EXT_RAM_BSS_ATTR
-#define Z_PL_DA_ESP_SDR_PSRAM_FILE   __attribute__((section(".ext_ram.bss")))
+#define Z_PL_DA_ESP_SDR_PSRAM_FILE   ESP_SDR_PSRAM_FILE_ATTR
 #define Z_PL_DA_ESP_SDR_NOINIT       __noinit
-#define Z_PL_DA_ESP_SDR_PSRAM_NOINIT EXT_RAM_NOINIT_ATTR
+#define Z_PL_DA_ESP_SDR_PSRAM_NOINIT ESP_SDR_PSRAM_NOINIT_ATTR
+
+/*
+ * The PSRAM sections by name, where the HAL's attributes place nothing in PSRAM. The S31's linker
+ * script keeps .ext_ram_noinit.* there, but its EXT_RAM_NOINIT_ATTR is internal .noinit. A prelude
+ * defines these first for code built otherwise (multiapp/ext.h, for extensions).
+ */
+#ifndef ESP_SDR_PSRAM_FILE_ATTR
+#define ESP_SDR_PSRAM_FILE_ATTR __attribute__((section(".ext_ram.bss")))
+#endif
+#ifndef ESP_SDR_PSRAM_NOINIT_ATTR
+#if defined(CONFIG_SOC_SERIES_ESP32S31)
+#define ESP_SDR_PSRAM_NOINIT_ATTR _SECTION_ATTR_IMPL(".ext_ram_noinit", __COUNTER__)
+#else
+#define ESP_SDR_PSRAM_NOINIT_ATTR EXT_RAM_NOINIT_ATTR
+#endif
+#endif
 #define Z_PL_DA_Z_PL_NORULE
 #define Z_PL_DA_ESP_SDR_IRAM
 #define Z_PL_DA_ESP_SDR_HOTBLOCK

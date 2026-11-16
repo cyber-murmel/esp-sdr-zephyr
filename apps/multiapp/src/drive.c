@@ -87,6 +87,26 @@ static ssize_t read_file(struct fs_file_t *f, uint8_t *buf, size_t max, const ui
 	}
 }
 
+#if defined(CONFIG_SETTINGS_FILE)
+/* Mounted read-write for the boot's app: the reads below use that mount. */
+static bool mounted_rw;
+
+int multiapp_drive_mount_rw(void)
+{
+	int ret;
+
+	fat_mount.flags = FS_MOUNT_FLAG_NO_FORMAT;
+	ret = fs_mount(&fat_mount);
+	if (ret != 0) {
+		fat_mount.flags = FS_MOUNT_FLAG_READ_ONLY | FS_MOUNT_FLAG_NO_FORMAT;
+		LOG_WRN("volume not mounted read-write (%d)", ret);
+		return ret;
+	}
+	mounted_rw = true;
+	return 0;
+}
+#endif
+
 int multiapp_drive_scan(void)
 {
 	char path[48];
@@ -174,10 +194,19 @@ ssize_t multiapp_drive_read(const char *name, uint8_t *buf, size_t max)
 	char path[48];
 	ssize_t ret;
 
+#if defined(CONFIG_SETTINGS_FILE)
+	if (!mounted_rw) {
+		ret = fs_mount(&fat_mount);
+		if (ret != 0) {
+			return ret;
+		}
+	}
+#else
 	ret = fs_mount(&fat_mount);
 	if (ret != 0) {
 		return ret;
 	}
+#endif
 	fs_file_t_init(&f);
 	file_path(path, sizeof(path), name);
 	ret = fs_open(&f, path, FS_O_READ);
@@ -185,7 +214,13 @@ ssize_t multiapp_drive_read(const char *name, uint8_t *buf, size_t max)
 		ret = read_file(&f, buf, max, NULL, NULL);
 		(void)fs_close(&f);
 	}
+#if defined(CONFIG_SETTINGS_FILE)
+	if (!mounted_rw) {
+		(void)fs_unmount(&fat_mount);
+	}
+#else
 	(void)fs_unmount(&fat_mount);
+#endif
 	return ret;
 }
 

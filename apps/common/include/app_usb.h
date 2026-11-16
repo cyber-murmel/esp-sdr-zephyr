@@ -52,4 +52,15 @@ void app_usb_attach(void);
 /* The USB thread's stack use in the last DFU download (it writes the flash), or false. */
 bool app_usb_dfu_stack(size_t *used, size_t *size);
 
+/* The application's USB device once it is enabled, else NULL. */
+struct usbd_context *app_usb_context(void);
+
+struct usbd_msg;
+
+/*
+ * With CONFIG_APP_USB_MSG_HOOK, every message of the application's USB device, after the handling
+ * here: for code that uses the device without owning it (multiapp's extensions).
+ */
+void app_usb_msg(struct usbd_context *ctx, const struct usbd_msg *msg);
+
 #endif /* APP_USB_H_ */

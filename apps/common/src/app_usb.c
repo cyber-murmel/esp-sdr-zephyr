@@ -235,6 +235,9 @@ static void msg_cb(struct usbd_context *const ctx, const struct usbd_msg *const 
 		k_work_schedule(&reboot_work, REBOOT_DELAY);
 	}
 #endif
+	if (IS_ENABLED(CONFIG_APP_USB_MSG_HOOK)) {
+		app_usb_msg(ctx, msg);
+	}
 }
 
 #if defined(CONFIG_APP_USB_DFU)
@@ -325,6 +328,11 @@ static void start_handler(struct k_work *work)
 	}
 	usb_ctx = ctx;
 	LOG_INF("USB device enabled");
+}
+
+struct usbd_context *app_usb_context(void)
+{
+	return usb_ctx;
 }
 
 void app_usb_detach(void)

@@ -52,6 +52,7 @@ static int cmd_hello(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+#if defined(CONFIG_SMP)
 /*
  * Atomic increments from both CPUs at once, on a counter in the extension's
  * data (PSRAM) and on one on the shell's stack (internal RAM).
@@ -96,6 +97,7 @@ static int cmd_atomic(const struct shell *sh, size_t argc, char **argv)
 		    2 * ATOMIC_ROUNDS);
 	return 0;
 }
+#endif
 
 #if defined(CONFIG_MULTIAPP_MODULE_TESTS)
 /* Calls into hellolib (PSRAM), which calls hellofast (internal RAM), and where each runs. */
@@ -128,7 +130,9 @@ static int cmd_phy(const struct shell *sh, size_t argc, char **argv)
 }
 
 SHELL_STATIC_SUBCMD_SET_CREATE(hello_cmds,
+#if defined(CONFIG_SMP)
 	SHELL_CMD(atomic, NULL, "atomic increments from both CPUs", cmd_atomic),
+#endif
 #if defined(CONFIG_MULTIAPP_MODULE_TESTS)
 	SHELL_CMD(mod, NULL, "calls across modules, PSRAM and internal RAM", cmd_mod),
 #endif

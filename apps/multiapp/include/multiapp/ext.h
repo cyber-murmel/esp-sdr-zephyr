@@ -122,6 +122,36 @@
 #define EXT_RAM_BSS_ATTR _SECTION_ATTR_IMPL(".bss.ext_ram", __COUNTER__)
 #undef EXT_RAM_NOINIT_ATTR
 #define EXT_RAM_NOINIT_ATTR _SECTION_ATTR_IMPL(".bss.ext_ram_noinit", __COUNTER__)
+#if defined(CONFIG_SOC_SERIES_ESP32S31)
+/* The PSRAM sections by name (esp_sdr_place.h), where those attributes place nothing in PSRAM. */
+#undef ESP_SDR_PSRAM_FILE_ATTR
+#define ESP_SDR_PSRAM_FILE_ATTR _SECTION_ATTR_IMPL(".bss.ext_ram", __COUNTER__)
+#undef ESP_SDR_PSRAM_NOINIT_ATTR
+#define ESP_SDR_PSRAM_NOINIT_ATTR _SECTION_ATTR_IMPL(".bss.ext_ram_noinit", __COUNTER__)
+#endif
+
+#if defined(CONFIG_SETTINGS)
+/* The settings subsystem's list of static handlers cannot take one: registered as it loads. */
+#include <zephyr/settings/settings.h>
+#undef SETTINGS_STATIC_HANDLER_DEFINE_WITH_CPRIO
+#define SETTINGS_STATIC_HANDLER_DEFINE_WITH_CPRIO(_hname, _tree, _get, _set, _commit, _export,     \
+						  _cprio)                                          \
+	static struct settings_handler UTIL_CAT(multiapp_settings_, _hname) = {                    \
+		.name = _tree,                                                                     \
+		.h_get = _get,                                                                     \
+		.h_set = _set,                                                                     \
+		.h_commit = _commit,                                                               \
+		.h_export = _export,                                                               \
+	};                                                                                         \
+	static void __attribute__((constructor)) UTIL_CAT(multiapp_settings_init_, _hname)(void)  \
+	{                                                                                          \
+		/* Its first call empties the list of dynamic handlers: before registering. */   \
+		if (settings_subsys_init() == 0) {                                                 \
+			(void)settings_register_with_cprio(&UTIL_CAT(multiapp_settings_, _hname),  \
+							   _cprio);                                \
+		}                                                                                  \
+	}
+#endif
 
 /* The kernel's list of static threads cannot take one: started as the extension loads. */
 #undef K_THREAD_DEFINE

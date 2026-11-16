@@ -74,6 +74,28 @@ the loaded app's origin, sizes and commands; ``multiapp crash`` what ended the
 previous boot (fatal error, watchdog, how far a boot into an app got) and the
 USB thread's stack use in the last DFU download.
 
+On the ESP32-S31
+****************
+
+On the ESP32-S31-Function-CoreBoard-1 the host boots into ``osmosdr_hs``, the SDR on the board's
+USB 2.0 HS port J4 (``CONFIG_MULTIAPP_AUTOSTART`` in the board's configuration file).
+``hello``, ``capture`` and ``rfprobe`` are the other apps, and the radio is one module,
+``sdr``. J4's VBUS is the board's own: connect it with VBUS cut
+(``apps/osmosdr_hs/README.rst``). The shell is on a CDC-ACM port of J4; the console and the log
+stay on the UART port.
+
+.. code-block:: console
+
+   west build -d build/multiapp-s31 --sysbuild -b esp32s31_function_coreboard/esp32s31/hpcore esp-sdr-zephyr/apps/multiapp
+   west flash -d build/multiapp-s31 --esp-device /dev/serial/by-id/usb-Silicon_Labs_CP2102N_*   # first install, UART
+   west dfu --storage -d build/multiapp-s31    # the apps' files, over J4
+
+Later updates go over J4 with ``west dfu``, as on the S3 (``west dfu --esptool`` is the S3's).
+The extensions are RISC-V relocatable objects and their code runs where llext writes it, in
+PSRAM; ``osmosdr_hs`` keeps its USB batches in internal RAM (``doc/multiapp.md``, "The
+ESP32-S31"). Host tools and the SoapySDR module find its stream as they find the standalone
+app's (``esdr_usb -s <serial> info``).
+
 Apps as files
 *************
 
@@ -189,3 +211,6 @@ into ``wifitest`` and scans, so it needs an access point in range.
 ``sample.esp_sdr.multiapp.micropython.hil`` boots into ``micropython`` from its file and checks it through
 its REPL (``pytest/test_micropython.py``): the modules it loaded, its heap, the volume, a gapless ring, a
 soft reset and, on a board with a display, a GUI app drawing with the ring gapless.
+``sample.esp_sdr.multiapp.s31.hil`` checks the ESP32-S31 CoreBoard in its own configuration
+(``pytest/test_multiapp_s31.py``): the files, the boot into ``osmosdr_hs`` from its file, the
+radio module's placement and a clean reset.

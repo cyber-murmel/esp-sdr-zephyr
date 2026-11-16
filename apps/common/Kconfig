@@ -89,6 +89,12 @@ config APP_LIVENESS_TIMEOUT_MS
 	  The ESP32 driver counts milliseconds as 0.5 ms ticks: 4000 resets
 	  after about 2 s without feeding.
 
+config APP_USB_MSG_HOOK
+	bool "Pass the USB device's messages to app_usb_msg()"
+	help
+	  For code that uses the application's USB device without owning it:
+	  multiapp's extensions, which bring their USB up themselves standalone.
+
 config APP_PROF_SHELL
 	bool "Shell command prof (esp_sdr_prof.h)"
 	default y

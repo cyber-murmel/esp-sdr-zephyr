@@ -87,6 +87,8 @@ int multiapp_drive_status(void);
 int multiapp_drive_file(const char *name, ssize_t *size, bool *same);
 /* Hand the volume to the PC over USB (a boot without an app): ready the disk. */
 int multiapp_drive_export(void);
+/* Mount the volume read-write for the boot's app, its files read through it: 0 or -errno. */
+int multiapp_drive_mount_rw(void);
 
 /* The USB drives go through the disks the boot's app registers (src/drive.c). */
 void multiapp_drive_app_disks(void);

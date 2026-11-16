@@ -14,6 +14,7 @@ config MULTIAPP_DATA_HEAP_KB
 
 config MULTIAPP_MODULE_HEAP_SIZE
 	int "Internal RAM for the modules that run from it, bytes"
+	default 8192 if SOC_SERIES_ESP32S31
 	default 31744
 	help
 	  IRAM_ATTR code, data and bss of the modules built INTERNAL: below ring
@@ -22,6 +23,8 @@ config MULTIAPP_MODULE_HEAP_SIZE
 
 config MULTIAPP_MODULE_HIGH_HEAP_SIZE
 	int "Bytes of the high region for a module's bss"
+	# The ESP32-S31 has no high region: a token heap.
+	default 256 if SOC_SERIES_ESP32S31
 	default 14528
 	help
 	  The rest of the high region next to the area, for the bss of a module
@@ -79,6 +82,13 @@ config MULTIAPP_MICROPYTHON_GUI
 	  devicetree must have the board's peripherals; the host has no driver
 	  for them.
 
+config MULTIAPP_OSMOSDR_HS_LOAD_LOG
+	bool "osmosdr_hs logs the CPU its stream leaves (a bench)"
+	depends on SOC_SERIES_ESP32S31
+	help
+	  osmosdr_hs with its loadlog.conf, as its standalone bench build: a low
+	  priority thread counts what it gets, and the log has it every 10 s.
+
 config MULTIAPP_EMBEDDED
 	bool "Apps built into the image too"
 	default y
@@ -94,6 +104,8 @@ config MULTIAPP_FILE_MAX_KB
 
 config MULTIAPP_AREA_SIZE
 	int "Bytes of internal RAM the apps share, one per boot"
+	# No app on the ESP32-S31 has buffers in the area.
+	default 16 if SOC_SERIES_ESP32S31
 	default 24128
 	help
 	  In the high region: the buffers an app defines with

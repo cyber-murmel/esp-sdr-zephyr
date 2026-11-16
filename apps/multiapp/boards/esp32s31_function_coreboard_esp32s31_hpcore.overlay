@@ -1,0 +1,29 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * The ESP32-S31-Function-CoreBoard-1's USB 2.0 OTG HS port, its USB-A socket J4: the shell on a
+ * CDC-ACM port, the drive, DFU and osmosdr_hs's stream. Its VBUS is driven whenever the board has
+ * power: connect it with VBUS cut (apps/osmosdr_hs/README.rst). The console stays on UART0.
+ */
+
+/ {
+	chosen {
+		zephyr,shell-uart = &cdc_acm_uart0;
+	};
+};
+
+zephyr_udc0: &usb_otg {
+	status = "okay";
+
+	/*
+	 * A FIFO per IN endpoint, in the order the classes take them: CDC-ACM's notification (1) and
+	 * data (2), then osmosdr_hs's stream or the drive (3). The stream needs at least 256 words
+	 * (apps/osmosdr_hs's overlay); 608 of the controller's 896 are left after RX and EP0.
+	 */
+	g-tx-fifo-size = <16 128 400 16 16 16 16>;
+
+	cdc_acm_uart0: cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+		label = "ESP-SDR multiapp shell";
+	};
+};
