@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-if(CONFIG_ESP_SDR)
+if(CONFIG_ESP_SDR OR CONFIG_ZIGBEE_ZNP)
   zephyr_include_directories(include)
 endif()
 
