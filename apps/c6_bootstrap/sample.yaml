@@ -1,0 +1,12 @@
+sample:
+  name: ESP-SDR ESP32-C6 bootstrap
+  description: >-
+    The ESP32-P4-Function-EV-Board's ESP32-P4 installs an ESP32-C6 image through the C6's
+    esp-hosted-mcu firmware (its OTA requests over SDIO)
+common:
+  tags: esp-sdr
+  platform_allow:
+    - esp32p4_function_ev_board/esp32p4/hpcore
+tests:
+  esp_sdr.c6_bootstrap:
+    build_only: true

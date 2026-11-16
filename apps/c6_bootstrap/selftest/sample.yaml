@@ -1,0 +1,12 @@
+sample:
+  name: ESP-SDR ESP32-C6 boot self-test
+  description: >-
+    Proves that the ESP-IDF bootloader of the ESP32-P4-Function-EV-Board's ESP32-C6 starts a
+    Zephyr image, then hands the C6 back to the firmware it ran before
+common:
+  tags: esp-sdr
+  platform_allow:
+    - esp32p4_function_ev_board/esp32c6/hpcore
+tests:
+  esp_sdr.c6_selftest:
+    build_only: true

@@ -1,0 +1,90 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * The ESP32-C6's ESP-Prog connector (CHIP_PU, U0TXD, U0RXD, GPIO9) wired to ESP32-P4 GPIO46,
+ * 48, 52 and 53, which of them to which unknown: a receiver on each shows which one carries the
+ * C6's console (its ROM, its bootloader, the installed image).
+ */
+
+#include <zephyr/dt-bindings/pinctrl/esp32p4-pinctrl.h>
+
+/ {
+	/* Early boards (V1.0B, v1.4) have a USB-UART on UART0, no USB-Serial-JTAG connector. */
+	chosen {
+		zephyr,console = &uart0;
+		zephyr,shell-uart = &uart0;
+	};
+
+	zephyr,user {
+		c6-console-uarts = <&uart1 &uart2 &uart3 &uart4>;
+	};
+};
+
+&pinctrl {
+	c6_rx46: c6_rx46 {
+		group1 {
+			pinmux = <UART1_RX_GPIO46>;
+			bias-pull-up;
+		};
+	};
+
+	c6_rx48: c6_rx48 {
+		group1 {
+			pinmux = <UART2_RX_GPIO48>;
+			bias-pull-up;
+		};
+	};
+
+	c6_rx52: c6_rx52 {
+		group1 {
+			pinmux = <UART3_RX_GPIO52>;
+			bias-pull-up;
+		};
+	};
+
+	c6_rx53: c6_rx53 {
+		group1 {
+			pinmux = <UART4_RX_GPIO53>;
+			bias-pull-up;
+		};
+	};
+};
+
+&uart1 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&c6_rx46>;
+	pinctrl-names = "default";
+};
+
+&uart2 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&c6_rx48>;
+	pinctrl-names = "default";
+};
+
+&uart3 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&c6_rx52>;
+	pinctrl-names = "default";
+};
+
+&uart4 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&c6_rx53>;
+	pinctrl-names = "default";
+};
+
+/* Only the C6's slot: the microSD slot shares the controller. */
+&sdhc0 {
+	status = "disabled";
+};
+
+/* Revision v0.0 P4s time out changing the card clock after initialization. */
+&sdhc1 {
+	max-bus-freq = <400000>;
+	bus-width = <1>;
+};
