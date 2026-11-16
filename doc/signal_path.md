@@ -70,7 +70,8 @@ RF out`"]
 - RX: the capture engine writes raw I/Q words directly into the selected DRAM bank; the CPU does
   not touch samples until `esp_sdr_rx_capture_iq()` reads that bank after the burst completes,
   or `esp_sdr_rx_capture_decimated()` / `_folded()` (`CONFIG_ESP_SDR_RX_DECIM`), selected per burst
-  by `rx_mode`.
+  by `rx_mode`. `esp_sdr_rx_capture_with()` hands the raw words to the caller's function, still
+  under the lock.
 - TX: the network thread writes samples into a PSRAM ring (`esp_sdr_tx_dac.c`). The leading
   filler stages each block's input in internal RAM, interpolates it (S3 vector unit, or the C
   fallback split across both cores) into the idle one of two 64 KiB dump banks, and flips the

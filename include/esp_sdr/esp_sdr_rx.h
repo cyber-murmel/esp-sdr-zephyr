@@ -138,6 +138,26 @@ int esp_sdr_rx_capture(enum esp_sdr_rate rate, size_t count, struct esp_sdr_rx_b
 int esp_sdr_rx_capture_iq(enum esp_sdr_rate rate, size_t count, struct esp_sdr_iq16 *out,
 			  uint64_t *first_ns);
 
+/** Takes a burst's raw words (esp_sdr_rx_burst.words) for esp_sdr_rx_capture_with(). */
+typedef void (*esp_sdr_rx_words_fn_t)(void *user, const uint32_t *words, size_t count);
+
+/**
+ * @brief Capture one burst and hand its raw words to @p fn under the radio lock.
+ *
+ * For work straight on the bank's words that other radio users must not overwrite meanwhile, as
+ * esp_sdr_rx_capture_iq() converts them. @p fn runs in the calling thread, after the capture; it
+ * must not call into esp_sdr, and every other thread that wants the radio waits for it.
+ *
+ * @param rate Native sample rate.
+ * @param count Complex samples, ESP_SDR_SAMPLES_MIN to ESP_SDR_SAMPLES_MAX.
+ * @param fn Called once with @\p user, the words and @p count; the words are good for the call.
+ * @param user Passed to @p fn.
+ * @param first_ns As for esp_sdr_rx_capture_iq().
+ * @return Like esp_sdr_rx_capture(); @p fn runs only on success.
+ */
+int esp_sdr_rx_capture_with(enum esp_sdr_rate rate, size_t count, esp_sdr_rx_words_fn_t fn,
+			    void *user, uint64_t *first_ns);
+
 #if defined(CONFIG_SOC_SERIES_ESP32S31) || defined(__DOXYGEN__)
 /** What a DC calibration measured; means in 1/256 of an 8-bit step, I then Q. */
 struct esp_sdr_rx_dc {

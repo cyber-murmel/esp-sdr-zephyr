@@ -519,8 +519,8 @@ int esp_sdr_rx_dc_calibrate(struct esp_sdr_rx_dc *result)
 }
 #endif /* CONFIG_SOC_SERIES_ESP32S31 */
 
-int esp_sdr_rx_capture_iq(enum esp_sdr_rate rate, size_t count, struct esp_sdr_iq16 *out,
-			  uint64_t *first_ns)
+int esp_sdr_rx_capture_with(enum esp_sdr_rate rate, size_t count, esp_sdr_rx_words_fn_t fn,
+			    void *user, uint64_t *first_ns)
 {
 	uint32_t usage, elapsed;
 	uint64_t t0;
@@ -534,17 +534,28 @@ int esp_sdr_rx_capture_iq(enum esp_sdr_rate rate, size_t count, struct esp_sdr_i
 	ret = esp_sdr_ready ? capture_locked(rate, count, __esp_sdr_bank_start, usage, &elapsed, &t0)
 			: -EAGAIN;
 	if (ret == 0) {
-		const uint32_t *w = __esp_sdr_bank_start + DUMP_FIRST_WORD;
-
-		/* Still under the lock: a transmit session or capture would reuse the bank. */
-		for (size_t j = 0; j < count; j++) {
-			out[j].i = esp_sdr_rx_i(w[j]);
-			out[j].q = esp_sdr_rx_q(w[j]);
-		}
+		/* Still under the lock: another thread's capture or transmit reuses the bank. */
+		fn(user, __esp_sdr_bank_start + DUMP_FIRST_WORD, count);
 		*first_ns = k_cyc_to_ns_floor64(t0);
 	}
 	k_mutex_unlock(&esp_sdr_lock);
 	return ret;
+}
+
+static void words_to_iq(void *user, const uint32_t *w, size_t count)
+{
+	struct esp_sdr_iq16 *out = user;
+
+	for (size_t j = 0; j < count; j++) {
+		out[j].i = esp_sdr_rx_i(w[j]);
+		out[j].q = esp_sdr_rx_q(w[j]);
+	}
+}
+
+int esp_sdr_rx_capture_iq(enum esp_sdr_rate rate, size_t count, struct esp_sdr_iq16 *out,
+			  uint64_t *first_ns)
+{
+	return esp_sdr_rx_capture_with(rate, count, words_to_iq, out, first_ns);
 }
 
 int esp_sdr_rx_capture_bank(enum esp_sdr_rate rate, size_t count, int bank,
