@@ -16,8 +16,8 @@
  *   and the tokens start again, so that a host enumerating anew finds no chain of the last
  *   session in the way.
  *
- * Nothing here takes interrupts: the paced receiver runs with them locked and pumps between
- * samples.
+ * Nothing here takes interrupts: the paced and gapless receivers run with them locked and pump
+ * between samples, so what they call lives in IRAM (a flash cache miss would stall them).
  */
 
 #include <string.h>
@@ -25,6 +25,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/util.h>
 
+#include <esp_attr.h>
 #include <hal/gpio_ll.h>
 #include <hal/sdio_slave_ll.h>
 #include <soc/gpio_struct.h>
@@ -124,7 +125,7 @@ void sdio_link_init(void)
 }
 
 /* An emptied receive buffer back to the tail of the DMA's list, with its token. */
-static void rx_recycle(uint32_t k)
+static IRAM_ATTR void rx_recycle(uint32_t k)
 {
 	sdio_slave_ll_desc_t *d = &rx_desc[k];
 
@@ -139,7 +140,7 @@ static void rx_recycle(uint32_t k)
 }
 
 /* The host restarted: drop what it will not read, start the counters again. */
-static void host_restart(void)
+static IRAM_ATTR void host_restart(void)
 {
 	sdio_slave_ll_send_stop(slc);
 	sdio_slave_ll_send_reset(slc);
@@ -161,7 +162,7 @@ static void host_restart(void)
 	}
 }
 
-bool sdio_link_readable(void)
+IRAM_ATTR bool sdio_link_readable(void)
 {
 	sdio_slave_ll_slvint_t slv;
 
@@ -184,12 +185,12 @@ bool sdio_link_readable(void)
 	}
 }
 
-uint8_t sdio_link_getc(void)
+IRAM_ATTR uint8_t sdio_link_getc(void)
 {
 	return rx_buf[rx_cur][rx_off++];
 }
 
-bool sdio_link_queue(const uint8_t *p, size_t n, bool block)
+IRAM_ATTR bool sdio_link_queue(const uint8_t *p, size_t n, bool block)
 {
 	sdio_slave_ll_desc_t *d;
 
@@ -207,7 +208,7 @@ bool sdio_link_queue(const uint8_t *p, size_t n, bool block)
 	return true;
 }
 
-void sdio_link_pump(void)
+IRAM_ATTR void sdio_link_pump(void)
 {
 	if (tx.end != tx.start) {
 		if (!sdio_slave_ll_send_done(slc)) {
@@ -245,12 +246,12 @@ void sdio_link_pump(void)
 	tx.end = stop;
 }
 
-uint32_t sdio_link_pending(void)
+IRAM_ATTR uint32_t sdio_link_pending(void)
 {
 	return tx.head - tx.start;
 }
 
-uint32_t sdio_link_blocks_done(void)
+IRAM_ATTR uint32_t sdio_link_blocks_done(void)
 {
 	return tx.blocks_done;
 }
