@@ -43,6 +43,10 @@ jobs:
             platforms: -p why2025_badge/esp32c6/hpcore -p why2025_badge/esp32p4/hpcore
             toolchains: riscv64-zephyr-elf
             twister-args: --build-only
+          - name: Build esp32p4_function_ev_board
+            platforms: -p esp32p4_function_ev_board/esp32c6/hpcore -p esp32p4_function_ev_board/esp32p4/hpcore
+            toolchains: riscv64-zephyr-elf
+            twister-args: --build-only
           - name: Build waveshare_esp32c5_zero
             platforms: -p waveshare_esp32c5_zero/esp32c5/hpcore
             toolchains: riscv64-zephyr-elf
