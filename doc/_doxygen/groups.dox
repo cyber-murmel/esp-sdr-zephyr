@@ -58,6 +58,13 @@
  */
 
 /**
+ * @defgroup esp_sdr_gain_guard Clip guard
+ * @ingroup esp_sdr
+ * @brief The receive gain down a level when packets reach full scale, up again after a quiet
+ * hold (esp_sdr_gain_guard.h, CONFIG_ESP_SDR_GAIN_GUARD).
+ */
+
+/**
  * @defgroup esp_sdr_diag Diagnostic-bus ring
  * @ingroup esp_sdr
  * @brief Gapless 40 MS/s receive through the modem diagnostic bus and PARLIO, ESP32-C5

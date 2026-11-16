@@ -287,6 +287,14 @@ config ESP_SDR_CPU_PROF_SAMPLES
 	  default holds 8.4 s. apps/common's "prof dump" prints 54 bytes a
 	  sample: 7 MB for the default, 11 s over CDC-ACM.
 
+config ESP_SDR_GAIN_GUARD
+	bool "Clip guard for the receive gain"
+	help
+	  esp_sdr_gain_guard.h: steps an app's receive gain down a level when
+	  packets reach full scale and up again after a quiet hold, which
+	  grows when the source comes in bursts. The app keeps its levels'
+	  gains and counts the packets.
+
 config ESP_SDR_HOT_TEXT
 	bool "Hot flash code as one block at a fixed instruction cache position"
 	depends on SOC_SERIES_ESP32S3
