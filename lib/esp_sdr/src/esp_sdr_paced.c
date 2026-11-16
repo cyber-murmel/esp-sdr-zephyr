@@ -14,6 +14,7 @@
 #include <zephyr/sys/sys_io.h>
 #include <zephyr/sys/util.h>
 
+#include <esp_attr.h>
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_dsp.h>
 #include <esp_sdr/esp_sdr_paced.h>
@@ -62,12 +63,80 @@ static inline void note_late(uint32_t late, uint32_t step)
 static struct {
 	uint32_t step, target, rearm_every, left, ctrl1;
 	int32_t pi, pq;
+	/* The DC of one sample (dc_measure(), then dc_track()), and the raw sums since. */
+	int32_t oi, oq;
+	int32_t acc_i, acc_q;
+	uint32_t acc_n;
 } rxp;
 
 static void iqe_start(void)
 {
 	sys_write32(rxp.ctrl1 | IQE_CTRL1_EN, IQE_CTRL1_REG);
 	sys_write32(rxp.ctrl1 | IQE_CTRL1_EN | IQE_CTRL1_START, IQE_CTRL1_REG);
+}
+
+/*
+ * Receive DC (CONFIG_ESP_SDR_RX_DC_REMOVE): the receive chain leaves a few ADC steps of DC,
+ * some 45 dB over the noise floor at the stream's centre. At a stream's start the estimator
+ * sums 32768 inputs for their mean; each sample, a sum of 80 MHz / rate inputs, then has that
+ * many means taken off. Measured once per stream: a gain change starts a new one.
+ */
+int32_t esp_sdr_rx_dc_mean[2];
+
+/*
+ * The DC drifts as the chain settles (some 10 steps of an 8-bit item over the first
+ * 100 ms at 2 MS/s): the offset follows the mean of the raw samples, 1 / 2^DC_TRACK_SHIFT of
+ * the way each DC_TRACK_N samples or fill call (time constant 2^16 samples: 33 ms at 2 MS/s,
+ * a DC notch a few Hz wide). Faster tracking (1/16) followed the signal itself: a burst moved
+ * the offset, the noise rose some 20 dB at 250 kS/s and a line showed at half the rate.
+ */
+#define DC_TRACK_SHIFT 8
+#define DC_TRACK_N     256U
+
+static void dc_track(void)
+{
+	if (IS_ENABLED(CONFIG_ESP_SDR_RX_DC_REMOVE) && rxp.acc_n != 0U) {
+		rxp.oi += (rxp.acc_i / (int32_t)rxp.acc_n - rxp.oi) / (1 << DC_TRACK_SHIFT);
+		rxp.oq += (rxp.acc_q / (int32_t)rxp.acc_n - rxp.oq) / (1 << DC_TRACK_SHIFT);
+	}
+	rxp.acc_i = 0;
+	rxp.acc_q = 0;
+	rxp.acc_n = 0;
+}
+
+static void dc_measure(uint32_t inputs)
+{
+	uint32_t ctrl1 = (sys_read32(IQE_CTRL1_REG) &
+			  ~(IQE_CTRL1_SRC | IQE_CTRL1_COUNT | IQE_CTRL1_START | IQE_CTRL1_EN)) |
+			 FIELD_PREP(IQE_CTRL1_SRC, 2) | FIELD_PREP(IQE_CTRL1_COUNT, IQE_COUNT_MAX - 1U);
+	uint32_t c0 = sys_read32(IQE_CTRL0_REG);
+	int64_t si, sq;
+
+	rxp.oi = 0;
+	rxp.oq = 0;
+	rxp.acc_i = 0;
+	rxp.acc_q = 0;
+	rxp.acc_n = 0;
+	if (!IS_ENABLED(CONFIG_ESP_SDR_RX_DC_REMOVE)) {
+		return;
+	}
+	/* The chain settles after the retune esp_sdr_rx_prepare() may have done. */
+	k_busy_wait(2000);
+	sys_write32((c0 & ~IQE_CTRL0_MODE) | FIELD_PREP(IQE_CTRL0_MODE, 1), IQE_CTRL0_REG);
+	sys_write32(ctrl1, IQE_CTRL1_REG);
+	sys_write32(ctrl1 | IQE_CTRL1_EN, IQE_CTRL1_REG);
+	k_busy_wait(1);
+	sys_write32(ctrl1 | IQE_CTRL1_EN | IQE_CTRL1_START, IQE_CTRL1_REG);
+	/* 32768 inputs at 80 MHz: 410 us. */
+	k_busy_wait(500);
+	si = (int32_t)sys_read32(IQE_SUM_I_REG) >> 6;
+	sq = (int32_t)sys_read32(IQE_SUM_Q_REG) >> 6;
+	sys_write32(ctrl1, IQE_CTRL1_REG);
+	/* Thousandths of an ADC step, and per sample. */
+	esp_sdr_rx_dc_mean[0] = (int32_t)(si * 1000 / IQE_COUNT_MAX);
+	esp_sdr_rx_dc_mean[1] = (int32_t)(sq * 1000 / IQE_COUNT_MAX);
+	rxp.oi = (int32_t)((si * inputs + IQE_COUNT_MAX / 2) / IQE_COUNT_MAX);
+	rxp.oq = (int32_t)((sq * inputs + IQE_COUNT_MAX / 2) / IQE_COUNT_MAX);
 }
 
 int esp_sdr_rx_paced_start(uint32_t rate_hz)
@@ -88,6 +157,7 @@ int esp_sdr_rx_paced_start(uint32_t rate_hz)
 	rxp.step = ESP_SDR_CPU_HZ / rate_hz;
 	rxp.rearm_every = MAX(1U, IQE_RUN_CYCLES / rxp.step);
 	rxp.left = rxp.rearm_every;
+	dc_measure(ESP_SDR_PACED_INPUT_HZ / rate_hz);
 	rxp.pi = 0;
 	rxp.pq = 0;
 	c0 = sys_read32(IQE_CTRL0_REG);
@@ -117,8 +187,13 @@ bool esp_sdr_rx_paced_poll(int32_t *i, int32_t *q)
 	q1 = (int32_t)sys_read32(IQE_SUM_Q_REG) >> 6;
 	si = (int32_t)sys_read32(IQE_SUM_I_REG) >> 6;
 	sq = (q1 + ((int32_t)sys_read32(IQE_SUM_Q_REG) >> 6)) / 2;
-	*i = si - rxp.pi;
-	*q = sq - rxp.pq;
+	*i = si - rxp.pi - rxp.oi;
+	*q = sq - rxp.pq - rxp.oq;
+	rxp.acc_i += si - rxp.pi;
+	rxp.acc_q += sq - rxp.pq;
+	if (++rxp.acc_n == DC_TRACK_N) {
+		dc_track();
+	}
 	rxp.pi = si;
 	rxp.pq = sq;
 	if (--rxp.left == 0U) {
@@ -132,6 +207,69 @@ bool esp_sdr_rx_paced_poll(int32_t *i, int32_t *q)
 	rxp.target += rxp.step;
 	stats.samples++;
 	return true;
+}
+
+/* One compare in the common case, the clamp only when out of range. */
+static inline uint32_t sat8(int32_t v)
+{
+	if (unlikely((uint32_t)(v + 127) > 254U)) {
+		v = v < 0 ? -127 : 127;
+	}
+	return (uint8_t)v;
+}
+
+/*
+ * esp_sdr_rx_paced_poll() a chunk at a time, for MS/s: the state in registers, no call per
+ * sample, the lateness counted only. In RAM: a cache miss would move samples.
+ */
+IRAM_ATTR __attribute__((optimize("O3"))) uint32_t esp_sdr_rx_paced_fill_iq8(int8_t *out, size_t n, unsigned int shift)
+{
+	uint16_t *pair = (uint16_t *)out;
+	uint32_t target = rxp.target, step = rxp.step, left = rxp.left, late = 0;
+	/* The shift rounds to the nearest: half a step comes off with the DC. */
+	int32_t half = shift != 0U ? 1 << (shift - 1U) : 0;
+	int32_t pi = rxp.pi, pq = rxp.pq, oi = rxp.oi - half, oq = rxp.oq - half, ai = 0, aq = 0;
+
+#pragma GCC unroll 2
+	for (size_t k = 0; k < n; k++) {
+		uint32_t now;
+		int32_t q1, si, sq;
+
+		do {
+			now = cycles();
+		} while ((int32_t)(now - target) < 0);
+		if (unlikely(now - target >= step)) {
+			late++;
+		}
+		q1 = (int32_t)sys_read32(IQE_SUM_Q_REG) >> 6;
+		si = (int32_t)sys_read32(IQE_SUM_I_REG) >> 6;
+		sq = (q1 + ((int32_t)sys_read32(IQE_SUM_Q_REG) >> 6)) >> 1;
+		pair[k] = (uint16_t)(sat8((si - pi - oi) >> shift) |
+				     (sat8((sq - pq - oq) >> shift) << 8));
+		ai += si - pi;
+		aq += sq - pq;
+		pi = si;
+		pq = sq;
+		if (unlikely(--left == 0U)) {
+			iqe_start();
+			pi = 0;
+			pq = 0;
+			left = rxp.rearm_every;
+			stats.events++;
+		}
+		target += step;
+	}
+	rxp.target = target;
+	rxp.left = left;
+	rxp.pi = pi;
+	rxp.pq = pq;
+	rxp.acc_i = ai;
+	rxp.acc_q = aq;
+	rxp.acc_n = n;
+	dc_track();
+	stats.samples += n;
+	stats.late += late;
+	return late;
 }
 
 uint32_t esp_sdr_rx_paced_slack(void)

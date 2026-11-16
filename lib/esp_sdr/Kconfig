@@ -27,6 +27,16 @@ config ESP_SDR_RFTEST
 	  esp-sdr-zephyr". Without it the receiver runs on the hardware AGC
 	  only and transmit keeps the PHY's own power setting.
 
+config ESP_SDR_RX_DC_REMOVE
+	bool "Receive DC taken off paced streams"
+	depends on SOC_SERIES_ESP32C6 || SOC_SERIES_ESP32C5
+	default y
+	help
+	  esp_sdr_rx_paced_start() measures the receive chain's DC with the
+	  IQ estimator (32768 inputs, 2.5 ms with the settling) and every
+	  sample has it taken off: without it the DC stands some 45 dB over
+	  the noise floor at the stream's centre.
+
 config ESP_SDR_RX_DECIM
 	bool "Decimated capture"
 	default y
