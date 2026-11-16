@@ -103,6 +103,28 @@ struct ieee154_phy_trk {
 };
 
 /**
+ * Where a receiver's frames went, each phase tracker counted on its own (both may follow one
+ * frame, a sample apart). A frame lost on the air shows where it ended: in noise no tracker
+ * finds four preamble symbols in a row.
+ */
+struct ieee154_phy_counts {
+	/** Four preamble symbols in a row. */
+	uint32_t preamble;
+	/** The SFD after them: a frame's start. */
+	uint32_t sfd;
+	/** A PHR of 5 bytes or more: the PSDU begins. */
+	uint32_t psdu;
+	/** Dropped before the SFD: another symbol, or one with too many chip errors. */
+	uint32_t drop_shr;
+	/** Dropped in the PHR or the PSDU: a symbol with too many chip errors. */
+	uint32_t drop_frame;
+	/** A PHR shorter than an ACK. */
+	uint32_t short_phr;
+	/** Frames completed with a bad FCS, and with a good one. */
+	uint32_t fcs_bad, fcs_good;
+};
+
+/**
  * A receiver: two phase trackers (one per sampling phase), the DC and
  * discriminator history, the sample count and the callbacks. Set up with
  * ieee154_phy_rx_init(); the fields are private to ieee154_phy.c.
@@ -128,6 +150,8 @@ struct ieee154_phy_rx {
 	bool bad_seen;
 	/* The most preamble symbols in a row a tracker has found. */
 	uint8_t run_max;
+	/* Kept across ieee154_phy_rx_reset_i(). */
+	struct ieee154_phy_counts counts;
 };
 
 /** Build the chip tables. Call once before anything else. */
@@ -196,6 +220,18 @@ void ieee154_phy_rx_reset_i(struct ieee154_phy_rx *rx);
 uint8_t ieee154_phy_rx_preamble_run_i(const struct ieee154_phy_rx *rx);
 
 /**
+ * A receiver's counts (struct ieee154_phy_counts) since it was set up or they were cleared;
+ * ieee154_phy_rx_reset_i() keeps them.
+ *
+ * @param rx The receiver.
+ * @param c Filled in.
+ */
+void ieee154_phy_rx_counts_i(const struct ieee154_phy_rx *rx, struct ieee154_phy_counts *c);
+
+/** Zero a receiver's counts. */
+void ieee154_phy_rx_counts_clear_i(struct ieee154_phy_rx *rx);
+
+/**
  * A receiver's sample count, over all blocks (wraps). In the callbacks: the
  * samples fed up to and including the one that completed the symbol just
  * decided (for a frame, its last symbol). Between blocks it keeps what the
@@ -241,6 +277,12 @@ uint32_t ieee154_phy_rx_position(void);
 
 /** ieee154_phy_rx_frame_start_i() of the static receiver. */
 uint32_t ieee154_phy_rx_frame_start(void);
+
+/** ieee154_phy_rx_counts_i() of the static receiver. */
+void ieee154_phy_rx_counts(struct ieee154_phy_counts *c);
+
+/** ieee154_phy_rx_counts_clear_i() of the static receiver. */
+void ieee154_phy_rx_counts_clear(void);
 
 /** The 32 chips of symbol @p sym (0..15), chip c0 in the MSB. */
 uint32_t ieee154_phy_chips(int sym);

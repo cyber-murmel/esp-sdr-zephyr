@@ -14,6 +14,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <esp_sdr/ieee154_phy.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -66,6 +68,8 @@ struct ieee154_esp_sdr_stats {
 	 * after the ACK delay), and how far the PHY was behind at the arm (max), in us.
 	 */
 	uint32_t ack_verdict_max_us, ack_verdict_sum_us, ack_verdict_late, ack_lag_max_us;
+	/** Where the received frames went in the PHY (ACK checks after a transmission included). */
+	struct ieee154_phy_counts phy;
 };
 
 struct net_pkt;

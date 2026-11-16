@@ -196,6 +196,7 @@ static void frame_done(struct ieee154_phy_rx *rx, struct ieee154_phy_trk *t)
 	lqi = lqi < 0 ? 0 : lqi;
 	rx->frame_start = rx->pos - IEEE154_PHY_FRAME_SAMPLES(t->len);
 	if (crc16(t->buf, t->len - 2) == fcs) {
+		rx->counts.fcs_good++;
 		if (rx->cb) {
 			rx->cb(t->buf, t->len, lqi, rx->user);
 		}
@@ -204,7 +205,10 @@ static void frame_done(struct ieee154_phy_rx *rx, struct ieee154_phy_trk *t)
 		}
 		/* Only on success: stop the sibling phase tracker delivering it twice. */
 		trk_reset(sib);
-	} else if (rx->all_cb) {
+		return;
+	}
+	rx->counts.fcs_bad++;
+	if (rx->all_cb) {
 		int32_t d = (int32_t)(rx->pos - rx->bad_end);
 
 		if (!rx->bad_seen || d > IEEE154_PHY_DUP_SAMPLES || d < -IEEE154_PHY_DUP_SAMPLES) {
@@ -233,6 +237,7 @@ static __attribute__((noinline)) void trk_chip_slow(struct ieee154_phy_rx *rx,
 			}
 			if (t->run >= 4) {
 				t->st = ST_PREAMBLE;
+				rx->counts.preamble++;
 			}
 		}
 		return;
@@ -246,7 +251,16 @@ static __attribute__((noinline)) void trk_chip_slow(struct ieee154_phy_rx *rx,
 	int err;
 	int s = match(t->win, &err);
 
+	/*
+	 * Also in the PSDU, whose length the PHR gave: going on with the best match there turned
+	 * the drops into bad FCSs and delivered no more frames (C6 to S3, 2026-11-15).
+	 */
 	if (err > DATA_MAX_ERR) {
+		if (t->st >= ST_PHR) {
+			rx->counts.drop_frame++;
+		} else {
+			rx->counts.drop_shr++;
+		}
 		trk_reset(t);
 		return;
 	}
@@ -256,6 +270,7 @@ static __attribute__((noinline)) void trk_chip_slow(struct ieee154_phy_rx *rx,
 		if (s == 7) {
 			t->st = ST_SFD2;
 		} else if (s != 0) {
+			rx->counts.drop_shr++;
 			trk_reset(t);
 		}
 		break;
@@ -265,7 +280,9 @@ static __attribute__((noinline)) void trk_chip_slow(struct ieee154_phy_rx *rx,
 			t->nib_have = 0;
 			t->err_sum = 0;
 			t->nsym = 0;
+			rx->counts.sfd++;
 		} else {
+			rx->counts.drop_shr++;
 			trk_reset(t);
 		}
 		break;
@@ -283,9 +300,11 @@ static __attribute__((noinline)) void trk_chip_slow(struct ieee154_phy_rx *rx,
 		if (t->st == ST_PHR) {
 			t->len = byte & 0x7F;
 			if (t->len < 5) {   /* shortest legal frame is an ACK */
+				rx->counts.short_phr++;
 				trk_reset(t);
 				break;
 			}
+			rx->counts.psdu++;
 			t->pos = 0;
 			t->st = ST_PSDU;
 			/* A symbol is 32 chips, 64 samples at 2 per chip; a byte two symbols. */
@@ -318,6 +337,16 @@ uint8_t ieee154_phy_rx_preamble_run_i(const struct ieee154_phy_rx *rx)
 	return rx->run_max;
 }
 
+void ieee154_phy_rx_counts_i(const struct ieee154_phy_rx *rx, struct ieee154_phy_counts *c)
+{
+	*c = rx->counts;
+}
+
+void ieee154_phy_rx_counts_clear_i(struct ieee154_phy_rx *rx)
+{
+	memset(&rx->counts, 0, sizeof(rx->counts));
+}
+
 uint32_t ieee154_phy_rx_frame_start_i(const struct ieee154_phy_rx *rx)
 {
 	return rx->frame_start;
@@ -346,6 +375,16 @@ uint32_t ieee154_phy_rx_position(void)
 uint32_t ieee154_phy_rx_frame_start(void)
 {
 	return ieee154_phy_rx_frame_start_i(&g_rx);
+}
+
+void ieee154_phy_rx_counts(struct ieee154_phy_counts *c)
+{
+	ieee154_phy_rx_counts_i(&g_rx, c);
+}
+
+void ieee154_phy_rx_counts_clear(void)
+{
+	ieee154_phy_rx_counts_clear_i(&g_rx);
 }
 
 void ieee154_phy_rx_reset(void)

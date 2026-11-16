@@ -1244,6 +1244,8 @@ void ieee154_esp_sdr_get_stats(struct ieee154_esp_sdr_stats *stats)
 
 	*stats = sdr154.stats;
 	k_spin_unlock(&stats_lock, key);
+	/* Counted by the PHY thread as it goes: a word may be a frame behind. */
+	ieee154_phy_rx_counts(&stats->phy);
 }
 
 int ieee154_esp_sdr_bench(struct ieee154_esp_sdr_bench *b)
@@ -1307,6 +1309,9 @@ void ieee154_esp_sdr_clear_stats(void)
 
 	memset(&sdr154.stats, 0, sizeof(sdr154.stats));
 	k_spin_unlock(&stats_lock, key);
+	k_mutex_lock(&phy_lock, K_FOREVER);
+	ieee154_phy_rx_counts_clear();
+	k_mutex_unlock(&phy_lock);
 }
 
 #if defined(CONFIG_NET_L2_IEEE802154)

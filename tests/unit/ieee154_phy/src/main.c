@@ -266,6 +266,46 @@ ZTEST(ieee154_phy, test_rejects_bad_fcs)
 	zassert_equal(got + bad, 0, "a frame with a bad FCS was delivered");
 }
 
+/*
+ * The counts follow a frame through the receiver: an intact one adds a good FCS (and no drop:
+ * the sibling tracker is reset by its success), a corrupt one a bad FCS; a reset keeps them, a
+ * clear zeroes them.
+ */
+ZTEST(ieee154_phy, test_counts_follow_the_frames)
+{
+	uint8_t psdu[IEEE154_PHY_PSDU_MAX] = {0};
+	struct ieee154_phy_counts c;
+	size_t len;
+
+	for (int i = 0; i < 20; i++) {
+		psdu[i] = (uint8_t)test_rng_u32();
+	}
+	len = ieee154_phy_append_fcs(psdu, 20);
+	memcpy(expect, psdu, len);
+	expect_len = (uint8_t)len;
+	ieee154_phy_rx_counts_clear();
+
+	feed_frame(psdu, len);
+	ieee154_phy_rx_counts(&c);
+	zassert_equal(got, 1, "the frame was not delivered");
+	zassert_true(c.preamble >= 1U && c.sfd >= 1U && c.psdu >= 1U,
+		     "preamble %u sfd %u psdu %u", c.preamble, c.sfd, c.psdu);
+	zassert_equal(c.fcs_good, 1U, "fcs good %u", c.fcs_good);
+	zassert_equal(c.fcs_bad + c.drop_frame + c.short_phr, 0U, "bad %u drop %u short %u",
+		      c.fcs_bad, c.drop_frame, c.short_phr);
+
+	psdu[len - 1] ^= 0xFFU;
+	ieee154_phy_rx_reset();
+	feed_frame(psdu, len);
+	ieee154_phy_rx_counts(&c);
+	zassert_equal(c.fcs_good, 1U, "kept across the reset: fcs good %u", c.fcs_good);
+	zassert_true(c.fcs_bad >= 1U, "the corrupt frame: fcs bad %u", c.fcs_bad);
+
+	ieee154_phy_rx_counts_clear();
+	ieee154_phy_rx_counts(&c);
+	zassert_equal(c.preamble + c.sfd + c.psdu + c.fcs_bad + c.fcs_good, 0U, "not cleared");
+}
+
 /* IEEE154_TABLES set to anything (even empty) enables the sweep tables. */
 static bool tables_enabled(void)
 {

@@ -662,6 +662,11 @@ static void print_sdr_status(const struct shell *sh)
 		    s.phy_us);
 	shell_print(sh, "ring status %u units %u lost pairs %u, phy read %u skipped %u",
 		    s.ring_status, s.ring_units, s.ring_lost, s.phy_read, s.phy_skipped);
+	shell_print(sh,
+		    "phy trackers: preamble %u, sfd %u, psdu %u; dropped %u before the sfd, %u in"
+		    " frames, %u short phr; fcs bad %u good %u",
+		    s.phy.preamble, s.phy.sfd, s.phy.psdu, s.phy.drop_shr, s.phy.drop_frame,
+		    s.phy.short_phr, s.phy.fcs_bad, s.phy.fcs_good);
 	shell_print(sh, "ring last run: %u.%02u cycles/pair, slice max %u cycles, abandoned %u",
 		    s.ring_cycles_x100 / 100U, s.ring_cycles_x100 % 100U, s.ring_slice_max,
 		    s.ring_abandoned);
