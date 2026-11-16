@@ -570,6 +570,9 @@ static ALWAYS_INLINE bool irq_window(uint32_t *lines)
  * abandoned until the run failed. The line stays disabled on this CPU for
  * the run and the interrupt is served when it ends, as before the windows
  * existed (the MAC does not need serving while the ring owns the radio).
+ * With SMP the MAC is CPU 0's and the ring's CPU 1 has the scheduler IPI on
+ * line 0 instead (2026-11-15, wpan with the driver): held the same way, at no
+ * cost to the ring's cooperative thread.
  */
 static bool wmac_was_enabled;
 

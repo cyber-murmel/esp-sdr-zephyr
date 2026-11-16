@@ -220,6 +220,14 @@ config ESP_SDR_RING
 	  SRAM bank 0 (0x3fcb0000) besides banks 1 and 2, another 64 KiB of
 	  internal RAM: the whole DRAM image must end below 0x3fcb0000.
 
+# The ring masks its CPU for a run and serves what is pending there in short windows. Without
+# IPI_OPTIMIZE every thread made ready on the other CPU sends it a scheduler IPI, even one pinned
+# away from it: about 1700 windows a second in wpan without the Wi-Fi driver (its PHY thread
+# sleeps 100 us at a time), 32 in Ubertooth (2026-11-15). The ring's thread is cooperative, so
+# with the option it draws none.
+configdefault IPI_OPTIMIZE
+	default y if ESP_SDR_RING && SMP
+
 config ESP_SDR_RING_BOX4
 	bool "Ring decimation by 4 (boxcar, for 2 MHz wide signals)"
 	depends on ESP_SDR_RING

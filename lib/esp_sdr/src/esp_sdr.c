@@ -20,6 +20,8 @@
 #include <esp_sdr/esp_sdr_rx.h>
 
 #if defined(CONFIG_ESP_SDR_PHY_ONLY)
+#include <zephyr/init.h>
+
 #include <esp_phy_init.h>
 #if defined(CONFIG_SOC_SERIES_ESP32C6) || defined(CONFIG_SOC_SERIES_ESP32S31)
 #include <esp_private/esp_modem_clock.h>
@@ -358,6 +360,20 @@ static int radio_up(void)
 	phy_wifi_enable_set(1);
 	return 0;
 }
+
+/*
+ * esp_timer takes its interrupt on the CPU that starts it, and radio_up() runs on whichever CPU
+ * the first esp_sdr_init() does: in Ubertooth main, which SMP put on CPU 1, so the PHY's PLL
+ * tracking timer (every second) opened windows in the ring there. Started at boot, before the
+ * second CPU, it stays on CPU 0 as with the radio drivers.
+ */
+static int esp_sdr_timer_boot(void)
+{
+	esp_err_t err = esp_timer_init();
+
+	return err == ESP_OK || err == ESP_ERR_INVALID_STATE ? 0 : -EIO;
+}
+SYS_INIT(esp_sdr_timer_boot, POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT);
 #else
 static int radio_up(void)
 {
