@@ -14,41 +14,96 @@ manifest:
       url-base: https://github.com/ESPARGOS
     - name: espressif
       url-base: https://github.com/espressif
+    - name: eliben
+      url-base: https://github.com/eliben
+    - name: micropython
+      url-base: https://github.com/micropython
 
   projects:
-    # Zephyr with ESP32-S3 SMP (zephyrproject-rtos/zephyr#120082, rebased), the
-    # CDC-NCM NTB aggregation the USB stream relies on, and the llext and
-    # Xtensa changes apps/multiapp needs (doc/multiapp.md, "Zephyr changes").
+    # Zephyr with SMP on the ESP32-S3 (zephyrproject-rtos/zephyr#120082,
+    # rebased), the ESP32-P4 and the ESP32-S31, the ESP32-S31 itself (SoC,
+    # CoreBoard, 200 and 250 MHz PSRAM) and the VIEWE 4.3 inch board with its
+    # LCD-CAM RGB panel, the CDC-NCM NTB aggregation the USB stream relies
+    # on, the llext and Xtensa changes apps/multiapp needs (doc/multiapp.md,
+    # "Zephyr changes"), LVGL allocating from the MicroPython heap,
+    # the options that make the USB stack and DWC2
+    # threads preemptible, application code in the S3's flash
+    # text and perf on Xtensa, the Hackaday Communicator, WHY2025 and MCH2022
+    # badges with their NV3007, ST7703, TCA8418 and RP2040 coprocessor
+    # drivers, an SX126x without BUSY and DIO1 lines and the ESP32 SPI timing
+    # fixes, the ESP32-P4-Function-EV-Board's C6 and V1.0B (ESP-IDF
+    # bootloader mode, esp-hosted OTA, P4 rev v0.0), the MIPI DBI SPI tearing
+    # effect wait and ESP32 SPI reads without a write phase (the MCH2022
+    # FPGA), on the RP2040 double buffered bulk IN, clearing an IN
+    # endpoint's halt and I2C target transactions kept apart when served
+    # late, and the MCH2022 FPGA as a lattice,ice40-fpga device, its lines on
+    # the RP2040 (branch zsdr).
     - name: zephyr
       remote: cyber-murmel
-      revision: ffb8a7cce5d31e098a09854d065e2e5ef7c493a4 # esp-sdr-multiapp branch
+      revision: cb19e8426d8a6a81b69542f1f2e93b1017aa2734 # zsdr
       path: modules/zephyr
       import:
         name-allowlist:
+          # The MCH2022 badge's RP2040: its HAL and the
+          # Cortex-M headers.
+          - cmsis_6
           - fatfs
+          - hal_rpi_pico
+          - loramac-node
           - mcuboot
           - mbedtls
+          - nanopb
           - tf-psa-crypto
-    # The HAL companion of the SMP port; listed here so it overrides the
-    # revision Zephyr's own manifest pins.
+    # The HAL companion of the SMP ports, with the ESP32-P4 flash erase fix
+    # (the line levels kept when SPI1's control register is cleared), the
+    # P4 rev v0.0 clock (from the ROM's CPLL) and the ESP32-S31 (its Zephyr
+    # port, the PHY blob and the LCD HAL's include paths); listed here so it
+    # overrides the revision Zephyr's own manifest pins.
     - name: hal_espressif
       remote: cyber-murmel
-      revision: 54d64a1289e8d0cddccef6359a385ffb4c68b213 # esp-sdr branch
+      revision: 5adb2b0dc8349ecbb4d081f3d3a5646536746188 # esp32s31 branch
       path: modules/hal/espressif
       groups:
         - hal
     # VITA 49 packet library, extended to VITA 49.2, with a Zephyr module.
     - name: libvrt
       remote: cyber-murmel
-      revision: 6ee1471079b969d843aa2f7dbc6ac74c086168a2 # esp-sdr branch
+      revision: 6bbeb839767a795adf6651abbe21031123995738 # esp-sdr branch
       path: modules/lib/libvrt
     # Upstream ESP-IDF firmware: only its header-only receiver helpers are used.
     - name: esp-sdr
       remote: espargos
       revision: 1fe55351036337359bcac1ccca6db04c32fde4f8
       path: modules/lib/esp-sdr
-    # Espressif DSP library: only the ESP32-S3 FFT kernel (apps/link OFDM).
+    # Espressif DSP library: only ESP32-S3 kernels (apps/link OFDM).
     - name: esp-dsp
       remote: espressif
       revision: 3c8ac0fdfec83740b783e200862c8d0c056de0ad
       path: modules/lib/esp-dsp
+    # MicroPython as a Zephyr module: CONFIG_MICROPYTHON builds its Zephyr port as the
+    # micropython library, which provides main(). The mp-lvgl branch, as
+    # cyber-murmel/mp-lvgl-example pins it (1.30.0-preview).
+    - name: micropython
+      remote: cyber-murmel
+      revision: daffaee29caf7cae7486c02bcd0f1ec42ea8e0ae # p4-function-ev-board, on the mp-lvgl branch
+      path: modules/micropython
+    # The frozen modules' library (argparse, upysh, ...), where the port expects it.
+    - name: micropython-lib
+      remote: micropython
+      revision: ee4bb8ff139e24c42b739935fbd8ec7c4d061e02
+      path: modules/micropython/lib/micropython-lib
+    # LVGL at the revision Zephyr pins (listed here, not imported, so that it can be fetched on its
+    # own), the binding for MicroPython adapted for Zephyr (cyber-murmel/mp-lvgl-example), and the
+    # C parser its generator needs (the revision its own west.yml pins).
+    - name: lvgl
+      remote: zephyrproject-rtos
+      revision: d1fe35d350a1503db2ec7fd4dfff8e0cc26eea7e
+      path: modules/lib/gui/lvgl
+    - name: lv_binding_micropython
+      remote: cyber-murmel
+      revision: f52d55a77a66a24a169ca9820115654f1a6e69e1 # zsdr branch (mp-lvgl + two commits)
+      path: modules/lib/gui/lv_binding_micropython
+    - name: pycparser
+      remote: eliben
+      revision: 3cf6bf5eb16f5eadd4a058e41596145c407a79ad
+      path: modules/lib/gui/lv_binding_micropython/pycparser

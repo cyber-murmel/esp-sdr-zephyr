@@ -221,11 +221,22 @@ let
 
   # The west workspace, made in $out: this repo at its path, the west2nix hook copies the other
   # projects in (each a git repo, which west wants) and runs west init, then the blobs.
+  # Projects inside another project's directory (micropython-lib in micropython). The hook
+  # copies each project from the read-only store, so it could not create these in their parent:
+  # it gets the others, the build phase copies these.
+  projectPath = project: project.path or project.name;
+  isNested = project: lib.any (other: other != project
+    && lib.hasPrefix "${projectPath other}/" (projectPath project)) lock.manifest.projects;
+  nestedProjects = lib.filter isNested lock.manifest.projects;
+  hookLock = lock // {
+    manifest = lock.manifest // { projects = lib.filter (p: !isNested p) lock.manifest.projects; };
+  };
+
   westWorkspace = pkgs.stdenvNoCC.mkDerivation {
     name = "esp-sdr-west-workspace-${version}";
     src = firmwareSrc;
     nativeBuildInputs = [
-      (west2nix.mkWest2nixHook { manifest = ./west2nix.toml; })
+      (west2nix.mkWest2nixHook { manifest = hookLock; })
       pkgs.gitMinimal
       python
     ];
@@ -238,6 +249,12 @@ let
     buildPhase = ''
       cd $out
       chmod -R u+w .
+      # The projects inside another one, now that the tree is writable (in place of the empty
+      # directory a submodule leaves).
+      ${lib.concatMapStrings (project: ''
+        rm -rf ${projectPath project}
+        __west2nix_copyProject ${fetchProject project} ${projectPath project}
+      '') nestedProjects}
       # West would write this on its first command, read-only later.
       west config zephyr.base modules/zephyr
       ${lib.concatMapStrings (blob: ''

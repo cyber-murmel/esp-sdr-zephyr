@@ -4,27 +4,27 @@ group-filter = ["-babblesim", "-optional", "-testing"]
 [[manifest.projects]]
 name = "zephyr"
 url = "https://github.com/cyber-murmel/zephyr"
-revision = "ffb8a7cce5d31e098a09854d065e2e5ef7c493a4"
+revision = "cb19e8426d8a6a81b69542f1f2e93b1017aa2734"
 path = "modules/zephyr"
 west-commands = "scripts/west-commands.yml"
 
 [manifest.projects.nix]
-hash = "sha256-hsljlgGSKRWV71oK48J0J9jjmQRxdI8pq0I5ZD7JJrQ="
+hash = "sha256-UMDgsOeVgOjwp6YkAo717c0xYot9Zv4LFN+OH/CZsUA="
 
 [[manifest.projects]]
 name = "hal_espressif"
 url = "https://github.com/cyber-murmel/hal_espressif"
-revision = "54d64a1289e8d0cddccef6359a385ffb4c68b213"
+revision = "5adb2b0dc8349ecbb4d081f3d3a5646536746188"
 path = "modules/hal/espressif"
 groups = ["hal"]
 
 [manifest.projects.nix]
-hash = "sha256-2OnaUIQZHGDceOU4mvLpwgbhafByLUdmWGcjHHW7Cmw="
+hash = "sha256-MfshOuejsQyB3LLB/FwIVXC2xGS3ewQnCVLItex86ig="
 
 [[manifest.projects]]
 name = "libvrt"
 url = "https://github.com/cyber-murmel/libvrt"
-revision = "6ee1471079b969d843aa2f7dbc6ac74c086168a2"
+revision = "6bbeb839767a795adf6651abbe21031123995738"
 path = "modules/lib/libvrt"
 
 [manifest.projects.nix]
@@ -49,6 +49,61 @@ path = "modules/lib/esp-dsp"
 hash = "sha256-APW/rEinKZI4d0d+nej3FgoZ94P2IknzADzsdywHC1s="
 
 [[manifest.projects]]
+name = "micropython"
+url = "https://github.com/cyber-murmel/micropython"
+revision = "daffaee29caf7cae7486c02bcd0f1ec42ea8e0ae"
+path = "modules/micropython"
+
+[manifest.projects.nix]
+hash = "sha256-DvhJB5rXjzOcfH9l2nqEfnwpkxL/qLymZvtQUlCV6C0="
+
+[[manifest.projects]]
+name = "micropython-lib"
+url = "https://github.com/micropython/micropython-lib"
+revision = "ee4bb8ff139e24c42b739935fbd8ec7c4d061e02"
+path = "modules/micropython/lib/micropython-lib"
+
+[manifest.projects.nix]
+hash = "sha256-nmGwxXwAO5DBTv+4A4l70Cdct21KVkjmjGZ5YntdulE="
+
+[[manifest.projects]]
+name = "lvgl"
+url = "https://github.com/zephyrproject-rtos/lvgl"
+revision = "d1fe35d350a1503db2ec7fd4dfff8e0cc26eea7e"
+path = "modules/lib/gui/lvgl"
+
+[manifest.projects.nix]
+hash = "sha256-aVtcZotDW5sggNc/9Nmhpl3bDSbgWUCs+iKvX2kxQAk="
+
+[[manifest.projects]]
+name = "lv_binding_micropython"
+url = "https://github.com/cyber-murmel/lv_binding_micropython"
+revision = "f52d55a77a66a24a169ca9820115654f1a6e69e1"
+path = "modules/lib/gui/lv_binding_micropython"
+
+[manifest.projects.nix]
+hash = "sha256-IByLogJJQ/QTv+mxTyJQym/TU8BbQotibtw7XaiC6zI="
+
+[[manifest.projects]]
+name = "pycparser"
+url = "https://github.com/eliben/pycparser"
+revision = "3cf6bf5eb16f5eadd4a058e41596145c407a79ad"
+path = "modules/lib/gui/lv_binding_micropython/pycparser"
+
+[manifest.projects.nix]
+hash = "sha256-3X0jr7bKNdz3n/82dMuwTyKHJYgLW2QEQ+Lj6esZ91Q="
+
+[[manifest.projects]]
+name = "cmsis_6"
+url = "https://github.com/zephyrproject-rtos/CMSIS_6"
+revision = "1c1840af7a7e757d6e2fec3ddb0e5ce0dfcc93c8"
+path = "modules/hal/cmsis_6"
+groups = ["hal"]
+
+[manifest.projects.nix]
+hash = "sha256-IiE4Wzh1aWgPI589n7CaoDM8l25KtrRsGwUF0r74b18="
+
+[[manifest.projects]]
 name = "fatfs"
 url = "https://github.com/zephyrproject-rtos/fatfs"
 revision = "4f60a12c58c3de4246857ad87c40239ecd93349b"
@@ -57,6 +112,25 @@ groups = ["fs"]
 
 [manifest.projects.nix]
 hash = "sha256-xJ4NabPhqIirDq7f9BJGMgu9RMBoWIwJvCbF4BQQgKA="
+
+[[manifest.projects]]
+name = "hal_rpi_pico"
+url = "https://github.com/zephyrproject-rtos/hal_rpi_pico"
+revision = "2e9dbf14fa56e5907aefb07e8e75010ec5210946"
+path = "modules/hal/rpi_pico"
+groups = ["hal"]
+
+[manifest.projects.nix]
+hash = "sha256-JVh+y7u67C3X5DIOSmG6s4frGwBaT8epRJfkkzsArpQ="
+
+[[manifest.projects]]
+name = "loramac-node"
+url = "https://github.com/zephyrproject-rtos/loramac-node"
+revision = "874544f2a8a0212a0cc12e5eea51a024fd3d93d1"
+path = "modules/lib/loramac-node"
+
+[manifest.projects.nix]
+hash = "sha256-M088uNCaXKHtrbkrNtSHGD1s/G9RFTjEeZrHjU5GrtY="
 
 [[manifest.projects]]
 name = "mbedtls"
@@ -77,6 +151,15 @@ groups = ["bootloader"]
 
 [manifest.projects.nix]
 hash = "sha256-bhKqDOvRXtmbdIM1PpMJwwEOB9DyLodnWsQ+epmTLhY="
+
+[[manifest.projects]]
+name = "nanopb"
+url = "https://github.com/zephyrproject-rtos/nanopb"
+revision = "0f6d088e777a33dd7b54297f137ef10d745c5da8"
+path = "modules/lib/nanopb"
+
+[manifest.projects.nix]
+hash = "sha256-T3lPaqAKgtNRM863MfqqC8+c311bqpU8FL7MdzPFhLs="
 
 [[manifest.projects]]
 name = "tf-psa-crypto"
