@@ -21,6 +21,7 @@
 #define ESDR_PROTO_H_
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -270,7 +271,24 @@ struct esdr_state {
 	/* LO as programmed (MHz plus kHz offset). */
 	uint32_t lo_mhz;
 	int32_t lo_offset_khz;
+	/* ESDR_STATUS_*; devices before it send the struct without it (ESDR_STATE_MIN_SIZE). */
+	uint16_t status;
 } __attribute__((packed));
+
+/* What every device sends of struct esdr_state: all but the status, which came later. */
+#define ESDR_STATE_MIN_SIZE offsetof(struct esdr_state, status)
+
+/*
+ * esdr_state.status: the device checks where its PLL's VCO ends up after a tune (every chip but
+ * the C5 and the classic ESP32 can: esp_sdr_freq_window_checked()); the last tune put the VCO
+ * outside its window (where checked) or the radio refused the frequency: the LO may not be where
+ * lo_mhz says, and the frequency is best left (the PLL may still lock about 12 MHz past the
+ * window: this errs on the safe side). Without ESDR_STATUS_LO_CHECKED, a clear
+ * ESDR_STATUS_LO_UNLOCKED says nothing about the lock. So far apps/osmosdr_serial sets them;
+ * apps/osmosdr and apps/osmosdr_hs send 0.
+ */
+#define ESDR_STATUS_LO_CHECKED  (1U << 0)
+#define ESDR_STATUS_LO_UNLOCKED (1U << 1)
 
 struct esdr_cal_point {
 	/* Die temperature in 0.1 degC, and the crystal's error there in ppb. */

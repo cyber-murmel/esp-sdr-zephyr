@@ -1088,7 +1088,8 @@ public:
 		/* Start from what the device runs with. */
 		struct esdr_state st{};
 
-		if (link_->ctrlIn(ESDR_REQ_GET_STATE, &st, sizeof(st)) == (int)sizeof(st)) {
+		if (link_->ctrlIn(ESDR_REQ_GET_STATE, &st, sizeof(st)) >=
+		    (int)ESDR_STATE_MIN_SIZE) {
 			freqHz_ = (double)st.freq_hz;
 			rateHz_ = (double)st.sample_rate_hz;
 			bwHz_ = (double)st.bandwidth_hz;

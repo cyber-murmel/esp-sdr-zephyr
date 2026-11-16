@@ -112,6 +112,11 @@ bool esp_sdr_lo_divided(void)
 #define RFPLL_STATUS_REG  12U
 #define RFPLL_STATUS_VCO  0x0cU
 
+bool esp_sdr_freq_window_checked(void)
+{
+	return !IS_ENABLED(CONFIG_SOC_SERIES_ESP32C5) && !IS_ENABLED(CONFIG_SOC_SERIES_ESP32);
+}
+
 static bool pll_in_window(void)
 {
 #if defined(CONFIG_SOC_SERIES_ESP32C5) || defined(CONFIG_SOC_SERIES_ESP32)

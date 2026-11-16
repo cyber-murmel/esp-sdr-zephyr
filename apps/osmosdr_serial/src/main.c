@@ -163,6 +163,8 @@ static struct settings want = SETTINGS_START;
 static uint64_t center_hz;
 static uint32_t lo_mhz;
 static int32_t lo_khz;
+/* The last radio_apply() left the VCO outside its window, or the radio refused the frequency. */
+static bool lo_unlocked;
 static bool radio_dirty = true;
 static struct esdr_stats stats;
 
@@ -859,8 +861,14 @@ static int radio_apply(void)
 	lo_khz = (int32_t)(hz - (int64_t)lo_mhz * 1000000);
 	lo_khz = lo_khz >= 0 ? (lo_khz + 500) / 1000 : -((-lo_khz + 500) / 1000);
 	ret = esp_sdr_set_freq(lo_mhz);
-	if (ret == 0 && lo_khz != esp_sdr_get_freq_offset()) {
+	/* -ERANGE: tuned, the VCO outside its window; the offset retune decides it anew. */
+	if ((ret == 0 || ret == -ERANGE) && lo_khz != esp_sdr_get_freq_offset()) {
 		ret = esp_sdr_set_freq_offset(lo_khz);
+	}
+	/* Reported in ESDR_REQ_GET_STATE; the gain and the filter still go in. */
+	lo_unlocked = ret != 0;
+	if (ret == -ERANGE) {
+		ret = 0;
 	}
 	if (ret == 0) {
 		ret = esp_sdr_rx_set_gain(want.rx_gain == ESDR_GAIN_AUTO ? ESP_SDR_RX_GAIN_AUTO
@@ -1536,6 +1544,8 @@ static int handle_in(uint8_t r, uint8_t *buf, size_t max)
 			.freq_corr_ppb = want.corr_ppb,
 			.lo_mhz = lo_mhz,
 			.lo_offset_khz = lo_khz,
+			.status = (esp_sdr_freq_window_checked() ? ESDR_STATUS_LO_CHECKED : 0U) |
+				  (lo_unlocked ? ESDR_STATUS_LO_UNLOCKED : 0U),
 		};
 
 		memcpy(buf, &st, MIN(max, sizeof(st)));

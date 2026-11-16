@@ -141,6 +141,13 @@ int esp_sdr_init(void);
  */
 int esp_sdr_set_freq(uint32_t mhz);
 
+/**
+ * @return Whether the tuning calls check the VCO's window on this chip (and return -ERANGE
+ *         outside it); false on the ESP32-C5 and the classic ESP32, whose PLL status is not
+ *         mapped: there they return 0 wherever the PLL ends up.
+ */
+bool esp_sdr_freq_window_checked(void);
+
 /** @return Current LO frequency in MHz. */
 uint32_t esp_sdr_get_freq(void);
 

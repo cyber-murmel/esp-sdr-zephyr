@@ -210,15 +210,20 @@ int set_freq(uint64_t hz)
 
 static void print_state(void)
 {
-	struct esdr_state st;
+	struct esdr_state st = {0};
 	struct esdr_stats s;
 
-	if (ctrl_in(ESDR_REQ_GET_STATE, &st, sizeof(st)) == sizeof(st)) {
+	if (ctrl_in(ESDR_REQ_GET_STATE, &st, sizeof(st)) >= (int)ESDR_STATE_MIN_SIZE) {
 		printf("state: mode %u, %u bit, %u S/s, centre %" PRIu64 " Hz (actual %" PRIu64
 		       "), gain %u, digital %u dB, bw %u Hz, corr %d ppb, LO %u MHz %+d kHz, opt 0x%x\n",
 		       st.mode, st.bits, st.sample_rate_hz, st.freq_hz, st.center_hz, st.rx_gain,
 		       st.digital_gain_db, st.bandwidth_hz, st.freq_corr_ppb, st.lo_mhz,
 		       st.lo_offset_khz, st.options);
+		if ((st.status & ESDR_STATUS_LO_UNLOCKED) != 0U) {
+			printf("LO: outside the PLL's lock window, or refused\n");
+		} else if ((st.status & ESDR_STATUS_LO_CHECKED) != 0U) {
+			printf("LO: in the PLL's lock window\n");
+		}
 	}
 	if (ctrl_in(ESDR_REQ_GET_STATS, &s, sizeof(s)) == sizeof(s)) {
 		printf("stats: rx %" PRIu64 " samples, %u blocks, overflow %" PRIu64
@@ -1000,7 +1005,7 @@ int main(int argc, char **argv)
 		ctrl_out(ESDR_REQ_SET_MODE, ESDR_MODE_OFF, NULL, 0);
 		print_state();
 	} else if (strcmp(cmd, "rx") == 0) {
-		struct esdr_state st;
+		struct esdr_state st = {0};
 
 		s.bits = bits;
 		if (outfile != NULL) {
@@ -1027,7 +1032,7 @@ int main(int argc, char **argv)
 		ctrl_out(ESDR_REQ_SET_DIGITAL_GAIN, dgain < 0 ? ESDR_DGAIN_DEFAULT : (uint16_t)dgain,
 			 NULL, 0);
 		ctrl_out(ESDR_REQ_SET_OPTIONS, offset ? ESDR_OPT_OFFSET_TUNING : 0, NULL, 0);
-		if (ctrl_in(ESDR_REQ_GET_STATE, &st, sizeof(st)) == sizeof(st)) {
+		if (ctrl_in(ESDR_REQ_GET_STATE, &st, sizeof(st)) >= (int)ESDR_STATE_MIN_SIZE) {
 			rate = st.sample_rate_hz;
 		}
 		if (ctrl_out(ESDR_REQ_SET_MODE, ESDR_MODE_RX, NULL, 0) < 0) {
@@ -1197,7 +1202,7 @@ int main(int argc, char **argv)
 			fprintf(stderr, "J8 goes to the C6 for %u s\n", secs);
 		}
 	} else if (strcmp(cmd, "tx") == 0) {
-		struct esdr_state st;
+		struct esdr_state st = {0};
 
 		s.bits = bits;
 		s.tone_hz = tone;
@@ -1212,7 +1217,7 @@ int main(int argc, char **argv)
 		set_u32(ESDR_REQ_SET_FREQ_CORR, (uint32_t)ppb);
 		ctrl_out(ESDR_REQ_SET_TX_GAIN, (uint16_t)txgain, NULL, 0);
 		ctrl_out(ESDR_REQ_SET_FORMAT, (uint16_t)bits, NULL, 0);
-		if (ctrl_in(ESDR_REQ_GET_STATE, &st, sizeof(st)) == sizeof(st)) {
+		if (ctrl_in(ESDR_REQ_GET_STATE, &st, sizeof(st)) >= (int)ESDR_STATE_MIN_SIZE) {
 			rate = st.sample_rate_hz;
 		}
 		s.rate = rate;

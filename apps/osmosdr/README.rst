@@ -91,7 +91,13 @@ little endian:
    * - ``SET_FREQ_CORR`` (0x09)
      - crystal correction in ppb, 4 bytes signed
    * - ``GET_STATE`` (0x0a, in) / ``GET_STATS`` (0x0b, in)
-     - settings as applied (``struct esdr_state``), counters
+     - settings as applied (``struct esdr_state``), counters. The state's last field,
+       ``status``, came later (``ESDR_STATE_MIN_SIZE`` is what every device sends). So far
+       ``apps/osmosdr_serial`` sets it: ``ESDR_STATUS_LO_CHECKED`` where its chip checks the
+       PLL's VCO after a tune (not the C5 nor the classic ESP32),
+       ``ESDR_STATUS_LO_UNLOCKED`` where the last tune left it outside its window or the radio
+       refused the frequency. The request that tuned does not fail for it: a tune is applied
+       as asked, after the reply; this app sends 0
    * - ``SET_OPTIONS`` (0x0c)
      - bit 0: offset tuning (default on)
    * - ``SET_DIGITAL_GAIN`` (0x0d)
