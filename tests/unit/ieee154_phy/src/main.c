@@ -197,6 +197,47 @@ static void feed_frame(const uint8_t *psdu, size_t len)
 	}
 }
 
+/* The FCS bit by bit, as IEEE 802.15.4 defines it: the reference for the table version. */
+static uint16_t fcs_bitwise(const uint8_t *p, size_t n)
+{
+	uint16_t c = 0;
+
+	while (n-- > 0) {
+		c ^= *p++;
+		for (int i = 0; i < 8; i++) {
+			c = (c & 1U) ? (c >> 1) ^ 0x8408U : (c >> 1);
+		}
+	}
+	return c;
+}
+
+/* The FCS is CRC-16/KERMIT: its check value over "123456789" is 0x2189, sent low byte first. */
+ZTEST(ieee154_phy, test_fcs_check_value)
+{
+	uint8_t buf[16] = "123456789";
+
+	zassert_equal(ieee154_phy_append_fcs(buf, 9), 11, "length");
+	zassert_equal(buf[9], 0x89, "FCS low byte 0x%02x", buf[9]);
+	zassert_equal(buf[10], 0x21, "FCS high byte 0x%02x", buf[10]);
+}
+
+/* The table version against the bitwise one, on random frames of every length. */
+ZTEST(ieee154_phy, test_fcs_matches_bitwise)
+{
+	uint8_t buf[IEEE154_PHY_PSDU_MAX + 2];
+
+	for (size_t n = 0; n <= IEEE154_PHY_PSDU_MAX; n++) {
+		uint16_t want;
+
+		for (size_t i = 0; i < n; i++) {
+			buf[i] = (uint8_t)test_rng_u32();
+		}
+		want = fcs_bitwise(buf, n);
+		ieee154_phy_append_fcs(buf, n);
+		zassert_equal(buf[n] | (buf[n + 1] << 8), want, "length %u", (unsigned int)n);
+	}
+}
+
 /*
  * A frame whose FCS does not match its payload must never reach the callback, while the same
  * frame with its FCS intact does (else a receiver that decodes nothing would pass).
