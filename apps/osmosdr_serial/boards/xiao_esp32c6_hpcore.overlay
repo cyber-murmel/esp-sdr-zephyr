@@ -15,3 +15,8 @@
 &usb_serial {
 	status = "disabled";
 };
+
+/* The die temperature for ESDR_REQ_GET_TEMP. */
+&coretemp {
+	status = "okay";
+};

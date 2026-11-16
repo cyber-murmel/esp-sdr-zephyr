@@ -9,7 +9,8 @@ a frequency reference: where its carrier lands in the baseband tells how far the
 it on a chip with the radio, the library applies it to every tuning, and with
 `CONFIG_ESP_SDR_CALSTORE` it is kept in Zephyr settings and applied at every start. With the die
 temperature sensor (`CONFIG_ESP_SDR_TEMP`) each measurement records the temperature, and
-calibrations at several temperatures make a model the correction follows.
+calibrations at several temperatures make a model the correction follows. A radio behind a link
+(the WHY2025 badge's ESP32-C6) is told the result over the protocol (`ESDR_REQ_SET_CAL`).
 
 ## The measurement
 
@@ -79,12 +80,12 @@ correction leaves the LO up to 500 Hz at the PLL (417 Hz at the RF below 2210 MH
 the run measures against the LO it asked for plus it. The median of the estimates, on top of
 the correction, goes to `esp_sdr_cal_update()`: a point of the temperature model, applied and
 stored. Estimates spread by more than 500 ppb fail the run (`-ERANGE`). The caller's thread
-needs about 9 KiB of stack.
+needs about 9 KiB of stack (rfprobe's shell thread peaks at 11.6 KiB of its 16 KiB on the S3).
 
 | Chip | Capture | Synchronization pair in a capture | Work memory |
 |------|---------|-----------------------------------|-------------|
 | ESP32-S3 | 16 MS/s, CIC by 8 | 0.95 ms: about 18 % of captures | `ESP_SDR_LTE_CAL_FFT` points, 2048: about 80 KiB heap |
-| ESP32-C5 | 4 MS/s, CIC by 2 | as the S3 at 2048 points, longer at 4096 | as the S3 |
+| ESP32-C5 | 4 MS/s, CIC by 2 | as the S3 at 2048 points, longer at 4096 | as the S3; the C5-Zero's SRAM has no room, rfprobe leaves it out there |
 | ESP32-C6 | 80 MS/s, CIC by 40 | 0.2 ms: about 1.3 % of captures | 1024 points static, above the capture bank |
 
 The C6 captures 80 MS/s bursts only, so it needs many more captures.
@@ -117,6 +118,40 @@ stream keeps the correction it started with. `esp_sdr_set_freq_corr_ppb()` sets 
 drops the model.
 
 The die temperature leads the crystal's (self heating), so the model is per board and enclosure.
+
+## Using it
+
+rfprobe takes the calibration and the temperature (`apps/rfprobe/README.rst`):
+
+```
+probe cal lte [start MHz] [stop MHz] [gain]   measure, apply, store
+probe cal show                                correction, LO residual, temperature, stored
+                                              points, model now
+probe cal set <ppb> | probe cal clear
+probe temp
+```
+
+The survey searches runs of steps 6 dB over the band's median, each from its centre. Where the
+downlinks fill the band (band 1 at the desk, 2026-11-03: every step 3 to 9 dB over the floor
+above it, in bursts) none stands out, and it takes the strongest steps instead, which need not
+be a carrier's centre: a span of one step at a known centre (`probe cal lte 2135 2135 50`)
+searches only there. The S3 devkit decoded cell 150 that way at gain 50, not at 60.
+
+Over the protocol (`apps/osmosdr/src/esdr_proto.h`, `apps/common/src/esdr_cal.c` answers them
+on a chip with the radio):
+
+| Request | |
+|---------|-|
+| `GET_TEMP` (0x18) | the die temperature, 0.1 degC |
+| `GET_CAL` (0x19) | `struct esdr_cal`: the correction in force, the LO residual, the temperature, the record behind it with its points, whether it is stored |
+| `SET_CAL` (0x1a) | wValue 0: a measured error (`struct esdr_cal_meas`) as a point; 1: a constant; 2: none; 3: a whole record (`struct esdr_cal_rec`). Applied from the next tuning, stored where the device can (`last_store` tells) |
+
+They are separate from `SET_FREQ_CORR`, the host's own correction on top. osmosdr_serial takes
+all of them; the S3 osmosdr app answers `GET_CAL` only (a `SET_CAL` would have to wait for its
+worker thread). On the serial link every request stops a running stream for a moment, so read
+them between runs. Hosts: `esdr_usb temp | cal | cal-set -p ppb | cal-clear`, `esdr_serial.py
+PORT cal [--set PPB | --clear]`, SoapySDR sensors `temperature`, `corr_ppb` and `lo_residual_hz`
+(`SoapySDRUtil --probe` lists them).
 
 ## Bench results
 

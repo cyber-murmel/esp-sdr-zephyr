@@ -36,3 +36,8 @@
 	current-speed = <5000000>;
 	pinctrl-0 = <&uart0_link>;
 };
+
+/* The die temperature for ESDR_REQ_GET_TEMP. */
+&coretemp {
+	status = "okay";
+};

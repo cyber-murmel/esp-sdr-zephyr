@@ -40,7 +40,13 @@ Building and flashing
    west flash -d build/rfprobe-s3    # first install; later: west dfu -d build/rfprobe-s3
 
 The S3 build runs on one core without PSRAM; its USB product string is
-``ESP-SDR probe``.
+``ESP-SDR probe``. A generic ESP32-S3 devkit takes the same build with
+``-b esp32s3_devkitc/esp32s3/procpu``; its first install goes through esptool on the
+USB-Serial-JTAG port (``west dfu --esptool`` needs a running esp-sdr app, so by hand: MCUboot at
+0x0 and ``zephyr.signed.confirmed.bin`` at 0x20000, then ``mcuboot confirm`` on the shell within
+30 s). ``west dfu`` works from a clean boot: after a shell session the probe's USB device stops
+answering string descriptor reads (dfu-util then cannot match the serial and the update fails
+with "no DFU mode"), so reset the board first (a devkit's UART bridge does it through RTS).
 
 Shell
 *****
@@ -64,6 +70,18 @@ Shell
                                little-endian words, then "end" (S3: 0, 1, 6; C6: 0 only,
                                80 MS/s; C5: 0 to 5, 80 to 4 MS/s)
    probe dump <block> [regs]   analog I2C registers 0..regs-1 of one block (read only)
+   probe cal lte [start MHz] [stop MHz] [gain|-1]
+                               measure the crystal's error against an LTE cell (default band
+                               1 downlink, 2110 to 2170 MHz), apply and store it with the die
+                               temperature (doc/lte-calibration.md); minutes. Where carriers
+                               fill the band nothing stands out of it: start = stop at a known
+                               carrier's centre searches only there
+   probe cal show              correction in force, where it leaves the LO (whole kHz at the
+                               PLL), temperature, the stored record, its temperature points
+                               and what the model gives now
+   probe cal set <ppb>         apply and store a constant correction (drops the points)
+   probe cal clear             correction 0, nothing stored
+   probe temp                  the die temperature
 
    C5 only:
    probe diag level            the nibble window (lsb) the signal needs
@@ -107,6 +125,9 @@ Shell
    probe tx paint state        rows played, the longest row change (transmitter off meanwhile)
    probe tx stop               stop a replay, carrier or painting
    probe sleep <ms>            C6: deep sleep with a timer wakeup (USB drops meanwhile)
+
+The ESP32-C5-Zero has no SRAM for the calibration's work memory or the settings volume: no
+``probe cal lte`` there, and ``probe cal set`` holds for the session.
 
 Host tool
 *********
