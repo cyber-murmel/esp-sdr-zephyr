@@ -44,7 +44,7 @@ repos:
             apps/micropython/cmod/(esdr_fsk|esdr_pcap_core|esdr_pcap_dissect)\.[ch]$|
             apps/micropython/cmod/(esdr_scan|esdr_wf|esdr_hb)\.[ch]$|
             apps/chancap/tools/ble_pcap\.py$|
-            apps/pcap/tools/esdr_(pcap\.py|burst\.lua)$|
+            apps/pcap/tools/esdr_(pcap\.py|gr_pcap\.py|burst\.lua)$|
             apps/pcap/src/(pcap_proto|pcapng|records|decode|burst)\.h$|
             apps/pcap/src/(pcapng|records|dec_ble|dec_wpan|dec_generic|refine)\.c$|
             lib/ieee802154/ieee154_phy\.c$|

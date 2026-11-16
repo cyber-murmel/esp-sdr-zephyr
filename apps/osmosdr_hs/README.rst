@@ -49,6 +49,10 @@ A suspend stops the stream and the pads: the port's VBUS is the board's own, so 
 pulled cable leaves. A host that resumes with no bus reset gets its stream back at index 0 with
 ``ESDR_BLK_GAP``; a bus reset ends the stream. Read from the code, not yet run with a real suspend.
 
+Every Bluetooth LE and 802.15.4 channel of the stream at once, decoded into pcapng for Wireshark:
+:ref:`pcap <esp_sdr_pcap>`'s ``tools/esdr_gr_pcap.py`` (GNU Radio on the host, "Every channel of a
+wideband stream" there).
+
 Connecting it
 *************
 

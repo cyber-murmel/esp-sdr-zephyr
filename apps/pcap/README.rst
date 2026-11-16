@@ -112,6 +112,55 @@ Without Wireshark:
 The badge's own clock times the packets, anchored to the host's time (``PCAP_REQ_SET_TIME``) at
 the first block of a run: a few milliseconds off the host's, consistent within the run.
 
+Every channel of a wideband stream
+**********************************
+
+``tools/esdr_gr_pcap.py`` writes the same records on the host, for every channel of a 20 MS/s
+stream at once: from :ref:`osmosdr_hs <esp_sdr_osmosdr_hs>` (an ESP32-S31, through the esdr
+SoapySDR module) or a recording of one. GNU Radio cuts each Bluetooth LE and 802.15.4 channel
+within 8 MHz of the centre out of the stream, a frequency translating filter each (4 MS/s, flat to
+1 MHz, 50 dB down from 1.6 MHz), and each channel goes through this app's detector and decoders:
+the Pcap egg's capture core (``apps/micropython/cmod/esdr_pcap_core.c``), built with the host
+compiler on the first run and cached in ``$XDG_CACHE_HOME/esdr-pcap``.
+
+What the channels see of each other is sorted out before the write:
+
+- an access address a CONNECT_IND taught one channel is followed on all of them;
+- a burst record of a packet another channel decoded goes: the two grids' channels are 1 MHz
+  apart where they meet, and an 802.15.4 frame reaches into channels 3 MHz away;
+- of two channels' records of one signal (at one frequency, or between them from the same
+  moment) the one nearest its channel's centre stays, the stronger where neither was analysed;
+- a wide signal (Wi-Fi) becomes one wideband record over its span and time. A weak one lifts the
+  channels it covers over their floors unevenly and in pieces of some 30 us: records that three
+  channels, or two far apart, start at once open it, and the pieces within its span join it until
+  it has been quiet for 100 us.
+
+``--no-merge`` writes what each channel saw.
+
+.. code-block:: console
+
+   python3 esp-sdr-zephyr/apps/pcap/tools/esdr_gr_pcap.py -f 2409M -w capture.pcapng
+   python3 esp-sdr-zephyr/apps/pcap/tools/esdr_gr_pcap.py -f 2409M -w - | wireshark -k -i -
+   esdr_usb rx -f 2409000000 -r 20000000 -t 10 -o rec.cs8
+   python3 esp-sdr-zephyr/apps/pcap/tools/esdr_gr_pcap.py --file rec.cs8 -f 2409M -w rec.pcapng
+
+The default centre, 2409 MHz, holds advertising channel 37, data channels 0 to 6 and 802.15.4
+channels 11 to 13, none of them at DC. ``python3`` of the dev shell (``default.nix``) has GNU Radio
+and the SoapySDR module. The generic analysis runs up to ``--analyses`` times a second (1000), the
+other bursts go out as their detector's numbers.
+
+On the VIEWE board and a laptop (Intel i7-12700H), at the desk, 2026-11-10: ten channels kept up
+with the stream, no gap and nothing dropped in 30 s. At 2427 MHz 30 s gave 3868 Bluetooth LE
+packets on advertising channel 38, every CRC good, and 92 frames of the 802.15.4 network on
+channel 15 (Thread MLE and ZigBee among them). The channels closed 127 000 bursts, which went out
+as 16 962 records: 12 222 wideband (Wi-Fi), 3763 unknown, 629 CW, 318 2-FSK, 29 OOK, 1 BPSK. On a
+recording the same ten channels decode 1.8 times as fast as the stream comes; GNU Radio's filters
+take most of the time, each on a core of its own.
+
+A stream of 20 MS/s never holds two channels 24 MHz or more apart, advertising channels 37 and 38
+among them. In its outer 2 MHz either side may show what the analog low-pass lets through from
+beyond 10 MHz, folded (``--edge`` narrows the band).
+
 Shell
 *****
 
