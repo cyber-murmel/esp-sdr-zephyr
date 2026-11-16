@@ -69,6 +69,7 @@ Contents
        - ``wpan``: 802.15.4 test shell
        - ``zstack``: Zigbee coordinator with the Z-Stack ZNP serial protocol
        - ``rfprobe``: bench probe (tuning, tones, registers)
+       - ``ubertooth``: Ubertooth One device firmware for the upstream host tools
        - ``multiapp``: one firmware that runs the others
          (`doc/multiapp.md <doc/multiapp.md>`__)
        - ``chancap``: one capture per packet per channel of a grid, as

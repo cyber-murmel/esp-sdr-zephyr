@@ -3,7 +3,10 @@
 Where a function runs from and where a buffer lives decides, on these chips, whether a paced loop
 keeps up. On the ESP32-S3 flash code and PSRAM code run through one instruction cache of 16 KB, 8
 ways of 2 KB with 32 byte lines, which both CPUs share; IRAM, the DRAM image, the internal RAM above
-the receive banks and PSRAM differ in size, speed and in what may live there.
+the receive banks and PSRAM differ in size, speed and in what may live there. Ubertooth showed how
+much it matters: its hottest flash code, gathered into one 12 KB block aligned to the cache's way,
+cut the stream lost while following a connection from 0.062 % to 0.0007 to 0.0025 %
+([ubertooth.md](ubertooth.md)).
 
 The firmware therefore says how its code and data are used, and rules per SoC, board and app say
 where that goes. Code moves by a change of the rules, one at a time, each measured.
@@ -104,7 +107,7 @@ or object its own, `ESP_SDR_PIN_CODE_<fn>` or `ESP_SDR_PIN_DATA_<name>`, and `ES
 lower level's pin back. Both can be narrowed:
 
 - to a scope, the compile definition `ESP_SDR_PLACE_SCOPE` of an app's sources
-  (`target_compile_definitions(app PRIVATE ESP_SDR_PLACE_SCOPE=link)`):
+  (`target_compile_definitions(app PRIVATE ESP_SDR_PLACE_SCOPE=ubertooth)`):
   `ESP_SDR_PLACE_<scope>_<cat>`, `ESP_SDR_PIN_CODE_<scope>_<fn>`;
 - to a file that defines `ESP_SDR_PLACE_FILE` ahead of its tags (static names repeat across
   files): `ESP_SDR_PIN_DATA_<file>_<name>`.
@@ -113,7 +116,7 @@ Lookup: the file's pin, the scope's pin, the pin, the scope's rule, the rule.
 
 The SoC headers hold the categories as the code was placed before them. Where a function or buffer
 sat elsewhere than its category says, a pin marked "as before" keeps it there: the receive sinks
-that run per sample from flash, the transmit DAC's player, the
+that run per sample from flash, the transmit DAC's player, Ubertooth's per-poll chain in IRAM, the
 link's OFDM, QAM and BCH split. Each such pin is a candidate for a
 measured change.
 
@@ -173,7 +176,11 @@ link stops (`hot_text_check.ld`) should the block not reach the image.
 `scripts/place/hot_text.py <build> <list file> <capture>...` writes the list from profiles of the
 image: the flash functions sampled, densest first (samples per byte), while their text and
 literals (sizes from the linked map) fit the budget less what the rules place there; functions
-tagged `COLD` never go in. Every list is an A/B on the board.
+tagged `COLD` never go in. Profiles of the time on average are not always the right input: Ubertooth's
+stream losses come in bursts, when the USB driver's code thrashes the cache, and a list made from
+fresh profiles of its image without the Wi-Fi driver (where flash code was 1.7 % of CPU 0's
+samples) lost five times as much as the list it was to replace ([ubertooth.md](ubertooth.md)).
+Every list is an A/B on the board.
 
 ## Measuring
 
@@ -191,7 +198,9 @@ tagged `COLD` never go in. Every list is an A/B on the board.
   samples the interrupted stack in the timer interrupt on CPU 0 and, through IPIs, on the other CPU
   (`perf record`, `perf printbuf`). The zsdr fork adds an Xtensa backend
   (`PROFILING_PERF_BACKEND_XTENSA`) and a CPU mask, `perf record <ms> <Hz> [thread [cpus]]`:
-  `perf record 3000 1000 0 1` samples CPU 0 alone and sends the ring's CPU no IPI. perf prints
+  `perf record 3000 1000 0 1` samples CPU 0 alone and sends the ring's CPU no IPI. With Ubertooth's
+  ring at 4 MS/s, in runs of 3 s at 10 kHz, every run sampling both CPUs abandoned a ring unit (6 to
+  10 pairs), 3 of 7 sampling CPU 0 alone did (5 to 11 pairs), none of 6 without perf. perf prints
   the end of a recording from the system work queue, where a CDC-ACM shell transmits too unless
   `CONFIG_USBD_CDC_ACM_WORKQUEUE` gives it a queue of its own: the print then waits for itself until
   the liveness watchdog resets the board, so apps/common turns that option on in builds with perf.

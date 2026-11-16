@@ -75,7 +75,7 @@ manifest:
       remote: espargos
       revision: 1fe55351036337359bcac1ccca6db04c32fde4f8
       path: modules/lib/esp-sdr
-    # Espressif DSP library: only ESP32-S3 kernels (apps/link OFDM).
+    # Espressif DSP library: only ESP32-S3 kernels (apps/link OFDM, ubertooth).
     - name: esp-dsp
       remote: espressif
       revision: 3c8ac0fdfec83740b783e200862c8d0c056de0ad

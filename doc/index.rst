@@ -31,6 +31,7 @@ The API reference of the library is generated with Doxygen:
    apps/wpan
    apps/zstack
    apps/rfprobe
+   apps/ubertooth
    apps/multiapp
    apps/chancap
    apps/mch2022_coproc
@@ -52,6 +53,7 @@ The API reference of the library is generated with Doxygen:
    fpga-accelerator
    mch2022-rp2040
    zigbit-reference
+   ubertooth
    lte-calibration
 
 Indices

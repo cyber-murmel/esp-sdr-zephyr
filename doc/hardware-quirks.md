@@ -177,11 +177,12 @@ The capture and DAC playback use the Wi-Fi MAC's undocumented dump engine
   one pinned away from it. With the Wi-Fi driver, CPU 1's IPI happened to get
   line 0 and waited out each run with the MAC; without the driver it got line
   1, and wpan's ring opened some 1700 windows a second (its PHY thread sleeps
-  100 us at a time: worst lateness 110 pairs instead of 7, a few lost pairs;
-  2026-11-15). `lib/esp_sdr/Kconfig` turns the option on for
+  100 us at a time: worst lateness 110 pairs instead of 7, a few lost pairs),
+  Ubertooth's 32 (2026-11-15). `lib/esp_sdr/Kconfig` turns the option on for
   SMP builds with the ring, whose cooperative thread then draws none. The
   esp_timer interrupt lands on the CPU that starts the timer, which the first
-  `esp_sdr_init()` did without the driver: lib/esp_sdr starts it at boot,
+  `esp_sdr_init()` did without the driver (Ubertooth's main, on CPU 1: the
+  PHY's PLL tracking opened a window a second): lib/esp_sdr starts it at boot,
   on CPU 0.
 - **Loop playback wraps only while the trigger is held.** Loop playback
   (`esp_sdr_tx_loop_*()`) holds the trigger bit; pulsing it plays one pass.
