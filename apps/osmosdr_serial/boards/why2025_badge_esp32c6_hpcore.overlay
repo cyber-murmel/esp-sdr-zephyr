@@ -1,0 +1,38 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * The WHY2025 badge's ESP32-C6 as the radio of its ESP32-P4: the protocol runs on UART0 (the
+ * line to the P4's UART1) at 5 Mbaud, an exact divisor of the 40 MHz crystal on both chips.
+ * RTS goes out on GPIO0, the line to the P4's GPIO14, which the P4 reads as CTS: it pauses
+ * while the transmit ring is full. The console stays on USB-Serial-JTAG (USB-C port J8, while
+ * the P4 hands the port to the C6).
+ */
+
+#include <zephyr/dt-bindings/pinctrl/esp32c6-pinctrl.h>
+
+/ {
+	chosen {
+		zephyr,console = &usb_serial;
+		zephyr,shell-uart = &usb_serial;
+		esdr,link-uart = &uart0;
+	};
+};
+
+&pinctrl {
+	uart0_link: uart0_link {
+		group1 {
+			pinmux = <UART0_TX_GPIO16>, <UART0_RTS_GPIO0>;
+			output-high;
+		};
+
+		group2 {
+			pinmux = <UART0_RX_GPIO17>;
+			bias-pull-up;
+		};
+	};
+};
+
+&uart0 {
+	current-speed = <5000000>;
+	pinctrl-0 = <&uart0_link>;
+};

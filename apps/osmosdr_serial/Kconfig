@@ -17,4 +17,12 @@ config APP_RX_DIAG
 	  estimator polled by the CPU. Drives 8 pads as outputs while receiving; the nibble
 	  window is picked from the signal level when a stream starts.
 
+config APP_LINK_SDIO
+	bool "The link is the SDIO slave (ESP32-C6)"
+	depends on SOC_SERIES_ESP32C6
+	help
+	  The host (the WHY2025 badge's ESP32-P4) reaches the radio over SDIO function 1, 4-bit
+	  (src/link_sdio.c), instead of a UART or USB-Serial-JTAG. It carries receive rates up
+	  to 2 MS/s, 8-bit items above 250 kS/s.
+
 source "Kconfig.zephyr"
