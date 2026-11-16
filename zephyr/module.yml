@@ -2,6 +2,9 @@ name: esp-sdr-zephyr
 build:
   cmake: .
   kconfig: Kconfig
+  # After the HAL, so that its CMake functions are defined for this module.
+  depends:
+    - hal_espressif
   settings:
     # boards/waveshare/esp32c5_zero
     board_root: .
