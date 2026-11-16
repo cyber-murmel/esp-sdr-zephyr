@@ -58,6 +58,7 @@ Contents
        - ``osmosdr_serial``: the same over USB-Serial-JTAG (C6, C5)
        - ``link``: QAM or OFDM packet link
        - ``wpan``: 802.15.4 test shell
+       - ``zstack``: Zigbee coordinator with the Z-Stack ZNP serial protocol
        - ``rfprobe``: bench probe (tuning, tones, registers)
        - ``multiapp``: one firmware that runs the others
          (`doc/multiapp.md <doc/multiapp.md>`__)
