@@ -57,6 +57,16 @@ config ESP_SDR_PACED
 	  through the modem's IQ estimator and continuous transmit through the
 	  TX DC value register, paced by the CPU from the caller's loop.
 
+config ESP_SDR_TRIG
+	bool "Triggered 80 MS/s snapshots (ESP32-C6)"
+	default y
+	depends on SOC_SERIES_ESP32C6 && ESP_SDR_PACED
+	help
+	  esp_sdr_trig_*(): the dump engine as a 205 us ring in SRAM block 2,
+	  frozen once the power the IQ estimator sums over the 80 MHz input
+	  rises past a threshold, so a snapshot holds a burst and what came
+	  before it.
+
 config ESP_SDR_DIAG
 	bool "Gapless receive through the modem diagnostic bus (ESP32-C5)"
 	depends on SOC_SERIES_ESP32C5 && ESP_SDR_PACED

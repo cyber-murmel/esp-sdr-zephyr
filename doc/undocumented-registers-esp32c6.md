@@ -142,6 +142,14 @@ every register (bench 2026-10-09).
 | [FE_TONE_FREQ_LO_REG](#register-fe_tone_freq_lo_reg-0x600a042c) | Fine tone frequency: the low two bits of each tone's frequency | 0x600a042c | R/W |
 | [FE_TXDC_REG](#register-fe_txdc_reg-0x600a0444) | TX DC value | 0x600a0444 | R/W |
 | [FE_R44C_REG](#register-fe_r44c_reg-0x600a044c) | Unknown; init sets bits 27 and 25 and clears bit 22 | 0x600a044c | R/W |
+| [FE_IQE_CTRL0_REG](#register-fe_iqe_ctrl0_reg-0x600a0470) | IQ estimator: mode | 0x600a0470 | R/W |
+| [FE_IQE_CTRL1_REG](#register-fe_iqe_ctrl1_reg-0x600a0474) | IQ estimator: source, input count, start and enable | 0x600a0474 | R/W |
+| [FE_IQE_SUM_I_REG](#register-fe_iqe_sum_i_reg-0x600a0488) | IQ estimator: sum of I since the run started, times 64 (signed) | 0x600a0488 | RO |
+| [FE_IQE_SUM_Q_REG](#register-fe_iqe_sum_q_reg-0x600a048c) | IQ estimator: sum of Q since the run started, times 64 (signed) | 0x600a048c | RO |
+| [FE_IQE_POW_REG](#register-fe_iqe_pow_reg-0x600a0490) | IQ estimator: sum of I squared plus Q squared since the run started, over 8 | 0x600a0490 | RO |
+| [FE_IQE_POW_I_REG](#register-fe_iqe_pow_i_reg-0x600a0494) | IQ estimator: sum of I squared since the run started, over 4 | 0x600a0494 | RO |
+| [FE_IQE_POW_Q_REG](#register-fe_iqe_pow_q_reg-0x600a0498) | IQ estimator: sum of Q squared since the run started, over 4 | 0x600a0498 | RO |
+| [FE_IQE_CORR_REG](#register-fe_iqe_corr_reg-0x600a049c) | IQ estimator: sum of I times Q since the run started, over 4 (signed) | 0x600a049c | RO |
 | [FE_FORCE_REG](#register-fe_force_reg-0x600a0910) | Receive, transmit and BT mode force pairs; receive and transmit clocks | 0x600a0910 | R/W |
 | [FE_R958_REG](#register-fe_r958_reg-0x600a0958) | Unknown; `set_dump_mode()` clears bits 1:0 | 0x600a0958 | R/W |
 | **Analog I2C master** | | | |
@@ -223,7 +231,7 @@ windows (*upstream* `modules/lib/esp-sdr/main/common/ring_capture.c:96-131,
 1485-1507`): the 160 MHz CPU has 2 cycles per sample, too few to decimate the
 whole stream.
 
-Leads for a continuous C6 receive below 80 MS/s, none tried:
+Leads for a continuous C6 receive below 80 MS/s (the first one probed):
 
 - The modem diagnostic bus into PARL_IO. A third-party project, not re-checked
   here, reports for the ESP32-C5 that the dump's I/Q MSBs appear on MODEM_DIAG
@@ -237,6 +245,20 @@ Leads for a continuous C6 receive below 80 MS/s, none tried:
   IO_MUX_MODEM_DIAG_EN_REG (0x600900bc); both below. Which selector
   value puts receive I/Q on the C6 bus is unknown. Sampling below 80 MHz
   decimates without filtering, so the analog low-pass has to be narrowed first.
+
+  Probed 2026-10-19 (`tmp/scratch/c6diag`, not in the tree: the dump engine
+  set up by a burst capture and left running circular, all lines enabled,
+  two lanes at a time looped back through GPIO5 and GPIO11 and read by the
+  CPU at some 20 MHz; GPIO5 is MTDI and needs its pad function set to GPIO
+  first). With a strong tone, selector values sel0 = 4n (sel1 = 0) drive lanes
+  16 to 22 and 26 to 29; their toggle rates fall from lane 16 (some 350 per
+  4096 reads) to lane 22 (some 30, the sign rate of the 100 kHz tone), like
+  the bits of a sampled value rather than copies of a sign (an earlier sweep
+  read them as sign-like). Odd values 3 + 4n drive lane 19 only. The bit
+  mapping is not resolved: two pads see only a pair at a time. A parallel
+  capture needs a free pad per lane, which the WHY2025 badge's C6 does not
+  have (its SDIO link takes GPIO18 to 23), and a XIAO ESP32C6 has the pads but
+  only USB-Serial-JTAG to send the samples on.
 - The 802.11p clock mode: `phy_11p_set(1, m)` writes MODEM_SYSCON_WIFI_BB_CFG_REG
   (0x600a981c) bits 4:2 = 4 for m = 0, else 5, presumably for 10 and 5 MHz
   channels, and clears AGC_R30_REG (0x600a7030) bit 5 (*decompile* C6 `libphy.a`
@@ -258,7 +280,7 @@ Receive side: run, trigger and count of a capture
 
 **DUMP_DONE** As on the S3, reads 1 once DUMP_COUNT words are written. Write DUMP_COUNT with DUMP_DONE first to clear a stale DUMP_DONE, as the stock sequence does. (R/W)
 
-**DUMP_CIRCULAR** Circular ring, in upstream's C6 ring code. Not used here. (R/W)
+**DUMP_CIRCULAR** Circular ring: set with DUMP_RUN and bit 14 (upstream's 0x24000), the engine writes the owned block's first 16384 words over and over at 80 MS/s (205 us a lap) until DUMP_RUN is cleared. The ring stays 16384 words whatever DUMP_COUNT holds (16384, 32768 and 0 alike), so the block's upper 64 KiB is never written; the CPUs cannot read the ring while it runs (see "SRAM bank ownership"). The library's triggered snapshots use it. (R/W)
 
 **DUMP_COUNT** Words to capture, 256 to 16380; 16380 samples take about 205 us. (R/W)
 
@@ -267,7 +289,7 @@ No rate field, unlike the S3's: receive runs at 80 MS/s only.
 Evidence:
 
 - *working* `lib/esp_sdr/src/esp_sdr_priv.h:77-81`, `lib/esp_sdr/src/esp_sdr_rx.c:302-310`; *upstream* `modules/lib/esp-sdr/main/targets/esp32c6/chip.h:43-46` (DUMP_RUN, DUMP_TRIGGER, DUMP_DONE, DUMP_COUNT)
-- DUMP_CIRCULAR: *upstream* `modules/lib/esp-sdr/main/common/ring_capture.c:104, 1499-1505`
+- DUMP_CIRCULAR: *measured* bench 2026-10-19 (sentinel fill, ring size and index); *working* `lib/esp_sdr/src/esp_sdr_trig.c`; *upstream* `modules/lib/esp-sdr/main/common/ring_capture.c:104, 1499-1505`
 
 #### Register DUMP_MODE_REG (0x600a9008)
 
@@ -281,12 +303,14 @@ Dump source; the live write index in upstream's ring
 
 **DUMP_SRC** Dump source; 15 = raw receive I/Q, as the stock `adctrig()` (see "Receive rate" above for the other sources). The library writes 15. (R/W)
 
-Upstream's ring code reads the live write index from the low bits of this
-register.
+While DUMP_CIRCULAR runs, bits 14:0 are the write index: bits 13:0 the word the
+engine writes next, one step per sample (80 MS/s), and bit 14 toggling every lap.
+They read 0 once DUMP_RUN is cleared, so a stopped ring's position has to be read
+just before the stop.
 
 Evidence:
 
-- *upstream* `modules/lib/esp-sdr/main/common/ring_capture.c:96, 1507` (write index)
+- *measured* bench 2026-10-19; *working* `lib/esp_sdr/src/esp_sdr_trig.c`; *upstream* `modules/lib/esp-sdr/main/common/ring_capture.c:96, 1507` (write index)
 - DUMP_B23_21: *measured* bench 2026-10-11; C5 and C61: *upstream* `modules/lib/esp-sdr/main/targets/esp32c5/chip.h:11`, `modules/lib/esp-sdr/main/targets/esp32c61/chip.h:20-21`
 - DUMP_SRC: *working* `lib/esp_sdr/src/esp_sdr_priv.h:82-84`; *upstream* `modules/lib/esp-sdr/main/targets/esp32c6/chip.h:6, 39`
 
@@ -850,6 +874,137 @@ and inject bits is a guess.
 Evidence:
 
 - *decompile* (the writes; C61 `libphy.a` `phy_reg.o`); *speculative* (the meaning)
+
+#### Register FE_IQE_CTRL0_REG (0x600a0470)
+
+IQ estimator: mode
+
+| Bits | 31:28 | 27:26 | 25:0 |
+|---|---|---|---|
+| Field | (unknown) | FE_MODE | (unknown) |
+
+**FE_MODE** Estimator mode; the library writes 1. (R/W)
+
+The estimator sums the 80 MHz receive input in hardware (ROM `rom_iq_est_enable`,
+`dc_iq_est`); the library selects mode 1 for its paced receive and its trigger.
+Modes 0 to 3 gave the same sums in FE_IQE_POW_REG and FE_IQE_POW_I_REG.
+
+Evidence:
+
+- *working* `lib/esp_sdr/src/esp_sdr_priv.h:118-120`, `lib/esp_sdr/src/esp_sdr_paced.c`; *measured* bench 2026-10-19 (modes)
+
+#### Register FE_IQE_CTRL1_REG (0x600a0474)
+
+IQ estimator: source, input count, start and enable
+
+| Bits | 31:21 | 20:19 | 18:17 | 16:2 | 1 | 0 |
+|---|---|---|---|---|---|---|
+| Field | (unknown) | FE_SRC | (unknown) | FE_COUNT | FE_START | FE_EN |
+
+**FE_SRC** Input select; the library writes 2 (the receive I/Q). (R/W)
+
+**FE_COUNT** Inputs to sum, minus one. (R/W)
+
+**FE_START** Set after IQE_EN to start a run. (R/W)
+
+**FE_EN** Enables the estimator. (R/W)
+
+A run sums IQE_COUNT + 1 inputs (at most 32768, 410 us), then stops; the sums
+can be read while it counts. Restarting is enable, then enable with start.
+
+Evidence:
+
+- *working* `lib/esp_sdr/src/esp_sdr_priv.h:121-128`, `lib/esp_sdr/src/esp_sdr_paced.c`
+
+#### Register FE_IQE_SUM_I_REG (0x600a0488)
+
+IQ estimator: sum of I since the run started, times 64 (signed)
+
+| Bits | 31:0 |
+|---|---|
+| Field | (unknown) |
+
+Differencing two readings gives the sum over the inputs between them: the paced
+receive's boxcar decimator.
+
+Evidence:
+
+- *working* `lib/esp_sdr/src/esp_sdr_paced.c`
+
+#### Register FE_IQE_SUM_Q_REG (0x600a048c)
+
+IQ estimator: sum of Q since the run started, times 64 (signed)
+
+| Bits | 31:0 |
+|---|---|
+| Field | (unknown) |
+
+Evidence:
+
+- *working* `lib/esp_sdr/src/esp_sdr_paced.c`
+
+#### Register FE_IQE_POW_REG (0x600a0490)
+
+IQ estimator: sum of I squared plus Q squared since the run started, over 8
+
+| Bits | 31:0 |
+|---|---|
+| Field | (unknown) |
+
+Over the full 80 MHz input, the 10-bit values (the dump's bits 19:10 and 9:0)
+squared: measured against the dump's own samples of the same inputs, 28 runs at
+three frequencies and four gains, DC from 1 to 19 and noise to strong Wi-Fi, all
+within 0.1 % once the count is matched by FE_IQE_SUM_I_REG. It keeps counting while
+the dump engine runs, so it is a wideband power detector next to a capture: the
+library's triggered snapshots difference it every 10 us and take the window's mean
+out with FE_IQE_SUM_I_REG and FE_IQE_SUM_Q_REG. Whether it saturates or wraps past
+2^32 is not known: the library restarts the run every 8000 inputs.
+
+Evidence:
+
+- *measured* bench 2026-10-20 (simultaneous dump and estimator); *working* `lib/esp_sdr/src/esp_sdr_trig.c`
+
+#### Register FE_IQE_POW_I_REG (0x600a0494)
+
+IQ estimator: sum of I squared since the run started, over 4
+
+| Bits | 31:0 |
+|---|---|
+| Field | (unknown) |
+
+Measured as FE_IQE_POW_REG.
+
+Evidence:
+
+- *measured* bench 2026-10-20
+
+#### Register FE_IQE_POW_Q_REG (0x600a0498)
+
+IQ estimator: sum of Q squared since the run started, over 4
+
+| Bits | 31:0 |
+|---|---|
+| Field | (unknown) |
+
+Measured as FE_IQE_POW_REG.
+
+Evidence:
+
+- *measured* bench 2026-10-20
+
+#### Register FE_IQE_CORR_REG (0x600a049c)
+
+IQ estimator: sum of I times Q since the run started, over 4 (signed)
+
+| Bits | 31:0 |
+|---|---|
+| Field | (unknown) |
+
+Measured as FE_IQE_POW_REG, with DCs and cross products of both signs.
+
+Evidence:
+
+- *measured* bench 2026-10-20
 
 #### Register FE_FORCE_REG (0x600a0910)
 
