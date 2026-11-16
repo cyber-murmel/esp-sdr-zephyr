@@ -57,6 +57,8 @@ namespace {
 /* Device handle plus the endpoints and serial, found once at enumeration or open. */
 struct UsbEsdr {
 	libusb_device_handle *h = nullptr;
+	/* The vendor interface: 0 on osmosdr's own image, another under multiapp. */
+	int iface = 0;
 	uint8_t ep_in = 0, ep_out = 0;
 	std::string serial;
 };
@@ -111,6 +113,7 @@ bool openByCriteria(libusb_context *ctx, const std::string &wantSerial, UsbEsdr 
 				}
 			}
 			out.h = h;
+			out.iface = id->bInterfaceNumber;
 			out.serial = sn;
 			found = true;
 		}
@@ -246,7 +249,7 @@ public:
 	~UsbLink() override
 	{
 		stopRx();
-		libusb_release_interface(usb_.h, 0);
+		libusb_release_interface(usb_.h, usb_.iface);
 		libusb_close(usb_.h);
 		libusb_exit(ctx_);
 	}

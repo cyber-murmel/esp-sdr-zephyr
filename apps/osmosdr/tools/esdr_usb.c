@@ -771,6 +771,14 @@ static int run_stream(struct stream *s, bool in, double seconds, double rate)
 		}
 	}
 	stop = 1;
+	if (in) {
+		/*
+		 * The device off first, while the transfers still queued take what it sends until
+		 * then: cancelled first, they left it streaming into nothing, its last batches
+		 * counted as overflows.
+		 */
+		ctrl_out(ESDR_REQ_SET_MODE, ESDR_MODE_OFF, NULL, 0);
+	}
 	for (int k = 0; k < XFERS; k++) {
 		libusb_cancel_transfer(x[k]);
 	}
