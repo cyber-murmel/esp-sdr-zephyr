@@ -75,7 +75,9 @@ which the badge's RP2040 bridges to USB without flow control wires, in one of tw
   ``--baud 2000000 <port>``. The firmware understands both and follows the host: hello goes to frames,
   the zeros a plain host opens with go back.
 
-The rate of samples on average, in 4 to 5 s at the desk (all blocks whole):
+The rate of samples on average, in 4 to 14 s at the desk (all blocks whole). The FPGA's column is
+through SoapySDR; the others were measured before the burst cycle got shorter, and at 2 MS/s now
+reach 89.1 kS/s plain and 178.9 kS/s framed at 5 Mbaud:
 
 .. list-table::
    :header-rows: 1
@@ -89,27 +91,27 @@ The rate of samples on average, in 4 to 5 s at the desk (all blocks whole):
      - 46.4 kS/s
      - 82.2 kS/s
      - 157.8 kS/s
-     - 348.7 kS/s
+     - 449.6 kS/s
    * - 1 MS/s
      - 44.8 kS/s
      - 77.7 kS/s
      - 139.7 kS/s
-     - 264.5 kS/s
+     - 415.8 kS/s
    * - 500 kS/s
      - 22.8 kS/s
      - 70.4 kS/s
      - 113.6 kS/s
-     - 177.0 kS/s
+     - 236.0 kS/s
    * - 250 kS/s
      - 11.5 kS/s
      - 59.1 kS/s
      - 82.6 kS/s
-     - 106.0 kS/s
+     - 126.1 kS/s
    * - 125 kS/s
      - not measured (a single failed start, see ``doc/mch2022-rp2040.md``)
      - 44.7 kS/s
      - 53.0 kS/s
-     - 58.3 kS/s
+     - 64.8 kS/s
 
 The stock RP2040 firmware resets the ESP32 into its download mode for esptool and keeps IO0 low until
 a reset into the application, which the RTS/DTR sequences do not always give; its WebUSB request 0x23

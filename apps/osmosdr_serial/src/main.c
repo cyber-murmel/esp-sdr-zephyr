@@ -46,6 +46,11 @@
 #include "esdr_cal.h"
 #include "esdr_dev.h"
 #if defined(CONFIG_APP_LINK_FRAMED)
+#if defined(CONFIG_SOC_SERIES_ESP32)
+/* A byte at a time from the ROM: every block's bytes go through it. */
+#include <esp_rom_crc.h>
+#define ESDR_LINK_CRC_ADD(crc, p, n) (~esp_rom_crc32_le(~(crc), (p), (n)))
+#endif
 #include <esp_sdr/esdr_link.h>
 #endif
 #if defined(CONFIG_APP_LINK_FAST)
@@ -367,6 +372,8 @@ static struct {
 	/* The encoded frame going out. */
 	uint32_t tx_len, tx_off;
 	uint8_t tx[FRAME_TX_BYTES];
+	/* A block's frame encoded, waiting for credit: its length, 0 for none. */
+	uint32_t ready_n;
 	/* A rate to go to after the reply. */
 	uint32_t baud_next;
 } fr APP_HIGH;
@@ -382,8 +389,35 @@ static size_t block_bytes(const uint8_t *blk)
 
 #if defined(CONFIG_APP_LINK_FAST)
 #define FPGA_REG_CAPS 0x03U
+#define FAST_STACK    2048
+/* Above the main loop, which only spins while the capture runs. */
+#define FAST_PRIO     K_PRIO_COOP(2)
 
 static const struct device *const fpga = DEVICE_DT_GET(DT_NODELABEL(fpga));
+
+/*
+ * A block's frame leaves by DMA while the main loop goes on with the next burst, so that the
+ * write's time need not add to the capture's: fast_tx is this thread's from fast_go to fast_idle.
+ */
+static uint8_t fast_tx[FRAME_TX_BYTES] __aligned(4) APP_HIGH;
+static uint32_t fast_len;
+static K_SEM_DEFINE(fast_go, 0, 1);
+static K_SEM_DEFINE(fast_idle, 1, 1);
+
+static void fast_thread(void *a, void *b, void *c)
+{
+	static const uint8_t op = ESDR_LINK_FPGA_OP;
+
+	ARG_UNUSED(a);
+	ARG_UNUSED(b);
+	ARG_UNUSED(c);
+	for (;;) {
+		(void)k_sem_take(&fast_go, K_FOREVER);
+		(void)esdr_fpga_write(fpga, &op, 1, fast_tx, fast_len);
+		k_sem_give(&fast_idle);
+	}
+}
+K_THREAD_DEFINE(fast_tid, FAST_STACK, fast_thread, NULL, NULL, NULL, FAST_PRIO, 0, 0);
 
 /* The link bitstream is what the FPGA runs. */
 static bool fast_available(void)
@@ -396,32 +430,57 @@ static bool fast_available(void)
 }
 #endif
 
+/* The frame waiting for credit goes: something else takes its seat or its sequence number. */
+static void framed_drop_ready(void)
+{
+#if defined(CONFIG_APP_LINK_FAST)
+	if (fr.fast && fr.ready_n != 0U) {
+		k_sem_give(&fast_idle);
+	}
+#endif
+	fr.ready_n = 0;
+}
+
 static void framed_out(uint32_t max)
 {
 	while (max-- > 0U) {
 		if (fr.tx_off == fr.tx_len) {
-			const uint8_t *blk;
+			uint8_t *tx = fr.tx;
 			size_t n;
 
 			if (out.sent == out.committed) {
 				return;
 			}
-			blk = out.blk[out.sent % OUT_BLOCKS];
-			/* Whatever its length, it fits: the frame's bound holds for a whole block. */
-			n = esdr_link_encode(fr.tx, sizeof(fr.tx), ESDR_LINK_BLOCK, fr.block_seq, blk,
-					     block_bytes(blk), NULL, 0);
+#if defined(CONFIG_APP_LINK_FAST)
+			if (fr.fast) {
+				/* Still sending the one before: its turn comes again. */
+				if (fr.ready_n == 0U && k_sem_take(&fast_idle, K_NO_WAIT) != 0) {
+					return;
+				}
+				tx = fast_tx;
+			}
+#endif
+			/* Once: a wait for credit brings it here many times. */
+			if (fr.ready_n == 0U) {
+				const uint8_t *blk = out.blk[out.sent % OUT_BLOCKS];
+
+				/* Whatever its length, it fits: the bound holds for a whole block. */
+				fr.ready_n = esdr_link_encode(tx, sizeof(fr.tx), ESDR_LINK_BLOCK,
+							      fr.block_seq, blk, block_bytes(blk),
+							      NULL, 0);
+			}
+			n = fr.ready_n;
 			if (fr.limited && fr.credit < n) {
 				return;
 			}
+			fr.ready_n = 0;
 			fr.block_seq++;
 			fr.credit = fr.limited ? fr.credit - (uint32_t)n : 0U;
 			stats.usb_in_bytes += n;
 #if defined(CONFIG_APP_LINK_FAST)
 			if (fr.fast) {
-				/* By DMA, some 200 ns a byte: the UART's FIFO meanwhile keeps replies. */
-				static const uint8_t op = ESDR_LINK_FPGA_OP;
-
-				(void)esdr_fpga_write(fpga, &op, 1, fr.tx, n);
+				fast_len = (uint32_t)n;
+				k_sem_give(&fast_go);
 				out.sent++;
 				stats.rx_blocks++;
 				return;
@@ -451,6 +510,7 @@ static void framed_now(const uint8_t *p, size_t n)
 	int64_t end = k_uptime_get() + 100;
 	size_t len;
 
+	framed_drop_ready();
 	while (fr.tx_off != fr.tx_len) {
 		if (k_uptime_get() > end) {
 			return;
@@ -600,6 +660,7 @@ static APP_HOT void req_feed(uint8_t b)
 #if defined(CONFIG_APP_LINK_FRAMED)
 static void framed_off(void)
 {
+	framed_drop_ready();
 	fr.on = false;
 	fr.fast = false;
 	fr.limited = false;
@@ -632,6 +693,7 @@ static void framed_frame(void)
 			return;
 		}
 		memcpy(&h, f.payload, sizeof(h));
+		framed_drop_ready();
 		fr.on = true;
 		fr.zeros = 0;
 		fr.credit = sys_le32_to_cpu(h.credit);
@@ -1601,6 +1663,19 @@ static void rx_begin(void)
 	out.fill_n = 0;
 }
 
+/* After samples went in: commit a full block, and with no free one drop until there is. */
+static void rx_block_check(void)
+{
+	if (out.fill_n == rx_per_block) {
+		out_commit();
+	}
+	rx_full = out.committed - out.sent >= OUT_BLOCKS;
+	if (rx_full && out.next_flags == 0U) {
+		out.next_flags = ESDR_BLK_OVERFLOW | ESDR_BLK_GAP;
+		stats.rx_overflows++;
+	}
+}
+
 /* One sample, int16 full scale; commits the block when it is full. */
 static void rx_emit(int32_t vi, int32_t vq)
 {
@@ -1619,15 +1694,7 @@ static void rx_emit(int32_t vi, int32_t vq)
 		blk[2U * out.fill_n + 1U] = (uint8_t)(int8_t)CLAMP((vq + 128) >> 8, -127, 127);
 		out.fill_n++;
 	}
-	if (out.fill_n == rx_per_block) {
-		out_commit();
-	}
-	/* No free block: drop until one is, then mark the gap. */
-	rx_full = out.committed - out.sent >= OUT_BLOCKS;
-	if (rx_full && out.next_flags == 0U) {
-		out.next_flags = ESDR_BLK_OVERFLOW | ESDR_BLK_GAP;
-		stats.rx_overflows++;
-	}
+	rx_block_check();
 }
 
 /* After a stream: whole blocks only, the partial one is dropped and the restart marked. */
@@ -1782,10 +1849,45 @@ static void run_rx_fast(void)
 #endif
 
 #if !defined(CONFIG_ESP_SDR_PACED)
+/* A burst into the blocks, as rx_emit() a sample at a time would, in under a third of the time. */
+static void rx_emit_burst(const struct esp_sdr_iq16 *iq, size_t n, int32_t g)
+{
+	while (n > 0U) {
+		if (rx_full || want.bits == 16U) {
+			rx_emit(CLAMP(iq->i * g, -32767, 32767), CLAMP(iq->q * g, -32767, 32767));
+			iq++;
+			n--;
+			continue;
+		}
+
+		const size_t k = MIN(n, rx_per_block - out.fill_n);
+		int8_t *p = (int8_t *)out.blk[out.committed % OUT_BLOCKS] +
+			    sizeof(struct esdr_block_hdr) + 2U * out.fill_n;
+
+		for (size_t j = 0; j < k; j++) {
+			p[2U * j] = (int8_t)CLAMP((iq[j].i * g + 128) >> 8, -127, 127);
+			p[2U * j + 1U] = (int8_t)CLAMP((iq[j].q * g + 128) >> 8, -127, 127);
+		}
+		out.fill_n += k;
+		iq += k;
+		n -= k;
+		rx_block_check();
+	}
+}
+
+/* The capture needs no CPU: the link has its turn meanwhile. */
+static void rx_during_capture(void *user)
+{
+	ARG_UNUSED(user);
+	out_service(64);
+	in_service(16);
+}
+
 /*
- * Decimated bursts: each one's samples into the blocks, then the link takes them; the next
- * burst starts once the blocks are out, its gap since the last one moves the block index and
- * flags the block. Their CIC's full scale is int16's; the digital gain shifts it up.
+ * Decimated bursts: each one's samples into the blocks, and the link takes them while the next
+ * burst is captured; the next waits for it only with more than a block queued. Its gap since the
+ * last one moves the block index and flags the block. Their CIC's full scale is int16's; the
+ * digital gain shifts it up.
  */
 static void run_rx(void)
 {
@@ -1794,14 +1896,21 @@ static void run_rx(void)
 	int32_t g = 1 << (dgain_db() / 6U);
 	uint64_t next_ns = 0;
 	bool first = true;
+	size_t outs = ESP_SDR_SAMPLES_MAX / m - ESP_SDR_RX_DECIM_SETTLE, count;
 
 	rx_begin();
+	/* Whole blocks when it fills any: a few samples over would take a frame of their own. */
+	if (outs >= rx_per_block) {
+		outs -= outs % rx_per_block;
+	}
+	count = m * (outs + ESP_SDR_RX_DECIM_SETTLE);
+	esp_sdr_rx_set_capture_hook(rx_during_capture, NULL);
 	while (!req.ready) {
 		uint64_t first_ns;
 		size_t n;
 
-		if (esp_sdr_rx_capture_decimated(ESP_SDR_RATE_16MSPS, ESP_SDR_SAMPLES_MAX, m, iq,
-						 ARRAY_SIZE(iq), &n, &first_ns) != 0) {
+		if (esp_sdr_rx_capture_decimated(ESP_SDR_RATE_16MSPS, count, m, iq, ARRAY_SIZE(iq), &n,
+						 &first_ns) != 0) {
 			want.mode = ESDR_MODE_OFF;
 			break;
 		}
@@ -1815,15 +1924,14 @@ static void run_rx(void)
 		}
 		first = false;
 		next_ns = first_ns + (uint64_t)n * NSEC_PER_SEC / want.rate_hz;
-		for (size_t j = 0; j < n; j++) {
-			rx_emit(CLAMP(iq[j].i * g, -32767, 32767), CLAMP(iq[j].q * g, -32767, 32767));
-		}
-		while (!req.ready && out.sent != out.committed) {
+		rx_emit_burst(iq, n, g);
+		while (!req.ready && out.committed - out.sent > 1U) {
 			out_service(64);
 			in_service(16);
 		}
 		in_service(16);
 	}
+	esp_sdr_rx_set_capture_hook(NULL, NULL);
 	stats.ring_runs++;
 	rx_end();
 }
