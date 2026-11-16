@@ -77,7 +77,8 @@ little endian:
    * - ``SET_FREQ`` (0x03)
      - centre in Hz, 8 bytes
    * - ``SET_SAMPLE_RATE`` (0x04)
-     - Hz, 4 bytes; the nearest supported rate is taken
+     - Hz, 4 bytes; the nearest supported rate is taken (on a log scale, of ``GET_RATES``'s
+       where there is the list)
    * - ``SET_RX_GAIN`` (0x05)
      - PHY gain index 0 to 82 (not dB), or 0xffff for the hardware AGC
    * - ``SET_TX_GAIN`` (0x06)
@@ -108,6 +109,10 @@ little endian:
        (``struct esdr_cal_rec``, as ``GET_CAL`` gave it). Applied from the next tuning, stored
        where the device has a store. The serial transport takes it;
        this app answers ``GET_CAL`` only
+   * - ``GET_RATES`` (0x1c, in)
+     - the receive rates in Hz, 4 bytes each, fastest first, the reply's length giving their
+       number; only where ``esdr_info.caps`` has ``ESDR_CAP_RATE_LIST``. The
+       ``rx_rate_max_hz >> k`` of ``GET_INFO`` are among them for hosts that know only those
 
 Receive data comes in 4096-byte blocks on bulk IN: a 16-byte header
 (magic ``EBLK``, flags, sample count, index of the first sample on the

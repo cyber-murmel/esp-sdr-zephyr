@@ -152,6 +152,13 @@ enum esdr_req {
 	 * its side and says HELLO. -EINVAL above struct esdr_link_hello's baud_max.
 	 */
 	ESDR_REQ_SET_LINK_BAUD = 0x1b,
+	/*
+	 * IN: the receive rates in Hz, uint32_t each, fastest first; the reply's length gives their
+	 * number, at most ESDR_RATES_MAX. Only from a device with ESDR_CAP_RATE_LIST in
+	 * esdr_info.caps; every rx_rate_max_hz >> k is among them, for hosts that know only those.
+	 * ESDR_REQ_SET_SAMPLE_RATE takes the nearest of them. wValue 0.
+	 */
+	ESDR_REQ_GET_RATES = 0x1c,
 };
 
 #define ESDR_BURST_MAX 16380U
@@ -220,13 +227,21 @@ enum esdr_mode {
 
 #define ESDR_INFO_MAGIC 0x52445345U /* "ESDR" */
 
+/* esdr_info.caps: the device answers ESDR_REQ_GET_RATES. */
+#define ESDR_CAP_RATE_LIST 0x0001U
+/* The most rates ESDR_REQ_GET_RATES gives. */
+#define ESDR_RATES_MAX 32U
+
 struct esdr_info {
 	uint32_t magic;
 	uint16_t proto_version;
 	uint16_t info_size;
 	char firmware[32];
 	uint64_t freq_min_hz, freq_max_hz;
-	/* Supported receive rates: rx_rate_max_hz >> k for k = 0 .. rx_rate_count - 1. */
+	/*
+	 * Receive rates: rx_rate_max_hz >> k for k = 0 .. rx_rate_count - 1, and with
+	 * ESDR_CAP_RATE_LIST also those between them that ESDR_REQ_GET_RATES lists.
+	 */
 	uint32_t rx_rate_max_hz;
 	uint16_t rx_rate_count;
 	uint16_t rx_gain_max;
@@ -234,7 +249,8 @@ struct esdr_info {
 	uint16_t block_bytes;
 	/* Full scale of the 16-bit items (8-bit items: 128). */
 	uint16_t full_scale16;
-	uint16_t reserved;
+	/* ESDR_CAP_*; 0 from devices before them (the field was reserved). */
+	uint16_t caps;
 } __attribute__((packed));
 
 struct esdr_state {

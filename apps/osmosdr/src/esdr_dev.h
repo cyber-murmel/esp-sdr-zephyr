@@ -35,6 +35,22 @@ static inline uint32_t esdr_rate_round(uint32_t max_hz, uint32_t count, uint32_t
 	return min_hz;
 }
 
+/* Nearest of @p n rates (fastest first, ESDR_REQ_GET_RATES) on a log scale. */
+static inline uint32_t esdr_rate_round_list(const uint32_t *rates, size_t n, uint32_t hz)
+{
+	/* Also keeps hz^2 below 2^64. */
+	if (hz >= rates[0]) {
+		return rates[0];
+	}
+	for (size_t k = 0; k + 1U < n; k++) {
+		/* At or above the geometric mean of the two neighbours. */
+		if ((uint64_t)hz * hz >= (uint64_t)rates[k] * rates[k + 1U]) {
+			return rates[k];
+		}
+	}
+	return rates[n - 1U];
+}
+
 /* ESDR_REQ_SET_FREQ: within the software tuning limits. */
 static inline bool esdr_freq_ok(uint64_t hz)
 {

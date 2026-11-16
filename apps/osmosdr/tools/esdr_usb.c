@@ -320,6 +320,16 @@ static int cmd_info(void)
 	       "rx gain 0..%u, tx gain 0..%u, block %u bytes\n",
 	       in.firmware, in.proto_version, in.freq_min_hz, in.freq_max_hz, in.rx_rate_max_hz,
 	       in.rx_rate_count - 1, in.rx_gain_max, in.tx_gain_max, in.block_bytes);
+	if ((in.caps & ESDR_CAP_RATE_LIST) != 0U) {
+		uint32_t rates[ESDR_RATES_MAX];
+		int got = ctrl_in(ESDR_REQ_GET_RATES, rates, sizeof(rates));
+
+		printf("rx rates:");
+		for (int k = 0; k < got / 4; k++) {
+			printf(" %u", rates[k]);
+		}
+		printf(" S/s\n");
+	}
 	print_state();
 	return 0;
 }

@@ -3,7 +3,7 @@
  *
  * Unit test of the osmosdr protocol helpers: esdr_dev.h's request checks and GET_INFO reply,
  * with the rate tables of the S3 (ring rate over 32 to 1024) and of osmosdr_serial over SDIO
- * (2 MS/s and seven halvings), and esdr_proto.h's block header check.
+ * (2 MS/s and seven halvings), a rate list (osmosdr_hs's), and esdr_proto.h's block header check.
  */
 #include <string.h>
 
@@ -35,6 +35,39 @@ ZTEST(esdr_dev, test_rate_round)
 	/* Every offered rate rounds to itself. */
 	for (uint32_t k = 0; k < 8U; k++) {
 		zassert_equal(esdr_rate_round(2000000U, 8U, 2000000U >> k), 2000000U >> k);
+	}
+}
+
+ZTEST(esdr_dev, test_rate_round_list)
+{
+	/* osmosdr_hs: 160 MHz over even dividers, 20 MS/s to 2. */
+	static const uint32_t r[] = {20000000U, 16000000U, 10000000U, 8000000U, 5000000U,
+				     4000000U, 3200000U, 2500000U, 2000000U};
+	const size_t n = ARRAY_SIZE(r);
+
+	zassert_equal(esdr_rate_round_list(r, n, UINT32_MAX), 20000000U);
+	zassert_equal(esdr_rate_round_list(r, n, 40000000U), 20000000U);
+	/* The geometric mean of 20 and 16 MS/s is 17.889 MS/s. */
+	zassert_equal(esdr_rate_round_list(r, n, 17888543U), 16000000U);
+	zassert_equal(esdr_rate_round_list(r, n, 17888544U), 20000000U);
+	zassert_equal(esdr_rate_round_list(r, n, 12000000U), 10000000U);
+	zassert_equal(esdr_rate_round_list(r, n, 2048000U), 2000000U);
+	zassert_equal(esdr_rate_round_list(r, n, 1U), 2000000U);
+	zassert_equal(esdr_rate_round_list(r, n, 0U), 2000000U);
+	/* Every listed rate rounds to itself, so does every max >> k an old host sends. */
+	for (size_t k = 0; k < n; k++) {
+		zassert_equal(esdr_rate_round_list(r, n, r[k]), r[k]);
+	}
+	for (uint32_t k = 0; k < 3U; k++) {
+		zassert_equal(esdr_rate_round_list(r, n, 20000000U >> k), 20000000U >> k);
+	}
+	/* A ladder of halvings rounds as esdr_rate_round() does. */
+	static const uint32_t h[] = {2000000U, 1000000U, 500000U, 250000U, 125000U, 62500U, 31250U,
+				     15625U};
+
+	for (uint32_t hz = 1000U; hz < 4000000U; hz = hz * 21U / 20U + 1U) {
+		zassert_equal(esdr_rate_round_list(h, ARRAY_SIZE(h), hz),
+			      esdr_rate_round(2000000U, 8U, hz), "%u", hz);
 	}
 }
 
@@ -70,7 +103,8 @@ ZTEST(esdr_dev, test_info_init)
 	zassert_equal(info.tx_gain_max, 15U);
 	zassert_equal(info.block_bytes, ESDR_BLOCK_BYTES);
 	zassert_equal(info.full_scale16, 32767U);
-	zassert_equal(info.reserved, 0U);
+	/* No capability unless the device sets it. */
+	zassert_equal(info.caps, 0U);
 	/* Cut to the field, always terminated. */
 	zassert_equal(strlen(info.firmware), sizeof(info.firmware) - 1U);
 	zassert_mem_equal(info.firmware, "a firmware name longer than the", sizeof(info.firmware) - 1U);

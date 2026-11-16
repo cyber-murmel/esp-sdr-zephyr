@@ -1070,6 +1070,21 @@ public:
 			rxGainMax_ = info.rx_gain_max;
 			txGainMax_ = info.tx_gain_max;
 		}
+		/* max >> k, or what the device lists between them (ESDR_CAP_RATE_LIST). */
+		for (unsigned k = 0; k < rateSteps_; k++) {
+			rates_.push_back(rateMaxHz_ / (double)(1u << k));
+		}
+		if ((info.caps & ESDR_CAP_RATE_LIST) != 0U) {
+			uint32_t list[ESDR_RATES_MAX];
+			int got = link_->ctrlIn(ESDR_REQ_GET_RATES, list, sizeof(list));
+
+			if (got >= 4) {
+				rates_.assign(list, list + got / 4);
+			}
+		}
+		if (rates_.empty()) {
+			rates_.push_back(rateMaxHz_);
+		}
 		/* Start from what the device runs with. */
 		struct esdr_state st{};
 
@@ -1457,17 +1472,15 @@ public:
 		}
 	}
 
-	/* The device's rate nearest to @p rate on a log scale (its own rounding). */
+	/* The device's rate nearest to @p rate on a log scale (its own rounding, esdr_dev.h). */
 	double deviceRate(double rate) const
 	{
-		for (unsigned k = 0; k + 1 < rateSteps_; k++) {
-			double r = rateMaxHz_ / (double)(1u << k);
-
-			if (2.0 * rate * rate >= r * r) {
-				return r;
+		for (size_t k = 0; k + 1 < rates_.size(); k++) {
+			if (rate * rate >= rates_[k] * rates_[k + 1]) {
+				return rates_[k];
 			}
 		}
-		return rateMaxHz_ / (double)(1u << (rateSteps_ - 1));
+		return rates_.back();
 	}
 
 	double getSampleRate(const int direction, const size_t) const override
@@ -1477,17 +1490,18 @@ public:
 
 	std::vector<double> listSampleRates(const int, const size_t) const override
 	{
-		std::vector<double> rates;
-
-		for (unsigned k = 0; k < rateSteps_; k++) {
-			rates.push_back(rateMaxHz_ / (double)(1u << k));
-		}
-		return rates;
+		return rates_;
 	}
 
+	/* The rates themselves, slowest first: nothing between them is taken as asked. */
 	SoapySDR::RangeList getSampleRateRange(const int, const size_t) const override
 	{
-		return {SoapySDR::Range(rateMaxHz_ / (double)(1u << (rateSteps_ - 1)), rateMaxHz_)};
+		SoapySDR::RangeList ranges;
+
+		for (auto r = rates_.rbegin(); r != rates_.rend(); ++r) {
+			ranges.push_back(SoapySDR::Range(*r, *r));
+		}
+		return ranges;
 	}
 
 	void setBandwidth(const int, const size_t, const double bw) override
@@ -1806,6 +1820,8 @@ private:
 
 	double freqMinHz_ = 100e6, freqMaxHz_ = 6000e6, rateMaxHz_ = 250e3;
 	unsigned rateSteps_ = 5;
+	/* The device's receive rates, fastest first (filled when it opens). */
+	std::vector<double> rates_;
 	unsigned rxGainMax_ = 82, txGainMax_ = 17;
 
 	double freqHz_ = 100e6, rateHz_ = 250e3, bwHz_ = 0, corrPpm_ = 0;
