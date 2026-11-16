@@ -1,0 +1,13 @@
+common:
+  tags:
+    - esp-sdr
+    - hardware
+  harness: ztest
+  timeout: 120
+
+tests:
+  # The 16 pads must be free: nothing on J2's GPIO 20 to 25, 36 to 40, 42 to 44, 47 and 48.
+  integration.esp_sdr.diag16_api.s31:
+    platform_allow:
+      - esp32s31_function_coreboard/esp32s31/hpcore
+      - ues31s043h800v480c_u/esp32s31/hpcore

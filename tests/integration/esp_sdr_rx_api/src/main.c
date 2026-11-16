@@ -7,6 +7,7 @@
  * peer board or host tool, and never transmits.
  */
 #include <errno.h>
+#include <stdlib.h>
 
 #include <zephyr/init.h>
 #include <zephyr/ztest.h>
@@ -124,6 +125,114 @@ ZTEST(esp_sdr_rx_api, test_capture_returns_requested_count)
 		zassert_not_null(b.words, "rate index %u: no sample buffer", rates[k]);
 	}
 }
+
+#if defined(CONFIG_SOC_SERIES_ESP32S31)
+#include <zephyr/sys/crc.h>
+
+extern char _iram_start[], _iram_end[];
+extern uint32_t __esp_sdr_bank_start[];
+
+/*
+ * The engine's finite mode writes at TCM offset 0, over the image: the library keeps it in its
+ * circular mode, in the bank. Bursts at every rate, the longest there are, must leave the code
+ * alone, and the first and last sample must be there.
+ */
+ZTEST(esp_sdr_rx_api, test_s31_capture_leaves_the_image_alone)
+{
+	static const enum esp_sdr_rate rates[] = {
+		ESP_SDR_RATE_80MSPS, ESP_SDR_RATE_40MSPS, ESP_SDR_RATE_20MSPS,
+		ESP_SDR_RATE_10MSPS, ESP_SDR_RATE_8MSPS,  ESP_SDR_RATE_4MSPS,
+	};
+	size_t len = (size_t)(_iram_end - _iram_start);
+	uint32_t before = crc32_ieee((const uint8_t *)_iram_start, len);
+
+	ARRAY_FOR_EACH(rates, k) {
+		struct esp_sdr_rx_burst b = {0};
+		int ret = esp_sdr_rx_capture(rates[k], ESP_SDR_SAMPLES_MAX, &b);
+
+		zassert_ok(ret, "rate index %u: capture failed (%d)", rates[k], ret);
+		zassert_true((uintptr_t)b.words >= (uintptr_t)__esp_sdr_bank_start,
+			     "samples below the bank");
+		zassert_equal(crc32_ieee((const uint8_t *)_iram_start, len), before,
+			      "rate index %u: the capture changed the image's code", rates[k]);
+	}
+}
+
+/* The elapsed time of a burst is the rate's: the engine's dividers, measured by the CPU's clock. */
+ZTEST(esp_sdr_rx_api, test_s31_capture_takes_the_rates_time)
+{
+	static const enum esp_sdr_rate rates[] = {
+		ESP_SDR_RATE_80MSPS, ESP_SDR_RATE_40MSPS, ESP_SDR_RATE_20MSPS,
+		ESP_SDR_RATE_10MSPS, ESP_SDR_RATE_8MSPS,  ESP_SDR_RATE_4MSPS,
+	};
+
+	ARRAY_FOR_EACH(rates, k) {
+		struct esp_sdr_rx_burst b = {0};
+		uint64_t want;
+
+		zassert_ok(esp_sdr_rx_capture(rates[k], ESP_SDR_SAMPLES_MAX, &b));
+		want = (ESP_SDR_SAMPLES_MAX + 256U) * (uint64_t)USEC_PER_SEC /
+		       esp_sdr_rx_rate_hz(rates[k]);
+		zassert_within((uint64_t)b.elapsed_us, want, want / 50U + 2U,
+			       "rate index %u: took %u us, the rate says %llu", rates[k],
+			       b.elapsed_us, want);
+	}
+}
+
+/* The DC by a look of its own: five bursts' median per channel, in 1/256 of an 8-bit step. */
+static void burst_dc(int32_t dc[2])
+{
+	int32_t seen[2][5];
+
+	for (unsigned int b = 0; b < 5U; b++) {
+		struct esp_sdr_rx_burst burst = {0};
+		int32_t si = 0, sq = 0;
+
+		zassert_ok(esp_sdr_rx_capture(ESP_SDR_RATE_4MSPS, ESP_SDR_SAMPLES_MAX, &burst));
+		for (size_t j = 0; j < burst.count; j++) {
+			si += esp_sdr_rx_i(burst.words[j]);
+			sq += esp_sdr_rx_q(burst.words[j]);
+		}
+		seen[0][b] = si * 64 / (int32_t)burst.count;
+		seen[1][b] = sq * 64 / (int32_t)burst.count;
+	}
+	for (unsigned int axis = 0; axis < 2U; axis++) {
+		for (unsigned int i = 1; i < 5U; i++) {
+			for (unsigned int j = i; j > 0U && seen[axis][j - 1U] > seen[axis][j]; j--) {
+				int32_t t = seen[axis][j];
+
+				seen[axis][j] = seen[axis][j - 1U];
+				seen[axis][j - 1U] = t;
+			}
+		}
+		dc[axis] = seen[axis][2];
+	}
+}
+
+ZTEST(esp_sdr_rx_api, test_s31_dc_calibrate)
+{
+	struct esp_sdr_rx_dc d;
+
+	zassert_ok(esp_sdr_rx_set_gain(ESP_SDR_RX_GAIN_AUTO));
+	zassert_equal(esp_sdr_rx_dc_calibrate(&d), -ENOTSUP, "the servo needs a fixed gain");
+	/* Off the Wi-Fi channels: a frame in a burst moves its mean by more than this looks for. */
+	zassert_ok(esp_sdr_set_freq(2350));
+	zassert_ok(esp_sdr_rx_set_gain(30));
+	zassert_ok(esp_sdr_rx_dc_calibrate(&d));
+	/* Each later call starts from the correction in force: it must not end up undoing it. */
+	for (int k = 0; k < 4; k++) {
+		int32_t dc[2];
+
+		zassert_ok(esp_sdr_rx_dc_calibrate(&d), "call %d", k);
+		burst_dc(dc);
+		zassert_true(abs(dc[0]) < 256 && abs(dc[1]) < 256,
+			     "call %d: DC %d %d (1/256 step), the servo said %d %d", k, dc[0], dc[1],
+			     d.after[0], d.after[1]);
+	}
+	zassert_ok(esp_sdr_rx_set_gain(ESP_SDR_RX_GAIN_AUTO));
+	zassert_ok(esp_sdr_set_freq(2412));
+}
+#endif
 
 ZTEST(esp_sdr_rx_api, test_gain_bounds)
 {

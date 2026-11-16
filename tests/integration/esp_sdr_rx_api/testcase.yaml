@@ -16,6 +16,12 @@ tests:
     platform_allow:
       - waveshare_esp32c5_zero/esp32c5/hpcore
 
+  # The S31, flashed over its UART bridge, without the Wi-Fi driver.
+  integration.esp_sdr.rx_api.s31:
+    platform_allow:
+      - esp32s31_function_coreboard/esp32s31/hpcore
+      - ues31s043h800v480c_u/esp32s31/hpcore
+
   # The S3 normally runs an app that owns the USB OTG port, so it needs
   # MCUboot and its own USB shell to deploy over `west dfu` (see Kconfig).
   integration.esp_sdr.rx_api.s3:
