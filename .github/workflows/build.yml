@@ -47,6 +47,10 @@ jobs:
             platforms: -p waveshare_esp32c5_zero/esp32c5/hpcore
             toolchains: riscv64-zephyr-elf
             twister-args: --build-only
+          - name: Build mch2022
+            platforms: -p mch2022/esp32/procpu
+            toolchains: xtensa-espressif_esp32_zephyr-elf
+            twister-args: --build-only
           # Unit tests: built and run on the host. The SDK installs no
           # cross toolchain for them, only its host tools. gcovr (Zephyr's
           # requirements) reads the host gcc's coverage data; paths in the
@@ -158,7 +162,8 @@ jobs:
           path: host-coverage/
           if-no-files-found: ignore
 
-  # The host side of apps/osmosdr, as the release builds it.
+  # The host side of apps/osmosdr, as the release builds it, and its host tool esdr_usb, as
+  # default.nix does.
   soapy:
     name: SoapySDR module
     runs-on: ubuntu-24.04
@@ -174,3 +179,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends libsoapysdr-dev libusb-1.0-0-dev
           cmake -S apps/osmosdr/soapy -B build-soapy -DCMAKE_BUILD_TYPE=Release
           cmake --build build-soapy
+
+      - name: Build esdr_usb
+        run: |
+          cc -O2 -Wall -Iinclude -Iapps/osmosdr/src $(pkg-config --cflags libusb-1.0) \
+            apps/osmosdr/tools/esdr_usb.c $(pkg-config --libs libusb-1.0) -lm -o esdr_usb
