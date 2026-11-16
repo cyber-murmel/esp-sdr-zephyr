@@ -279,8 +279,8 @@ static int16_t fs2_wq[FS2_CAP] __aligned(16) ESP_SDR_DATA_F(STATE, fs2_wq, NOINI
 
 static struct fstage fs1 = {.h = fs1_h, .wi = fs1_wi, .wq = fs1_wq};
 static struct fstage fs2 = {.h = fs2_h, .wi = fs2_wi, .wq = fs2_wq};
-#else
-/* Stage 1's window only, as the raw path's chunk buffer. */
+#elif defined(CONFIG_ESP_SDR_RING_RAW)
+/* Stage 1's window only, as the raw path's chunk buffer (box4 uses the arrays directly). */
 static struct fstage fs1 = {.wi = fs1_wi, .wq = fs1_wq};
 #endif
 static bool fir_rot;
@@ -421,6 +421,7 @@ static uint32_t fstage_run(struct fstage *s, int16_t *oi, int16_t *oq)
 }
 #endif /* CONFIG_ESP_SDR_RING_FIR */
 
+#if defined(CONFIG_ESP_SDR_RING_FIR) || defined(CONFIG_ESP_SDR_RING_RAW)
 /* One ring word into stage 1 (the unaligned head and tail of a chunk). */
 HOT(PACED_SAMPLE, fir_scalar)
 static void fir_scalar(uint32_t w)
@@ -457,6 +458,7 @@ static void fir_scalar(uint32_t w)
 	fs1.wq[fs1.n] = q;
 	fs1.n++;
 }
+#endif
 
 /* Run state, reset by esp_sdr_ring_run(). */
 struct unit {
