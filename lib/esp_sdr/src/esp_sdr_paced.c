@@ -197,7 +197,10 @@ static inline uint32_t sat8(int32_t v)
 
 /*
  * esp_sdr_rx_paced_poll() a chunk at a time, for MS/s: the state in registers, no call per
- * sample, the lateness counted only. In RAM: a cache miss would move samples.
+ * sample. A poll whole steps late (the caller's I/O between calls) gets sums spanning that many
+ * windows more: each missed sample gets an equal share, so that the samples stay on their grid
+ * (catching up with short windows would skew the next dozens of them). In RAM: a cache miss
+ * would move samples.
  */
 IRAM_ATTR __attribute__((optimize("O3"))) uint32_t esp_sdr_rx_paced_fill_iq8(int8_t *out, size_t n, unsigned int shift)
 {
@@ -210,23 +213,35 @@ IRAM_ATTR __attribute__((optimize("O3"))) uint32_t esp_sdr_rx_paced_fill_iq8(int
 #pragma GCC unroll 2
 	for (size_t k = 0; k < n; k++) {
 		uint32_t now;
-		int32_t q1, si, sq;
+		int32_t q1, si, sq, di, dq;
 
 		do {
 			now = esp_sdr_paced_cycles();
 		} while ((int32_t)(now - target) < 0);
-		if (unlikely(now - target >= step)) {
-			late++;
-		}
 		q1 = (int32_t)sys_read32(IQE_SUM_Q_REG) >> 6;
 		si = (int32_t)sys_read32(IQE_SUM_I_REG) >> 6;
 		sq = (q1 + ((int32_t)sys_read32(IQE_SUM_Q_REG) >> 6)) >> 1;
-		pair[k] = (uint16_t)(sat8((si - pi - oi) >> shift) |
-				     (sat8((sq - pq - oq) >> shift) << 8));
-		ai += si - pi;
-		aq += sq - pq;
+		di = si - pi;
+		dq = sq - pq;
+		ai += di;
+		aq += dq;
 		pi = si;
 		pq = sq;
+		if (unlikely(now - target >= step)) {
+			uint32_t miss = MIN((now - target) / step, (uint32_t)(n - 1U - k));
+
+			late++;
+			di /= (int32_t)(miss + 1U);
+			dq /= (int32_t)(miss + 1U);
+			for (uint32_t j = 0; j < miss; j++) {
+				pair[k++] = (uint16_t)(sat8((di - oi) >> shift) |
+						       (sat8((dq - oq) >> shift) << 8));
+			}
+			target += miss * step;
+			/* The estimator counted those windows too. */
+			left = left > miss ? left - miss : 1U;
+		}
+		pair[k] = (uint16_t)(sat8((di - oi) >> shift) | (sat8((dq - oq) >> shift) << 8));
 		if (unlikely(--left == 0U)) {
 			iqe_start();
 			pi = 0;
