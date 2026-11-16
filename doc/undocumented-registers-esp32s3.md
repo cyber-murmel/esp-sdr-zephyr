@@ -376,10 +376,10 @@ behaviour:
 Evidence:
 
 - `lib/esp_sdr/src/esp_sdr_rx.c:246-278`, `lib/esp_sdr/src/esp_sdr.c:123-133` (save and restore)
-- `lib/esp_sdr/esp_sdr_bank_ring.ld:4-14` (reserved banks)
+- `lib/esp_sdr/esp_sdr_bank_s3.ld:4-34` (reserved banks)
 - *measured* `lib/esp_sdr/src/esp_sdr_tx.c:346-349` (CPU stores and the DAC)
 - *measured* hardware-quirks.md, "Capture and DAC engine"; `lib/esp_sdr/src/esp_sdr_priv.h:236-244` (a change while running)
-- *measured* bench 2026-10-05, `lib/esp_sdr/esp_sdr_bank.ld`; *upstream* `modules/lib/esp-sdr/main/common/ring_capture.h:26` (bank 3)
+- *measured* bench 2026-10-05, `lib/esp_sdr/esp_sdr_bank_s3.ld:43-47`; *upstream* `modules/lib/esp-sdr/main/common/ring_capture.h:26` (bank 3)
 - SENSITIVE_INTERNAL_SRAM_MAC_DUMP_USAGE: `modules/hal/espressif/components/soc/esp32s3/register/soc/sensitive_reg.h:101-107`
 
 ### AGC force

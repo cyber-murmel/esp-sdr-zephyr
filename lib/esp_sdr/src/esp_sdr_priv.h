@@ -439,7 +439,7 @@ void regi2c_exit_critical(void);
 
 /* Reserved by the module linker snippet. */
 extern uint32_t __esp_sdr_bank_start[];
-/* Second bank, only linked with CONFIG_ESP_SDR_BANK1 (esp_sdr_bank_tx.ld). */
+/* Second bank, only linked with CONFIG_ESP_SDR_BANK1 (esp_sdr_bank_s3.ld). */
 extern uint32_t __esp_sdr_bank1_start[];
 
 /* Radio state, guarded by esp_sdr_lock (esp_sdr.c). */
