@@ -1,0 +1,11 @@
+common:
+  tags:
+    - esp-sdr
+    - gapless
+  platform_allow:
+    - native_sim
+    - native_sim/native/64
+tests:
+  unit.esp_sdr.esdr_link_host:
+    integration_platforms:
+      - native_sim
