@@ -56,7 +56,7 @@
  * The ring takes SRAM blocks 1 and 2 and the image must fit block 0: the large buffers go to
  * block 3 (not zeroed at boot: main() clears them).
  */
-#define APP_HIGH __attribute__((section(".esp_sdr_high")))
+#define APP_HIGH ESP_SDR_HIGH_RAM
 #else
 #define APP_HOT
 #define APP_HIGH

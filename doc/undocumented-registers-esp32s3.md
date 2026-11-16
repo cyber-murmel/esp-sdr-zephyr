@@ -230,7 +230,7 @@ Evidence:
 - DUMP_SRC: *decompile* S3 `mac_common.o`; *upstream* `modules/lib/esp-sdr/main/targets/esp32s3/receiver.c:164`
 - DUMP_TRIGGER: *working* `lib/esp_sdr/src/esp_sdr_rx.c:308-310`
 - DUMP_DONE: *working* `lib/esp_sdr/src/esp_sdr_rx.c:311-314`
-- DUMP_CIRCULAR: *working* `lib/esp_sdr/src/esp_sdr_ring.c:41-42, 876-881`; *decompile* S3 `mac_common.o`
+- DUMP_CIRCULAR: *working* `lib/esp_sdr/src/esp_sdr_priv.h:290-294`, `lib/esp_sdr/src/esp_sdr_ring.c:1349`; *decompile* S3 `mac_common.o`
 - DUMP_RATE_16M: *measured* `apps/capture/README.rst:56`; *upstream* (USRP B210) `modules/lib/esp-sdr/main/targets/esp32s3/receiver.c:161-163`; *decompile* S3 `mac_common.o`
 - DUMP_RATE_40M: *measured* `apps/capture/README.rst:53`, hardware-quirks.md, "Receiving at 40 MS/s"
 - DUMP_COUNT: *working* `lib/esp_sdr/src/esp_sdr_priv.h:33`; *decompile* S3 `mac_common.o`

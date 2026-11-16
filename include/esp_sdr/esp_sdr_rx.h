@@ -228,6 +228,15 @@ static inline int16_t esp_sdr_rx_q(uint32_t word)
 	return (int16_t)((int32_t)(word << 22) >> 22);
 }
 
+/**
+ * @return The top 8 bits of each component of a raw receive word as an int8 I/Q pair: I
+ * (bits 19:12) in the low byte, Q (bits 9:2) in the high one.
+ */
+static inline __attribute__((always_inline)) uint32_t esp_sdr_rx_iq8(uint32_t word)
+{
+	return ((word >> 12) & 0xffU) | ((word << 6) & 0xff00U);
+}
+
 /** @} */
 
 #ifdef __cplusplus

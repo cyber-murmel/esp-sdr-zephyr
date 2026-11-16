@@ -50,7 +50,7 @@ Contents
      - ``esp_sdr/``: the API, ``esp_sdr.h``, ``esp_sdr_rx.h``,
        ``esp_sdr_tx.h``, ``esp_sdr_ring.h``, ``esp_sdr_chancap.h``,
        ``esp_sdr_paced.h``, ``esp_sdr_diag.h``, ``esp_sdr_replay.h``,
-       ``esp_sdr_dsp.h``, ``ieee154_phy.h``, ``ieee154_esp_sdr.h``
+       ``esp_sdr_dsp.h``, ``esp_sdr_xtensa.h``, ``ieee154_phy.h``, ``ieee154_esp_sdr.h``
    * - ``apps/``
      - - ``capture``: capture survey on the console
        - ``stream``: VITA 49.2 RX and TX over USB (CDC-NCM)

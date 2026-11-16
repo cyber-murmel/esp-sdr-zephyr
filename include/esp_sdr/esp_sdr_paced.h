@@ -121,8 +121,8 @@ void esp_sdr_tx_paced_stop(void);
 /** @brief Highest power step: 2 dB per step of the vendor tone's backoff (none on the C5). */
 unsigned int esp_sdr_tx_paced_power_max(void);
 
-/** @brief The CPU cycle counter the paced streams run on. */
-static inline uint32_t esp_sdr_paced_cycles(void)
+/** @brief The CPU cycle counter the paced streams run on (inlined into IRAM loops). */
+static inline __attribute__((always_inline)) uint32_t esp_sdr_paced_cycles(void)
 {
 	uint32_t v;
 
@@ -133,6 +133,16 @@ static inline uint32_t esp_sdr_paced_cycles(void)
 	__asm__ volatile("csrr %0, cycle" : "=r"(v));
 #endif
 	return v;
+}
+
+/** @brief Make esp_sdr_paced_cycles() count CPU cycles (a stream's start does it too). */
+static inline void esp_sdr_paced_cycles_enable(void)
+{
+#if defined(CONFIG_SOC_SERIES_ESP32C6)
+	/* The machine performance counter (mpccr) counts CPU cycles. */
+	__asm__ volatile("csrw 0x7e0, %0" ::"r"(1));
+	__asm__ volatile("csrw 0x7e1, %0" ::"r"(1));
+#endif
 }
 
 /**

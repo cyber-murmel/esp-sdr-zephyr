@@ -15,6 +15,7 @@
 #include <string.h>
 
 #include <esp_sdr/esp_sdr_dsp.h>
+#include <esp_sdr/esp_sdr_xtensa.h>
 
 #include "ofdm.h"
 
@@ -270,17 +271,6 @@ __attribute__((visibility("hidden"))) int dsp_is_power_of_two(int x)
  * The receive FFT in 16 bit: the input is scaled by FFT16_GAIN (10 bit samples, so 16 bit
  * after derotation with room to spare), every stage halves, so the output is X * G / N.
  * In place on the worker's buffer, bit reversed like the float one.
- */
-static inline void pie_enable(void)
-{
-	uint32_t cp;
-
-	__asm__ volatile("rsr.cpenable %0" : "=r"(cp));
-	cp |= 1U << 3;
-	__asm__ volatile("wsr.cpenable %0\n\trsync" : : "r"(cp));
-}
-
-/*
  * The vector registers are not part of the thread context: no other thread may run on
  * this CPU while they are live. Interrupts masked on this CPU for the 7 us (a scheduler
  * lock would take the global spinlock of an SMP kernel).
@@ -289,7 +279,7 @@ static inline void fft16(const struct ofdm_ctx *ctx, int16_t *q, unsigned int n)
 {
 	unsigned int key = arch_irq_lock();
 
-	pie_enable();
+	esp_sdr_pie_enable();
 	(void)dsps_fft2r_sc16_aes3_(q, (int)n, (int16_t *)ctx->w16);
 	arch_irq_unlock(key);
 }
@@ -1046,7 +1036,7 @@ static void derot16(const struct ofdm_ctx *ctx, int16_t *q, const uint32_t *x, u
 		       (uint16_t)(int16_t)(ctx->rx.dci * 64);
 	unsigned int key = arch_irq_lock();
 
-	pie_enable();
+	esp_sdr_pie_enable();
 	derot_kernel(q, x, (const int16_t *)ctx->rot16, n / 4U, &dcw, &maskw, clip);
 	arch_irq_unlock(key);
 }
@@ -1460,7 +1450,7 @@ static inline __attribute__((always_inline)) void data_symbol_v(const struct ofd
 		ep = &wk->e16[0][0];
 	}
 	irq = arch_irq_lock();
-	pie_enable();
+	esp_sdr_pie_enable();
 	{
 		/* Squared error in units of 1 / U, U = 128 / s per unit of the constellation. */
 		float acc = (float)veq_kernel(gb, ep, ng, sh, &rq32, cv);

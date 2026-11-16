@@ -35,6 +35,7 @@
 #include <esp_sdr/esp_sdr_rx.h>
 #include <esp_sdr/esp_sdr_ring.h>
 #include <esp_sdr/esp_sdr_chancap.h>
+#include <esp_sdr/esp_sdr_xtensa.h>
 
 #include "esp_sdr_chancap_dsp.h"
 #include "esp_sdr_priv.h"
@@ -233,24 +234,6 @@ struct capbuf {
 };
 
 static EXT_RAM_BSS_ATTR uint8_t slab[CONFIG_ESP_SDR_CHANCAP_SLAB_KB * 1024U] __aligned(16);
-
-static inline uint32_t ccount(void)
-{
-	uint32_t c;
-
-	__asm__ volatile("rsr.ccount %0" : "=r"(c));
-	return c;
-}
-
-/* The vector unit is coprocessor 3; Zephyr neither enables nor saves it. */
-static inline void pie_enable(void)
-{
-	uint32_t cp;
-
-	__asm__ volatile("rsr.cpenable %0" : "=r"(cp));
-	cp |= BIT(3);
-	__asm__ volatile("wsr.cpenable %0\n\trsync" : : "r"(cp));
-}
 
 /* ---- sink side (CPU 1, ring loop, interrupts masked) ---- */
 
@@ -863,18 +846,18 @@ static void capture_open_(unsigned int c, uint32_t back)
 /* The capture bookkeeping, timed for the stats (cycles, the longest of each). */
 static void capture_finish(unsigned int c, bool truncated, bool chunk)
 {
-	uint32_t t = ccount();
+	uint32_t t = esp_sdr_ccount();
 
 	capture_finish_(c, truncated, chunk);
-	rs.st.finish_max = MAX(rs.st.finish_max, ccount() - t);
+	rs.st.finish_max = MAX(rs.st.finish_max, esp_sdr_ccount() - t);
 }
 
 static void capture_open(unsigned int c, uint32_t back)
 {
-	uint32_t t = ccount();
+	uint32_t t = esp_sdr_ccount();
 
 	capture_open_(c, back);
-	rs.st.open_max = MAX(rs.st.open_max, ccount() - t);
+	rs.st.open_max = MAX(rs.st.open_max, esp_sdr_ccount() - t);
 }
 
 /* Channel c's lookback ring slot for its next run of 8 samples (runs never wrap: 8 | size). */
@@ -1024,7 +1007,7 @@ static void run_sub_fast(uint64_t pair, bool ch_gate)
 	};
 	const unsigned int n = rs.n, b0 = rs.b0;
 	struct chan *ch = chs;
-	uint32_t t = prof_on ? ccount() : 0U;
+	uint32_t t = prof_on ? esp_sdr_ccount() : 0U;
 
 	/* The run starts on a multiple of 8 frames: an even frame, as the kernel expects. */
 	esp_sdr_chancap_post_n(&pj);
@@ -1045,7 +1028,7 @@ static void run_sub_fast(uint64_t pair, bool ch_gate)
 		}
 	}
 	if (prof_on) {
-		uint32_t t1 = ccount();
+		uint32_t t1 = esp_sdr_ccount();
 
 		prof_kern += t1 - t;
 		t = t1;
@@ -1071,7 +1054,7 @@ static void run_sub_fast(uint64_t pair, bool ch_gate)
 		}
 	}
 	if (prof_on) {
-		prof_chan += ccount() - t;
+		prof_chan += esp_sdr_ccount() - t;
 	}
 }
 
@@ -1280,7 +1263,7 @@ static bool dsp_block(uint64_t written)
 	struct bank2 *b2 = snk.b2;
 	uint64_t sub_end = written >> SUB_SHIFT;
 	uint64_t run_end;
-	uint32_t t0 = ccount(), dt;
+	uint32_t t0 = esp_sdr_ccount(), dt;
 	uint64_t run0 = rs.st.pairs_run;
 	bool did = false;
 
@@ -1315,10 +1298,10 @@ static bool dsp_block(uint64_t written)
 			if (!rs.running) {
 				run_restart(rs.run_pair);
 			}
-			uint32_t t1 = ccount();
+			uint32_t t1 = esp_sdr_ccount();
 
 			run_sub(rs.run_pair, ch_gate);
-			rs.st.run_max = MAX(rs.st.run_max, ccount() - t1);
+			rs.st.run_max = MAX(rs.st.run_max, esp_sdr_ccount() - t1);
 			rs.st.pairs_run += SUB_PAIRS;
 			did = true;
 		} else if (rs.running) {
@@ -1326,7 +1309,7 @@ static bool dsp_block(uint64_t written)
 		}
 		rs.run_pair += SUB_PAIRS;
 	}
-	dt = ccount() - t0;
+	dt = esp_sdr_ccount() - t0;
 	if (did) {
 		/* Per pair channelized: the gate pass's share is included. */
 		rs.cyc += dt;
@@ -1360,7 +1343,7 @@ static void dsp_thread_fn(void *p1, void *p2, void *p3)
 	bool wmac;
 
 	/* The kernels: this thread is the vector unit's only user on its CPU. */
-	pie_enable();
+	esp_sdr_pie_enable();
 	/*
 	 * Wi-Fi started on this CPU, so its MAC interrupt is here: on busy air it took this CPU
 	 * for 400 us at a time, longer than the hand-over ring's slack.
@@ -1642,9 +1625,9 @@ static uint32_t bench_fill(uint32_t pairs)
 			bench_q[BENCH_H + k] = (int16_t)((x >> 16) & 0x3fffU) - 8192;
 		}
 		key = arch_irq_lock();
-		t = ccount();
+		t = esp_sdr_ccount();
 		sink(NULL, &bench_i[BENCH_H], &bench_q[BENCH_H], BLOCK_PAIRS, p);
-		cyc += ccount() - t;
+		cyc += esp_sdr_ccount() - t;
 		arch_irq_unlock(key);
 	}
 	return cyc;
@@ -1838,21 +1821,21 @@ static void bench_kernels(struct esp_sdr_chancap_bench_result *res)
 	unsigned int key = arch_irq_lock();
 	uint32_t t;
 
-	t = ccount();
+	t = esp_sdr_ccount();
 	for (unsigned int r = 0; r < 4; r++) {
 		esp_sdr_chancap_sums_n(&sj);
 	}
-	res->sums_cyc = (ccount() - t) / (4U * 64U);
-	t = ccount();
+	res->sums_cyc = (esp_sdr_ccount() - t) / (4U * 64U);
+	t = esp_sdr_ccount();
 	for (unsigned int r = 0; r < 64; r++) {
 		esp_sdr_chancap_post_n(&pj);
 	}
-	res->post_cyc = (ccount() - t) / 64U;
-	t = ccount();
+	res->post_cyc = (esp_sdr_ccount() - t) / 64U;
+	t = esp_sdr_ccount();
 	for (unsigned int r = 0; r < 64; r++) {
 		esp_sdr_chancap_power(&wj);
 	}
-	res->power_cyc = (ccount() - t) / 64U;
+	res->power_cyc = (esp_sdr_ccount() - t) / 64U;
 	arch_irq_unlock(key);
 }
 #endif
@@ -1886,7 +1869,7 @@ int esp_sdr_chancap_bench(const struct esp_sdr_chancap_cfg *cfg, uint32_t pairs,
 	}
 	setup(&c);
 	res->fast = rs.fast;
-	pie_enable();
+	esp_sdr_pie_enable();
 	atomic_set(&gates, GATE_CH);
 	atomic_set(&thresholds, ((atomic_val_t)(uint16_t)c.ch_threshold_db << 16) |
 					(uint16_t)c.wb_threshold_db);
@@ -1925,14 +1908,14 @@ int esp_sdr_chancap_bench(const struct esp_sdr_chancap_cfg *cfg, uint32_t pairs,
 		prof_on = true;
 		for (uint32_t p = 0; p < pairs; p += SUB_PAIRS) {
 			unsigned int key = arch_irq_lock();
-			uint32_t t1 = ccount();
+			uint32_t t1 = esp_sdr_ccount();
 
 			if (!rs.running) {
 				run_restart(p);
 			}
 			/* The data wraps in the hand-over ring: every sub-block is a valid one. */
 			run_sub((uint64_t)p, true);
-			t_run += ccount() - t1;
+			t_run += esp_sdr_ccount() - t1;
 			arch_irq_unlock(key);
 		}
 		prof_on = false;
@@ -1943,7 +1926,7 @@ int esp_sdr_chancap_bench(const struct esp_sdr_chancap_cfg *cfg, uint32_t pairs,
 	/* The engines alone, on the C paths. */
 	if (!rs.fast && rs.engine == ENGINE_PFB) {
 		int16_t oi[CHANNELS_MAX], oq[CHANNELS_MAX];
-		uint32_t t1 = ccount();
+		uint32_t t1 = esp_sdr_ccount();
 		unsigned int frames = pairs / rs.d;
 
 		for (unsigned int j = 0; j < frames; j++) {
@@ -1952,7 +1935,7 @@ int esp_sdr_chancap_bench(const struct esp_sdr_chancap_cfg *cfg, uint32_t pairs,
 			chancap_pfb_frame(&rs.pfb, &snk.b2->ho.raw.hi[at], &snk.b2->ho.raw.hq[at], oi,
 					  oq);
 		}
-		res->pfb_x100 = (uint32_t)((uint64_t)(ccount() - t1) * 100U / pairs);
+		res->pfb_x100 = (uint32_t)((uint64_t)(esp_sdr_ccount() - t1) * 100U / pairs);
 #if defined(CONFIG_ESP_SDR_CHANCAP_SIMD)
 	} else if (rs.ddc_fast) {
 		/* One channel on the kernels, as run_sub() runs it. */
@@ -1968,14 +1951,14 @@ int esp_sdr_chancap_bench(const struct esp_sdr_chancap_cfg *cfg, uint32_t pairs,
 		uint32_t t1;
 
 		bench_check_ddc(HO_PAIRS, res);
-		t1 = ccount();
+		t1 = esp_sdr_ccount();
 		for (uint32_t p = 0; p < pairs; p += SUB_PAIRS) {
 			esp_sdr_chancap_copy(mi, &mi[SUB_PAIRS], CHANCAP_DDC_L);
 			esp_sdr_chancap_copy(mq, &mq[SUB_PAIRS], CHANCAP_DDC_L);
 			esp_sdr_chancap_mix(&mj);
 			esp_sdr_chancap_ddc_fir(&fj);
 		}
-		res->ddc_x100 = (uint32_t)((uint64_t)(ccount() - t1) * 100U / pairs);
+		res->ddc_x100 = (uint32_t)((uint64_t)(esp_sdr_ccount() - t1) * 100U / pairs);
 #endif
 	} else if (rs.engine == ENGINE_DDC) {
 		/* One channel as run_sub() runs it: a mix per pair, a filter per output. */
@@ -1983,7 +1966,7 @@ int esp_sdr_chancap_bench(const struct esp_sdr_chancap_cfg *cfg, uint32_t pairs,
 		struct chancap_ddc *ddc = &rs.ddc[0];
 		int16_t *mi = snk.b2->dmi[0], *mq = snk.b2->dmq[0];
 		int16_t oi, oq;
-		uint32_t t1 = ccount();
+		uint32_t t1 = esp_sdr_ccount();
 
 		for (uint32_t p = 0; p < pairs; p += SUB_PAIRS) {
 			uint32_t at = p & HO_MASK;
@@ -1998,7 +1981,7 @@ int esp_sdr_chancap_bench(const struct esp_sdr_chancap_cfg *cfg, uint32_t pairs,
 			memcpy(mi, &mi[SUB_PAIRS], 2U * CHANCAP_DDC_L);
 			memcpy(mq, &mq[SUB_PAIRS], 2U * CHANCAP_DDC_L);
 		}
-		res->ddc_x100 = (uint32_t)((uint64_t)(ccount() - t1) * 100U / pairs);
+		res->ddc_x100 = (uint32_t)((uint64_t)(esp_sdr_ccount() - t1) * 100U / pairs);
 	}
 	res->kernels_match = res->mismatches == 0U;
 	if (rs.running) {
