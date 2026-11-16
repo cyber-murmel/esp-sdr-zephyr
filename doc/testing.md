@@ -1,11 +1,13 @@
 # Testing
 
-Every pass/fail test is a twister test; all but the S3 variant of the integration test also run
-end to end under twister (that one is deployed by hand, see below). Four tiers:
+Every pass/fail test of the firmware is a twister test; all but the S3 variant of the integration
+test also run end to end under twister (that one is deployed by hand, see below). The Python tools
+have host tests of their own (pytest). Five tiers:
 
 | Tier | Where | Runs on | Covers |
 | --- | --- | --- | --- |
-| Unit | `tests/unit/` | host (`native_sim/native/64`), no board | Portable code as ztest suites: the 802.15.4 PHY (`ieee154_phy`), the driver's signal processing (`ieee154_dsp`), link RS(255,231) (`link_rs`) and Hamming(128,120) (`link_hamming`), the `stream` app's I/Q packing (`iq_pack`), the diagnostic-bus ring's box16 and CIC decimator (`diag_dsp`, bit-exact against naive references). With `IEEE154_TABLES` set, `ieee154_phy` and `ieee154_dsp` also print their sweep tables (`scripts/unit-tables.sh`). |
+| Unit | `tests/unit/` | host (`native_sim/native/64`), no board | Portable code as ztest suites: the 802.15.4 PHY (`ieee154_phy`), the driver's signal processing (`ieee154_dsp`), link RS(255,231) (`link_rs`) and Hamming(128,120) (`link_hamming`), the `stream` app's I/Q packing (`iq_pack`), the diagnostic-bus ring's box16 and CIC decimator (`diag_dsp`, bit-exact against naive references), the shared signal processing helpers of `esp_sdr_dsp.h` (`dsp`: windows, sinc, the FFT against a direct DFT, whole-cycle tones), the link's QAM and OFDM modems (`link_qam`, `link_ofdm`: frames through a simulated channel and decoded, as the host simulators in `apps/link/tools` do). With `IEEE154_TABLES` set, `ieee154_phy` and `ieee154_dsp` also print their sweep tables (`scripts/unit-tables.sh`). |
+| Host | `tests/host/` | host (CPython), no board | The Python tools that run in builds and CI: multiapp's build steps (`mkfat.py`, read back by a FAT reader written from the spec; `apptrail.py`, `appconfig.py`, `buildid.py`, `exports.py`), the register page tools, `twister-flash.py` and `coverage-summary.py`. |
 | Integration | `tests/integration/` | one real board | ztest on the radio itself. `esp_sdr_rx_api`: the receive API's contract (error codes, bounds, one real capture per supported rate); on the S3, C6 and C5. `esp_sdr_diag_api`: the C5's gapless diagnostic-bus ring (argument contract, a 10 s run's byte rate and integrity, every step of the decimation ladder, stop and restart). Need no antenna, peer or host tool and never transmit. `esp_sdr_replay_api`: the C5's DAC-engine replay (argument contract, pass time at 80 and 40 MS/s, repeat count, restarts, receive afterwards); plays all-zero words, so only the LO leaks out: keep the board on its coax link. |
 | Regression | `tests/regression/` | two real boards | pytest through twister's multi-board harness. `ieee802154_link`: the C6 native radio and the S3 software radio exchange `apps/wpan` test frames both ways on channels 11, 15, 20 and 25, plus ACK requests. Guards against the two bugs that only ever showed as lost frames between real boards (`doc/hardware-quirks.md`). `lo_tuning`: the S3 sends tones to the C6 at overlapping LO frequencies, through the 5/6 divider and directly tuned; guards the transmit divider and `-ERANGE`. `stream_gapless`: the C6 and the C5 on a coax link stream a tone to each other through `apps/osmosdr_serial` (receive by the CPU-paced estimator or by the C5's diagnostic-bus ring); no gap may be found in the recording. |
 | Smoke | `apps/*/sample.yaml` | build, and one board | Every app builds for its boards; `apps/capture` also boots on the S3 and the C6 and must print `esp-sdr rx: ready` (console harness); `apps/multiapp` boots into an app from its file on the FAT volume (pytest, `sample.esp_sdr.multiapp.hil`). |
@@ -13,11 +15,14 @@ end to end under twister (that one is deployed by hand, see below). Four tiers:
 ## Continuous integration
 
 `.github/workflows/build.yml` runs on every push and pull request. It builds every app and test
-for each board it allows (`xiao_esp32s3/esp32s3/procpu` and `xiao_esp32c6/esp32c6/hpcore`, one job
-each) and builds and runs the unit tests on `native_sim` and `native_sim/native/64`. A GitHub
-runner has no boards, so the integration and regression tests and the console smoke test are only
-built there; run them on the desk as below. The twister reports of each job are kept as
-artifacts.
+for each board it allows (`xiao_esp32s3/esp32s3/procpu`, `xiao_esp32c6/esp32c6/hpcore` and
+`waveshare_esp32c5_zero/esp32c5/hpcore`, one job each) and builds and runs the unit tests on
+`native_sim` and `native_sim/native/64`. A GitHub runner has no boards, so the integration and
+regression tests and the console smoke test are only built there; run them on the desk as below.
+The twister reports of each job are kept as artifacts. The unit test job also measures code
+coverage (see [Coverage](#coverage)): its summary page shows a table per source file, and the
+`coverage` artifact holds gcovr's HTML report. The "Host tools" job runs the host tests under
+coverage the same way: a table on its summary page, the HTML report in `host-coverage`.
 
 ### Git hooks
 
@@ -29,6 +34,7 @@ files are staged or pushed:
 | --- | --- | --- |
 | `svd2md` | the register pages match `doc/registers/*.svd` | commit |
 | `svdmerge` | those SVDs merge into Espressif's | commit |
+| `host-tests` | the host tests of the Python tools, with coverage | commit |
 | `soapy` | the SoapySDR module builds (in `build-soapy/`) | commit |
 | `docs` | Doxygen and Sphinx with warnings as errors | push |
 | `unit-tests` | twister on `native_sim/native/64` (the shell has no 32-bit glibc) | push |
@@ -55,6 +61,27 @@ fatal.
 compiled instead of the ESP-IDF one. The suites draw their random input from
 `tests/common/include/test_rng.h` (xorshift64 and normal deviates), seeded before each case.
 
+### Coverage
+
+```
+NIX_HARDENING_ENABLE= esp-sdr-zephyr/scripts/run-unit-tests.sh \
+  --coverage --coverage-basedir . --coverage-formats html
+esp-sdr-zephyr/scripts/coverage-summary.py esp-sdr-zephyr/twister-out/coverage_summary.json
+```
+
+Coverage builds without optimization. The nix shell's compiler wrapper defines
+`_FORTIFY_SOURCE` regardless, and glibc's warning about that is fatal under `-Werror`; the empty
+`NIX_HARDENING_ENABLE` turns the wrapper's hardening off for the run (Ubuntu's gcc, as in CI,
+defines it only when optimizing).
+
+Twister builds the suites with `CONFIG_COVERAGE`, runs them and has gcovr merge the results (the
+script runs twister from the repository root): `twister-out/coverage/index.html` per file and
+line, and `twister-out/coverage_summary.json` for `scripts/coverage-summary.py`, which prints the
+Markdown table CI puts on the job's summary page. The test sources themselves (`tests/`) are left
+out. Coverage counts only the files some unit test compiles; the script lists the C sources under
+`lib/` and `apps/` that none does (the radio drivers and the app glue, which only the integration
+and regression tests reach on the boards).
+
 ### Sweep tables
 
 `ieee154_phy` and `ieee154_dsp` each hold one more test case that is skipped unless the
@@ -77,6 +104,20 @@ assert what the documentation claims (`phy`: no frame lost from 6 dB SNR up, non
 wrong content; `dsp`: each decimator column reads 1.000 from 2 dB above the SNR where it first
 does), after printing the whole table, so a regression fails the run and still shows the numbers.
 Without the variable the cases are skipped and the unit tests stay at a few seconds.
+
+## Host tests
+
+```
+esp-sdr-zephyr/scripts/run-host-tests.sh              # all, then the coverage report
+esp-sdr-zephyr/scripts/run-host-tests.sh -k mkfat     # some (pytest arguments)
+```
+
+pytest under coverage.py, a second or so; the nix shell has both, `tests/host/requirements.txt`
+pins them (with PyYAML, pyelftools and numpy) elsewhere. The tools are loaded by path
+(`tests/host/conftest.py`). `test_exports.py` compiles a small shared library with the host
+compiler and is skipped without one. `tests/host/coveragerc` sets what counts: the build and CI
+tools under `apps/multiapp/`, `scripts/` and `doc/registers/`, files
+no test imports included; the bench tools under `apps/*/tools` need boards and stay out.
 
 ## Integration tests (one board)
 

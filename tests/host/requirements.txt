@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# The host tests (scripts/run-host-tests.sh) outside the nix shell, as CI installs them:
+# the versions the nix shell has.
+coverage==7.12.0
+numpy==2.3.4
+pyelftools==0.32
+pytest==8.4.2
+pyyaml==6.0.3

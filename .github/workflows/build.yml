@@ -3,7 +3,9 @@
 # Builds every app and test for every platform it allows and runs the unit
 # tests, as Zephyr's example application does (doc/testing.md). The integration
 # and regression tests need real boards, which a GitHub runner does not have:
-# here they are only built.
+# here they are only built. The unit tests' code coverage goes into the job
+# summary, the HTML report into the "coverage" artifact; the host tests of the Python
+# tools (tests/host) run in their own job, with their coverage the same way.
 
 name: Build
 
@@ -38,11 +40,16 @@ jobs:
             toolchains: riscv64-zephyr-elf
             twister-args: --build-only
           # Unit tests: built and run on the host. The SDK installs no
-          # cross toolchain for them, only its host tools.
+          # cross toolchain for them, only its host tools. gcovr (Zephyr's
+          # requirements) reads the host gcc's coverage data; paths in the
+          # report are relative to this repository.
           - name: Unit tests
             platforms: -p native_sim -p native_sim/native/64
             toolchains: ""
-            twister-args: ""
+            twister-args: >-
+              --coverage --coverage-basedir esp-sdr-zephyr
+              --coverage-formats html,xml
+            coverage: true
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -85,6 +92,62 @@ jobs:
             twister-out/twister.json
             twister-out/twister.xml
             twister-out/twister_report.xml
+          if-no-files-found: ignore
+
+      - name: Coverage summary
+        if: always() && matrix.coverage
+        run: |
+          python3 esp-sdr-zephyr/scripts/coverage-summary.py twister-out/coverage_summary.json \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        if: always() && matrix.coverage
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage
+          path: |
+            twister-out/coverage/
+            twister-out/coverage_summary.json
+          if-no-files-found: ignore
+
+  # The Python tools that run in builds and CI (tests/host), with their coverage in the job
+  # summary and the HTML report in the "host-coverage" artifact.
+  host:
+    name: Host tools
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: 3.12
+
+      - name: Install dependencies
+        run: pip install -r tests/host/requirements.txt
+
+      - name: Tests
+        run: scripts/run-host-tests.sh
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          {
+            echo "## Host tool coverage"
+            echo
+            python3 -m coverage report --rcfile tests/host/coveragerc --format=markdown
+          } >> "$GITHUB_STEP_SUMMARY"
+          python3 -m coverage html --rcfile tests/host/coveragerc
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: host-coverage
+          path: host-coverage/
           if-no-files-found: ignore
 
   # The host side of apps/osmosdr, as the release builds it.
