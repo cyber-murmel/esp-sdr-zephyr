@@ -7,6 +7,7 @@ branch = True
 source =
     apps/multiapp
     apps/chancap/tools
+    apps/pcap/tools
     apps/ubertooth/tools
     scripts
     doc/registers

@@ -1,0 +1,13 @@
+tests:
+  unit.esp_sdr.pcap_generic:
+    # Some sixty bursts of up to 32768 samples modulated in double precision; the timeout only
+    # bounds hangs.
+    timeout: 300
+    tags:
+      - esp-sdr
+      - pcap
+    platform_allow:
+      - native_sim
+      - native_sim/native/64
+    integration_platforms:
+      - native_sim
