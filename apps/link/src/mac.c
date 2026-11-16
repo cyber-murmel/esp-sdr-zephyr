@@ -1212,7 +1212,7 @@ static void mac_loop(void *p1, void *p2, void *p3)
 
 	rs_init();
 	qam_crc_init();
-	/* PSRAM is not cleared at boot: no BCH code set up yet. */
+	/* No BCH code set up yet (zero already: PSRAM .bss is zeroed at boot). */
 	ofdm_txw.bch_key = 0;
 	ofdm_rxw.bch_key = 0;
 #if !defined(MULTIAPP_NAME)
@@ -1382,7 +1382,7 @@ int link_mac_init(void)
 #if defined(CONFIG_HWINFO)
 	n = hwinfo_get_device_id(id, sizeof(id));
 #endif
-	/* PSRAM .bss is not zeroed at boot. */
+	/* Zero already (PSRAM .bss is zeroed at boot, an extension's by llext): kept explicit. */
 	memset(srcs, 0, sizeof(srcs));
 	memset(&ack_tx_ctx, 0, sizeof(ack_tx_ctx));
 	cfg.addr = n > 0 ? id[n - 1] : 1U;
