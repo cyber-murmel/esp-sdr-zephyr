@@ -21,7 +21,7 @@
         **Wi-Fi MAC interrupt.** CPU interrupt line 0 (`ETS_WMAC_INUM`,
         `modules/hal/espressif/components/soc/esp32s3/include/soc/soc.h:212`);
         `esp_sdr_ring_run()` disables it on its CPU (hardware-quirks.md, "Capture and
-        DAC engine"; `lib/esp_sdr/src/esp_sdr_ring.c:462-491`).
+        DAC engine"; `lib/esp_sdr/src/esp_sdr_ring.c:508-538`).
       </description>
       <baseAddress>0x60033000</baseAddress>
       <addressBlock>
@@ -100,7 +100,7 @@
                 16384-pair ring (0x00024000 = this bit plus count 16384). In `adctrig()`
                 the same bit skips the final count check.
                 Evidence: *working* `lib/esp_sdr/src/esp_sdr_priv.h:290-294`,
-                `lib/esp_sdr/src/esp_sdr_ring.c:1349`;
+                `lib/esp_sdr/src/esp_sdr_ring.c:1287`;
                 *decompile* S3 `mac_common.o`
               </description>
               <bitRange>[17:17]</bitRange>
@@ -136,7 +136,7 @@
                 `ESP_SDR_SAMPLES_MAX`); `adctrig()` writes count + 1 and checks a 15-bit
                 written count, and the ring writes 16384 (bit 14), so the field is probably
                 15 bits wide.
-                Evidence: *working* `lib/esp_sdr/src/esp_sdr_priv.h:33`; *decompile* S3
+                Evidence: *working* `lib/esp_sdr/src/esp_sdr_priv.h:34`; *decompile* S3
                 `mac_common.o`
               </description>
               <bitRange>[14:0]</bitRange>
@@ -150,7 +150,7 @@
             Words written by a capture; the live write index in circular mode
             No read pointer is known for the DAC side; loop playback runs open loop on
             CCOUNT.
-            Evidence: *measured* `lib/esp_sdr/src/esp_sdr_priv.h:236-244` (no DAC read pointer)
+            Evidence: *measured* `lib/esp_sdr/src/esp_sdr_priv.h:237-245` (no DAC read pointer)
           </description>
           <addressOffset>0xd60</addressOffset>
           <fields>
@@ -161,7 +161,7 @@
                 count + 1. In circular mode bits 13:0 are the live write index, mod 16384,
                 advancing whichever bank is selected; the ring times its bank switches on it.
                 Evidence: *decompile* S3 `mac_common.o` (words written)
-                Evidence: *working* `lib/esp_sdr/src/esp_sdr_ring.c:40, 116-119`; *upstream*
+                Evidence: *working* `lib/esp_sdr/src/esp_sdr_ring.c:43, 139-142`; *upstream*
                 `modules/lib/esp-sdr/main/common/ring_capture.c:112` (circular mode)
               </description>
               <bitRange>[14:0]</bitRange>
@@ -188,7 +188,7 @@
               DUMP_CTRL_REG after every transmit session as well.
             - The front end must be forced to transmit, or only a spur near -6 MHz leaks
               (FE_FORCE_TXON, see "Front end").
-            Evidence: *measured* `lib/esp_sdr/src/esp_sdr_priv.h:236-244` (loop mode)
+            Evidence: *measured* `lib/esp_sdr/src/esp_sdr_priv.h:237-245` (loop mode)
             Evidence: *decompile* S3 `mac_common.o` (`dactrig()`)
             Evidence: `lib/esp_sdr/src/esp_sdr_tx.c:272-273` (the library skips the ramp, clears DUMP_CTRL_REG)
           </description>
@@ -207,7 +207,7 @@
               <name>B27_20</name>
               <description>
                 `dactrig()` writes count &amp; 0xff here; no effect on the rate.
-                Evidence: *measured* `lib/esp_sdr/src/esp_sdr_priv.h:46-48`; *decompile* S3
+                Evidence: *measured* `lib/esp_sdr/src/esp_sdr_priv.h:47-49`; *decompile* S3
                 `mac_common.o`
               </description>
               <bitRange>[27:20]</bitRange>
@@ -220,7 +220,7 @@
                 back to back, gapless, until the register is cleared. A retrigger leaves a
                 hole of about 1.35 us.
                 Evidence: *measured* `lib/esp_sdr/src/esp_sdr_tx.c:163-166, 253-263`,
-                `lib/esp_sdr/src/esp_sdr_priv.h:236-244`
+                `lib/esp_sdr/src/esp_sdr_priv.h:237-245`
               </description>
               <bitRange>[19:19]</bitRange>
               <access>read-write</access>
@@ -238,7 +238,7 @@
               <name>B16</name>
               <description>
                 No effect on the rate: there is no 16 MS/s DAC rate.
-                Evidence: *measured* `lib/esp_sdr/src/esp_sdr_priv.h:46-48`
+                Evidence: *measured* `lib/esp_sdr/src/esp_sdr_priv.h:47-49`
               </description>
               <bitRange>[16:16]</bitRange>
               <access>read-write</access>
@@ -248,7 +248,7 @@
               <description>
                 The DAC has its own clock: 1 = 80 MS/s, 0 = 40 MS/s. 40 MS/s gives about
                 4 dB less MER.
-                Evidence: *measured* `lib/esp_sdr/src/esp_sdr_priv.h:46-49`, hardware-quirks.md
+                Evidence: *measured* `lib/esp_sdr/src/esp_sdr_priv.h:47-50`, hardware-quirks.md
               </description>
               <bitRange>[15:15]</bitRange>
               <access>read-write</access>
@@ -275,7 +275,7 @@
 
             Only sources 0 to 3 are ever used. The others could take work off the CPU;
             lead, not tried.
-            Evidence: *working* `lib/esp_sdr/src/esp_sdr_priv.h:34-36`; *upstream*
+            Evidence: *working* `lib/esp_sdr/src/esp_sdr_priv.h:35-37`; *upstream*
             `modules/lib/esp-sdr/main/targets/esp32s3/receiver.c:159` (lane selectors)
             Evidence: *decompile* S3 `mac_common.o` (`mac_init()`)
             Evidence: *decompile* S3 `libphy.a` (lead)
@@ -371,7 +371,7 @@
             Evidence: `lib/esp_sdr/esp_sdr_bank_s3.ld:4-34` (reserved banks)
             Evidence: *measured* `lib/esp_sdr/src/esp_sdr_tx.c:346-349` (CPU stores and the DAC)
             Evidence: *measured* hardware-quirks.md, "Capture and DAC engine";
-            `lib/esp_sdr/src/esp_sdr_priv.h:236-244` (a change while running)
+            `lib/esp_sdr/src/esp_sdr_priv.h:237-245` (a change while running)
             Evidence: *measured* bench 2026-10-05, `lib/esp_sdr/esp_sdr_bank_s3.ld:43-47`;
             *upstream* `modules/lib/esp-sdr/main/common/ring_capture.h:26` (bank 3)
           </description>
@@ -520,7 +520,7 @@
             The library calls `force_txon_mode(1, 0, 0)` and `force_tx_gain()`, which writes
             gain memory slot 0. That this is the slot the front end then uses holds only
             while FE_BASE_INDEX reads 0; the code does not check it.
-            Evidence: `lib/esp_sdr/src/esp_sdr_priv.h:164-169` (slot 0)
+            Evidence: `lib/esp_sdr/src/esp_sdr_priv.h:165-170` (slot 0)
           </description>
           <addressOffset>0x0</addressOffset>
           <fields>
@@ -1702,7 +1702,7 @@
         - Writing the other pairs (0x06/0x07 up to 0x1e/0x1f) disturbed reception until a
           reboot (*measured* bench 2026-10-06). `esp_sdr_bbtop_read()` and
           `esp_sdr_bbtop_write()` give unchecked access
-          (`lib/esp_sdr/src/esp_sdr_rx.c:648-667`).
+          (`lib/esp_sdr/src/esp_sdr_rx.c:689-708`).
         - The PHY's channel bandwidth mode changes these filters too (hardware-quirks.md,
           "40 MHz mode widens the analog filters").
 
@@ -1859,7 +1859,7 @@
               <description>
                 Transmit low-pass code, pair B.
                 Evidence: *decompile* S3 `rf_test.o`; *working*
-                `lib/esp_sdr/src/esp_sdr_rx.c:578-637`
+                `lib/esp_sdr/src/esp_sdr_rx.c:621-678`
               </description>
               <bitRange>[5:0]</bitRange>
               <access>read-write</access>

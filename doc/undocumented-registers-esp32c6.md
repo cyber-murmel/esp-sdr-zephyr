@@ -69,8 +69,8 @@ Zephyr link maps them to the ROM at 0x40003dc0 and 0x400040b4.
 | Fact | Evidence |
 |---|---|
 | The `host` argument is ignored. The I2C master is picked from the block id: 0x62, 0x63, 0x64, 0x67 and 0x6b go to master 1, every other block to master 0 (bit mask 0x227 over `block - 0x62`). | *decompile*: C6 ROM `rom_chip_i2c_readReg` and `rom_get_i2c_hostid` (0x40003d4a, `andi 551`). *measured*: host 0 and 1 read identically in every register of blocks 0x60 to 0x6f (bench 2026-10-09). |
-| Host values in code are therefore cosmetic: the library passes 1 for BBTOP, the RF PLL and the LO selector, and upstream's docs say host 1 for BBTOP on every chip. Across the two chips they are inconsistent (see the ESP32-S3 page). | `lib/esp_sdr/src/esp_sdr_priv.h:106`; `modules/lib/esp-sdr/docs/rx-controls.md:43` |
-| The ROM functions take no lock (shown on the ESP32-S3, whose ROM lock functions are empty; see its page). libphy's `ram_chip_i2c_*` call `phy_i2c_enter_critical()`, which the HAL maps to `regi2c_enter_critical()`. The Wi-Fi PHY may run a sequence at any time, so the library takes `regi2c_enter_critical()` around every `rom_chip_i2c_*` sequence. | `modules/hal/espressif/components/esp_phy/src/phy_override.c:50-58`; *working*: `lib/esp_sdr/src/esp_sdr_priv.h:175-180`, hardware-quirks.md |
+| Host values in code are therefore cosmetic: the library passes 1 for BBTOP, the RF PLL and the LO selector, and upstream's docs say host 1 for BBTOP on every chip. Across the two chips they are inconsistent (see the ESP32-S3 page). | `lib/esp_sdr/src/esp_sdr_priv.h:107`; `modules/lib/esp-sdr/docs/rx-controls.md:43` |
+| The ROM functions take no lock (shown on the ESP32-S3, whose ROM lock functions are empty; see its page). libphy's `ram_chip_i2c_*` call `phy_i2c_enter_critical()`, which the HAL maps to `regi2c_enter_critical()`. The Wi-Fi PHY may run a sequence at any time, so the library takes `regi2c_enter_critical()` around every `rom_chip_i2c_*` sequence. | `modules/hal/espressif/components/esp_phy/src/phy_override.c:50-58`; *working*: `lib/esp_sdr/src/esp_sdr_priv.h:176-181`, hardware-quirks.md |
 
 The I2C masters themselves are memory-mapped (I2C_ANA_MST below).
 
@@ -288,7 +288,7 @@ No rate field, unlike the S3's: receive runs at 80 MS/s only.
 
 Evidence:
 
-- *working* `lib/esp_sdr/src/esp_sdr_priv.h:77-81`, `lib/esp_sdr/src/esp_sdr_rx.c:302-310`; *upstream* `modules/lib/esp-sdr/main/targets/esp32c6/chip.h:43-46` (DUMP_RUN, DUMP_TRIGGER, DUMP_DONE, DUMP_COUNT)
+- *working* `lib/esp_sdr/src/esp_sdr_priv.h:78-82`, `lib/esp_sdr/src/esp_sdr_rx.c:302-310`; *upstream* `modules/lib/esp-sdr/main/targets/esp32c6/chip.h:43-46` (DUMP_RUN, DUMP_TRIGGER, DUMP_DONE, DUMP_COUNT)
 - DUMP_CIRCULAR: *measured* bench 2026-10-19 (sentinel fill, ring size and index); *working* `lib/esp_sdr/src/esp_sdr_trig.c`; *upstream* `modules/lib/esp-sdr/main/common/ring_capture.c:104, 1499-1505`
 
 #### Register DUMP_MODE_REG (0x600a9008)
@@ -312,7 +312,7 @@ Evidence:
 
 - *measured* bench 2026-10-19; *working* `lib/esp_sdr/src/esp_sdr_trig.c`; *upstream* `modules/lib/esp-sdr/main/common/ring_capture.c:96, 1507` (write index)
 - DUMP_B23_21: *measured* bench 2026-10-11; C5 and C61: *upstream* `modules/lib/esp-sdr/main/targets/esp32c5/chip.h:11`, `modules/lib/esp-sdr/main/targets/esp32c61/chip.h:20-21`
-- DUMP_SRC: *working* `lib/esp_sdr/src/esp_sdr_priv.h:82-84`; *upstream* `modules/lib/esp-sdr/main/targets/esp32c6/chip.h:6, 39`
+- DUMP_SRC: *working* `lib/esp_sdr/src/esp_sdr_priv.h:83-85`; *upstream* `modules/lib/esp-sdr/main/targets/esp32c6/chip.h:6, 39`
 
 #### Register DUMP_DAC_TRIG_REG (0x600a900c)
 
@@ -652,7 +652,7 @@ front-end setup.
 
 Evidence:
 
-- *working* `lib/esp_sdr/src/esp_sdr_priv.h:110-112`; *decompile* C6 `librftest.a` `phy_test.o` (`force_rx_gain`); *upstream* `modules/lib/esp-sdr/main/common/burst_gain.h:11-12, 36`
+- *working* `lib/esp_sdr/src/esp_sdr_priv.h:111-113`; *decompile* C6 `librftest.a` `phy_test.o` (`force_rx_gain`); *upstream* `modules/lib/esp-sdr/main/common/burst_gain.h:11-12, 36`
 - `lib/esp_sdr/src/esp_sdr_rx.c:164-166` (front-end rerun)
 
 #### Register AGC_R30_REG (0x600a7030)
@@ -895,7 +895,7 @@ Modes 0 to 3 gave the same sums in FE_IQE_POW_REG and FE_IQE_POW_I_REG.
 
 Evidence:
 
-- *working* `lib/esp_sdr/src/esp_sdr_priv.h:118-120`, `lib/esp_sdr/src/esp_sdr_paced.c`; *measured* bench 2026-10-19 (modes)
+- *working* `lib/esp_sdr/src/esp_sdr_priv.h:119-121`, `lib/esp_sdr/src/esp_sdr_paced.c`; *measured* bench 2026-10-19 (modes)
 
 #### Register FE_IQE_CTRL1_REG (0x600a0474)
 
@@ -918,7 +918,7 @@ can be read while it counts. Restarting is enable, then enable with start.
 
 Evidence:
 
-- *working* `lib/esp_sdr/src/esp_sdr_priv.h:121-128`, `lib/esp_sdr/src/esp_sdr_paced.c`
+- *working* `lib/esp_sdr/src/esp_sdr_priv.h:122-129`, `lib/esp_sdr/src/esp_sdr_paced.c`
 
 #### Register FE_IQE_SUM_I_REG (0x600a0488)
 
@@ -1549,7 +1549,7 @@ registers 4, 5, 12, 13 from one PHY parameter, 6, 7, 14, 15 from the next), so t
 transmit pairs are probably at the same place as on the S3 (*decompile* C6
 `libphy.a` `phy_i2c.o`). `esp_sdr_tx_set_lpf()` returns -ENOTSUP on the C6.
 `esp_sdr_bbtop_read()` and `esp_sdr_bbtop_write()` give unchecked access
-(`lib/esp_sdr/src/esp_sdr_rx.c:648-667`).
+(`lib/esp_sdr/src/esp_sdr_rx.c:689-708`).
 
 #### Register BBTOP_R4, BBTOP_R5 (0x67:4, 0x67:5)
 
@@ -1612,8 +1612,8 @@ The HAL names the block (`I2C_BIAS`). Registers 0 to 3 at 2412 MHz read
 | transmit, played by the DAC engine | I | Q | 0 | *measured* bench 2026-10-11 (tone side and image) |
 
 - Each field is 10-bit two's complement, -512 to 511.
-- Packed forms: IQ8 is bits 19:12 then 9:2 (I then Q); IQ10 packs bits 19:0 of
-  two words into 5 bytes (`lib/esp_sdr/src/esp_sdr_rx.c:548-576`).
+- Packed form: IQ8 is bits 19:12 then 9:2 (I then Q;
+  `include/esp_sdr/esp_sdr_rx.h:231-238`).
 
 ## Vendor library functions as used
 
