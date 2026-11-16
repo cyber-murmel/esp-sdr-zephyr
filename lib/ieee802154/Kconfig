@@ -20,6 +20,19 @@ config ESP_SDR_IEEE802154
 
 if ESP_SDR_IEEE802154
 
+config ESP_SDR_IEEE802154_RX_SUMS
+	bool "Receive through the ring's sums of four"
+	depends on !ESP_SDR_IEEE802154_AUTO_ACK
+	help
+	  The ring decimates by summing each four pairs (the boxcar) instead
+	  of taking every fourth one: the noise of the 12 MHz outside the
+	  channel no longer folds into it. On the XIAO S3 against the C6
+	  half the frames came through at about 8 dB less signal (6 dB in
+	  the simulation, scripts/unit-tables.sh dsp). The sums cost the
+	  ring's CPU some 4 cycles a pair more, which it keeps up with in
+	  units of 2048 pairs, not 1024: the receiver takes 2048, and its
+	  verdict on a frame comes too late for an ACK (doc/ieee802154.md).
+
 config ESP_SDR_IEEE802154_AUTO_ACK
 	bool "Send ACKs"
 	default y

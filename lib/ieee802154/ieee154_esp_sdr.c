@@ -427,22 +427,29 @@ static void ring_sink(void *user, const int16_t *i, const int16_t *q, size_t n,
 	atomic_set(&sring_w, (atomic_val_t)sink_next);
 }
 
+/*
+ * The ring's unit: the shortest, so that the PHY decides a frame in time for its ACK; the sums of
+ * four keep up in units of twice that only (CONFIG_ESP_SDR_IEEE802154_RX_SUMS, no ACKs).
+ */
+#define RX_UNIT_PAIRS                                                                              \
+	(IS_ENABLED(CONFIG_ESP_SDR_IEEE802154_RX_SUMS) ? 2U * ESP_SDR_RING_UNIT_MIN               \
+						       : ESP_SDR_RING_UNIT_MIN)
+
 static struct esp_sdr_ring_cfg ring_cfg = {
 	.decim = ESP_SDR_RING_DECIM_BOX4,
 	.shift_fs4 = true,
 	.sink = ring_sink,
 	/*
-	 * Every 4th pair. Summing four (the boxcar, 6 dB better in noise) costs about 9.5 cycles a
-	 * pair with PIE (doc/chancap.md), which fits the budget: not yet checked against a peer on the
-	 * air.
+	 * Every 4th pair, or with CONFIG_ESP_SDR_IEEE802154_RX_SUMS the sums of four (the boxcar:
+	 * about 8 dB more reach on the air, some 4 cycles a pair more on the ring's CPU).
 	 */
-	.subsample = true,
+	.subsample = !IS_ENABLED(CONFIG_ESP_SDR_IEEE802154_RX_SUMS),
 	/*
-	 * 64 us units: the PHY decides a frame about 100 us after its end
-	 * (768 us units: about 900), and a unit (256 samples) never comes
-	 * near the size of the sample ring.
+	 * 64 us units (128 with the sums): the PHY decides a frame about 100 us after its end
+	 * (768 us units: about 900), and a unit (256 samples) never comes near the size of the
+	 * sample ring.
 	 */
-	.unit_pairs = ESP_SDR_RING_UNIT_MIN,
+	.unit_pairs = RX_UNIT_PAIRS,
 	/* Bank 2 holds the ACK waveform. */
 	.spare_bank = IS_ENABLED(CONFIG_ESP_SDR_IEEE802154_AUTO_ACK),
 };
@@ -479,7 +486,7 @@ int ieee154_esp_sdr_set_ring_unit(uint32_t pairs)
 {
 	struct esp_sdr_ring_cfg cfg = ring_cfg;
 
-	cfg.unit_pairs = pairs != 0U ? pairs : ESP_SDR_RING_UNIT_MIN;
+	cfg.unit_pairs = pairs != 0U ? pairs : RX_UNIT_PAIRS;
 	if (pairs != 0U && (pairs < ESP_SDR_RING_UNIT_MIN || pairs > ESP_SDR_RING_UNIT_DEFAULT ||
 			    pairs % 64U != 0U)) {
 		return -EINVAL;
