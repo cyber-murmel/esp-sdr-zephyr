@@ -24,6 +24,7 @@
 #include <zephyr/sys/sys_heap.h>
 #include <zephyr/sys/util.h>
 
+#include "app_shell.h"
 #if defined(CONFIG_USB_DEVICE_STACK_NEXT)
 #include "app_cpu.h"
 #include "app_crash.h"
@@ -322,19 +323,6 @@ static bool radio_ok(const struct shell *sh)
 	return true;
 }
 
-static int parse_u32(const struct shell *sh, const char *s, uint32_t max, uint32_t *out)
-{
-	char *end;
-	unsigned long v = strtoul(s, &end, 0);
-
-	if (*s == '\0' || *end != '\0' || v > max) {
-		shell_error(sh, "bad value: %s", s);
-		return -EINVAL;
-	}
-	*out = (uint32_t)v;
-	return 0;
-}
-
 /* ------------------------------------------------------------- settings */
 
 /* Last transmit power set (the radio API has no getter), INT16_MIN: the driver's default. */
@@ -344,25 +332,12 @@ static bool promiscuous;
 static bool rx_invert, tx_invert, lo_above;
 #endif
 
-static int parse_long(const struct shell *sh, const char *s, long min, long max, long *out)
-{
-	char *end;
-	long v = strtol(s, &end, 0);
-
-	if (*s == '\0' || *end != '\0' || v < min || v > max) {
-		shell_error(sh, "bad value: %s (%ld to %ld)", s, min, max);
-		return -EINVAL;
-	}
-	*out = v;
-	return 0;
-}
-
 static int set_chan(const struct shell *sh, const char *value)
 {
 	long ch;
 	int ret;
 
-	if (parse_long(sh, value, 11, 26, &ch) != 0) {
+	if (app_shell_long(sh, value, 11, 26, &ch) != 0) {
 		return -EINVAL;
 	}
 	ret = api->set_channel(radio, (uint16_t)ch);
@@ -381,7 +356,7 @@ static int set_txpower(const struct shell *sh, const char *value)
 	long dbm;
 	int ret;
 
-	if (parse_long(sh, value, -40, 30, &dbm) != 0) {
+	if (app_shell_long(sh, value, -40, 30, &dbm) != 0) {
 		return -EINVAL;
 	}
 	ret = api->set_txpower(radio, (int16_t)dbm);
@@ -397,7 +372,7 @@ static int set_promisc(const struct shell *sh, const char *value)
 	long on;
 	int ret;
 
-	if (parse_long(sh, value, 0, 1, &on) != 0) {
+	if (app_shell_long(sh, value, 0, 1, &on) != 0) {
 		return -EINVAL;
 	}
 	cfg.promiscuous = on != 0;
@@ -425,7 +400,7 @@ static int set_pan(const struct shell *sh, const char *value)
 {
 	long v;
 
-	if (parse_long(sh, value, 0, 0xffff, &v) != 0) {
+	if (app_shell_long(sh, value, 0, 0xffff, &v) != 0) {
 		return -EINVAL;
 	}
 	pan_id = (uint16_t)v;
@@ -436,7 +411,7 @@ static int set_addr(const struct shell *sh, const char *value)
 {
 	long v;
 
-	if (parse_long(sh, value, 0, 0xffff, &v) != 0) {
+	if (app_shell_long(sh, value, 0, 0xffff, &v) != 0) {
 		return -EINVAL;
 	}
 	short_addr = (uint16_t)v;
@@ -447,7 +422,7 @@ static int set_print(const struct shell *sh, const char *value)
 {
 	long level;
 
-	if (parse_long(sh, value, 0, 2, &level) != 0) {
+	if (app_shell_long(sh, value, 0, 2, &level) != 0) {
 		return -EINVAL;
 	}
 	atomic_set(&rx_verbose, (atomic_val_t)level);
@@ -459,7 +434,7 @@ static int set_rxgain(const struct shell *sh, const char *value)
 {
 	long g = ESP_SDR_RX_GAIN_AUTO;
 
-	if (strcmp(value, "auto") != 0 && parse_long(sh, value, -1, 255, &g) != 0) {
+	if (strcmp(value, "auto") != 0 && app_shell_long(sh, value, -1, 255, &g) != 0) {
 		return -EINVAL;
 	}
 	return ieee154_esp_sdr_set_rx_gain((int)g);
@@ -469,7 +444,7 @@ static int set_invert(const struct shell *sh, const char *value, bool *flag)
 {
 	long on;
 
-	if (parse_long(sh, value, 0, 1, &on) != 0) {
+	if (app_shell_long(sh, value, 0, 1, &on) != 0) {
 		return -EINVAL;
 	}
 	*flag = on != 0;
@@ -525,7 +500,7 @@ static int set_unit(const struct shell *sh, const char *value)
 {
 	long pairs;
 
-	if (parse_long(sh, value, 0, 12288, &pairs) != 0) {
+	if (app_shell_long(sh, value, 0, 12288, &pairs) != 0) {
 		return -EINVAL;
 	}
 	return ieee154_esp_sdr_set_ring_unit((uint32_t)pairs);
@@ -606,7 +581,7 @@ static int cmd_tx(const struct shell *sh, size_t argc, char **argv)
 	static const uint32_t max[6] = {UINT32_MAX, 60000U, PAYLOAD_MAX, 0xffffU, 1U, 1U};
 
 	for (size_t k = 1; k < argc && k <= ARRAY_SIZE(v); k++) {
-		if (parse_u32(sh, argv[k], max[k - 1], &v[k - 1]) != 0) {
+		if (app_shell_u32(sh, argv[k], max[k - 1], &v[k - 1]) != 0) {
 			return -EINVAL;
 		}
 	}
@@ -816,7 +791,6 @@ static int cmd_mem(const struct shell *sh, size_t argc, char **argv)
 #if defined(CONFIG_USB_DEVICE_STACK_NEXT)
 static int cmd_crash(const struct shell *sh, size_t argc, char **argv)
 {
-	struct app_crash c;
 	uint32_t cause = 0;
 
 	ARG_UNUSED(argc);
@@ -844,25 +818,9 @@ static int cmd_crash(const struct shell *sh, size_t argc, char **argv)
 		}
 	}
 #endif
-	{
-		struct app_crash_dx dx;
-
-		if (app_crash_dx_last(&dx)) {
-			shell_print(sh,
-				    "double exception: depc 0x%08x exccause %u excvaddr 0x%08x epc1 0x%08x"
-				    " ps 0x%08x a1 0x%08x prid 0x%x",
-				    dx.depc, dx.exccause, dx.excvaddr, dx.epc1, dx.ps, dx.a1, dx.prid);
-		}
-	}
-	if (!app_crash_last(&c)) {
+	if (!app_crash_print(sh)) {
 		shell_print(sh, "no crash record");
-		return 0;
 	}
-	shell_print(sh,
-		    "reason 0x%x thread %s cpu %u uptime %u ms pc 0x%08x a0 0x%08x ps 0x%08x"
-		    " exccause %u excvaddr 0x%08x",
-		    c.reason, c.thread, c.cpu, c.uptime_ms, c.pc, c.a0, c.ps, c.exccause,
-		    c.excvaddr);
 	return 0;
 }
 #endif

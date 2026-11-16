@@ -15,5 +15,8 @@ project(link_rs_unit)
 set(RS_SRC ${CMAKE_CURRENT_LIST_DIR}/../../../apps/link/src/rs.c)
 
 target_sources(app PRIVATE src/main.c ${RS_SRC})
-target_include_directories(app PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../../../apps/link/src)
+target_include_directories(app PRIVATE
+  ${CMAKE_CURRENT_LIST_DIR}/../../../apps/link/src
+  ${CMAKE_CURRENT_LIST_DIR}/../../../include
+  ${CMAKE_CURRENT_LIST_DIR}/../../common/include)
 set_source_files_properties(${RS_SRC} PROPERTIES COMPILE_OPTIONS "-U__ZEPHYR__")

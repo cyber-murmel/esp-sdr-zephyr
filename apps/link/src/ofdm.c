@@ -14,10 +14,9 @@
 #include <math.h>
 #include <string.h>
 
-#include "ofdm.h"
+#include <esp_sdr/esp_sdr_dsp.h>
 
-#define PI     3.14159265358979323846f
-#define TWO_PI 6.28318530717958647692f
+#include "ofdm.h"
 
 #if defined(__ZEPHYR__)
 #include <esp_attr.h>
@@ -221,10 +220,10 @@ int ofdm_init(struct ofdm_ctx *ctx, const struct ofdm_cfg *cfg)
 		/* Bit reversal over fewer bits: the top one of a smaller index is zero. */
 		ctx->binr[a] = (uint16_t)(ctx->rev[rb] >> (cfg->rx_div - 1U));
 	}
-	/* esp-dsp radix-2 table: cos, sin of 2 pi i / nfft for i < nfft / 2, in bit reversed order. */
+	/* esp-dsp radix-2 table: cos, sin of tau i / nfft for i < nfft / 2, bit reversed. */
 	for (unsigned int i = 0; i < nfft / 2U; i++) {
 		unsigned int r = ctx->rev[i] >> 1;
-		float a = TWO_PI * (float)r / (float)nfft;
+		float a = ESP_SDR_TAU_F * (float)r / (float)nfft;
 
 		ctx->w[2U * i] = cosf(a);
 		ctx->w[2U * i + 1U] = sinf(a);
@@ -657,21 +656,22 @@ static int search(struct ofdm_ctx *ctx, const uint32_t *w, int tmax, int tlim, i
 }
 
 /*
- * Derotation over one receive FFT window: rot[i] = exp(-j 2 pi eps i). The
+ * Derotation over one receive FFT window: rot[i] = exp(-j tau eps i). The
  * phase at each window's first sample is the same for all its subcarriers, so
  * it goes into the tracked phase instead (rx.u).
  */
 static void rot_init(struct ofdm_ctx *ctx, float eps)
 {
-	float sr = cosf(-TWO_PI * eps), si = sinf(-TWO_PI * eps), rr = 1.0f, ri = 0.0f;
+	float a = -ESP_SDR_TAU_F * eps;
+	float sr = cosf(a), si = sinf(a), rr = 1.0f, ri = 0.0f;
 
 	for (unsigned int i = 0; i < ctx->rnfft; i++) {
 		float t;
 
 		/* Exact every 64 samples, steps in between. */
 		if ((i & 63U) == 0U) {
-			rr = cosf(-TWO_PI * eps * (float)i);
-			ri = sinf(-TWO_PI * eps * (float)i);
+			rr = cosf(a * (float)i);
+			ri = sinf(a * (float)i);
 		}
 		ctx->rot[i] = (struct ofdm_cf){rr, ri};
 		t = rr * sr - ri * si;
@@ -684,8 +684,8 @@ static void rot_init(struct ofdm_ctx *ctx, float eps)
  * Slot s of the frame at rx.start into the FFT buffer, DC removed and
  * derotated, the window cp/4 early inside the prefix (a late start then still
  * stays clear of the next symbol), and the FFT. Steps rx.u to this slot:
- * against the first pilot's, slot s comes out turned by exp(+j 2 pi eps rslot
- * (s - 1)), which u = exp(-j 2 pi eps rslot (s - 1)) undoes.
+ * against the first pilot's, slot s comes out turned by exp(+j tau eps rslot
+ * (s - 1)), which u = exp(-j tau eps rslot (s - 1)) undoes.
  */
 OFDM_HOT static void take_slot(const struct ofdm_ctx *ctx, struct ofdm_worker *wk,
 			       const uint32_t *w, unsigned int s, bool fast)
@@ -1189,7 +1189,7 @@ static void channel(struct ofdm_ctx *ctx, const uint32_t *w)
 	}
 	/*
 	 * The phase step between neighbouring subcarriers: a window d samples
-	 * early in the prefix turns subcarrier k by -2 pi k d / N, the channel's
+	 * early in the prefix turns subcarrier k by -tau k d / N, the channel's
 	 * delay adds to it. Kept as rx.delay for the fine timing.
 	 */
 	for (unsigned int a = 0; a + 1U < c; a++) {
@@ -1199,7 +1199,7 @@ static void channel(struct ofdm_ctx *ctx, const uint32_t *w)
 		}
 	}
 	ctx->rx.delay = (rho.re != 0.0f || rho.im != 0.0f)
-				? -atan2f(rho.im, rho.re) * (float)ctx->rnfft / TWO_PI
+				? -atan2f(rho.im, rho.re) * (float)ctx->rnfft / ESP_SDR_TAU_F
 				: 0.0f;
 	if (ctx->cfg.smooth) {
 		struct ofdm_cf *hs = ctx->w0.buf;
@@ -1280,14 +1280,14 @@ int ofdm_rx_begin_period(struct ofdm_ctx *ctx, const uint32_t *words, size_t n, 
 	if (rx->start < 0 || best < METRIC_MIN) {
 		return -1;
 	}
-	/* Phase over half a symbol: pi per subcarrier spacing. */
-	info->cfo_frac = ang / PI;
+	/* Phase over half a symbol: half a turn per subcarrier spacing. */
+	info->cfo_frac = ang / (ESP_SDR_TAU_F / 2.0f);
 	info->cfo_hz = info->cfo_frac * ctx->spacing_hz;
 	info->start = rx->start;
 	/* Cycles per receive sample. */
 	rx->eps = info->cfo_frac / (float)ctx->rnfft;
 	rot_init(ctx, rx->eps);
-	a = -TWO_PI * rx->eps * (float)ctx->rslot;
+	a = -ESP_SDR_TAU_F * rx->eps * (float)ctx->rslot;
 	rx->us = (struct ofdm_cf){cosf(a), sinf(a)};
 	ctx->w0.u = (struct ofdm_cf){1.0f, 0.0f};
 
@@ -1345,7 +1345,7 @@ void ofdm_rx_fork(const struct ofdm_ctx *ctx, struct ofdm_worker *wk, const uint
 {
 	unsigned int ps = ctx->rx.slot + ctx->mid;
 	/* The window phase before the pilot's slot (take_slot() steps it once). */
-	float a = -TWO_PI * ctx->rx.eps * (float)ctx->rslot * (float)(ps - 2U);
+	float a = -ESP_SDR_TAU_F * ctx->rx.eps * (float)ctx->rslot * (float)(ps - 2U);
 	struct ofdm_cf acc = {0.0f, 0.0f};
 	float m;
 

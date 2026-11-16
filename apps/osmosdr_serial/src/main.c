@@ -28,7 +28,6 @@
 
 #include "esdr_proto.h"
 
-#define CPU_HZ (CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ * 1000000U)
 #define RATE_MAX_HZ 250000U
 #define RATE_COUNT 5U
 /*
@@ -660,7 +659,8 @@ static void run_tx(void)
 	/* The top rate leaves no time to interpolate: it goes to the DAC as it is. */
 	uint32_t dac_max = want.rate_hz >= RATE_MAX_HZ ? RATE_MAX_HZ : TX_DAC_MAX_HZ;
 
-	while (l > 1U && (want.rate_hz * l > dac_max || CPU_HZ % (want.rate_hz * l) != 0U)) {
+	while (l > 1U &&
+	       (want.rate_hz * l > dac_max || ESP_SDR_CPU_HZ % (want.rate_hz * l) != 0U)) {
 		l /= 2U;
 	}
 	if (esp_sdr_tx_paced_start(want.rate_hz, l, want.tx_gain, tx_input, NULL) != 0) {

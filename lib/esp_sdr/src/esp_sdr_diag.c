@@ -36,7 +36,6 @@
 
 LOG_MODULE_DECLARE(esp_sdr, CONFIG_ESP_SDR_LOG_LEVEL);
 
-#define CPU_HZ (CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ * 1000000U)
 #define PLL_HZ 240000000U
 
 /* One GDMA RX channel of the AHB group, fixed: Zephyr's GDMA driver stays disabled. */

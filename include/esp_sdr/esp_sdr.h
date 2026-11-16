@@ -43,6 +43,12 @@ extern "C" {
 #define ESP_SDR_SAMPLES_MIN 256U
 #define ESP_SDR_SAMPLES_MAX 16380U
 
+/**
+ * CPU clock in Hz (CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ): the unit of esp_sdr_paced_cycles(), and
+ * the clock the CPU-paced rates must divide.
+ */
+#define ESP_SDR_CPU_HZ (CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ * 1000000U)
+
 /** Dump banks available for capture and loop playback (CONFIG_ESP_SDR_BANK1 adds one). */
 #if defined(CONFIG_ESP_SDR_BANK1)
 #define ESP_SDR_BANKS 2

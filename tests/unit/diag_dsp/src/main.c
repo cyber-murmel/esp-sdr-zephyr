@@ -11,19 +11,11 @@
 
 #include <zephyr/ztest.h>
 
+#include <test_rng.h>
+
 #include "esp_sdr_diag_dsp.h"
 
-#define PI 3.14159265358979323846
 #define RNG_SEED 0x2545F4914F6CDD1DULL
-static uint64_t rs = RNG_SEED;
-
-static uint32_t rnd(void)
-{
-	rs ^= rs << 13;
-	rs ^= rs >> 7;
-	rs ^= rs << 17;
-	return (uint32_t)(rs >> 32);
-}
 
 static int32_t nib(uint8_t v)
 {
@@ -43,7 +35,7 @@ ZTEST(diag_dsp, test_box16)
 	uint8_t *b = (uint8_t *)w;
 
 	for (size_t k = 0; k < sizeof(w); k++) {
-		b[k] = (uint8_t)rnd();
+		b[k] = (uint8_t)test_rng_u32();
 	}
 	/* Extremes too: all -8, all 7. */
 	memset(&b[16], 0x88, 16);
@@ -105,7 +97,7 @@ static void check_cic(uint32_t r, size_t chunk_bytes)
 
 	zassert_not_null(w);
 	for (size_t k = 0; k < nbytes; k++) {
-		b[k] = (uint8_t)rnd();
+		b[k] = (uint8_t)test_rng_u32();
 	}
 	for (size_t k = 0; k < boxes; k++) {
 		diag_box16(&w[k * 4U], &xi[k], &xq[k]);
@@ -135,13 +127,13 @@ static void check_cic(uint32_t r, size_t chunk_bytes)
 ZTEST(diag_dsp, test_cic_exact)
 {
 	/* R values in and around the supported range, one chunk and the ring's 8192-byte blocks. */
-	static const uint32_t rs_[] = {8, 10, 20, 40, 80, 160};
+	static const uint32_t rs[] = {8, 10, 20, 40, 80, 160};
 
-	for (size_t k = 0; k < ARRAY_SIZE(rs_); k++) {
-		check_cic(rs_[k], 16U * 1000000U);
-		check_cic(rs_[k], 8192U);
+	for (size_t k = 0; k < ARRAY_SIZE(rs); k++) {
+		check_cic(rs[k], 16U * 1000000U);
+		check_cic(rs[k], 8192U);
 		/* Chunks that are not a multiple of a decimation period. */
-		check_cic(rs_[k], 16U * 7U);
+		check_cic(rs[k], 16U * 7U);
 	}
 }
 
@@ -163,9 +155,11 @@ ZTEST(diag_dsp, test_scale)
 	size_t cnt = 0;
 
 	for (size_t k = 0; k < n; k++) {
-		double ph = 2.0 * PI * f / fs * (double)k;
-		int32_t i = (int32_t)floor(amp * cos(ph) / (1 << lsb) + 0.5 + ((int)(rnd() & 1023) - 512) / 1024.0);
-		int32_t q = (int32_t)floor(amp * sin(ph) / (1 << lsb) + 0.5 + ((int)(rnd() & 1023) - 512) / 1024.0);
+		double ph = ESP_SDR_TAU * f / fs * (double)k;
+		double di = ((int)(test_rng_u32() & 1023) - 512) / 1024.0;
+		double dq = ((int)(test_rng_u32() & 1023) - 512) / 1024.0;
+		int32_t i = (int32_t)floor(amp * cos(ph) / (1 << lsb) + 0.5 + di);
+		int32_t q = (int32_t)floor(amp * sin(ph) / (1 << lsb) + 0.5 + dq);
 
 		i = CLAMP(i, -8, 7);
 		q = CLAMP(q, -8, 7);
@@ -194,4 +188,10 @@ ZTEST(diag_dsp, test_scale)
 	free(out);
 }
 
-ZTEST_SUITE(diag_dsp, NULL, NULL, NULL, NULL, NULL);
+static void before_each(void *f)
+{
+	ARG_UNUSED(f);
+	test_rng_seed(RNG_SEED);
+}
+
+ZTEST_SUITE(diag_dsp, NULL, NULL, before_each, NULL, NULL);

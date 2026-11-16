@@ -14,13 +14,13 @@
 #include <zephyr/sys/util.h>
 
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_dsp.h>
 
 #define SAMPLES   4096U
 #define NFFT      256U
 #define COLUMNS   64U
 #define FULLSCALE 512.0f
 #define FLOOR_DB  (-120.0f)
-#define TWO_PI    6.28318530718f
 
 struct survey_step {
 	uint32_t mhz;
@@ -38,46 +38,9 @@ static const struct survey_step survey[] = {
 };
 
 static float re[NFFT], im[NFFT], window[NFFT], psd[NFFT], column_db[COLUMNS];
+static float tw_cos[NFFT / 2], tw_sin[NFFT / 2];
 /* NFFT * sum(window^2): bins then sum to the mean power. */
 static float window_gain;
-
-static void fft(float *xr, float *xi, unsigned int n)
-{
-	for (unsigned int i = 1, j = 0; i < n; i++) {
-		unsigned int bit = n >> 1;
-
-		for (; j & bit; bit >>= 1) {
-			j ^= bit;
-		}
-		j |= bit;
-		if (i < j) {
-			float t = xr[i];
-
-			xr[i] = xr[j];
-			xr[j] = t;
-			t = xi[i];
-			xi[i] = xi[j];
-			xi[j] = t;
-		}
-	}
-	for (unsigned int len = 2; len <= n; len <<= 1) {
-		float ang = -TWO_PI / (float)len;
-
-		for (unsigned int i = 0; i < n; i += len) {
-			for (unsigned int k = 0; k < len / 2; k++) {
-				float wr = cosf(ang * (float)k), wi = sinf(ang * (float)k);
-				unsigned int a = i + k, b = a + len / 2;
-				float tr = xr[b] * wr - xi[b] * wi;
-				float ti = xr[b] * wi + xi[b] * wr;
-
-				xr[b] = xr[a] - tr;
-				xi[b] = xi[a] - ti;
-				xr[a] += tr;
-				xi[a] += ti;
-			}
-		}
-	}
-}
 
 static float to_db(float power)
 {
@@ -102,7 +65,7 @@ static void spectrum(const struct esp_sdr_rx_burst *b, float dc_i, float dc_q)
 			re[k] = ((float)esp_sdr_rx_i(w[k]) - dc_i) * window[k] / FULLSCALE;
 			im[k] = ((float)esp_sdr_rx_q(w[k]) - dc_q) * window[k] / FULLSCALE;
 		}
-		fft(re, im, NFFT);
+		esp_sdr_fft(re, im, NFFT, tw_cos, tw_sin, NFFT);
 		for (unsigned int k = 0; k < NFFT; k++) {
 			psd[k] += (re[k] * re[k] + im[k] * im[k]) / (window_gain * (float)segments);
 		}
@@ -195,9 +158,10 @@ int main(void)
 
 	printk("capture %s\n", APP_VERSION_STRING);
 	for (unsigned int k = 0; k < NFFT; k++) {
-		window[k] = 0.5f - 0.5f * cosf(TWO_PI * (float)k / (float)NFFT);
+		window[k] = esp_sdr_window(ESP_SDR_WINDOW_HANN, k, NFFT);
 		window_gain += (float)NFFT * window[k] * window[k];
 	}
+	esp_sdr_fft_twiddles(tw_cos, tw_sin, NFFT);
 
 	ret = esp_sdr_init();
 	if (ret != 0) {

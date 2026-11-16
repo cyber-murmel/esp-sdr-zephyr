@@ -31,6 +31,7 @@
 #include <esp_attr.h>
 
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_dsp.h>
 #include <esp_sdr/esp_sdr_ring.h>
 
 #include "esp_sdr_priv.h"
@@ -99,8 +100,6 @@ static bool geom_two_banks(const struct geom *g)
 {
 	return 3U * g->thr + g->eg + g->late <= RING_PAIRS;
 }
-
-#define PI_F 3.14159265f
 
 extern uint32_t __esp_sdr_bank0_start[];
 
@@ -332,7 +331,7 @@ static float kaiser_tap(uint32_t i, uint32_t l, float fc)
 {
 	float m = (float)i - 0.5f * (float)(l - 1U);
 	float x = 2.0f * fc * m;
-	float sinc = fabsf(x) < 1e-6f ? 1.0f : sinf(PI_F * x) / (PI_F * x);
+	float sinc = esp_sdr_sincf(x);
 	float r = 2.0f * m / (float)(l - 1U);
 
 	return 2.0f * fc * sinc * bessel_i0(5.65f * sqrtf(fmaxf(0.0f, 1.0f - r * r))) /

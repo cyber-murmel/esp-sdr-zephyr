@@ -6,7 +6,7 @@ software PHY and radio driver built on it. See the
 [topics](topics.html) for the parts:
 
 - @ref esp_sdr : @ref esp_sdr_radio, @ref esp_sdr_rx, @ref esp_sdr_tx,
-  @ref esp_sdr_ring, @ref esp_sdr_diag and @ref esp_sdr_replay.
+  @ref esp_sdr_ring, @ref esp_sdr_diag, @ref esp_sdr_replay and @ref esp_sdr_dsp.
 - @ref ieee154 : @ref ieee154_phy and @ref ieee154_esp_sdr.
 
 Declarations that depend on the SoC or on Kconfig are all listed here; each

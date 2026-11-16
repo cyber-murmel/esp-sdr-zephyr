@@ -52,7 +52,8 @@ The script runs twister on `native_sim/native/64` with `NSI_OPT=-O2`. Plain `nat
 fatal.
 
 `tests/unit/link_rs` builds `apps/link/src/rs.c` with `-U__ZEPHYR__`, so its host branch is
-compiled instead of the ESP-IDF one.
+compiled instead of the ESP-IDF one. The suites draw their random input from
+`tests/common/include/test_rng.h` (xorshift64 and normal deviates), seeded before each case.
 
 ### Sweep tables
 

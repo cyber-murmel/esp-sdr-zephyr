@@ -15,4 +15,6 @@ set(PHY_DIR ${CMAKE_CURRENT_LIST_DIR}/../../../lib/ieee802154)
 target_sources(app PRIVATE
   src/main.c
   ${PHY_DIR}/ieee154_phy.c)
-target_include_directories(app PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../../../include)
+target_include_directories(app PRIVATE
+  ${CMAKE_CURRENT_LIST_DIR}/../../../include
+  ${CMAKE_CURRENT_LIST_DIR}/../../common/include)

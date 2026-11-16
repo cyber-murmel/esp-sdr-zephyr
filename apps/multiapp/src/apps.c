@@ -596,8 +596,6 @@ static int cmd_info(const struct shell *sh, size_t argc, char **argv)
 /* What ended the previous boot, if it ended badly (apps/common app_crash.h). */
 static int cmd_crash(const struct shell *sh, size_t argc, char **argv)
 {
-	struct app_crash_dx dx;
-	struct app_crash c;
 	size_t used, size;
 
 	ARG_UNUSED(argc);
@@ -612,23 +610,8 @@ static int cmd_crash(const struct shell *sh, size_t argc, char **argv)
 		shell_print(sh, "last DFU download: %zu of %zu bytes of the USB thread's stack used",
 			    used, size);
 	}
-	if (app_crash_dx_last(&dx)) {
-		shell_print(sh, "double exception: depc 0x%08x exccause %u excvaddr 0x%08x"
-			    " epc1 0x%08x ps 0x%08x a1 0x%08x prid 0x%x",
-			    dx.depc, dx.exccause, dx.excvaddr, dx.epc1, dx.ps, dx.a1, dx.prid);
-	}
-	if (!app_crash_last(&c)) {
+	if (!app_crash_print(sh)) {
 		shell_print(sh, "no fatal error or watchdog reset recorded");
-		return 0;
-	}
-	if (c.reason == APP_CRASH_WATCHDOG) {
-		shell_print(sh, "watchdog reset: thread %s cpu %u uptime %u ms", c.thread, c.cpu,
-			    c.uptime_ms);
-	} else {
-		shell_print(sh, "fatal error %u: thread %s cpu %u uptime %u ms pc 0x%08x a0 0x%08x"
-			    " ps 0x%08x exccause %u excvaddr 0x%08x",
-			    c.reason, c.thread, c.cpu, c.uptime_ms, c.pc, c.a0, c.ps, c.exccause,
-			    c.excvaddr);
 	}
 	return 0;
 }

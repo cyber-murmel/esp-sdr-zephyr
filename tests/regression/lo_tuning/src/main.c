@@ -23,6 +23,7 @@
 #include <zephyr/sys/util.h>
 
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_dsp.h>
 #include <esp_sdr/esp_sdr_rx.h>
 #if defined(CONFIG_SOC_SERIES_ESP32S3)
 #include <esp_sdr/esp_sdr_tx.h>
@@ -31,8 +32,6 @@
 #if defined(CONFIG_USB_DEVICE_STACK_NEXT)
 #include "app_usb.h"
 #endif
-
-#define TWO_PI_F 6.28318530717958647692f
 
 #if defined(CONFIG_SOC_SERIES_ESP32S3)
 /* A tone's loop session holds the radio until "lo tone off". */
@@ -55,42 +54,6 @@ static bool lo_tone_active;
 
 static float re[NFFT], im[NFFT], win[NFFT], psd[NFFT], floor_psd[NFFT];
 static float tw_cos[NFFT / 2], tw_sin[NFFT / 2];
-
-static void fft(float *xr, float *xi)
-{
-	for (unsigned int i = 1, j = 0; i < NFFT; i++) {
-		unsigned int bit = NFFT >> 1;
-
-		for (; j & bit; bit >>= 1) {
-			j ^= bit;
-		}
-		j |= bit;
-		if (i < j) {
-			float t = xr[i];
-
-			xr[i] = xr[j];
-			xr[j] = t;
-			t = xi[i];
-			xi[i] = xi[j];
-			xi[j] = t;
-		}
-	}
-	for (unsigned int len = 2, step = NFFT / 2; len <= NFFT; len <<= 1, step >>= 1) {
-		for (unsigned int i = 0; i < NFFT; i += len) {
-			for (unsigned int k = 0; k < len / 2; k++) {
-				float wr = tw_cos[k * step], wi = -tw_sin[k * step];
-				unsigned int a = i + k, b = a + len / 2;
-				float tr = xr[b] * wr - xi[b] * wi;
-				float ti = xr[b] * wi + xi[b] * wr;
-
-				xr[b] = xr[a] - tr;
-				xi[b] = xi[a] - ti;
-				xr[a] += tr;
-				xi[a] += ti;
-			}
-		}
-	}
-}
 
 /* Baseband frequency of FFT bin k (natural order: 0 .. +fs/2, then -fs/2 .. 0). */
 static float bin_hz(unsigned int k)
@@ -161,7 +124,7 @@ static int cmd_rx(const struct shell *sh, size_t argc, char **argv)
 			re[k] = i * win[k];
 			im[k] = q * win[k];
 		}
-		fft(re, im);
+		esp_sdr_fft(re, im, NFFT, tw_cos, tw_sin, NFFT);
 		for (unsigned int k = 0; k < NFFT; k++) {
 			psd[k] += re[k] * re[k] + im[k] * im[k];
 		}
@@ -197,12 +160,9 @@ static int cmd_rx(const struct shell *sh, size_t argc, char **argv)
 static void rx_init(void)
 {
 	for (unsigned int k = 0; k < NFFT; k++) {
-		win[k] = 0.5f - 0.5f * cosf(TWO_PI_F * (float)k / (float)NFFT);
+		win[k] = esp_sdr_window(ESP_SDR_WINDOW_HANN, k, NFFT);
 	}
-	for (unsigned int k = 0; k < NFFT / 2; k++) {
-		tw_cos[k] = cosf(TWO_PI_F * (float)k / (float)NFFT);
-		tw_sin[k] = sinf(TWO_PI_F * (float)k / (float)NFFT);
-	}
+	esp_sdr_fft_twiddles(tw_cos, tw_sin, NFFT);
 }
 #endif /* !CONFIG_SOC_SERIES_ESP32S3 */
 
@@ -215,9 +175,8 @@ static int cmd_tone_on(const struct shell *sh, size_t argc, char **argv)
 	long hz = strtol(argv[1], NULL, 0);
 	long amp = argc > 2 ? strtol(argv[2], NULL, 0) : 400;
 	double fs = (double)esp_sdr_tx_rate_hz(TX_RATE);
-	size_t words, n = 0;
-	long cycles = 0;
-	double best = INFINITY;
+	size_t words, n;
+	long cycles;
 	uint32_t *bank;
 	int ret;
 
@@ -235,24 +194,10 @@ static int cmd_tone_on(const struct shell *sh, size_t argc, char **argv)
 		return ret;
 	}
 	bank = esp_sdr_tx_loop_buf(0, &words);
-	words = MIN(words, ESP_SDR_SAMPLES_MAX);
-	/* The period length whose whole number of cycles comes closest to hz. */
-	for (size_t len = words; len >= ESP_SDR_SAMPLES_MIN; len--) {
-		long c = lround((double)hz * (double)len / fs);
-		double err = fabs((double)c * fs / (double)len - (double)hz);
-
-		if (err < best) {
-			best = err;
-			n = len;
-			cycles = c;
-			if (err < 1.0) {
-				break;
-			}
-		}
-	}
+	n = esp_sdr_tone_period((double)hz, fs, ESP_SDR_SAMPLES_MIN,
+				MIN(words, ESP_SDR_SAMPLES_MAX), &cycles);
 	for (size_t k = 0; k < n; k++) {
-		float ph = TWO_PI_F * (float)((double)cycles * (double)k / (double)n -
-					      floor((double)cycles * (double)k / (double)n));
+		float ph = (float)esp_sdr_tone_phase(cycles, k, n);
 
 		bank[k] = esp_sdr_tx_word((int16_t)lroundf((float)amp * cosf(ph)),
 					  (int16_t)lroundf((float)amp * sinf(ph)));

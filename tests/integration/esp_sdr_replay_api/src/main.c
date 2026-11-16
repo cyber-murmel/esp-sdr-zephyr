@@ -17,7 +17,6 @@
 #include <esp_sdr/esp_sdr_replay.h>
 #include <esp_sdr/esp_sdr_rx.h>
 
-#define CPU_HZ (CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ * 1000000U)
 /* A pass costs the samples plus a start of about 50 CPU cycles (doc/hardware-quirks.md). */
 #define START_CYCLES_MAX 400U
 
@@ -74,7 +73,7 @@ ZTEST(esp_sdr_replay_api, test_rejects_bad_config)
 static void timed(enum esp_sdr_rate rate, size_t count, unsigned int passes)
 {
 	struct esp_sdr_replay_cfg cfg = {.rate = rate, .count = count, .passes = passes};
-	uint32_t per_word = CPU_HZ / (rate == ESP_SDR_RATE_80MSPS ? 80000000U : 40000000U);
+	uint32_t per_word = ESP_SDR_CPU_HZ / (rate == ESP_SDR_RATE_80MSPS ? 80000000U : 40000000U);
 	uint32_t want = (uint32_t)count * passes * per_word, got = 0;
 
 	zassert_ok(esp_sdr_replay_start(&cfg));

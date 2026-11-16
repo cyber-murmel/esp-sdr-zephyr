@@ -13,6 +13,9 @@
 #include <zephyr/fatal.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/reboot.h>
+#if defined(CONFIG_SHELL)
+#include <zephyr/shell/shell.h>
+#endif
 
 #include <esp_attr.h>
 
@@ -92,6 +95,34 @@ bool app_crash_dx_last(struct app_crash_dx *out)
 	}
 	return have_dx;
 }
+
+#if defined(CONFIG_SHELL)
+bool app_crash_print(const struct shell *sh)
+{
+	const struct app_crash_dx *dx = &app_crash_dx_record;
+	const struct app_crash *c = &last;
+
+	if (have_dx) {
+		shell_print(sh, "double exception: depc 0x%08x exccause %u excvaddr 0x%08x"
+			    " epc1 0x%08x ps 0x%08x a1 0x%08x prid 0x%x",
+			    dx->depc, dx->exccause, dx->excvaddr, dx->epc1, dx->ps, dx->a1,
+			    dx->prid);
+	}
+	if (!have_last) {
+		return have_dx;
+	}
+	if (c->reason == APP_CRASH_WATCHDOG) {
+		shell_print(sh, "watchdog reset: thread %s cpu %u uptime %u ms", c->thread, c->cpu,
+			    c->uptime_ms);
+	} else {
+		shell_print(sh, "fatal error %u: thread %s cpu %u uptime %u ms pc 0x%08x a0 0x%08x"
+			    " ps 0x%08x exccause %u excvaddr 0x%08x",
+			    c->reason, c->thread, c->cpu, c->uptime_ms, c->pc, c->a0, c->ps,
+			    c->exccause, c->excvaddr);
+	}
+	return true;
+}
+#endif
 
 static int app_crash_init(void)
 {

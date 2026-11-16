@@ -43,4 +43,12 @@ struct app_crash_dx {
 /* The double exception from before this boot, if any. */
 bool app_crash_dx_last(struct app_crash_dx *out);
 
+struct shell;
+
+/*
+ * Print the double exception and the crash record from before this boot, as far as there are
+ * any (CONFIG_SHELL); false when there was nothing to print.
+ */
+bool app_crash_print(const struct shell *sh);
+
 #endif /* APP_CRASH_H_ */
