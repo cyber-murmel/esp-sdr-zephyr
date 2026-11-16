@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-if(CONFIG_ESP_SDR OR CONFIG_ZIGBEE_ZNP)
+if(CONFIG_ESP_SDR OR CONFIG_ZIGBEE_ZNP OR CONFIG_ESDR_FPGA)
   zephyr_include_directories(include)
 endif()
 
+add_subdirectory(drivers)
 add_subdirectory(lib)
 
 # The apps here take their version from VERSION (a link in each app directory). As in

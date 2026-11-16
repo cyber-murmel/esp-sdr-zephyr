@@ -8,8 +8,8 @@
 # a west.yml change, run `west2nix` (in the shell) and commit west2nix.toml. One image is one
 # derivation: nix-build -A firmware.xiao_esp32s3.osmosdr builds just that one.
 #
-# Attributes: firmware, tools, soapy-esdr, soapysdr (with the esdr module), westWorkspace,
-# dev (the packages shell.nix has) and shell.
+# Attributes: firmware, gateware (the MCH2022 badge's FPGA bitstream), tools, soapy-esdr, soapysdr
+# (with the esdr module), westWorkspace, dev (the packages shell.nix has) and shell.
 
 let
   nixpkgs-ref = "c9bfd86ed684d27e63b0ff9ebb18699f84f27a3b"; # nixos-25.11-small
@@ -83,11 +83,15 @@ let
 
   python = zephyr-nix.pythonEnv.override {
     extraPackages = ps: with ps; [
+      # The MCH2022 badge's FPGA gateware (gateware/).
+      amaranth
       jsonschema
       # Markdown pages in the Sphinx docs (doc/).
       myst-parser
       # nanopb's generator (Zephyr's esp-hosted-mcu driver, apps/c6_bootstrap).
       protobuf
+      # The MCH2022 badge's console bridge for twister (tests/integration/esdr_fpga/mch2022_pty.py).
+      pyusb
     ];
   };
 
@@ -168,10 +172,13 @@ let
     (esp-idf-xtensa.tools.openocd-esp32)
     gnuradio
     gqrx
+    # Synthesis, place and route for the MCH2022 badge's iCE40 (gateware/).
+    icestorm
     inspectrum
     librsvg
     libusb1
     mermaid-filter
+    nextpnr
     pandoc
     # The CI checks as git hooks (.pre-commit-config.yaml).
     pre-commit
@@ -182,6 +189,7 @@ let
     tcpdump
     texliveBasic
     west2nix-update
+    yosys
   ]);
 
   env = {
@@ -199,6 +207,28 @@ let
 
   yamlPython = pkgs.python3.withPackages (ps: [ ps.pyyaml ]);
   pycFiles = dir: lib.fileset.fileFilter (f: f.hasExt "pyc") dir;
+
+  # The MCH2022 badge's FPGA bitstream from gateware/ (top.bin, nextpnr's report beside it); the
+  # build fails when a clock misses its timing.
+  gateware = pkgs.stdenvNoCC.mkDerivation {
+    name = "esp-sdr-gateware-${version}";
+    src = lib.fileset.toSource {
+      root = ./gateware;
+      fileset = lib.fileset.difference ./gateware/esdr_fpga (pycFiles ./gateware/esdr_fpga);
+    };
+    nativeBuildInputs = [ (pkgs.python3.withPackages (ps: [ ps.amaranth ])) ]
+      ++ (with pkgs; [ yosys nextpnr icestorm ]);
+    dontConfigure = true;
+    buildPhase = "python3 -m esdr_fpga.build top --out $TMPDIR/gateware";
+    installPhase = ''
+      install -Dm644 -t $out $TMPDIR/gateware/top/top.bin $TMPDIR/gateware/top/top.tim.json
+    '';
+  };
+  # The MCH2022 images that drive the FPGA (its node in their overlay) embed the bitstream.
+  fpgaApps = [ "fpga_demo" ];
+  imageArgs = img: img.extraArgs
+    ++ lib.optional (img.board == "mch2022" && lib.elem img.app fpgaApps)
+      "CONFIG_ESDR_FPGA_IMAGE=\"${gateware}/top.bin\"";
   excludedApps = map (app: lib.fileset.maybeMissing (./apps + "/${app}")) excludeApps;
 
   # The images twister builds, from the sample.yaml files alone (nix/images.py).
@@ -241,6 +271,9 @@ let
         ./west.yml
         ./apps
         ./boards
+        # The module's own drivers and their bindings (the MCH2022 FPGA).
+        ./drivers
+        ./dts
         ./include
         ./lib
         ./scripts/west-commands.yml
@@ -308,7 +341,7 @@ let
       cd ${westWorkspace}/${selfPath}
       west build -d $TMPDIR/build -b ${img.platform} ${lib.optionalString img.sysbuild "--sysbuild"} \
         apps/${img.app} -o=-j$NIX_BUILD_CORES \
-        -- ${lib.escapeShellArgs (map (arg: "-D${arg}") img.extraArgs)}
+        -- ${lib.escapeShellArgs (map (arg: "-D${arg}") (imageArgs img))}
       python3 ${./nix/collect.py} $TMPDIR/build ${img.app} ${img.chip} $out/${img.board}/${img.name}
     '';
   });
@@ -380,7 +413,7 @@ pkgs.symlinkJoin {
   name = "esp-sdr-zephyr-${version}";
   paths = lib.concatMap lib.attrValues (lib.attrValues firmware) ++ [ tools ];
   passthru = {
-    inherit pkgs dev shell firmware tools host-tools soapy-esdr soapysdr westWorkspace
+    inherit pkgs dev shell firmware gateware tools host-tools soapy-esdr soapysdr westWorkspace
       riscv32-esp-binutils;
     west2nix = west2nix-update;
   };

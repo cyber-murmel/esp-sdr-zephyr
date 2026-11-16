@@ -1,0 +1,138 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+
+/**
+ * @file
+ * @brief The esp-sdr gateware on the MCH2022 badge's iCE40UP5K.
+ *
+ * One SPI frame (one CS assertion) carries one command: an opcode byte, then its payload.
+ */
+
+#ifndef ESDR_FPGA_H_
+#define ESDR_FPGA_H_
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include <zephyr/device.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/** @brief Whether the FPGA (the parent lattice,ice40-fpga device) has a bitstream. */
+bool esdr_fpga_loaded(const struct device *dev);
+
+/**
+ * @brief One write frame: @p head then @p data (either may be empty) under one CS assertion.
+ */
+int esdr_fpga_write(const struct device *dev, const void *head, size_t head_len,
+		    const void *data, size_t len);
+
+/**
+ * @brief One read frame at the read clock: send @p head, then receive @p len bytes.
+ *
+ * @p len must be a multiple of 4.
+ */
+int esdr_fpga_read(const struct device *dev, const void *head, size_t head_len, void *rx,
+		   size_t len);
+
+/** @brief Write @p n words to the gateware's registers from @p addr on. */
+int esdr_fpga_reg_write(const struct device *dev, uint16_t addr, const uint16_t *words,
+			size_t n);
+
+/** @brief Read @p n words (at most 2046) from @p addr on. */
+int esdr_fpga_reg_read(const struct device *dev, uint16_t addr, uint16_t *words, size_t n);
+
+/** @brief Change the read clock (tests; the default comes from devicetree). */
+void esdr_fpga_set_read_frequency(const struct device *dev, uint32_t hz);
+
+/*
+ * Graphics. Regions are in screen pixels, in the display driver's orientation; every pixel is
+ * a palette index (entries ESDR_FPGA_PAL_BG.. are the trace's colours, the waterfall uses
+ * 0..247).
+ */
+
+/** @brief Load @p n RGB565 palette entries from @p first on. */
+int esdr_fpga_palette(const struct device *dev, uint8_t first, const uint16_t *rgb565, size_t n);
+
+/** @brief Place the waterfall: @p w columns (at most 320) of @p h rows; w = 0 turns it off. */
+int esdr_fpga_waterfall(const struct device *dev, uint16_t x, uint16_t y, uint16_t w,
+			uint16_t h);
+
+/** @brief A new waterfall line on top: @p n palette indices, one per column. */
+int esdr_fpga_wf_line(const struct device *dev, const uint8_t *idx, size_t n);
+
+/** @brief The spectrum trace's look. */
+struct esdr_fpga_trace {
+	uint8_t flags;		/**< ESDR_FPGA_SP_CENTER */
+};
+
+/** @brief Place the spectrum trace; w = 0 turns it off. */
+int esdr_fpga_spectrum(const struct device *dev, uint16_t x, uint16_t y, uint16_t w,
+		       uint16_t h, const struct esdr_fpga_trace *t);
+
+/** @brief New trace: the row (0 at the top) of each of @p n columns; redraws the trace. */
+int esdr_fpga_columns(const struct device *dev, const uint8_t *rows, size_t n);
+
+/**
+ * @brief Start or stop the renderer.
+ *
+ * @param dev the FPGA
+ * @param on start (true) or stop the renderer
+ * @param te_sync start renders on the panel's tearing-effect edge
+ * @param line_dirty redraw the waterfall after every new line
+ */
+int esdr_fpga_render(const struct device *dev, bool on, bool te_sync, bool line_dirty);
+
+/** @brief Redraw regions now (or at the next TE). */
+int esdr_fpga_redraw(const struct device *dev, bool waterfall, bool spectrum);
+
+/*
+ * DSP: samples in (ESDR_FPGA_OP_SAMPLES), an FFT of 16..512 points, power in dB averaged per
+ * bin, and every frames_per_line frames a waterfall line and a new trace from the columns.
+ */
+
+/** @brief The DSP chain's settings. */
+struct esdr_fpga_dsp {
+	uint8_t log2n;		/**< FFT size, 4..9 */
+	uint8_t window;		/**< enum esp_sdr_window */
+	bool overlap;		/**< frames overlap by half */
+	float alpha;		/**< exponential average weight of a new frame, 1: none */
+	uint8_t frames_per_line; /**< 0: lines only on demand */
+	uint16_t cols;		/**< columns per line (the regions' width) */
+	uint16_t zoom_start;	/**< first bin (fftshifted) */
+	uint16_t zoom_step;	/**< bins per column, 8.8; 0: all bins over the columns */
+	float wf_min_db;	/**< waterfall colour 0 */
+	float wf_max_db;	/**< waterfall's top colour */
+	float tr_top_db;	/**< trace's top row */
+	float tr_bottom_db;	/**< trace's bottom row */
+	uint16_t tr_rows;	/**< the trace region's height */
+	float full_scale;	/**< the input's amplitude of 0 dB; 0: 32768 (all formats' top) */
+};
+
+/** @brief Load window, average table and scales (dB relative to a full-scale tone). */
+int esdr_fpga_dsp_config(const struct device *dev, const struct esdr_fpga_dsp *cfg);
+
+/** @brief Start or stop the DSP chain; starting restarts the average. */
+int esdr_fpga_dsp_run(const struct device *dev, bool on, const struct esdr_fpga_dsp *cfg);
+
+/**
+ * @brief Samples for the DSP: @p format one of ESDR_FPGA_FMT_*, @p resync starts a new frame
+ * at the first of them.
+ */
+int esdr_fpga_samples(const struct device *dev, uint8_t format, bool resync, const void *data,
+		      size_t len);
+
+/** @brief The last line's levels per column, in L units (esdr_fpga_l_to_db()). */
+int esdr_fpga_dsp_columns(const struct device *dev, int16_t *l, size_t n);
+
+/** @brief dB to the gateware's level units (256 log2 of power) and back. */
+int16_t esdr_fpga_db_to_l(float db);
+float esdr_fpga_l_to_db(int16_t l);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* ESDR_FPGA_H_ */

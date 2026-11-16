@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+description: |
+  The MCH2022 badge's ILI9341 behind the iCE40. With the gateware loaded, LCD_MODE goes high,
+  the FPGA drives the panel's 8080 bus and the driver's commands and pixels travel as DBI
+  frames over the FPGA's SPI port. Without it, the panel stays on the ESP32's SPI bus
+  (4-wire, D/C on a GPIO), as zephyr,mipi-dbi-spi drives it.
+
+compatible: "esdr,mch2022-fpga-dbi"
+
+include: mipi-dbi-controller.yaml
+
+properties:
+  fpga:
+    type: phandle
+    required: true
+    description: The esdr,mch2022-fpga node.
+
+  spi-dev:
+    type: phandle
+    required: true
+    description: The SPI bus the panel sits on without the FPGA (its CS in cs-gpios).
+
+  dc-gpios:
+    type: phandle-array
+    required: true
+    description: D/C on the ESP32 (IO33); floats while the FPGA drives WR on the same line.
+
+  reset-gpios:
+    type: phandle-array
+    required: true
+    description: Panel reset, driven by the ESP32 (IO25) in both modes.
+
+  lcd-mode-gpios:
+    type: phandle-array
+    required: true
+    description: |
+      LCD_MODE (IO26): high hands the panel to the FPGA's 8080 bus (IM0 high) and cuts the
+      ESP32's SCK off the panel.

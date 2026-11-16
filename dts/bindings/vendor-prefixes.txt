@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+esdr	esp-sdr-zephyr (this repository's own devices)
