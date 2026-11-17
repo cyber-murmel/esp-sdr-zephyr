@@ -17,7 +17,7 @@
 #include <zephyr/sys/reboot.h>
 #include <zephyr/version.h>
 
-#define OTADATA_OFFSET FIXED_PARTITION_OFFSET(otadata_partition)
+#define OTADATA_OFFSET PARTITION_OFFSET(otadata_partition)
 #define SECTOR 0x1000U
 
 /* esp_ota_select_entry_t: the sequence number, and the ROM's CRC-32 of it. */
@@ -38,7 +38,7 @@ static bool ota_valid(const struct ota_entry *e)
 
 int main(void)
 {
-	const struct device *flash = FIXED_PARTITION_DEVICE(otadata_partition);
+	const struct device *flash = PARTITION_DEVICE(otadata_partition);
 	struct ota_entry e[2];
 	unsigned int newest = 2;
 	int ret;
