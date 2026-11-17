@@ -360,12 +360,13 @@ static void direct_case(uint16_t m, uint16_t t, uint16_t frames, uint32_t chunk,
 		gap = kind == 0U ? 0U : kind == 1U ? 1U + test_rng_u32() % (pfb.l - 1U) :
 			kind == 2U ? pfb.l - 1U : kind == 3U ? pfb.l : kind == 4U ? pfb.l + 1U :
 			pfb.l + test_rng_u32() % 3000U;
-		if (segs > 0U) {
-			off += gap;
-		}
-		if (off + pairs > DM_SPAN) {
+		/* Where the segment would start: off stays the end of the last one pushed. */
+		const uint32_t at = segs > 0U ? off + gap : off;
+
+		if (at + pairs > DM_SPAN) {
 			break;
 		}
+		off = at;
 		for (uint32_t j = 0; j < pairs; j++) {
 			uint32_t o = off + j;
 
