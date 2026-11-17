@@ -1,0 +1,66 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Fills the Nix store cache that release.yml's per-board firmware builds restore: the SDK, the
+# Python environment, the west workspace, mpy-cross and the gateware (default.nix's ciDeps). A
+# tag can read main's caches but not another tag's, so the cache is made here, on main, whenever
+# the Nix expressions or the pinned projects change. It also shows that default.nix still
+# evaluates. Older entries are purged: the repository's 10 GB hold ccache too.
+
+name: Nix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - default.nix
+      - shell.nix
+      - west2nix.toml
+      - west.yml
+      - nix/**
+      - .github/workflows/nix.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # The purge of older nix-ci- caches.
+  actions: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cache:
+    name: Build environment
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command
+
+      - name: Restore and save the Nix store
+        uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-ci-${{ hashFiles('default.nix', 'west2nix.toml', 'nix/**') }}
+          restore-prefixes-first-match: nix-ci-
+          # Only from main: elsewhere it would be a cache no tag can read.
+          save: ${{ github.ref == 'refs/heads/main' }}
+          gc-max-store-size-linux: 8G
+          purge: true
+          purge-prefixes: nix-ci-
+          purge-created: 0
+          purge-primary-key: never
+
+      # The link is a garbage collector root: the cache step's collection keeps this closure.
+      - name: Build
+        run: nix-build -A ciDeps -o ci-deps
+
+      - name: Boards
+        run: nix eval --json -f default.nix firmwareByBoard --apply builtins.attrNames
