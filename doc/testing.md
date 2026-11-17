@@ -38,7 +38,12 @@ board) and
 builds and runs the unit tests on
 `native_sim` and `native_sim/native/64`. A GitHub runner has no boards, so the integration and
 regression tests and the console smoke test are only built there; run them on the desk as below.
-The twister reports of each job are kept as artifacts. The unit test job also measures code
+The twister reports of each job are kept as artifacts.
+`.github/actions/zephyr-setup` sets up each job's workspace, SDK and ccache as Zephyr's own setup
+action does, but leaves out Zephyr's compliance requirements (nothing here runs them, and one comes
+from codeberg.org, which timed out under a dozen parallel jobs) and caches the blobs too. Only
+pushes to main save caches; branches, tags and pull requests restore main's.
+The unit test job also measures code
 coverage (see [Coverage](#coverage)): its summary page shows a table per source file, and the
 `coverage` artifact holds gcovr's HTML report. The "Host tools" job runs the host tests under
 coverage the same way: a table on its summary page, the HTML report in `host-coverage`.

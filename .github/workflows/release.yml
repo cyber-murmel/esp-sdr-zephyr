@@ -49,16 +49,12 @@ jobs:
         with:
           python-version: 3.12
 
-      - name: Setup Zephyr project
-        uses: zephyrproject-rtos/action-zephyr-setup@be8136a8bba01580485d98b7ad2d32477c36a49a # v1.0.15
+      # The workspace, the SDK and the blobs, from main's caches where they hold (a tag saves none).
+      - name: Zephyr workspace
+        uses: ./esp-sdr-zephyr/.github/actions/zephyr-setup
         with:
-          app-path: esp-sdr-zephyr
           toolchains: xtensa-espressif_esp32s3_zephyr-elf
-
-      - name: Fetch blobs
-        run: |
-          west blobs fetch hal_espressif
-          west blobs fetch esp-sdr-zephyr
+          ccache-key: Build xiao_esp32s3
 
       - name: Build multiapp
         run: |

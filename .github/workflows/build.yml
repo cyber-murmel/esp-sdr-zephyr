@@ -90,17 +90,12 @@ jobs:
         with:
           python-version: 3.12
 
-      - name: Setup Zephyr project
-        uses: zephyrproject-rtos/action-zephyr-setup@be8136a8bba01580485d98b7ad2d32477c36a49a # v1.0.15
+      # The workspace, the SDK, ccache and the blobs, from the caches where they hold.
+      - name: Zephyr workspace
+        uses: ./esp-sdr-zephyr/.github/actions/zephyr-setup
         with:
-          app-path: esp-sdr-zephyr
           toolchains: ${{ matrix.toolchains }}
-          ccache-cache-key: ${{ matrix.name }}
-
-      - name: Fetch blobs
-        run: |
-          west blobs fetch hal_espressif
-          west blobs fetch esp-sdr-zephyr
+          ccache-key: ${{ matrix.name }}
 
       # Every MicroPython image's build runs make in the shared mpy-cross tree: two at once
       # relink it under each other ("Text file busy"). Built once here, it is up to date for them.
@@ -115,6 +110,14 @@ jobs:
           west twister -T esp-sdr-zephyr/apps -T esp-sdr-zephyr/tests \
             ${{ matrix.platforms }} ${{ matrix.twister-args }} \
             -v --inline-logs
+
+      # From main only, as the workspace's caches; a failed build's objects are still valid.
+      - name: Save ccache
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ matrix.name }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload twister report
         if: always()
@@ -158,6 +161,8 @@ jobs:
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: 3.12
+          cache: pip
+          cache-dependency-path: tests/host/requirements.txt
 
       - name: Install dependencies
         run: pip install -r tests/host/requirements.txt

@@ -1,0 +1,152 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# The west workspace for build.yml and release.yml, set up as zephyrproject-rtos/action-zephyr-setup
+# does it (Linux x86_64 only), with three differences:
+# - Zephyr's compliance requirements are left out: nothing here runs them, and reuse comes as a
+#   codeberg.org tarball, whose download timed out under a dozen parallel jobs.
+# - The blobs come from a cache too, keyed by the module.yml files that list them.
+# - Caches are saved from main only. Other refs restore main's (every ref may read the default
+#   branch's caches) instead of storing copies of their own, which had filled the repository's
+#   10 GB. The workflow saves ccache itself, after the build.
+
+name: Zephyr workspace
+description: west, the workspace, its Python packages, the Zephyr SDK, ccache and the blobs
+
+inputs:
+  toolchains:
+    description: The Zephyr SDK toolchains to install, colon separated (none for host builds)
+    default: ""
+  ccache-key:
+    description: The job's part of the ccache key
+    default: default
+
+runs:
+  using: composite
+  steps:
+    - name: Install west and the host packages
+      shell: bash
+      run: |
+        pip3 install -U pip wheel west
+        sudo rm -f /var/lib/man-db/auto-update
+        sudo apt-get update -y
+        sudo apt-get install -y ccache gperf libc6-dev-i386 g++-multilib
+
+    - name: Initialize the workspace
+      shell: bash
+      run: |
+        west init -l esp-sdr-zephyr
+        west update -o=--depth=1 -n
+        sdk=$(cat "$(west list -f '{abspath}' zephyr)/SDK_VERSION")
+        {
+          echo "SDK_VERSION=$sdk"
+          echo "SDK_FILE=zephyr-sdk-${sdk}_linux-x86_64_minimal.tar.xz"
+          echo "CCACHE_DIR=$HOME/.cache/ccache"
+          echo "CCACHE_IGNOREOPTIONS=-specs=* --specs=*"
+        } >> "$GITHUB_ENV"
+
+    # west.yml's pins fix every requirement file.
+    - name: Restore the Python packages
+      id: pip
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/pip
+        key: pip-${{ hashFiles('esp-sdr-zephyr/west.yml') }}
+        restore-keys: pip-
+
+    - name: Install the Python packages
+      shell: bash
+      run: |
+        z=$(west list -f '{abspath}' zephyr)/scripts
+        # Zephyr's requirements.txt but its compliance file, then the modules' files.
+        reqs=$(sed -n 's/^-r //p' "$z/requirements.txt" | grep -v -x requirements-compliance.txt |
+               sed "s|^|-r $z/|")
+        reqs="$reqs $(west packages pip | grep -v -x -F -- "-r $z/requirements.txt")"
+        # shellcheck disable=SC2086 # one -r and one path per word
+        pip3 install $reqs
+
+    - name: Save the Python packages
+      if: steps.pip.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/pip
+        key: pip-${{ hashFiles('esp-sdr-zephyr/west.yml') }}
+
+    - name: Restore the Zephyr SDK
+      id: sdk
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: zephyr-sdk
+        key: zephyr-sdk-${{ env.SDK_VERSION }}-${{ inputs.toolchains }}
+
+    - name: Download the Zephyr SDK
+      if: steps.sdk.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        wget --progress=dot:giga \
+          "https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v$SDK_VERSION/$SDK_FILE"
+        rm -rf zephyr-sdk
+        mkdir zephyr-sdk
+        tar xf "$SDK_FILE" -C zephyr-sdk --strip-components=1
+        rm -f "$SDK_FILE"
+
+    - name: Set up the Zephyr SDK
+      shell: bash
+      working-directory: zephyr-sdk
+      env:
+        TOOLCHAINS: ${{ inputs.toolchains }}
+      run: |
+        IFS=: read -r -a toolchains <<< "$TOOLCHAINS"
+        for toolchain in "${toolchains[@]}"; do
+          ./setup.sh -t "$toolchain"
+        done
+        if [ ! -d sysroots ]; then
+          ./setup.sh -h
+        fi
+        ./setup.sh -c
+
+    - name: Save the Zephyr SDK
+      if: steps.sdk.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: zephyr-sdk
+        key: zephyr-sdk-${{ env.SDK_VERSION }}-${{ inputs.toolchains }}
+
+    # The newest of the job's ccache entries; the workflow saves a new one after the build.
+    - name: Restore ccache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/ccache
+        key: ccache-${{ inputs.ccache-key }}-${{ github.run_id }}
+        restore-keys: ccache-${{ inputs.ccache-key }}-
+
+    - name: Set up ccache
+      shell: bash
+      run: |
+        mkdir -p "$CCACHE_DIR"
+        ccache -M 512MB
+        ccache -z
+
+    - name: Restore the blobs
+      id: blobs
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          modules/hal/espressif/zephyr/blobs
+          esp-sdr-zephyr/zephyr/blobs/lib
+        key: blobs-${{ hashFiles('modules/hal/espressif/zephyr/module.yml', 'esp-sdr-zephyr/zephyr/module.yml') }}
+
+    # Present blobs with the right checksum are skipped: after a restore nothing is downloaded.
+    - name: Fetch the blobs
+      shell: bash
+      run: |
+        west blobs fetch hal_espressif
+        west blobs fetch esp-sdr-zephyr
+
+    - name: Save the blobs
+      if: steps.blobs.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          modules/hal/espressif/zephyr/blobs
+          esp-sdr-zephyr/zephyr/blobs/lib
+        key: blobs-${{ hashFiles('modules/hal/espressif/zephyr/module.yml', 'esp-sdr-zephyr/zephyr/module.yml') }}
