@@ -16,6 +16,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
+    branches: [nix-release]
   workflow_dispatch:
 
 permissions:
