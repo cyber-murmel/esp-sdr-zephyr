@@ -11,6 +11,9 @@ project(esp_sdr_c6_bootstrap)
 set(C6_IMAGE "" CACHE FILEPATH "ESP32-C6 application image to install")
 
 target_sources(app PRIVATE src/main.c)
+# main.c includes the esp_hosted driver's header, which includes the RPC header nanopb generates
+# for the driver's library: the app's objects wait for it as the library's do.
+add_dependencies(app nanopb_generated_headers)
 if(C6_IMAGE)
   if(NOT EXISTS "${C6_IMAGE}")
     message(FATAL_ERROR "C6_IMAGE '${C6_IMAGE}' does not exist")
