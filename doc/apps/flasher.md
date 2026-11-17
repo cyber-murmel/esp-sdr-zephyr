@@ -32,20 +32,24 @@ a desktop; elsewhere, download the image and use esptool.
 
 ## Download mode
 
-The ROM bootloader takes the image. The page reaches it one of three ways:
+The ROM bootloader takes the image. The page finds out what answers on the picked port and gets
+the board there by itself, in this order:
 
-- Automatic: esptool's reset, through the USB-Serial-JTAG on chips that have one, else RTS and
-  DTR on the UART bridge.
-- Already in download mode: for a board put there by hand (BOOT held while plugging in or while
-  pressing reset), the page connects without touching RTS and DTR.
-- From a running esp-sdr app: the apps own the S3's USB port (USB IDs 2fe3:0005), where no reset
-  reaches the bootloader. Picking that port makes the page send the shell command `usj`, which
-  hands the port to the USB-Serial-JTAG ([Handing the port over](index.md#handing-the-port-over));
-  the second attempt then picks the new port. Where multiapp runs MicroPython (its autostart on
-  the XIAO ESP32S3 and the Communicator), the port is the REPL: the page stops the running
-  Python app with Ctrl-C and sends `esdr.shell("usj")` instead, as `west dfu` does.
+1. An esp-sdr app (USB vendor 2fe3): the apps own the S3's USB port, where no reset reaches the
+   bootloader. The page sends Ctrl-C; a `>>>` means MicroPython (multiapp's autostart on the
+   XIAO ESP32S3 and the Communicator), which gets `esdr.shell("usj")`, else the shell gets
+   `usj`, as `west dfu` does. Either hands the port to the USB-Serial-JTAG
+   ([Handing the port over](index.md#handing-the-port-over)), which comes up as a new port. The
+   page goes on with it when the browser may use it already; the first time it asks for one more
+   pick.
+2. One short attempt without a reset, for a bootloader that waits already (BOOT held while
+   plugging in or while pressing reset).
+3. esptool's reset into download mode: the USB-Serial-JTAG's sequence on chips that have one,
+   else RTS and DTR on the UART bridge. Opening the port may reset the chip out of download mode
+   before step 2; this step brings it back.
 
-The boards' own ways are in [Badges](index.md#badges) and the page's hints.
+When nothing answers, the page's hints for the board say what to do by hand; the boards' own
+ways are in [Badges](index.md#badges).
 
 ## Where the images come from
 
