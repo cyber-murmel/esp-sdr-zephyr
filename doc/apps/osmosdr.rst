@@ -1,3 +1,3 @@
 .. SPDX-License-Identifier: GPL-3.0-or-later
 
-.. include:: ../../apps/osmosdr/README.rst
+.. Placeholder: conf.py replaces this page's source with apps/osmosdr/README.rst.

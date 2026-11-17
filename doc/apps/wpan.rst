@@ -1,3 +1,3 @@
 .. SPDX-License-Identifier: GPL-3.0-or-later
 
-.. include:: ../../apps/wpan/README.rst
+.. Placeholder: conf.py replaces this page's source with apps/wpan/README.rst.

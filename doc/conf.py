@@ -5,6 +5,7 @@
 # The API reference comes from Doxygen (Doxyfile); when it has been built
 # first, it is copied into the HTML output as doxygen/.
 
+import os
 import re
 import shutil
 from pathlib import Path
@@ -16,7 +17,11 @@ project = "esp-sdr-zephyr"
 author = "The esp-sdr-zephyr contributors"
 copyright = author
 
-extensions = ["myst_parser", "sphinx.ext.intersphinx"]
+extensions = ["myst_parser", "sphinx.ext.intersphinx", "sphinx_design"]
+
+# ::: fences for directives such as tab-set: GitHub shows their Markdown content
+# (images, text) where it would show a ``` fence as code.
+myst_enable_extensions = ["colon_fence"]
 source_suffix = {".rst": "restructuredtext", ".md": "markdown"}
 exclude_patterns = ["_build*", "_doxygen", "Thumbs.db", ".DS_Store"]
 
@@ -38,28 +43,102 @@ VERSION = dict(re.findall(r"^(\w+) = (\d+)$", (REPO / "VERSION").read_text(), re
 version = release = "{VERSION_MAJOR}.{VERSION_MINOR}.{PATCHLEVEL}".format(**VERSION)
 html_title = f"{project} {release}"
 
-# overview.rst shows the README. Its links are relative to the repository root:
-# guides and app READMEs become links to their pages here, other files go to
-# GitHub.
+# Pages shown from outside doc/: overview.rst shows README.rst, doc/apps/<app>.rst
+# shows apps/<app>/README.rst. Both are placeholders whose source this hook replaces.
+#
+# Every page writes its links as paths relative to its own file in the repository,
+# so they work on GitHub. Here they become page links: README.rst is the overview,
+# an app README its app page, a guide its page (MyST links Markdown guides to each
+# other itself). Links to any other file of the repository go to GitHub. A link
+# with an #anchor from an RST page goes to GitHub too: :doc: takes no anchor.
 GITHUB = "https://github.com/cyber-murmel/esp-sdr-zephyr/blob/main/"
-LINK = re.compile(r"`([^`<]+?)\s*<([^>\s]+)>`__")
+RST_LINK = re.compile(r"`([^`<]+?)\s*<([^>\s]+)>`__")
+MD_LINK = re.compile(r"(?<!!)\[([^\]]+)\]\(([^)\s]+)\)")
+MD_FENCE = re.compile(r"^(```|~~~).*?^\1[^\n]*$", re.M | re.S)
+APP_README = re.compile(r"apps/(\w+)/README\.rst")
 
 
-def readme_link(m):
-    text, target = m.group(1), m.group(2)
-    if re.match(r"[a-z]+:", target):
-        return m.group(0)
-    app = re.fullmatch(r"apps/(\w+)/README\.rst", target)
-    if target.startswith("doc/") and target.endswith(".md") and (REPO / target).is_file():
-        return f":doc:`{text} <{target[len('doc/'):-len('.md')]}>`"
-    if app and (DOC / "apps" / f"{app.group(1)}.rst").is_file():
-        return f":doc:`{text} <apps/{app.group(1)}>`"
-    return f"`{text} <{GITHUB}{target}>`__"
-
-
-def readme_source(app, docname, source):
+def shown_from(docname):
+    """The repository file a placeholder page shows, or None."""
     if docname == "overview":
-        source[0] = LINK.sub(readme_link, (REPO / "README.rst").read_text())
+        return REPO / "README.rst"
+    if docname.startswith("apps/"):
+        readme = REPO / "apps" / docname[len("apps/"):] / "README.rst"
+        if readme.is_file():
+            return readme
+    return None
+
+
+def page_of(path):
+    """The page (as the source file under doc/) that shows a repository path, or None."""
+    if path == "README.rst":
+        return "doc/overview.rst"
+    app = APP_README.fullmatch(path)
+    if app and (DOC / "apps" / f"{app.group(1)}.rst").is_file():
+        return f"doc/apps/{app.group(1)}.rst"
+    if path.startswith("doc/") and path.endswith((".md", ".rst")) and (REPO / path).is_file():
+        return path
+    return None
+
+
+def resolve(base, target):
+    """A link target, relative to the repository directory base, as (path, anchor)."""
+    path, _, anchor = target.partition("#")
+    return os.path.normpath(os.path.join(base, path)), anchor
+
+
+def github(path, anchor):
+    return GITHUB + path + (f"#{anchor}" if anchor else "")
+
+
+def rst_links(text, base):
+    def link(m):
+        label, target = m.group(1), m.group(2)
+        if re.match(r"[a-z]+:", target):
+            return m.group(0)
+        path, anchor = resolve(base, target)
+        page = page_of(path)
+        if page and not anchor:
+            return f":doc:`{label} </{page[len('doc/'):].rsplit('.', 1)[0]}>`"
+        return f"`{label} <{github(path, anchor)}>`__"
+
+    return RST_LINK.sub(link, text)
+
+
+def md_links(text, base):
+    def link(m):
+        label, target = m.group(1), m.group(2)
+        if re.match(r"[a-z]+:", target) or target.startswith("#"):
+            return m.group(0)
+        path, anchor = resolve(base, target)
+        page = page_of(path)
+        if page is None:
+            return f"[{label}]({github(path, anchor)})"
+        if page == path:
+            return m.group(0)
+        rel = os.path.relpath(REPO / page, REPO / base)
+        return f"[{label}]({rel}{'#' + anchor if anchor else ''})"
+
+    parts, last = [], 0
+    for fence in MD_FENCE.finditer(text):
+        parts += [MD_LINK.sub(link, text[last:fence.start()]), fence.group(0)]
+        last = fence.end()
+    return "".join(parts + [MD_LINK.sub(link, text[last:])])
+
+
+def rewrite_source(app, docname, source):
+    shown = shown_from(docname)
+    if shown is not None:
+        app.env.note_dependency(str(shown))
+        source[0] = shown.read_text()
+        file = shown
+    else:
+        file = Path(app.env.doc2path(docname))
+    base = os.path.relpath(file.parent, REPO)
+    if file.suffix == ".rst":
+        source[0] = rst_links(source[0], base)
+    elif file.suffix == ".md":
+        source[0] = md_links(source[0], base)
 
 
 def copy_doxygen(app, exception):
@@ -68,5 +147,5 @@ def copy_doxygen(app, exception):
 
 
 def setup(app):
-    app.connect("source-read", readme_source)
+    app.connect("source-read", rewrite_source)
     app.connect("build-finished", copy_doxygen)
