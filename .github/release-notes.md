@@ -1,6 +1,19 @@
-For the Seeed XIAO ESP32S3 (8 MB flash) and an x86_64 Linux PC:
+Every app for every board it runs on, built with Nix. Flash them from Chrome or Edge with the
+[web flasher](https://cyber-murmel.github.io/esp-sdr-zephyr/flasher/), or with esptool:
 
-- `@IMAGE@`: multiapp, with MCUboot and every app on its FAT volume.
+- `esp-sdr-<app>-@TAG@-<board>.bin`: one app's whole flash image (bootloader or MCUboot, the
+  app, multiapp's FAT volume), written at 0x0:
+  `esptool --chip <chip> write-flash 0x0 esp-sdr-<app>-@TAG@-<board>.bin`.
+  The MCH2022 badge's RP2040 gets a `.uf2` instead.
+- `esp-sdr-@TAG@-<board>.zip`: the board's images one by one, with their ELF files, the signed
+  images for USB DFU (`west dfu`) and `flash_args`.
+- `firmware.json`: the list of images, as the web flasher reads it.
+
+The list of every image is at the end. The rest of these notes is for the Seeed XIAO ESP32S3
+(8 MB flash) and an x86_64 Linux PC:
+
+- `esp-sdr-multiapp-@TAG@-xiao_esp32s3.bin`: multiapp, with MCUboot and every app on its FAT
+  volume.
 - `@PLUGIN@`: the SoapySDR module for the board's osmosdr app (`driver=esdr`), built on
   Ubuntu 24.04 for SoapySDR ABI @ABI@ and libusb 1.0. Elsewhere, build it from
   `apps/osmosdr/soapy`.
@@ -22,7 +35,7 @@ For the Seeed XIAO ESP32S3 (8 MB flash) and an x86_64 Linux PC:
 1. Flash, with the board in download mode (hold BOOT while plugging it in, or run `usj` on the
    shell of a running esp-sdr app):
    ```
-   esptool --chip esp32s3 write-flash 0x0 @IMAGE@
+   esptool --chip esp32s3 write-flash 0x0 esp-sdr-multiapp-@TAG@-xiao_esp32s3.bin
    ```
 2. Load the plugin: SoapySDR loads the modules in the directories `SOAPY_SDR_PLUGIN_PATH` names.
    ```

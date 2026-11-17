@@ -1,45 +1,132 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# A version tag (v<major>.<minor>.<patch>, as in VERSION) gets a GitHub release with one
-# esptool image for the XIAO ESP32-S3 (MCUboot, multiapp and the FAT volume with every
-# app's file, merged at their flash offsets), the SoapySDR module for osmosdr and
-# Espressif's SVDs with this project's radio registers, notes from release-notes.md.
+# A version tag (v<major>.<minor>.<patch>, as in VERSION) gets a GitHub release with every image
+# default.nix builds (every app on every board it allows, see nix/release.py): per image one
+# esptool image to write at 0x0 (a .uf2 for the RP2040), per board a zip with the ELF files, the
+# USB DFU images and flash_args, and firmware.json, which lists them for the web flasher. Besides
+# them the SoapySDR module for osmosdr and Espressif's SVDs with this project's radio registers,
+# notes from release-notes.md. Then the documentation is deployed again, with the flasher
+# serving the new images.
+#
+# Run by hand (workflow_dispatch) it builds everything and keeps it as artifacts, without a
+# release: a dry run for a branch.
 
 name: Release
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  check:
+    name: Version and boards
     runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      boards: ${{ steps.boards.outputs.boards }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          path: esp-sdr-zephyr
           persist-credentials: false
 
       - name: Check the tag against VERSION
+        id: version
         run: |
-          v=v$(sed -n 's/^\(VERSION_MAJOR\|VERSION_MINOR\|PATCHLEVEL\) = //p' esp-sdr-zephyr/VERSION | paste -sd.)
-          if [ "$GITHUB_REF_NAME" != "$v" ]; then
+          v=v$(sed -n 's/^\(VERSION_MAJOR\|VERSION_MINOR\|PATCHLEVEL\) = //p' VERSION | paste -sd.)
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "$v" ]; then
             echo "::error::tag $GITHUB_REF_NAME, but VERSION says $v"
             exit 1
           fi
+          echo "tag=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command
+
+      - name: Boards
+        id: boards
+        run: |
+          boards=$(nix eval --json -f default.nix firmwareByBoard --apply builtins.attrNames)
+          echo "$boards"
+          echo "boards=$boards" >> "$GITHUB_OUTPUT"
+
+  firmware:
+    name: Firmware ${{ matrix.board }}
+    needs: check
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        board: ${{ fromJSON(needs.check.outputs.boards) }}
+    env:
+      BOARD: ${{ matrix.board }}
+      TAG: ${{ needs.check.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command
+
+      # The build environment main's nix.yml cached; a tag cannot save caches another tag reads.
+      - name: Restore the Nix store
+        uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-ci-${{ hashFiles('default.nix', 'west2nix.toml', 'nix/**') }}
+          restore-prefixes-first-match: nix-ci-
+
+      - name: Build
+        run: nix-build -A "firmwareByBoard.$BOARD" -o result-board
+
+      - name: Assets
+        run: |
+          nix-build -E '(import ./default.nix { }).pkgs.python3.withPackages (p: [ p.pyyaml ])' \
+            -o python
+          python/bin/python3 nix/release.py result-board apps "$TAG" assets
+
+      - name: Upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: firmware-${{ matrix.board }}
+          path: assets/
+          if-no-files-found: error
+
+  release:
+    name: Release
+    needs: [check, firmware]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      # Deploys the documentation (docs.yml) with the new images.
+      actions: write
+    env:
+      TAG: ${{ needs.check.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Build the SoapySDR module
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libsoapysdr-dev libusb-1.0-0-dev
-          cmake -S esp-sdr-zephyr/apps/osmosdr/soapy -B build-soapy -DCMAKE_BUILD_TYPE=Release
+          cmake -S apps/osmosdr/soapy -B build-soapy -DCMAKE_BUILD_TYPE=Release
           cmake --build build-soapy
-          plugin=libEsdrSupport-$GITHUB_REF_NAME-ubuntu24.04-x86_64.so
-          cp build-soapy/libEsdrSupport.so $plugin
+          plugin=libEsdrSupport-$TAG-ubuntu24.04-x86_64.so
+          cp build-soapy/libEsdrSupport.so "$plugin"
           abi=$(sed -n 's/^#define SOAPY_SDR_ABI_VERSION "\(.*\)"/\1/p' /usr/include/SoapySDR/Version.h)
           echo "PLUGIN=$plugin" >> "$GITHUB_ENV"
           echo "SOAPY_ABI=$abi" >> "$GITHUB_ENV"
@@ -49,44 +136,69 @@ jobs:
         with:
           python-version: 3.12
 
-      # The workspace, the SDK and the blobs, from main's caches where they hold (a tag saves none).
-      - name: Zephyr workspace
-        uses: ./esp-sdr-zephyr/.github/actions/zephyr-setup
-        with:
-          toolchains: xtensa-espressif_esp32s3_zephyr-elf
-          ccache-key: Build xiao_esp32s3
-
-      - name: Build multiapp
-        run: |
-          west build -d build --sysbuild -b xiao_esp32s3/esp32s3/procpu esp-sdr-zephyr/apps/multiapp
-
-      # The same offsets and flash settings as west dfu --esptool. The gaps are 0xff, so the
-      # update slot is erased too; the image is the padded, confirmed one (its trailer marks it
-      # confirmed: an erased trailer would leave it on trial, reset by the trial watchdog).
-      - name: Merge the image
-        run: |
-          image=esp-sdr-multiapp-$GITHUB_REF_NAME-xiao_esp32s3.bin
-          esptool --chip esp32s3 merge-bin -o $image \
-            --flash-mode dio --flash-freq 80m --flash-size 8MB \
-            0x0 build/mcuboot/zephyr/zephyr.bin \
-            0x20000 build/multiapp/zephyr/zephyr.signed.confirmed.bin \
-            0x400000 build/multiapp/multiapp_fat.img
-          echo "IMAGE=$image" >> "$GITHUB_ENV"
-
       - name: Merge the register SVDs
         run: |
-          python3 esp-sdr-zephyr/doc/registers/svdmerge.py --out svd
+          python3 doc/registers/svdmerge.py --out svd
           for chip in esp32s3 esp32c6; do
-            cp svd/$chip-esp-sdr.svd $chip-esp-sdr-$GITHUB_REF_NAME.svd
+            cp "svd/$chip-esp-sdr.svd" "$chip-esp-sdr-$TAG.svd"
           done
 
+      - name: Download the firmware
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: firmware-*
+          path: assets
+          merge-multiple: true
+
+      # The boards' lists in one file, for the web flasher (doc/_extra/flasher).
+      - name: firmware.json
+        run: |
+          jq -s --arg tag "$TAG" '{tag: $tag, images: add}' assets/firmware-*.json > firmware.json
+          jq -r '.images | length' firmware.json
+
+      - name: Release notes
+        run: |
+          sed -e "s/@PLUGIN@/$PLUGIN/g" -e "s/@ABI@/$SOAPY_ABI/g" -e "s/@TAG@/$TAG/g" \
+            .github/release-notes.md > notes.md
+          {
+            echo
+            echo "## Every image"
+            echo
+            echo "Per board, recommended first; \`esp-sdr-$TAG-<board>.zip\` holds the ELF files,"
+            echo "USB DFU images and \`flash_args\` of all of them."
+            echo
+            jq -r '.images | group_by(.board)[] |
+              "- `\(.[0].board)`: " + (sort_by(.chip, .rank, .name) |
+                map(.name + (if .rank < 2 then " (recommended)" else "" end)) | join(", "))' \
+              firmware.json
+          } >> notes.md
+          cat notes.md
+
+      - name: Keep the release files
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release
+          path: |
+            notes.md
+            firmware.json
+            ${{ env.PLUGIN }}
+            *-esp-sdr-*.svd
+
       - name: Release
+        if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          sed -e "s/@IMAGE@/$IMAGE/g" -e "s/@PLUGIN@/$PLUGIN/g" -e "s/@ABI@/$SOAPY_ABI/g" \
-            -e "s/@TAG@/$GITHUB_REF_NAME/g" \
-            esp-sdr-zephyr/.github/release-notes.md > notes.md
-          gh release create "$GITHUB_REF_NAME" "$IMAGE" "$PLUGIN" *-esp-sdr-$GITHUB_REF_NAME.svd \
+          gh release create "$TAG" assets/*.bin assets/*.uf2 assets/*.zip firmware.json \
+            "$PLUGIN" ./*-esp-sdr-"$TAG".svd \
             --repo "$GITHUB_REPOSITORY" \
-            --title "$GITHUB_REF_NAME" --notes-file notes.md --generate-notes --verify-tag
+            --title "$TAG" --notes-file notes.md --generate-notes --verify-tag
+
+      # A release made with this token starts no workflows, but a dispatch does; Pages deploys
+      # from main only.
+      - name: Deploy the documentation with the new images
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run docs.yml --ref main --repo "$GITHUB_REPOSITORY"
