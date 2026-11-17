@@ -1,7 +1,7 @@
 # Applications
 
 <!-- nav-start -->
-Previous: [Error correction](../modem/fec.md) · Up: [esp-sdr-zephyr](../index.rst) · Next: [capture](../../apps/capture/README.rst)
+Previous: [Error correction](../modem/fec.md) · Up: [esp-sdr-zephyr](../index.rst) · Next: [Web flasher](flasher.md)
 <!-- nav-end -->
 
 Part 4 puts the earlier parts to work: the radio, its sample paths and the modems of
@@ -104,6 +104,8 @@ is in [Samples in and out](../samples/index.md).
 - On the ESP32-S31, `micropython` runs on the VIEWE board's display.
 
 ## Building and flashing
+
+Released images need no build: the [Web flasher](flasher.md) writes them from the browser.
 
 Each app's page has its build commands. What they have in common:
 
@@ -277,5 +279,5 @@ CPU wedged with interrupts masked.
 - Xtensa frame sizes are in the disassembly as `entry a1, N`.
 
 <!-- nav-start -->
-Previous: [Error correction](../modem/fec.md) · Up: [esp-sdr-zephyr](../index.rst) · Next: [capture](../../apps/capture/README.rst)
+Previous: [Error correction](../modem/fec.md) · Up: [esp-sdr-zephyr](../index.rst) · Next: [Web flasher](flasher.md)
 <!-- nav-end -->

@@ -69,8 +69,10 @@ This puts multiapp on a XIAO ESP32S3. On its USB shell ``multiapp list`` shows t
 (`multiapp <apps/multiapp/README.rst>`__).
 
 Each app also builds on its own. `Applications <doc/apps/index.md>`__ has the steps all apps share
-and how an app's configuration splits into SoC and board files. Releases carry the multiapp image
-and the SoapySDR module for gqrx and GNU Radio.
+and how an app's configuration splits into SoC and board files. Releases carry every app for every
+board it runs on and the SoapySDR module for gqrx and GNU Radio; the `web flasher
+<https://software.defined.rodeo/flasher/>`__ writes them from the browser
+(`Web flasher <doc/apps/flasher.md>`__).
 
 The library
 ***********
@@ -275,7 +277,8 @@ Versioning
 
 - ``VERSION`` (Zephyr's format) versions the library and the apps; each app prints it at boot.
 - Major for breaking API changes, minor for compatible extensions, patch for fixes.
-- A tag ``v<VERSION>`` makes a GitHub release.
+- A tag ``v<VERSION>`` makes a GitHub release: every image ``default.nix`` builds, built with Nix
+  (``.github/workflows/release.yml``), and the web flasher serves them.
 
 Dependencies
 ************

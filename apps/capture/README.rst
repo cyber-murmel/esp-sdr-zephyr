@@ -8,7 +8,7 @@ capture
 
 .. nav-start
 
-Previous: `Applications <../../doc/apps/index.md>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `rfprobe <../rfprobe/README.rst>`__
+Previous: `Web flasher <../../doc/apps/flasher.md>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `rfprobe <../rfprobe/README.rst>`__
 
 .. nav-end
 
@@ -130,6 +130,6 @@ See also
 
 .. nav-start
 
-Previous: `Applications <../../doc/apps/index.md>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `rfprobe <../rfprobe/README.rst>`__
+Previous: `Web flasher <../../doc/apps/flasher.md>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `rfprobe <../rfprobe/README.rst>`__
 
 .. nav-end
