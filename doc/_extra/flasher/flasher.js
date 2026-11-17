@@ -286,11 +286,18 @@ const isUsj = (port) => {
 
 // The USB-Serial-JTAG that comes up after a handover, if the browser may use it already (it was
 // picked before); null when it needs the user's permission first.
+// "back" when the app's port leaves and comes again instead: the chip restarted into its app,
+// which takes the USB port back.
 async function waitForUsj(before, ms) {
+  let left = false;
   for (const end = Date.now() + ms; Date.now() < end;) {
     await sleep(300);
-    const port = (await navigator.serial.getPorts()).find((p) => isUsj(p) && !before.includes(p));
+    const ports = await navigator.serial.getPorts();
+    const port = ports.find((p) => isUsj(p) && !before.includes(p));
     if (port) return port;
+    const app = ports.some((p) => p.getInfo().usbVendorId === ESP_SDR_VID);
+    if (!app) left = true;
+    else if (left) return "back";
   }
   return null;
 }
@@ -326,11 +333,15 @@ async function connect({ ESPLoader, Transport }, port) {
     }
   };
 
-  status("Connecting: is the bootloader waiting already?");
-  try {
-    return await attempt("no_reset", 1);
-  } catch (e) {
-    log(`No bootloader without a reset (${e?.message ?? e}): resetting into download mode.`);
+  // The USB-Serial-JTAG's own reset gets any state into download mode, and a plain open and
+  // close of it may restart the chip into an app that takes the port away (the S3's after usj).
+  if (!isUsj(port)) {
+    status("Connecting: is the bootloader waiting already?");
+    try {
+      return await attempt("no_reset", 1);
+    } catch (e) {
+      log(`No bootloader without a reset (${e?.message ?? e}): resetting into download mode.`);
+    }
   }
   status("Connecting: resetting into download mode...");
   return attempt("default_reset");
@@ -347,10 +358,13 @@ async function flash() {
     return; // Chooser closed.
   }
   state.wantUsj = false;
+  const hex = (n) => (n ?? 0).toString(16).padStart(4, "0");
+  const info = port.getInfo();
 
   state.busy = true;
   updateButton();
   $("log").textContent = "";
+  log(`Port ${hex(info.usbVendorId)}:${hex(info.usbProductId)}`);
   const progress = $("progress");
   progress.hidden = true;
   let transport;
@@ -361,6 +375,12 @@ async function flash() {
       await handOver(port);
       status("Waiting for the USB-Serial-JTAG...");
       port = await waitForUsj(before, 8000);
+      if (port === "back") {
+        status("The board restarted into its app, which took the USB port back. Press Connect " +
+          "and flash to try again.", "err");
+        log("The app's port came back instead of the USB-Serial-JTAG.");
+        return;
+      }
       if (!port) {
         state.wantUsj = true;
         status("Handed over. Press Connect and flash again and pick \"USB JTAG/serial debug " +
