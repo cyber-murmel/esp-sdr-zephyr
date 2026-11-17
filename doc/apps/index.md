@@ -234,9 +234,14 @@ Without root, the PC needs udev rules for the board (USB vendor 2fe3), for examp
 SUBSYSTEM=="usb", ATTRS{idVendor}=="2fe3", MODE="660", GROUP="plugdev", TAG+="uaccess"
 SUBSYSTEM=="tty", ATTRS{idVendor}=="2fe3", MODE="660", GROUP="dialout", TAG+="uaccess"
 ATTRS{idVendor}=="2fe3", ENV{ID_MM_DEVICE_IGNORE}="1"
+ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", ENV{ID_MM_DEVICE_IGNORE}="1"
 ```
 
-On NixOS the same three lines go into `services.udev.extraRules = '' ... '';`.
+The last line keeps ModemManager off the USB-Serial-JTAG (303a:1001): it probes a new port by
+opening it, and a change of DTR and RTS there resets the chip, so an S3 handed over with `usj`
+can restart into its app, which takes the port back.
+
+On NixOS the same lines go into `services.udev.extraRules = '' ... '';`.
 [stream](../../apps/stream/README.rst) has the network settings for its CDC-NCM link.
 
 ## Shell conventions
