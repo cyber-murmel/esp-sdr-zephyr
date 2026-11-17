@@ -16,6 +16,8 @@ Espressif documents them: the register description's line "Other bits:
 documented" names their ranges ("31:29, 22"), or all of them without any. Peripherals in group ANALOG_I2C are analog I2C blocks: base
 address block << 8, one 8-bit register per offset, shown as block:register,
 named PERIPHERAL_REGISTER.
+Each register gets a mermaid packet diagram of its fields (bit 0 first, the field's own name
+without the prefix; 8 bits a row for the analog registers) above its bit-field table.
 --check: exit 1 if a page is not up to date.
 """
 
@@ -113,6 +115,7 @@ class Register:
         self.addrs = ([f"0x{base >> 8:02x}:{a}" for a in addrs] if analog else
                       [f"0x{base + a:08x}" for a in addrs])
         self.fields = []
+        self.prefixes = [f"{pname}_"] if analog else [prefix]
         for f in r.iterfind("fields/field"):
             msb, lsb = bits(f)
             fdesc, _, fev, _ = split(lines(f, "description"))
@@ -135,13 +138,35 @@ class Register:
                 cols.append((b, b, kind))
         return cols
 
-    def table(self):
+    def columns(self):
         cols, top = [], self.size - 1
         for msb, lsb, name, *_ in self.fields:
             cols += self.gaps(top, msb + 1)
             cols.append((msb, lsb, name))
             top = lsb - 1
-        cols += self.gaps(top, 0)
+        return cols + self.gaps(top, 0)
+
+    def packet(self):
+        """A mermaid packet diagram of the fields, bit 0 first (as mermaid numbers the bits)."""
+        out = ["```mermaid"]
+        if self.size != 32:
+            out.append(f'%%{{init: {{"packet": {{"bitsPerRow": {self.size}}}}}}}%%')
+        out.append("packet-beta")
+        for msb, lsb, name in reversed(self.columns()):
+            short = name if name.startswith("(") else name[self.cut(name):]
+            span = str(lsb) if msb == lsb else f"{lsb}-{msb}"
+            out.append(f'{span}: "{short}"')
+        return out + ["```"]
+
+    def cut(self, name):
+        """Where the field's own name starts after the register's prefix."""
+        for prefix in self.prefixes:
+            if name.startswith(prefix):
+                return len(prefix)
+        return 0
+
+    def table(self):
+        cols = self.columns()
         rows = [["Bits"] + [label(m, l) for m, l, _ in cols], ["Field"] + [n for *_, n in cols]]
         if self.init:
             value = num(self.init.split()[0].rstrip(",.;"))
@@ -153,7 +178,8 @@ class Register:
         return out + ["| " + " | ".join(r) + " |" for r in rows[1:]]
 
     def markdown(self):
-        out = [f"#### {self.title}", "", self.desc[0], ""] + self.table() + [""]
+        out = [f"#### {self.title}", "", self.desc[0], ""] + self.packet() + [""]
+        out += self.table() + [""]
         for _, _, name, desc, access, _ in self.fields:
             out += [f"**{name}** {desc} ({access})", ""]
         notes = "\n".join(self.desc[1:]).strip()

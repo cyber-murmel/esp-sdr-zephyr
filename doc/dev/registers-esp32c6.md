@@ -255,6 +255,17 @@ Leads for a continuous C6 receive below 80 MS/s (the first one probed):
 
 Receive side: run, trigger and count of a capture
 
+```mermaid
+packet-beta
+0-13: "COUNT"
+14-16: "(unknown)"
+17: "CIRCULAR"
+18: "DONE"
+19: "TRIGGER"
+20-30: "(unknown)"
+31: "RUN"
+```
+
 | Bits | 31 | 30:20 | 19 | 18 | 17 | 16:14 | 13:0 |
 |---|---|---|---|---|---|---|---|
 | Field | DUMP_RUN | (unknown) | DUMP_TRIGGER | DUMP_DONE | DUMP_CIRCULAR | (unknown) | DUMP_COUNT |
@@ -280,6 +291,15 @@ Evidence:
 
 Dump source; the live write index in upstream's ring
 
+```mermaid
+packet-beta
+0-14: "(unknown)"
+15-18: "SRC"
+19-20: "(unknown)"
+21-23: "B23_21"
+24-31: "(unknown)"
+```
+
 | Bits | 31:24 | 23:21 | 20:19 | 18:15 | 14:0 |
 |---|---|---|---|---|---|
 | Field | (unknown) | DUMP_B23_21 | (unknown) | DUMP_SRC | (unknown) |
@@ -302,6 +322,19 @@ Evidence:
 #### Register DUMP_DAC_TRIG_REG (0x600a900c)
 
 Transmit side: run, loop, rate and count of a playback
+
+```mermaid
+packet-beta
+0-13: "DAC_COUNT"
+14: "(unknown)"
+15: "DAC_RATE_80M"
+16-17: "(unknown)"
+18: "DAC_DONE"
+19: "DAC_LOOP"
+20-27: "B27_20"
+28-30: "(unknown)"
+31: "DAC_RUN"
+```
 
 | Bits | 31 | 30:28 | 27:20 | 19 | 18 | 17:16 | 15 | 14 | 13:0 |
 |---|---|---|---|---|---|---|---|---|---|
@@ -363,6 +396,12 @@ Evidence:
 
 Lane selectors: the sources packed into a dump word
 
+```mermaid
+packet-beta
+0-24: "LANES"
+25-31: "(unknown)"
+```
+
 | Bits | 31:25 | 24:0 |
 |---|---|---|
 | Field | (unknown) | DUMP_LANES |
@@ -377,6 +416,11 @@ Evidence:
 #### Register DUMP_DIAG_SEL0_REG, DUMP_DIAG_SEL1_REG (0x600a9018, 0x600a901c)
 
 Modem diagnostic bus selectors
+
+```mermaid
+packet-beta
+0-31: "(unknown)"
+```
 
 | Bits | 31:0 |
 |---|---|
@@ -398,6 +442,16 @@ Evidence:
 #### Register HP_SYSTEM_SRAM_USAGE_CONF_REG (0x60095004)
 
 Hands an SRAM block to the dump engine
+
+```mermaid
+packet-beta
+0: "(documented)"
+1-7: "(unknown)"
+8-11: "SRAM_USAGE"
+12-15: "(unknown)"
+16: "MAC_DUMP_ALLOC"
+17-31: "(unknown)"
+```
 
 | Bits | 31:17 | 16 | 15:12 | 11:8 | 7:1 | 0 |
 |---|---|---|---|---|---|---|
@@ -444,6 +498,14 @@ Documented registers; the entries give the behaviour the HAL does not document.
 
 Modem clock enables, forced on for the dump engine
 
+```mermaid
+packet-beta
+0-20: "(unknown)"
+21: "CLK_DATA_DUMP_MUX"
+22-30: "(documented)"
+31: "CLK_DATA_DUMP_EN"
+```
+
 | Bits | 31 | 30:22 | 21 | 20:0 |
 |---|---|---|---|---|
 | Field | MODEM_SYSCON_CLK_DATA_DUMP_EN | (documented) | MODEM_SYSCON_CLK_DATA_DUMP_MUX | (unknown) |
@@ -467,6 +529,12 @@ Evidence:
 
 Forced to 0xffffffff for the dump engine
 
+```mermaid
+packet-beta
+0-7: "(unknown)"
+8-31: "(documented)"
+```
+
 | Bits | 31:8 | 7:0 |
 |---|---|---|
 | Field | (documented) | (unknown) |
@@ -481,6 +549,22 @@ Evidence:
 #### Register MODEM_SYSCON_MODEM_RST_CONF_REG (0x600a9810)
 
 Modem resets, pulsed at boot against stale modem state
+
+```mermaid
+packet-beta
+0-7: "(unknown)"
+8: "(documented)"
+9: "(unknown)"
+10: "(documented)"
+11-13: "(unknown)"
+14-18: "(documented)"
+19-21: "(unknown)"
+22: "(documented)"
+23: "(unknown)"
+24-27: "(documented)"
+28: "(unknown)"
+29-31: "(documented)"
+```
 
 | Bits | 31:29 | 28 | 27:24 | 23 | 22 | 21:19 | 18:14 | 13:11 | 10 | 9 | 8 | 7:0 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -501,6 +585,12 @@ Evidence:
 
 Bits 18:0 forced on for the dump engine
 
+```mermaid
+packet-beta
+0-23: "(documented)"
+24-31: "(unknown)"
+```
+
 | Bits | 31:24 | 23:0 |
 |---|---|---|
 | Field | (unknown) | (documented) |
@@ -515,6 +605,11 @@ Evidence:
 #### Register MODEM_SYSCON_WIFI_BB_CFG_REG (0x600a981c)
 
 Wi-Fi baseband configuration; the 802.11p clock mode in bits 4:2
+
+```mermaid
+packet-beta
+0-31: "WIFI_BB_CFG"
+```
 
 | Bits | 31:0 |
 |---|---|
@@ -534,6 +629,15 @@ MODEM_SYSCON_MODEM_RST_CONF_REG.
 #### Register MODEM_LPCON_RST_CONF_REG (0x600af024)
 
 Modem LP resets, pulsed at boot against stale modem state
+
+```mermaid
+packet-beta
+0: "RST_WIFIPWR"
+1: "RST_COEX"
+2: "RST_I2C_MST"
+3: "RST_LP_TIMER"
+4-31: "(unknown)"
+```
 
 | Bits | 31:4 | 3 | 2 | 1 | 0 |
 |---|---|---|---|---|---|
@@ -561,6 +665,11 @@ Evidence:
 
 Routes modem diagnostic lines into the GPIO matrix
 
+```mermaid
+packet-beta
+0-31: "MODEM_DIAG_EN"
+```
+
 | Bits | 31:0 |
 |---|---|
 | Field | IO_MUX_MODEM_DIAG_EN |
@@ -577,6 +686,12 @@ Evidence:
 
 Dump gate in bit 0
 
+```mermaid
+packet-beta
+0: "DUMP_GATE"
+1-31: "(unknown)"
+```
+
 | Bits | 31:1 | 0 |
 |---|---|---|
 | Field | (unknown) | BTBB_DUMP_GATE |
@@ -591,6 +706,12 @@ Evidence:
 
 Unknown; bits 31:30 written by the BT branch of `force_txon_mode()`
 
+```mermaid
+packet-beta
+0-29: "(unknown)"
+30-31: "B31_30"
+```
+
 | Bits | 31:30 | 29:0 |
 |---|---|---|
 | Field | BTBB_B31_30 | (unknown) |
@@ -602,6 +723,13 @@ Unknown; bits 31:30 written by the BT branch of `force_txon_mode()`
 #### Register WIFIMAC_EVENT_SEL_REG (0x600a4e30)
 
 Wi-Fi MAC event selector, used by the dump's `adctrig()` mode 7
+
+```mermaid
+packet-beta
+0-7: "EVENT"
+8: "B8"
+9-31: "(unknown)"
+```
 
 | Bits | 31:9 | 8 | 7:0 |
 |---|---|---|---|
@@ -620,6 +748,15 @@ Evidence:
 #### Register AGC_FORCE_REG (0x600a702c)
 
 Forced receive gain index, force bit and largest calibrated index
+
+```mermaid
+packet-beta
+0-7: "(unknown)"
+8-14: "GAIN_MAX"
+15-22: "(unknown)"
+23: "FORCE_EN"
+24-31: "FORCE_INDEX"
+```
 
 | Bits | 31:24 | 23 | 22:15 | 14:8 | 7:0 |
 |---|---|---|---|---|---|
@@ -645,6 +782,13 @@ Evidence:
 
 Unknown; bit 5 cleared in the 802.11p clock mode
 
+```mermaid
+packet-beta
+0-4: "(unknown)"
+5: "B5"
+6-31: "(unknown)"
+```
+
 | Bits | 31:6 | 5 | 4:0 |
 |---|---|---|---|
 | Field | (unknown) | AGC_B5 | (unknown) |
@@ -659,6 +803,12 @@ Evidence:
 
 Unknown; bits 2:0 written by `set_dump_mode()`
 
+```mermaid
+packet-beta
+0-2: "B2_0"
+3-31: "(unknown)"
+```
+
 | Bits | 31:3 | 2:0 |
 |---|---|---|
 | Field | (unknown) | AGC_B2_0 |
@@ -672,6 +822,13 @@ Evidence:
 #### Register AGC_RDC_REG (0x600a70dc)
 
 Unknown; bit 16 cleared by `force_txon()`
+
+```mermaid
+packet-beta
+0-15: "(unknown)"
+16: "B16"
+17-31: "(unknown)"
+```
 
 | Bits | 31:17 | 16 | 15:0 |
 |---|---|---|---|
@@ -718,6 +875,13 @@ How the vendor functions drive the front end:
 
 Hardware frequency engine stop
 
+```mermaid
+packet-beta
+0-25: "(unknown)"
+26: "HW_FREQ_STOP"
+27-31: "(unknown)"
+```
+
 | Bits | 31:27 | 26 | 25:0 |
 |---|---|---|---|
 | Field | (unknown) | FE_HW_FREQ_STOP | (unknown) |
@@ -727,6 +891,15 @@ Hardware frequency engine stop
 #### Register FE_PWR_INDEX_REG (0x600a0410)
 
 Power index force
+
+```mermaid
+packet-beta
+0-15: "(unknown)"
+16-21: "PWR_INDEX"
+22: "(unknown)"
+23: "PWR_INDEX_FORCE"
+24-31: "(unknown)"
+```
 
 | Bits | 31:24 | 23 | 22 | 21:16 | 15:0 |
 |---|---|---|---|---|---|
@@ -744,6 +917,12 @@ Evidence:
 
 DAC source select
 
+```mermaid
+packet-beta
+0-1: "DAC_SRC"
+2-31: "(unknown)"
+```
+
 | Bits | 31:2 | 1:0 |
 |---|---|---|
 | Field | (unknown) | FE_DAC_SRC |
@@ -757,6 +936,18 @@ Evidence:
 #### Register FE_TXDC_CAL_REG (0x600a0418)
 
 TX DC calibration comparator
+
+```mermaid
+packet-beta
+0: "TXDC_CAL_START"
+1: "TXDC_CAL_EN"
+2-21: "(unknown)"
+22: "TXDC_CAL_DONE"
+23-27: "(unknown)"
+28: "TXDC_CMP_ROW3"
+29: "TXDC_CMP_ROW2"
+30-31: "(unknown)"
+```
 
 | Bits | 31:30 | 29 | 28 | 27:23 | 22 | 21:2 | 1 | 0 |
 |---|---|---|---|---|---|---|---|---|
@@ -785,6 +976,14 @@ Evidence:
 
 Tones 0 and 1: enable, attenuation, frequency
 
+```mermaid
+packet-beta
+0-9: "TONE_FREQ"
+10-17: "TONE_ATTEN"
+18: "TONE_EN"
+19-31: "(unknown)"
+```
+
 | Bits | 31:19 | 18 | 17:10 | 9:0 |
 |---|---|---|---|---|
 | Field | (unknown) | FE_TONE_EN | FE_TONE_ATTEN | FE_TONE_FREQ |
@@ -806,6 +1005,13 @@ Evidence:
 
 Fine tone frequency: the low two bits of each tone's frequency
 
+```mermaid
+packet-beta
+0-1: "TONE0_FREQ_LO"
+2-3: "TONE1_FREQ_LO"
+4-31: "(unknown)"
+```
+
 | Bits | 31:4 | 3:2 | 1:0 |
 |---|---|---|---|
 | Field | (unknown) | FE_TONE1_FREQ_LO | FE_TONE0_FREQ_LO |
@@ -825,6 +1031,13 @@ Evidence:
 #### Register FE_TXDC_REG (0x600a0444)
 
 TX DC value
+
+```mermaid
+packet-beta
+0-9: "TXDC_I"
+10-19: "TXDC_Q"
+20-31: "(unknown)"
+```
 
 | Bits | 31:20 | 19:10 | 9:0 |
 |---|---|---|---|
@@ -846,6 +1059,17 @@ Evidence:
 #### Register FE_R44C_REG (0x600a044c)
 
 Unknown; init sets bits 27 and 25 and clears bit 22
+
+```mermaid
+packet-beta
+0-21: "(unknown)"
+22: "B22"
+23-24: "(unknown)"
+25: "B25"
+26: "(unknown)"
+27: "B27"
+28-31: "(unknown)"
+```
 
 | Bits | 31:28 | 27 | 26 | 25 | 24:23 | 22 | 21:0 |
 |---|---|---|---|---|---|---|---|
@@ -870,6 +1094,13 @@ Evidence:
 
 IQ estimator: mode
 
+```mermaid
+packet-beta
+0-25: "(unknown)"
+26-27: "MODE"
+28-31: "(unknown)"
+```
+
 | Bits | 31:28 | 27:26 | 25:0 |
 |---|---|---|---|
 | Field | (unknown) | FE_MODE | (unknown) |
@@ -887,6 +1118,16 @@ Evidence:
 #### Register FE_IQE_CTRL1_REG (0x600a0474)
 
 IQ estimator: source, input count, start and enable
+
+```mermaid
+packet-beta
+0: "EN"
+1: "START"
+2-16: "COUNT"
+17-18: "(unknown)"
+19-20: "SRC"
+21-31: "(unknown)"
+```
 
 | Bits | 31:21 | 20:19 | 18:17 | 16:2 | 1 | 0 |
 |---|---|---|---|---|---|---|
@@ -911,6 +1152,11 @@ Evidence:
 
 IQ estimator: sum of I since the run started, times 64 (signed)
 
+```mermaid
+packet-beta
+0-31: "(unknown)"
+```
+
 | Bits | 31:0 |
 |---|---|
 | Field | (unknown) |
@@ -926,6 +1172,11 @@ Evidence:
 
 IQ estimator: sum of Q since the run started, times 64 (signed)
 
+```mermaid
+packet-beta
+0-31: "(unknown)"
+```
+
 | Bits | 31:0 |
 |---|---|
 | Field | (unknown) |
@@ -937,6 +1188,11 @@ Evidence:
 #### Register FE_IQE_POW_REG (0x600a0490)
 
 IQ estimator: sum of I squared plus Q squared since the run started, over 8
+
+```mermaid
+packet-beta
+0-31: "(unknown)"
+```
 
 | Bits | 31:0 |
 |---|---|
@@ -959,6 +1215,11 @@ Evidence:
 
 IQ estimator: sum of I squared since the run started, over 4
 
+```mermaid
+packet-beta
+0-31: "(unknown)"
+```
+
 | Bits | 31:0 |
 |---|---|
 | Field | (unknown) |
@@ -972,6 +1233,11 @@ Evidence:
 #### Register FE_IQE_POW_Q_REG (0x600a0498)
 
 IQ estimator: sum of Q squared since the run started, over 4
+
+```mermaid
+packet-beta
+0-31: "(unknown)"
+```
 
 | Bits | 31:0 |
 |---|---|
@@ -987,6 +1253,11 @@ Evidence:
 
 IQ estimator: sum of I times Q since the run started, over 4 (signed)
 
+```mermaid
+packet-beta
+0-31: "(unknown)"
+```
+
 | Bits | 31:0 |
 |---|---|
 | Field | (unknown) |
@@ -1000,6 +1271,17 @@ Evidence:
 #### Register FE_FORCE_REG (0x600a0910)
 
 Receive, transmit and BT mode force pairs; receive and transmit clocks
+
+```mermaid
+packet-beta
+0-7: "(unknown)"
+8-9: "RX_FORCE"
+10-11: "TX_FORCE"
+12-13: "BT_FORCE"
+14-15: "RX_CLK"
+16-17: "TX_CLK"
+18-31: "(unknown)"
+```
 
 | Bits | 31:18 | 17:16 | 15:14 | 13:12 | 11:10 | 9:8 | 7:0 |
 |---|---|---|---|---|---|---|---|
@@ -1026,6 +1308,12 @@ Evidence:
 
 Unknown; `set_dump_mode()` clears bits 1:0
 
+```mermaid
+packet-beta
+0-1: "B1_0"
+2-31: "(unknown)"
+```
+
 | Bits | 31:2 | 1:0 |
 |---|---|---|
 | Field | (unknown) | FE_B1_0 |
@@ -1043,6 +1331,17 @@ Evidence:
 #### Register I2C_ANA_MST_I2C0_CTRL_REG, I2C_ANA_MST_I2C1_CTRL_REG (0x600af800, 0x600af804)
 
 Command word of master 0 and master 1
+
+```mermaid
+packet-beta
+0-7: "BLOCK"
+8-15: "REG_ADDR"
+16-23: "DATA"
+24: "WRITE"
+25: "BUSY"
+26: "B26"
+27-31: "(unknown)"
+```
 
 | Bits | 31:27 | 26 | 25 | 24 | 23:16 | 15:8 | 7:0 |
 |---|---|---|---|---|---|---|---|
@@ -1074,6 +1373,12 @@ Evidence:
 
 Read mask
 
+```mermaid
+packet-beta
+0-23: "ANA_CONF1"
+24-31: "(documented)"
+```
+
 | Bits | 31:24 | 23:0 |
 |---|---|---|
 | Field | (documented) | I2C_ANA_MST_ANA_CONF1 |
@@ -1087,6 +1392,12 @@ Evidence:
 #### Register I2C_ANA_MST_ANA_CONF2_REG (0x600af820)
 
 Master select
+
+```mermaid
+packet-beta
+0-23: "ANA_CONF2"
+24-31: "(documented)"
+```
 
 | Bits | 31:24 | 23:0 |
 |---|---|---|
@@ -1108,6 +1419,12 @@ Registers 0 to 10 at 2412 MHz: `1f 02 08 49 53 40 51 2f 33 59 20` (bench
 
 HAL `I2C_ULP_OCODE`, function undocumented
 
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 8}}}%%
+packet-beta
+0-7: "OCODE"
+```
+
 | Bits | 7:0 |
 |---|---|
 | Field | ULP_OCODE |
@@ -1122,6 +1439,12 @@ Evidence:
 #### Register ULP_R9 (0x61:9)
 
 Unknown
+
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 8}}}%%
+packet-beta
+0-7: "(unknown)"
+```
 
 | Bits | 7:0 |
 |---|---|
@@ -1158,6 +1481,15 @@ The Init rows below come from this dump.
 
 VCO calibration start
 
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 8}}}%%
+packet-beta
+0-4: "(unknown)"
+5: "CAL_START"
+6: "R0_B6"
+7: "(unknown)"
+```
+
 | Bits | 7 | 6 | 5 | 4:0 |
 |---|---|---|---|---|
 | Field | (unknown) | RFPLL_R0_B6 | RFPLL_CAL_START | (unknown) |
@@ -1175,6 +1507,12 @@ Evidence:
 
 Manual capacitor code, bits 7:0
 
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 8}}}%%
+packet-beta
+0-7: "MANUAL_CODE"
+```
+
 | Bits | 7:0 |
 |---|---|
 | Field | RFPLL_MANUAL_CODE |
@@ -1191,6 +1529,15 @@ Evidence:
 #### Register RFPLL_R2 (0x62:2)
 
 Manual code bit 8 and a 4-bit code override
+
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 8}}}%%
+packet-beta
+0-3: "CODE4_VAL"
+4: "MANUAL_CODE_B8"
+5-6: "(unknown)"
+7: "CODE4_OVR"
+```
 
 | Bits | 7 | 6:5 | 4 | 3:0 |
 |---|---|---|---|---|
@@ -1218,6 +1565,12 @@ Evidence:
 
 Unknown
 
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 8}}}%%
+packet-beta
+0-7: "(unknown)"
+```
+
 | Bits | 7:0 |
 |---|---|
 | Field | (unknown) |
@@ -1232,6 +1585,12 @@ Evidence:
 #### Register RFPLL_R5 (0x62:5)
 
 Capacitor code readback, bits 7:0
+
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 8}}}%%
+packet-beta
+0-7: "CAP_CODE"
+```
 
 | Bits | 7:0 |
 |---|---|
@@ -1248,6 +1607,13 @@ Evidence:
 
 Calibrated 4-bit code
 
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 8}}}%%
+packet-beta
+0-3: "CODE4_CAL"
+4-7: "(unknown)"
+```
+
 | Bits | 7:4 | 3:0 |
 |---|---|---|
 | Field | (unknown) | RFPLL_CODE4_CAL |
@@ -1262,6 +1628,15 @@ Evidence:
 #### Register RFPLL_R7 (0x62:7)
 
 Capacitor code bit 8 and calibration done
+
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 8}}}%%
+packet-beta
+0: "(unknown)"
+1: "CAL_DONE"
+2: "CAP_CODE_B8"
+3-7: "(unknown)"
+```
 
 | Bits | 7:3 | 2 | 1 | 0 |
 |---|---|---|---|---|
@@ -1281,6 +1656,14 @@ Evidence:
 
 Capacitor code source
 
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 8}}}%%
+packet-beta
+0-5: "(unknown)"
+6: "CODE_SRC"
+7: "(unknown)"
+```
+
 | Bits | 7 | 6 | 5:0 |
 |---|---|---|---|
 | Field | (unknown) | RFPLL_CODE_SRC | (unknown) |
@@ -1295,6 +1678,15 @@ Evidence:
 #### Register RFPLL_R12 (0x62:12)
 
 VCO window comparator and two unknown status bits
+
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 8}}}%%
+packet-beta
+0: "R12_B0"
+1: "R12_B1"
+2-3: "VCO_WINDOW"
+4-7: "(unknown)"
+```
 
 | Bits | 7:4 | 3:2 | 1 | 0 |
 |---|---|---|---|---|
@@ -1317,6 +1709,14 @@ Evidence:
 
 Charge pump calibration done and result
 
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 8}}}%%
+packet-beta
+0-4: "CHGP_CAL_RESULT"
+5-6: "(unknown)"
+7: "CHGP_CAL_DONE"
+```
+
 | Bits | 7 | 6:5 | 4:0 |
 |---|---|---|---|
 | Field | RFPLL_CHGP_CAL_DONE | (unknown) | RFPLL_CHGP_CAL_RESULT |
@@ -1333,6 +1733,15 @@ Evidence:
 #### Register RFPLL_R15 (0x62:15)
 
 Charge pump calibration
+
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 8}}}%%
+packet-beta
+0-4: "CHGP_CODE"
+5: "R15_B5"
+6: "R15_B6"
+7: "(unknown)"
+```
 
 | Bits | 7 | 6 | 5 | 4:0 |
 |---|---|---|---|---|
@@ -1358,6 +1767,14 @@ Evidence:
 #### Register RFPLL_R16 (0x62:16)
 
 LO 5/6 divider select
+
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 8}}}%%
+packet-beta
+0-2: "(unknown)"
+3: "LO_DIV"
+4-7: "(unknown)"
+```
 
 | Bits | 7:4 | 3 | 2:0 |
 |---|---|---|---|
@@ -1387,6 +1804,12 @@ Evidence:
 
 Unknown
 
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 8}}}%%
+packet-beta
+0-7: "(unknown)"
+```
+
 | Bits | 7:0 |
 |---|---|
 | Field | (unknown) |
@@ -1401,6 +1824,12 @@ Evidence:
 #### Register RFPLL_R18 (0x62:18)
 
 Unknown
+
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 8}}}%%
+packet-beta
+0-7: "(unknown)"
+```
 
 | Bits | 7:0 |
 |---|---|
@@ -1451,6 +1880,14 @@ The Init rows below are the values at 2412 MHz.
 
 Bit 3 cleared and set around a divider write; other bits unknown
 
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 8}}}%%
+packet-beta
+0-2: "(unknown)"
+3: "R0_B3"
+4-7: "(unknown)"
+```
+
 | Bits | 7:4 | 3 | 2:0 |
 |---|---|---|---|
 | Field | (unknown) | RFPLL_SDM_R0_B3 | (unknown) |
@@ -1467,6 +1904,12 @@ Evidence:
 
 Unknown
 
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 8}}}%%
+packet-beta
+0-7: "(unknown)"
+```
+
 | Bits | 7:0 |
 |---|---|
 | Field | (unknown) |
@@ -1480,6 +1923,12 @@ Evidence:
 
 Divider integer part
 
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 8}}}%%
+packet-beta
+0-7: "INTEGER"
+```
+
 | Bits | 7:0 |
 |---|---|
 | Field | RFPLL_SDM_INTEGER |
@@ -1490,6 +1939,12 @@ Divider integer part
 #### Register RFPLL_SDM_R4 (0x63:4)
 
 Divider fraction, high byte
+
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 8}}}%%
+packet-beta
+0-7: "FRAC_H"
+```
 
 | Bits | 7:0 |
 |---|---|
@@ -1502,6 +1957,12 @@ Divider fraction, high byte
 
 Divider fraction, middle byte
 
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 8}}}%%
+packet-beta
+0-7: "FRAC_M"
+```
+
 | Bits | 7:0 |
 |---|---|
 | Field | RFPLL_SDM_FRAC_M |
@@ -1512,6 +1973,13 @@ Divider fraction, middle byte
 #### Register RFPLL_SDM_R6 (0x63:6)
 
 Divider fraction, low 3 bits
+
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 8}}}%%
+packet-beta
+0-2: "FRAC_L"
+3-7: "(unknown)"
+```
 
 | Bits | 7:3 | 2:0 |
 |---|---|---|
@@ -1542,6 +2010,13 @@ transmit pairs are probably at the same place as on the S3 (*decompile* C6
 
 Receive low-pass capacitor code, I (BBTOP_R4) and Q (BBTOP_R5)
 
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 8}}}%%
+packet-beta
+0-5: "RX_LPF"
+6-7: "(unknown)"
+```
+
 | Bits | 7:6 | 5:0 |
 |---|---|---|
 | Field | (unknown) | BBTOP_RX_LPF |
@@ -1558,6 +2033,12 @@ Evidence:
 
 Probably the transmit low-pass pair A, as on the S3
 
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 8}}}%%
+packet-beta
+0-7: "(unknown)"
+```
+
 | Bits | 7:0 |
 |---|---|
 | Field | (unknown) |
@@ -1572,6 +2053,12 @@ Evidence:
 #### Register BBTOP_R14, BBTOP_R15 (0x67:14, 0x67:15)
 
 Probably the transmit low-pass pair B, as on the S3
+
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 8}}}%%
+packet-beta
+0-7: "(unknown)"
+```
 
 | Bits | 7:0 |
 |---|---|
