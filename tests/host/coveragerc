@@ -14,6 +14,7 @@ source =
     apps/ubertooth/tools
     scripts
     doc/registers
+    nix
 omit =
     apps/multiapp/pytest/*
     apps/chancap/tools/chancap_bridge.py

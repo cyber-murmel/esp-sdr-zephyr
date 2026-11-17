@@ -22,15 +22,16 @@ def as_list(value):
     return value.split() if isinstance(value, str) else list(value)
 
 
-def main():
-    apps, exclude = Path(sys.argv[1]), set(sys.argv[2:])
+def list_images(apps, exclude=()):
+    """The images of APPS_DIR's sample.yaml files, as dicts (main() prints them)."""
     images = {}
-    for sample in sorted(apps.glob("*/sample.yaml")):
+    for sample in sorted(Path(apps).glob("*/sample.yaml")):
         app = sample.parent.name
         if app in exclude:
             continue
         doc = yaml.safe_load(sample.read_text())
         common = doc.get("common") or {}
+        description = " ".join(((doc.get("sample") or {}).get("description") or "").split())
         for test, conf in doc["tests"].items():
             conf = {**common, **(conf or {})}
             if conf.get("harness") == "pytest":
@@ -50,8 +51,13 @@ def main():
                     "platform": platform,
                     "sysbuild": bool(conf.get("sysbuild", False)),
                     "extraArgs": extra_args,
+                    "description": description,
                 }
-    json.dump(list(images.values()), sys.stdout, indent=1)
+    return list(images.values())
+
+
+def main():
+    json.dump(list_images(sys.argv[1], set(sys.argv[2:])), sys.stdout, indent=1)
 
 
 if __name__ == "__main__":
