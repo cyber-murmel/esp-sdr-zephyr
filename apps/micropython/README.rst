@@ -746,7 +746,8 @@ How it is built
   <https://github.com/cyber-murmel/mp-lvgl-example>`__: ``CONFIG_MICROPYTHON`` builds its
   Zephyr port as the ``micropython`` library, which provides ``main()``, with this app's
   configuration header, manifest and C modules (``cmod/``). ``modules/micropython`` is the
-  ``mp-lvgl`` branch of cyber-murmel's fork, which the example pins. ``mpy_module.cmake``
+  ``zsdr`` branch of cyber-murmel's fork: the ``mp-lvgl`` branch the example pins, its port
+  change split into single commits, and this app's own. ``mpy_module.cmake``
   changes the module's build where this app needs it: the bundled apps' index for the
   manifest, the USB device left to the app, a copy of the port's ``zephyr_filesystem.c`` (a
   volume stays mounted across soft resets instead of being powered off and on) and LVGL's

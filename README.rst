@@ -209,22 +209,22 @@ Dependencies
 
 ``west.yml`` pins:
 
-- `Zephyr mch2022-badge <https://github.com/cyber-murmel/zephyr/tree/mch2022-badge>`__:
+- `Zephyr zsdr <https://github.com/cyber-murmel/zephyr/tree/zsdr>`__:
   ESP32-S3 SMP (zephyrproject-rtos/zephyr#120082), CDC-NCM aggregation,
   llext and Xtensa changes for multiapp, the Communicator, WHY2025 and
   MCH2022 badges with their drivers
-- `hal_espressif esp-sdr <https://github.com/cyber-murmel/hal_espressif/tree/esp-sdr>`__:
+- `hal_espressif zsdr <https://github.com/cyber-murmel/hal_espressif/tree/zsdr>`__:
   the HAL side of the SMP port, the ESP32-P4 flash erase fix
-- `libvrt esp-sdr <https://github.com/cyber-murmel/libvrt/tree/esp-sdr>`__:
+- `libvrt zsdr <https://github.com/cyber-murmel/libvrt/tree/zsdr>`__:
   VITA 49.2
 - `esp-sdr <https://github.com/ESPARGOS/esp-sdr>`__ (upstream,
   unmodified): receiver helper headers
 - `esp-dsp <https://github.com/espressif/esp-dsp>`__: the ESP32-S3 FFT kernels for
   ``apps/link`` OFDM, the MicroPython app's Scan (``apps/common/esp_dsp.cmake``) and
   ``apps/ubertooth``'s spectrum analyser
-- `MicroPython <https://github.com/cyber-murmel/micropython/tree/mp-lvgl>`__ (the
-  ``mp-lvgl`` branch, a Zephyr module) and micropython-lib, LVGL with
-  `lv_binding_micropython <https://github.com/cyber-murmel/lv_binding_micropython>`__
+- `MicroPython zsdr <https://github.com/cyber-murmel/micropython/tree/zsdr>`__ (a
+  Zephyr module) and micropython-lib, LVGL with
+  `lv_binding_micropython zsdr <https://github.com/cyber-murmel/lv_binding_micropython/tree/zsdr>`__
   and pycparser: ``apps/micropython``
 
 License
