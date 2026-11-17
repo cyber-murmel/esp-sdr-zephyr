@@ -218,13 +218,13 @@ let
   # The development shell's packages.
   dev = build ++ (with pkgs; [
     black
+    ccache
     clang-tools
     dfu-util
     doxygen
     openocd-esp32
     gnuradio
     gqrx
-    # Synthesis, place and route for the MCH2022 badge's iCE40 (gateware/).
     icestorm
     inspectrum
     librsvg
@@ -232,9 +232,7 @@ let
     mermaid-filter
     nextpnr
     pandoc
-    # The MCH2022 badge's RP2040 in its ROM bootloader: backup, rollback, images.
     picotool
-    # The CI checks as git hooks (.pre-commit-config.yaml).
     pre-commit
     qemu-esp32
     soapyremote
@@ -243,7 +241,6 @@ let
     tcpdump
     texliveBasic
     west2nix-update
-    # tshark: the host tests read the pcap app's stream with it.
     wireshark-cli
     yosys
   ]);
@@ -255,6 +252,7 @@ let
 
   shell = pkgs.mkShell (env // {
     packages = dev;
+    CCACHE_MAXSIZE = "4G";
     # gqrx and GNU Radio find the esdr module too.
     SOAPY_SDR_PLUGIN_PATH = soapyPluginPath;
   });
