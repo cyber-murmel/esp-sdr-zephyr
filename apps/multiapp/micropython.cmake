@@ -125,9 +125,9 @@ multiapp_extension(micropython APP ${mp_app} APP_CONF ${mp_ext}/app.conf STACK 1
               "SPI_COMPLETION_TIMEOUT_TOLERANCE" "SPI_SDHC" "SPI_ASYNC" "ESP32_SPIM" "SPI_ESP32_.*"
               "I2C" "I2C_.*"
               "SDHC" "SDHC_.*" "SD_.*" "SDMMC_.*" "MMC_.*" "DISK_DRIVER_SDMMC"
-  # Sensor drivers' settings, and no driver of them is built. The kernel heap is the host's, whatever
-  # the board's fragment sets for the standalone app.
-  KCONFIG_DROP "ADE7978_.*" "HEAP_MEM_POOL_SIZE"
+  # Sensor drivers' settings, and no driver of them is built. The kernel heap and the early boot
+  # log level are the host's, whatever the board's fragment sets for the standalone app.
+  KCONFIG_DROP "ADE7978_.*" "HEAP_MEM_POOL_SIZE" "ESP_HAL_EARLY_LOG_LEVEL"
   PRELUDE ${mp_ext}/mp_prelude.h
   WRAP setjmp
   VERSION_SCRIPT ${mp_ext}/micropython.ver
