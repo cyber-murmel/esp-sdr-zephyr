@@ -118,6 +118,7 @@ Contents
    :caption: Part 4: Applications
 
    apps/index
+   apps/flasher
    apps/capture
    apps/rfprobe
    apps/stream

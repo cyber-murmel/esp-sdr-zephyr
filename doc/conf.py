@@ -24,6 +24,9 @@ exclude_patterns = ["_build*", "_doxygen", "Thumbs.db", ".DS_Store"]
 
 html_theme = "alabaster"
 
+# The web flasher (doc/_extra/flasher), copied as it is to flasher/ in the site.
+html_extra_path = ["_extra"]
+
 intersphinx_mapping = {"zephyr": ("https://docs.zephyrproject.org/latest/", None)}
 
 # Links to headings inside the Markdown guides (file.md#section).

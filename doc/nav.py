@@ -8,6 +8,8 @@ markers (<!-- nav-start --> / <!-- nav-end --> in Markdown, .. nav-start / .. na
 
 - Previous and Next: the neighbours in the reading order, across parts.
 - Up: the part's index page; for an index page and the overview, the landing page doc/index.rst.
+- The overview (README.rst, which GitHub shows first) gets no Next: it links to the start of the
+  hosted documentation instead.
 
 Links are relative paths, so they work on GitHub; doc/conf.py turns them into page links. The link
 text is the target's title. App pages are their READMEs (apps/<app>/README.rst), the overview is
@@ -24,6 +26,8 @@ from pathlib import Path
 DOC = Path(__file__).resolve().parent
 REPO = DOC.parent
 INDEX = DOC / "index.rst"
+# The start of the documentation on GitHub Pages (.github/workflows/docs.yml).
+HOSTED = "https://cyber-murmel.github.io/esp-sdr-zephyr/"
 ADORN = re.compile(r"^([#*=\-~^\"'`])\1{2,}\s*$")
 ENTRY = re.compile(r"^   ([\w/.-]+)\s*$")
 MD_BLOCK = re.compile(r"\n*<!-- nav-start -->.*?<!-- nav-end -->\n*", re.S)
@@ -121,7 +125,11 @@ def main():
     for k, (name, page) in enumerate(zip(names, pages)):
         prev = pages[k - 1] if k > 0 else None
         nxt = pages[k + 1] if k + 1 < len(pages) else None
-        new = rewrite(page, nav_line(page, prev, up_of(name, names), nxt))
+        if name == "overview":
+            line = f"`Documentation <{HOSTED}>`__"
+        else:
+            line = nav_line(page, prev, up_of(name, names), nxt)
+        new = rewrite(page, line)
         if new != page.read_text():
             stale.append(str(page.relative_to(REPO)))
             if not check:

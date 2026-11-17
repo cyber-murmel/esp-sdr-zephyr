@@ -2,11 +2,13 @@
 #
 # Builds the documentation (doc/: Doxygen API reference and the Sphinx site)
 # as Zephyr's example application does, and publishes it to GitHub Pages from
-# pushes to main. Pull requests get it as an artifact.
+# pushes to main. Pull requests get it as an artifact. The web flasher (doc/_extra/flasher)
+# serves the latest release's images, copied into the site: GitHub's release downloads cannot
+# be fetched from a page. release.yml starts this workflow on main after a release.
 
 name: Documentation
 
-on: [push, pull_request]
+on: [push, pull_request, workflow_dispatch]
 
 permissions:
   contents: read
@@ -73,6 +75,21 @@ jobs:
           cd doc
           doxygen
           SPHINXOPTS="-W" make html
+
+      # A release before the flasher has no firmware.json: the page then says there are no images.
+      - name: Firmware for the web flasher
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          dir=doc/_build_sphinx/html/flasher/firmware
+          mkdir -p "$dir"
+          if gh release download --repo "$GITHUB_REPOSITORY" --pattern firmware.json --dir "$dir"; then
+            gh release download --repo "$GITHUB_REPOSITORY" --dir "$dir" \
+              --pattern 'esp-sdr-*.bin' --pattern 'esp-sdr-*.uf2'
+            du -sh "$dir"
+          else
+            echo "::notice::the latest release has no firmware.json, the flasher has no images"
+          fi
 
       - name: Setup pages
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'

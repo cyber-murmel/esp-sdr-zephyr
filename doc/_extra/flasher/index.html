@@ -1,0 +1,77 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ESP-SDR web flasher</title>
+<meta name="description" content="Flash the latest esp-sdr-zephyr release onto a board from the browser">
+<link rel="stylesheet" href="flasher.css">
+<script type="module" src="flasher.js"></script>
+</head>
+<body>
+<header>
+  <h1>ESP-SDR web flasher</h1>
+  <p class="lead">
+    Writes an image of the latest
+    <a href="https://github.com/cyber-murmel/esp-sdr-zephyr/releases/latest">esp-sdr-zephyr release</a>
+    onto a board over USB, from Chrome, Edge or Opera on a desktop.
+    <a href="../apps/flasher.html">How it works</a> ·
+    <a href="../index.html">Documentation</a>
+  </p>
+  <p id="release" class="muted"></p>
+</header>
+
+<main>
+  <p id="unsupported" class="notice" hidden>
+    This browser has no Web Serial. Use Chrome, Edge or Opera on a desktop, or download an image
+    below and write it with
+    <code>esptool --chip &lt;chip&gt; write-flash 0x0 &lt;file&gt;</code>.
+  </p>
+  <p id="missing" class="notice" hidden>
+    The latest release has no images for this flasher yet: take them from the
+    <a href="https://github.com/cyber-murmel/esp-sdr-zephyr/releases">releases</a>.
+  </p>
+
+  <section id="step-board" hidden>
+    <h2><span class="step">1</span> Board</h2>
+    <select id="board" aria-label="Board"></select>
+    <div id="hint" class="hint"></div>
+  </section>
+
+  <section id="step-image" hidden>
+    <h2><span class="step">2</span> Image</h2>
+    <div id="images"></div>
+  </section>
+
+  <section id="step-flash" hidden>
+    <h2><span class="step">3</span> Flash</h2>
+    <div class="options">
+      <label>Download mode
+        <select id="reset">
+          <option value="default_reset" selected>Automatic (RTS/DTR or USB-Serial-JTAG reset)</option>
+          <option value="no_reset">Already in download mode (no reset)</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="erase"> Erase the whole flash first</label>
+      <label>Baud rate
+        <select id="baud">
+          <option>115200</option>
+          <option>460800</option>
+          <option selected>921600</option>
+        </select>
+      </label>
+    </div>
+    <div class="actions">
+      <button id="flash" type="button">Connect and flash</button>
+      <span id="status" role="status"></span>
+    </div>
+    <progress id="progress" max="1" value="0" hidden></progress>
+    <details id="log-box">
+      <summary>Log</summary>
+      <pre id="log"></pre>
+    </details>
+  </section>
+</main>
+</body>
+</html>
