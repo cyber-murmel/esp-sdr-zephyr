@@ -37,7 +37,7 @@ EMPTY = -200.0
 # S3 with channel_bw(2) and 69 MHz within 1 dB to +-15.6 MHz, 3 dB at +-20, 6 at +-22 (its
 # channel_bw(0) passes +-35 MHz and lets what lies up to 50 MHz away fold in); the S31's and the
 # C6's noise flat within 3 dB to +-40 MHz (the ADC's), the S31's filter 3 dB down at 25 MHz
-# (doc/hardware-quirks.md); DC and its skirt +3 dB within +-1.5 MHz on the S31 and the C6.
+# (doc/radio/filters.md); DC and its skirt +3 dB within +-1.5 MHz on the S31 and the C6.
 RADIOS = {
     "esp32s3": {"bw": 69000000, "cbw": 2, "d": 15, "u": 18, "edges": (1700, 2400, 3000),
                 "table": None, "lines": (), "deadline": 60, "flat": ()},

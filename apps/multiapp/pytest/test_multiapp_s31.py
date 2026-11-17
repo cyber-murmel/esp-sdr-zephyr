@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Desk check of the multiapp host on the ESP32-S31-Function-CoreBoard-1 (doc/multiapp.md): the
-image and its FAT volume are on the board (scripts/twister-flash.py), which boots into osmosdr_hs.
+"""Desk check of the multiapp host on the ESP32-S31-Function-CoreBoard-1
+(doc/apps/multiapp-internals.md): the image and its FAT volume are on the board
+(scripts/twister-flash.py), which boots into osmosdr_hs.
 
 Run with the board's USB HS port J4 on the PC through a cable with VBUS cut
 (apps/osmosdr_hs/README.rst):

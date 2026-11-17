@@ -7,7 +7,7 @@
  * radio or Zephyr dependency beyond ztest.
  *
  * Besides the pass/fail cases, this file also holds the PER sweep table
- * (test_per_table), opt-in with IEEE154_TABLES (see doc/testing.md): it is
+ * (test_per_table), opt-in with IEEE154_TABLES (see doc/dev/testing.md): it is
  * skipped unless the variable is set.
  */
 #include <math.h>
@@ -162,7 +162,7 @@ ZTEST(ieee154_phy, test_no_premature_sibling_reset_regression)
 	zassert_equal(dups, 0, "%d duplicate deliveries", dups);
 }
 
-/* Operating points measured error-free in doc/ieee802154.md's host test table. */
+/* Operating points measured error-free in doc/modem/ieee802154.md's host test table. */
 ZTEST(ieee154_phy, test_decodes_at_operating_points)
 {
 	static const struct {
@@ -314,8 +314,8 @@ static bool tables_enabled(void)
 
 /*
  * Opt-in PER table: SNR 0 to 16 dB against three carrier offsets, 300 frames per point, with a
- * DC offset. Printed whole, then the claim of doc/ieee802154.md is asserted: no frame lost from
- * 6 dB up, none delivered twice, none with wrong content.
+ * DC offset. Printed whole, then the claim of doc/modem/ieee802154.md is asserted: no frame lost
+ * from 6 dB up, none delivered twice, none with wrong content.
  */
 ZTEST(ieee154_phy, test_per_table)
 {

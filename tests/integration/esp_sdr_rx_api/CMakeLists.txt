@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Hardware integration test of the esp_sdr receive API's contract (error
-# codes, boundary values) on a real board. See doc/testing.md.
+# codes, boundary values) on a real board. See doc/dev/testing.md.
 #
 # apps/common is only needed by the S3 variant (USB shell and DFU, see
 # Kconfig); same if(CONFIG_USB_DEVICE_STACK_NEXT) guard every app uses.

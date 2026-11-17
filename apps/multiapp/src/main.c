@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * multiapp host (doc/multiapp.md): the USB shell and DFU, the radio, and the
+ * multiapp host (doc/apps/multiapp-internals.md): the USB shell and DFU, the radio, and the
  * apps built as extensions (apps.c).
  */
 

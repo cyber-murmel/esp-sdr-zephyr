@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * What a multiapp extension and the host share (doc/multiapp.md).
+ * What a multiapp extension and the host share (doc/apps/multiapp-internals.md).
  */
 
 #ifndef MULTIAPP_MULTIAPP_H_

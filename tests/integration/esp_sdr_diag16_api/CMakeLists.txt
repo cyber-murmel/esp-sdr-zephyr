@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Hardware integration test of the S31's gapless ring (esp_sdr_diag16.h). See doc/testing.md.
+# Hardware integration test of the S31's gapless ring (esp_sdr_diag16.h). See doc/dev/testing.md.
 
 cmake_minimum_required(VERSION 3.20.0)
 

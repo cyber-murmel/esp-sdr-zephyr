@@ -4,7 +4,7 @@
  * The link's placement rules (esp_sdr_place.h), for its sources (ESP_SDR_PLACE_SCOPE link), ahead
  * of the SoC's: the modems' per-sample and per-symbol loops run from IRAM, frame setup from flash.
  * Pins marked "as before" keep code and data where it was, each a candidate for a measured change
- * (doc/code-placement.md).
+ * (doc/dev/code-placement.md).
  */
 
 #define ESP_SDR_PLACE_link_SAMPLE ESP_SDR_IRAM

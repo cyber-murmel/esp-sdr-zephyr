@@ -195,7 +195,7 @@ MP_REGISTER_ROOT_POINTER(mp_obj_t esdr_scan_src);
  * The stack in PSRAM, which a flash write turns off with the cache: the other CPU waits in an
  * interrupt meanwhile, so the worker does not run. The kernel objects in internal RAM, standalone;
  * a multiapp extension's bss, these among it, is PSRAM, whose atomics the pinned Zephyr emulates
- * (doc/hardware-quirks.md), as for the Pcap engine's.
+ * (doc/dev/code-placement.md), as for the Pcap engine's.
  */
 static Z_KERNEL_STACK_DEFINE_IN(scan_stack, SCAN_STACK, ESP_SDR_DATA_F(STACK, scan_stack, NOINIT));
 /* On the S3 above the capture bank: the standalone Communicator's DRAM is full. */

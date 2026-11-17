@@ -3,7 +3,7 @@
 # Unit test of lib/ieee802154/ieee154_phy.c on native_sim: the module has no
 # Zephyr dependencies, so it is compiled directly as an extra source instead
 # of through the esp_sdr_ieee802154 Kconfig library (which needs a real
-# radio). See doc/testing.md.
+# radio). See doc/dev/testing.md.
 
 cmake_minimum_required(VERSION 3.20.0)
 

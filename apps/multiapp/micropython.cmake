@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# apps/micropython as an app of this host (doc/multiapp.md): the port, its C modules and frozen Python,
-# built as one extension. The host stays CONFIG_MICROPYTHON=n, so the module's own build does not run;
-# this builds the same sources with the same flags (ports/zephyr/CMakeLists.txt) and the rules of
-# MicroPython's py/mkrules.cmake into the extension's target. ext/mp/ has what differs.
+# apps/micropython as an app of this host (doc/apps/multiapp-internals.md): the port, its C modules
+# and frozen Python, built as one extension. The host stays CONFIG_MICROPYTHON=n, so the module's
+# own build does not run; this builds the same sources with the same flags
+# (ports/zephyr/CMakeLists.txt) and the rules of MicroPython's py/mkrules.cmake into the extension's
+# target. ext/mp/ has what differs.
 
 set(mp_app ${apps_dir}/micropython)
 set(mp_ext ${CMAKE_CURRENT_LIST_DIR}/ext/mp)

@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""MicroPython as an app (doc/multiapp.md): the boot runs it from its file, which has no built-in copy,
-and it has the CDC-ACM port for its REPL. Everything here goes through that REPL. On a board with a
-display the launcher comes up first, and a GUI app must draw with the ring gapless.
+"""MicroPython as an app (doc/apps/multiapp-internals.md): the boot runs it from its file, which has
+no built-in copy, and it has the CDC-ACM port for its REPL. Everything here goes through that REPL.
+On a board with a display the launcher comes up first, and a GUI app must draw with the ring
+gapless.
 
     west twister -T apps/multiapp -s sample.esp_sdr.multiapp.micropython.hil --device-testing \\
         --hardware-map tests/regression/hardware-map.yaml \\

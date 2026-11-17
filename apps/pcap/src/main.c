@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * The WHY2025 badge's ESP32-P4 as a burst sniffer (doc/pcap.md): its ESP32-C6 runs
+ * The WHY2025 badge's ESP32-P4 as a burst sniffer (doc/apps/pcap-internals.md): its ESP32-C6 runs
  * apps/osmosdr_serial over SDIO as the radio, this chip demodulates and decodes what it
  * receives and streams pcapng over USB (the shell on CDC-ACM, DFU, the stream on a vendor
  * bulk IN endpoint). Here: the settings and their requests (esdr_proto.h's to the radio,

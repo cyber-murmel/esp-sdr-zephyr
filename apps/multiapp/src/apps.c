@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * Runs one app per boot as an llext extension (doc/multiapp.md): loads it
+ * Runs one app per boot as an llext extension (doc/apps/multiapp-internals.md): loads it
  * into PSRAM, runs its constructors (include/multiapp/ext.h) and starts its
  * main() in a thread. Starting another app reboots into it.
  */

@@ -188,7 +188,7 @@ volatile bool esdr_panel_quiet = true;
 #define PANEL_WAIT      K_MSEC(40)
 /*
  * Lines at the multiples of the PSRAM's bus clock (at 200 MHz: 2200 to 2800 MHz in steps of 200)
- * drop while the panel's DMA is idle: the bus under the panel's reads (doc/hardware-quirks.md).
+ * drop while the panel's DMA is idle: the bus under the panel's reads (doc/radio/impairments.md).
  */
 #define PANEL_PSRAM_HZ  ((uint64_t)CONFIG_SPIRAM_SPEED * 1000000ULL)
 /* Past the band's edge: the decimator's transition and the line's skirt. */
@@ -1061,7 +1061,7 @@ static void rx_store_burst(uint64_t first_ns, size_t n, uint32_t rate)
 #define GL_OUT   128U
 /*
  * Gapless runs capture at 20 MS/s, as the bursts do, so that only what the analog filter lets
- * through from 20 MHz away folds in (doc/hardware-quirks.md). 20 MS/s leave CPU 1 16 cycles a
+ * through from 20 MHz away folds in (doc/radio/filters.md). 20 MS/s leave CPU 1 16 cycles a
  * word, the ring's turns some 1.6 of them (PIE copies: 3.9 before, when this ran at 10 MS/s): the
  * sink takes 12.0 a word at 250 kS/s, 10.9 at 125 kS/s (measured on the VIEWE board). The stream
  * sits a quarter of the rate above the LO.
@@ -1074,7 +1074,7 @@ static void rx_store_burst(uint64_t first_ns, size_t n, uint32_t rate)
  * with no half-band: a third order sinc, 2.6 dB down at 500 kHz, folds what lies 1.5 MHz from
  * the centre in 30 dB down, and the analog filter what lies 10 MHz away (the 13 MHz setting: some
  * 12 dB down on the LO's side of the centre; on the other 28 measured at 10 MS/s, over 40 in
- * doc/hardware-quirks.md's table). Half the capture rate halves the turns that stop the other
+ * doc/radio/filters.md's table). Half the capture rate halves the turns that stop the other
  * core. The centre lies a quarter of the 10 MS/s (2.5 MHz) from the LO, on the side
  * gl_lo_offset() picks; with no sum there is no null at the LO's DC: the sinc leaves it some 42
  * dB down, folded to 500 kHz from the centre.
@@ -1784,7 +1784,7 @@ static void gen_offset(const struct esdr_gen *gen)
  * into the capture bank in TCM, scaled to the path's full scale and the power step; then the
  * stream runs from IRAM with interrupts locked until the interpolator has emptied: the panel's
  * DMA keeps the picture, LVGL, touch and the console wait. At most the bank's pairs (106 ms at
- * 250 kS/s). doc/hardware-quirks.md has the path's numbers.
+ * 250 kS/s). doc/samples/paced.md has the path's numbers.
  */
 /* The TX DC path's full scale: 256 of the DAC's 511 counts, below the S31's knee. */
 #define TX_FULL      16384

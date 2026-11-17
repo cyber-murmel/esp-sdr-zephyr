@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Runs every unit test (tests/unit/): native_sim, no boards needed, a minute
-# or two. See doc/testing.md for the other test tiers.
+# or two. See doc/dev/testing.md for the other test tiers.
 #
 # NSI_OPT=-O2 works around a native_sim/glibc interaction: without an
 # optimization level, glibc's _FORTIFY_SOURCE check becomes a warning Zephyr

@@ -8,7 +8,7 @@
  * 4, or a plain pick-every-4th) -> PHY. Runs on native_sim.
  *
  * Besides the pass/fail cases, this file also holds the decimator sweep table
- * (test_decimator_table), opt-in with IEEE154_TABLES (see doc/testing.md): the
+ * (test_decimator_table), opt-in with IEEE154_TABLES (see doc/dev/testing.md): the
  * decoded fraction over SNR through the three decimators. The case is skipped
  * unless the variable is set; with it, test_cfo_estimator_accuracy also prints
  * its estimates.

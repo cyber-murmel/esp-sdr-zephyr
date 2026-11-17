@@ -4,7 +4,7 @@
  * ESP32-C6 placement rules (esp_sdr_place.h): the categories as the code was placed before them.
  * An app's rules come first (<app>/place.h); pins marked "as before" keep a function or buffer
  * where it was although its category says otherwise, each a candidate for a measured change
- * (doc/code-placement.md).
+ * (doc/dev/code-placement.md).
  *
  * IRAM is HP SRAM, as is all internal RAM; no PSRAM: ESP_SDR_PSRAM is the DRAM image.
  */

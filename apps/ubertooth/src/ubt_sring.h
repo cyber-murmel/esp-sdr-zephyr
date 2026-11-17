@@ -92,7 +92,8 @@ static inline bool ubt_sring_hole_get(const struct ubt_sring_holes *h, uint32_t 
  * The holes counted (count, read after w) from rd->hole on: skip those the reader has reached and
  * stop before the next one ahead. Returns the samples to take from rd->r on, at most avail.
  * Inline, in the reader's IRAM: out of line in flash it moved the flash code after it by 200 B,
- * and CPU 0 lapped two to three times as often (the instruction cache, doc/ubertooth.md).
+ * and CPU 0 lapped two to three times as often (the instruction cache,
+ * doc/apps/ubertooth-internals.md).
  */
 static inline uint32_t ubt_sring_take_holes(struct ubt_sring_rd *rd,
 					    const struct ubt_sring_holes *h, uint32_t w,

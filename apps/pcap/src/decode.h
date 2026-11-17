@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * The decoders that run over a closed burst (doc/pcap.md, "Decoders"): Bluetooth LE
+ * The decoders that run over a closed burst (doc/modem/bursts.md, "Decoders"): Bluetooth LE
  * (dec_ble.c), IEEE 802.15.4 (dec_wpan.c) and the generic analysis (dec_generic.c). Plain C, no
  * Zephyr: each is unit tested on native_sim. Each takes a burst (burst.h), a scratch area the
  * caller owns and hands its packets to a callback; none keeps a pointer into the burst or the
@@ -125,7 +125,7 @@ int dec_wpan_run(const struct burst *b, const struct dec_wpan_cfg *cfg, void *sc
 
 /*
  * The band between two neighbouring channels (@p lo's index one below @p hi's, both at
- * 4 MS/s) over the frames both hold, combined as doc/pcap.md describes, through the PHY.
+ * 4 MS/s) over the frames both hold, combined as doc/modem/bursts.md describes, through the PHY.
  * Packets carry the middle frequency. Returns the count or a negative errno.
  */
 int dec_wpan_run_pair(const struct burst *lo, const struct burst *hi,

@@ -1,9 +1,9 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * apps/pcap's wire formats beyond esdr_proto.h (doc/pcap.md): the vendor requests the host tool
- * (tools/esdr_pcap.py) sends this chip itself, and the record of a burst no decoder claimed,
- * the payload of the pcapng packets on the LINKTYPE_USER0 interface (tools/esdr_burst.lua
+ * apps/pcap's wire formats beyond esdr_proto.h (doc/apps/pcap-internals.md): the vendor requests
+ * the host tool (tools/esdr_pcap.py) sends this chip itself, and the record of a burst no decoder
+ * claimed, the payload of the pcapng packets on the LINKTYPE_USER0 interface (tools/esdr_burst.lua
  * dissects it). Little endian throughout, as esdr_proto.h. The host tool and its tests read the
  * numbers from this file: keep every constant on its own line, as "#define NAME value" or an
  * enumerator "NAME = value".
@@ -41,7 +41,7 @@ enum pcap_req {
 	PCAP_REQ_STOP = 0x41,
 	/*
 	 * OUT 8 bytes: the host's time, nanoseconds since the Unix epoch (uint64_t). Packet
-	 * timestamps count from it (doc/pcap.md, "Output").
+	 * timestamps count from it (apps/pcap/README.rst, "Output format").
 	 */
 	PCAP_REQ_SET_TIME = 0x42,
 	/* OUT struct pcap_decoders: what runs over the bursts. Applies to the next burst. */
@@ -62,8 +62,8 @@ enum pcap_req {
 };
 
 /*
- * Capture modes (doc/pcap.md, "Modes"). The survey runs the C6's gapless 80 MHz (bursts the
- * channelizer finds, decoded where they fit: the C6 keeps some 50 us of a burst whole, three
+ * Capture modes (apps/pcap/README.rst, "Modes"). The survey runs the C6's gapless 80 MHz (bursts
+ * the channelizer finds, decoded where they fit: the C6 keeps some 50 us of a burst whole, three
  * times that at 40 MS/s, PCAP_MODE_F_HALF). The channel mode streams one channel without a gap
  * at the C6's paced rate (2 MS/s): complete packets of that channel (Bluetooth LE 1M).
  */
@@ -83,9 +83,10 @@ enum pcap_mode {
  */
 #define PCAP_MODE_F_HALF    0x0002U
 /*
- * Follow 802.15.4 (doc/pcap.md, "Modes"): the capture starts in the survey (PCAP_MODE_SURVEY only,
- * 40 channels, PCAP_REQ_START fails otherwise) and goes to the channel mode on a channel where
- * the 802.15.4 decoder sights a frame or a piece of one, back when it goes quiet.
+ * Follow 802.15.4 (apps/pcap/README.rst, "Modes"): the capture starts in the survey
+ * (PCAP_MODE_SURVEY only, 40 channels, PCAP_REQ_START fails otherwise) and goes to the channel mode
+ * on a channel where the 802.15.4 decoder sights a frame or a piece of one, back when it goes
+ * quiet.
  */
 #define PCAP_MODE_F_FOLLOW  0x0004U
 

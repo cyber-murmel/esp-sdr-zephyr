@@ -23,7 +23,7 @@
  *   Captures and the ring give -EBUSY while it plays. Captures land in the
  *   same group (as on the C5, the bank): write the buffer after the last
  *   capture before the start. Measured, as no vendor code programs this
- *   engine: doc/hardware-quirks.md.
+ *   engine: doc/samples/transmit.md.
  */
 
 #ifndef ESP_SDR_ESP_SDR_REPLAY_H_
@@ -119,7 +119,7 @@ int esp_sdr_replay_wait(uint32_t timeout_us, uint32_t *cycles);
  * @brief Start a finished replay again, with the same settings and samples.
  *
  * The output pauses between the done flag and the restart (see
- * doc/hardware-quirks.md). Interrupts should be locked around wait and restart.
+ * doc/samples/transmit.md). Interrupts should be locked around wait and restart.
  *
  * @return 0, or -EINVAL for no replay.
  */

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Host tests of the repository's Python tools (pytest, CPython): see doc/testing.md."""
+"""Host tests of the repository's Python tools (pytest, CPython): see doc/dev/testing.md."""
 
 import ctypes
 import importlib.util

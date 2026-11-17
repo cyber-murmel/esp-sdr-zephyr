@@ -577,7 +577,7 @@ ZTEST(pcap_wpan, test_combine_convention)
 			     tb_hi.b.m0 + tb_hi.b.n >= m + frames);
 		dec_wpan_combine(&tb_lo.b, &tb_hi.b, m, frames, z);
 		tone_stats(z, frames, &step, &mag);
-		printk("tone at %+.1f MHz combined (doc/pcap.md): step %.4f rad a frame "
+		printk("tone at %+.1f MHz combined (doc/modem/bursts.md): step %.4f rad a frame "
 		       "(want %.4f), magnitude %.0f (gain A %.0f)\n",
 		       (CH_HZ(CH_LO) + 1e6 + off) / 1e6, step, want_step, mag, GAIN * amp);
 		zassert_within(step, want_step, 0.05, "step %.4f, want %.4f", step, want_step);

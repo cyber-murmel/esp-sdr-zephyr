@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Two-board hardware regression test of the LO tuning (pytest/test_lo_tuning.py, see
-# doc/testing.md): the ESP32-S3 transmits tones, the ESP32-C6 captures them. The DUT image is
+# doc/dev/testing.md): the ESP32-S3 transmits tones, the ESP32-C6 captures them. The DUT image is
 # the apps/rfprobe application, unmodified, as ieee802154_link builds apps/wpan: src/main.c by
 # path, APPLICATION_CONFIG_DIR and KCONFIG_ROOT pointing Zephyr's board-aware config lookup at
 # the app. Only sysbuild.conf is a copy: sysbuild looks it up here, before this file runs

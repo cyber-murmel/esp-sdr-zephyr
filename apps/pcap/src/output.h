@@ -1,11 +1,11 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * The pcapng stream (doc/pcap.md, "Output"): one section per capture (SHB, the three interface
- * blocks of pcap_proto.h's PCAP_IF_*, timestamps in nanoseconds), a packet block per decoded
- * packet, statistics blocks every second, written into transfer buffers of internal RAM that go
- * out on the vendor interface's bulk IN as they fill (or after OUTPUT_FLUSH_MS). A block that
- * does not fit is dropped and counted against its interface, never waited for.
+ * The pcapng stream (apps/pcap/README.rst, "Output format"): one section per capture (SHB, the
+ * three interface blocks of pcap_proto.h's PCAP_IF_*, timestamps in nanoseconds), a packet block
+ * per decoded packet, statistics blocks every second, written into transfer buffers of internal RAM
+ * that go out on the vendor interface's bulk IN as they fill (or after OUTPUT_FLUSH_MS). A block
+ * that does not fit is dropped and counted against its interface, never waited for.
  */
 
 #ifndef OUTPUT_H_

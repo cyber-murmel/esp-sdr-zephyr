@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# multiapp (doc/multiapp.md): the other apps, built from their own sources as
+# multiapp (doc/apps/multiapp-internals.md): the other apps, built from their own sources as
 # llext extensions, run on one host image.
 
 cmake_minimum_required(VERSION 3.20.0)

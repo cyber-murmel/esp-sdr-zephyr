@@ -10,7 +10,7 @@
  * from CPU 1; a thread on the other CPU runs a wideband power gate, a channelizer (a polyphase
  * filter bank for grids that divide the ring rate, else one mixer and decimator per channel), a
  * power detector per channel, and assembles the captures in a PSRAM slab. A callback thread
- * hands every finished capture to the consumer. Design: doc/chancap.md. Needs
+ * hands every finished capture to the consumer. Design: doc/modem/channelizer.md. Needs
  * CONFIG_ESP_SDR_CHANCAP.
  */
 

@@ -345,7 +345,7 @@ void esp_sdr_tx_tone_stop(void)
  * The paced stream's chain (esp_sdr_paced.c), lock held: the tone path turns the transmit chain
  * on at the LO as tuned, then phy_stop_tx_tone_new() stops the tone and hands the DAC to the TX DC
  * value. No retune: the tone path keeps the LO. The power step does nothing here; the level
- * follows the samples alone (doc/hardware-quirks.md).
+ * follows the samples alone (doc/radio/gain.md).
  */
 int esp_sdr_tx_chain_on(unsigned int power)
 {

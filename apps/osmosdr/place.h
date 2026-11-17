@@ -2,7 +2,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * osmosdr's placement rules (esp_sdr_place.h), ahead of the SoC's. Pins marked "as before" keep
- * code where it was, each a candidate for a measured change (doc/code-placement.md).
+ * code where it was, each a candidate for a measured change (doc/dev/code-placement.md).
  */
 
 /* As before: the ring's sink and what it calls run on the ring's CPU from flash. */

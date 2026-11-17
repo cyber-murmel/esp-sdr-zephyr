@@ -1,13 +1,13 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * The stream thread and the survey (doc/pcap.md, "Survey"). The radio's blocks come here: in
- * the survey the C6's gapless segment blocks go through the fixed-point channelizer and burst
- * detector (../../common/include/esdr_pfbq.h, PIE on the P4: this is the one thread that uses
- * it, pinned to its core), each channel's opening is assembled into a burst (burst.h) until it closes, a signal
- * that opens BURST_WIDE_MIN or more adjacent channels at once is kept as one wideband burst
- * without samples, and the C6's width records are joined into wideband runs; in the channel
- * mode the blocks go to narrow.c. Closed bursts go to the decoder.
+ * The stream thread and the survey (doc/modem/bursts.md, "Survey assembler"). The radio's blocks
+ * come here: in the survey the C6's gapless segment blocks go through the fixed-point channelizer
+ * and burst detector (../../common/include/esdr_pfbq.h, PIE on the P4: this is the one thread that
+ * uses it, pinned to its core), each channel's opening is assembled into a burst (burst.h) until it
+ * closes, a signal that opens BURST_WIDE_MIN or more adjacent channels at once is kept as one
+ * wideband burst without samples, and the C6's width records are joined into wideband runs; in the
+ * channel mode the blocks go to narrow.c. Closed bursts go to the decoder.
  */
 
 #include <errno.h>

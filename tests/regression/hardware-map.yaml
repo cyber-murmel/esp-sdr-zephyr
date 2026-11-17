@@ -1,5 +1,5 @@
 # Hardware map of the boards on the desk, for the two-board regression tests
-# (scripts/run-regression-tests.sh, doc/testing.md). For another desk change the
+# (scripts/run-regression-tests.sh, doc/dev/testing.md). For another desk change the
 # serial numbers: `ls /dev/serial/by-id` shows them. The stream_gapless scenarios also need the
 # C5 on a coax link to the C6 (a 30 dB attenuator between the U.FL ports).
 #

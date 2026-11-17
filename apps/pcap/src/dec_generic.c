@@ -1,8 +1,8 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * The generic analysis of a burst no decoder claimed (decode.h, doc/pcap.md "Decoders"): its
- * centre, bandwidth, modulation class, symbol rate and bits, best effort. Plain C, no Zephyr:
+ * The generic analysis of a burst no decoder claimed (decode.h, doc/modem/bursts.md "Decoders"):
+ * its centre, bandwidth, modulation class, symbol rate and bits, best effort. Plain C, no Zephyr:
  * tests/unit/pcap_generic runs it on native_sim.
  *
  * Measure and refine. The loud part, trimmed to where the envelope stands clear of the floor, is

@@ -15,7 +15,7 @@
  * @{
  *
  * A function or buffer says how it is used; rules for the SoC, the board and the app say where
- * that goes (doc/code-placement.md). Every region expands to the attribute such code or data
+ * that goes (doc/dev/code-placement.md). Every region expands to the attribute such code or data
  * carried before (IRAM_ATTR, DRAM_ATTR, EXT_RAM_BSS_ATTR, ESP_SDR_HIGH_RAM, ...), so the default
  * rules keep each section name as it was, and a multiapp extension's own definitions of those
  * attributes (multiapp/ext.h) still apply.

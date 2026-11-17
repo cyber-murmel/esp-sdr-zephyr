@@ -499,7 +499,7 @@ int ieee154_esp_sdr_set_ring_unit(uint32_t pairs)
 
 #if defined(CONFIG_ESP_SDR_IEEE802154_AUTO_ACK)
 /*
- * ACKs from inside the ring run (doc/ieee802154-ack.md): the PHY's header
+ * ACKs from inside the ring run (doc/modem/ieee802154.md): the PHY's header
  * callback decides from the addresses whether an ACK is due and arms a ring
  * burst with the frame's end; the waveform's first 416 slots (preamble,
  * SFD, PHR and the frame control's low nibble) are the same for every ACK

@@ -3,8 +3,8 @@
 # Prints the sweep tables of the 802.15.4 unit tests: the PHY's packet error rate over SNR and
 # carrier offset (phy) and the decoded fraction of the driver chain per decimator over SNR (dsp),
 # each about half a minute on an idle machine plus the build. They are test cases that skip unless IEEE154_TABLES is set,
-# which this script does, and they assert the region doc/ieee802154.md documents. The dsp run
-# also prints the carrier offset estimates. See doc/testing.md.
+# which this script does, and they assert the region doc/modem/ieee802154.md documents. The dsp run
+# also prints the carrier offset estimates. See doc/dev/testing.md.
 #
 # usage: unit-tables.sh [phy|dsp]    (default: both)
 set -eu

@@ -7,9 +7,9 @@
  *
  * The S3's instruction cache is 16 KB, 8 ways of 2 KB with 32 byte lines. Where its lines fall
  * decided how much of the stream CPU 0 lost: the same image padded back to the previous flash
- * layout lost a fifth to a fifteenth as much (doc/ubertooth.md). Every function, and every
- * literal before the text, moved the code behind it. Aligned to the way, the block's lines keep
- * their cache sets whatever comes before or after it. At about 12 KB it takes 6 of the 8 ways
+ * layout lost a fifth to a fifteenth as much (doc/apps/ubertooth-internals.md). Every function, and
+ * every literal before the text, moved the code behind it. Aligned to the way, the block's lines
+ * keep their cache sets whatever comes before or after it. At about 12 KB it takes 6 of the 8 ways
  * of each set, leaving 2 to the rest: filled to 16 KB, it left the losses depending 9 times
  * as much on code outside it as at 12 KB (3.5 times).
  *

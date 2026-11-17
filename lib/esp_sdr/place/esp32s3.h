@@ -4,7 +4,7 @@
  * ESP32-S3 placement rules (esp_sdr_place.h): the categories as the code was placed before them.
  * An app's rules come first (<app>/place.h); pins marked "as before" keep a function or buffer
  * where it was although its category says otherwise, each a candidate for a measured change
- * (doc/code-placement.md).
+ * (doc/dev/code-placement.md).
  */
 
 /* Paced code: IRAM, the receive ring and its sinks run there with interrupts masked. */

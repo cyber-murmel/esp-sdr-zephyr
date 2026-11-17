@@ -4,7 +4,7 @@
  * Boot glue for MicroPython as the main program. The shared USB device (CDC-ACM console the
  * REPL talks to, DFU, watchdog) starts from here. The port's main(), compiled as real_main()
  * (CMakeLists.txt), runs in its own thread on CPU 0 with its stack in the SRAM above the ring
- * banks: internal RAM, which flash access needs (doc/hardware-quirks.md, Memory), but outside
+ * banks: internal RAM, which flash access needs (doc/dev/code-placement.md), but outside
  * the DRAM image, which must end below the ring banks. esdr_port_init() points MicroPython's
  * stack check at that stack.
  */

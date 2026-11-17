@@ -1,8 +1,8 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * The Pcap app's packet capture (eggs/pcap): apps/pcap's channel mode (doc/pcap.md, "Modes")
- * on the stream of the board's own radio. A power detector cuts one channel's samples into
+ * The Pcap app's packet capture (eggs/pcap): apps/pcap's channel mode (apps/pcap/README.rst,
+ * "Modes") on the stream of the board's own radio. A power detector cuts one channel's samples into
  * bursts as apps/pcap's src/narrow.c does, and every burst goes through apps/pcap's decoders
  * in the order of its src/decoder.c: Bluetooth LE, IEEE 802.15.4, then the generic analysis
  * for what neither claimed (a band filling the channel goes out unanalysed, a burst beyond the

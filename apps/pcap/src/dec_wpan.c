@@ -3,8 +3,8 @@
  *
  * The IEEE 802.15.4 decoder of apps/pcap (decode.h): a closed burst at 4 MS/s, one at 2 MS/s
  * (the channel mode's) read at 4 MS/s, or the band between two neighbouring channels of the bank
- * recombined from both (doc/pcap.md), streamed through a receiver of the software O-QPSK PHY
- * (lib/ieee802154/ieee154_phy.c). Every frame
+ * recombined from both (doc/modem/bursts.md), streamed through a receiver of the software O-QPSK
+ * PHY (lib/ieee802154/ieee154_phy.c). Every frame
  * comes out once, with its FCS verdict (bad ones only when asked), its first preamble sample (of
  * a pair: an index into lo), a carrier offset estimate, its mean power and the 802.15.4 channel
  * of the frequency it was decoded on. Plain C, no Zephyr: tests/unit/pcap_wpan runs it on
@@ -94,8 +94,8 @@ static inline int16_t sat16(int32_t v)
 
 /*
  * The band centred between channels k (lo) and k + 1 (hi) at the same 4 MS/s, n frames from
- * absolute frame index m (doc/pcap.md): z[m] = lo[m] exp(-j pi m / 2) + hi[m] exp(+j pi m / 2),
- * the factors by m mod 4 being 1, -j, -1, j for lo and 1, j, -1, -j for hi, saturated to int16.
+ * absolute frame index m (doc/modem/bursts.md): z[m] = lo[m] exp(-j pi m / 2) + hi[m] exp(+j pi m /
+ * 2), the factors by m mod 4 being 1, -j, -1, j for lo and 1, j, -1, -j for hi, saturated to int16.
  * Both bursts must hold the frames. Not static: the unit test checks the convention on tones.
  */
 void dec_wpan_combine(const struct burst *lo, const struct burst *hi, uint64_t m, uint32_t n,

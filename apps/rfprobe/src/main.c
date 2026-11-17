@@ -62,7 +62,7 @@
 #include <zephyr/sys/poweroff.h>
 #endif
 
-/* Vendor and ROM calls, as lib/esp_sdr uses them (doc/undocumented-registers-*.md). */
+/* Vendor and ROM calls, as lib/esp_sdr uses them (doc/dev/registers-*.md). */
 extern void regi2c_enter_critical(void);
 extern void regi2c_exit_critical(void);
 #if defined(CONFIG_SOC_SERIES_ESP32C5)

@@ -1,9 +1,9 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * What the parts of apps/pcap share (doc/pcap.md): the capture's settings, the time base, the
- * burst pool and the decoder's queue, the counters. main.c owns the settings and changes them
- * only while no capture runs.
+ * What the parts of apps/pcap share (doc/apps/pcap-internals.md): the capture's settings, the time
+ * base, the burst pool and the decoder's queue, the counters. main.c owns the settings and changes
+ * them only while no capture runs.
  */
 
 #ifndef APP_H_

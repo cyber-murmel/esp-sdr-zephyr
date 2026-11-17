@@ -1,8 +1,8 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * The follow mode's decisions (doc/pcap.md, "Modes"): from the survey to the 802.15.4 channel it
- * sighted, back when that channel goes quiet. Plain C on times the caller passes:
+ * The follow mode's decisions (apps/pcap/README.rst, "Modes"): from the survey to the 802.15.4
+ * channel it sighted, back when that channel goes quiet. Plain C on times the caller passes:
  * tests/unit/pcap_follow runs it on native_sim. The caller holds a lock around these.
  */
 

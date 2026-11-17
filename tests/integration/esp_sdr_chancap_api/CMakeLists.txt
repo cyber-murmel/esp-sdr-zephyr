@@ -2,7 +2,7 @@
 #
 # Hardware integration test of esp_sdr_chancap on the XIAO ESP32S3: the start contract, the
 # channelizer's timing on synthetic data (both engines), and a short live run. Deployed with
-# `west dfu` like the apps (USB shell, see Kconfig). See doc/testing.md.
+# `west dfu` like the apps (USB shell, see Kconfig). See doc/dev/testing.md.
 
 cmake_minimum_required(VERSION 3.20.0)
 

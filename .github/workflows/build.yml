@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Builds every app and test for every platform it allows and runs the unit
-# tests, as Zephyr's example application does (doc/testing.md). The integration
+# tests, as Zephyr's example application does (doc/dev/testing.md). The integration
 # and regression tests need real boards, which a GitHub runner does not have:
 # here they are only built. The unit tests' code coverage goes into the job
 # summary, the HTML report into the "coverage" artifact; the host tests of the Python

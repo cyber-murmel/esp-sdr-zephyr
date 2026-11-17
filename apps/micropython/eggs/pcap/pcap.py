@@ -3,7 +3,7 @@
 
 apps/pcap's channel mode on one channel at 2 MS/s: a power detector cuts bursts, and apps/pcap's
 decoders make Bluetooth LE packets, IEEE 802.15.4 frames and, from what neither claimed, records
-of the burst's modulation, symbol rate and bits (doc/pcap.md). Where the esdr module has the
+of the burst's modulation, symbol rate and bits (doc/modem/bursts.md). Where the esdr module has the
 engine (esdr.pcap_start(): the S3 in multiapp, esdr.PACKET_RATES, the ring's every 4th pair, two
 of them averaged; the S31; the P4), a thread above MicroPython runs the detector where the
 samples land (the S3 and the S31: internal RAM, the thread on the other CPU; the P4: a ring in

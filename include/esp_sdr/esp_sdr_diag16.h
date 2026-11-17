@@ -15,7 +15,7 @@
  * 13 MHz, so 10 and 5 MS/s alias.
  *
  * The 16 pads are driven as outputs that toggle at up to 40 MHz: nothing may drive them, whatever
- * they reach gets all that, and a slow pad spoils its bits (doc/hardware-quirks.md).
+ * they reach gets all that, and a slow pad spoils its bits (doc/samples/rings.md).
  *
  * The PARLIO clock comes from 160 MHz, the bus runs at 80 MHz: a start samples the bus either in the
  * middle of its bit or on its edge, about one start in two, whatever the rate or clock edge. On the

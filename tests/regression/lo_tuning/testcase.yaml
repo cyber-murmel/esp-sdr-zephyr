@@ -3,7 +3,7 @@ tests:
   # S3 transmits tones, a real C6 captures them, at overlapping LO pairs; both run
   # apps/rfprobe, built from here (CMakeLists.txt). Needs
   # both boards in a hardware map: scripts/run-regression-tests.sh runs it with
-  # tests/regression/hardware-map.yaml (see doc/testing.md). Twister flashes and
+  # tests/regression/hardware-map.yaml (see doc/dev/testing.md). Twister flashes and
   # resets both, so the two per-board ids below exist only to be built
   # (build_only), and are referenced by id from the scenario id.
   regression.esp_sdr.lo_tuning.c6:

@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * A burst: one channel's samples from the detector's opening to its closing (doc/pcap.md).
+ * A burst: one channel's samples from the detector's opening to its closing (doc/modem/bursts.md).
  * The assembler (burst.c, the channelizer thread) fills one from the detector's events; the
  * decoder thread reads it. Plain C: the decoders and their tests on native_sim use this header
  * without Zephyr.

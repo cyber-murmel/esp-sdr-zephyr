@@ -5,7 +5,7 @@ sample:
     data and the DSP chain; CONFIG_ESDR_FPGA_IMAGE embeds a bitstream to load at boot
 common:
   tags: esp-sdr
-  # Driven from the shell by hand (doc/fpga-accelerator.md); tests/integration/esdr_fpga is the
+  # Driven from the shell by hand (doc/apps/mch2022.md); tests/integration/esdr_fpga is the
   # test on the badge.
   build_only: true
   platform_allow:

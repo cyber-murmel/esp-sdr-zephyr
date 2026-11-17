@@ -1,9 +1,9 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * Refinement of a narrow burst (doc/pcap.md, "Refinement"): the stream mixed to the signal's
- * centre and decimated by a power of two through half-band stages, so that a signal much
- * narrower than its bin gets a rate fitting its bandwidth and loses the noise outside it. The
+ * Refinement of a narrow burst (doc/modem/bursts.md, "Recursive refinement"): the stream mixed to
+ * the signal's centre and decimated by a power of two through half-band stages, so that a signal
+ * much narrower than its bin gets a rate fitting its bandwidth and loses the noise outside it. The
  * generic decoder applies it recursively: measure, refine while the signal fills less than a
  * quarter of the rate, measure again. Plain C, no Zephyr: unit tested on native_sim.
  */

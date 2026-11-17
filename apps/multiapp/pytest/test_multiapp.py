@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Desk check of the multiapp host (doc/multiapp.md): the image and its FAT volume are
-on the XIAO ESP32-S3 (scripts/twister-flash.py), and the boot runs hello from its file.
+"""Desk check of the multiapp host (doc/apps/multiapp-internals.md): the image and its FAT volume
+are on the XIAO ESP32-S3 (scripts/twister-flash.py), and the boot runs hello from its file.
 
 Run with the boards attached:
 

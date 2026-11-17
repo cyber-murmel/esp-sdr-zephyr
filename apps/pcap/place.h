@@ -3,7 +3,7 @@
  *
  * The pcap app's placement rules (esp_sdr_place.h), for its sources (ESP_SDR_PLACE_SCOPE pcap),
  * ahead of the SoC's. Pins marked "as before" keep data where it was, each a candidate for a
- * measured change (doc/code-placement.md).
+ * measured change (doc/dev/code-placement.md).
  */
 
 /* As before: the decoders' scratch in PSRAM, 136 KB and two of 176 KB. */

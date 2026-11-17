@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * The Bluetooth LE decoder of apps/pcap (decode.h, doc/pcap.md "Decoders"): LE 1M and LE 2M
+ * The Bluetooth LE decoder of apps/pcap (decode.h, doc/modem/bursts.md "Decoders"): LE 1M and LE 2M
  * packets in a closed burst at 4 or 2 MS/s, the algorithm of apps/chancap/tools/ble_pcap.py. An
  * FM discriminator (dec_step(), a binary angle a sample) summed over a symbol at every sampling
  * phase, the access addresses looked for at every position whatever the carrier offset, the

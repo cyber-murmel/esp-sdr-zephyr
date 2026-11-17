@@ -17,7 +17,7 @@ Guards the properties the streams were built for and that only ever showed on th
 - the transmit stream keeps up with the host (underruns stay below a fraction of a percent).
 
 Needs two connected boards on a coax link, and a hardware map with required_devices (see
-doc/testing.md); twister flashes and resets both. The RF levels (below) suit a 30 dB attenuator
+doc/dev/testing.md); twister flashes and resets both. The RF levels (below) suit a 30 dB attenuator
 between the U.FL ports; another path may need other gains.
 """
 import logging

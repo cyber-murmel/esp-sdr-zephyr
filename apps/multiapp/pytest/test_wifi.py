@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The stock Wi-Fi driver as a module (doc/multiapp.md): the boot runs wifitest, and the board finds
-the access points around it. Needs at least one in range.
+"""The stock Wi-Fi driver as a module (doc/apps/multiapp-internals.md): the boot runs wifitest, and
+the board finds the access points around it. Needs at least one in range.
 
     west twister -T apps/multiapp -s sample.esp_sdr.multiapp.wifi.hil --device-testing \\
         --hardware-map tests/regression/hardware-map.yaml \\

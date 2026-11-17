@@ -88,7 +88,7 @@ def main():
                     help="native radio board: USB serial number or console port")
     ap.add_argument("--sdr", required=True,
                     help="esp-sdr board: USB serial number or shell port")
-    # Channel 26 from the C6 does not decode yet (doc/ieee802154.md).
+    # Channel 26 from the C6 does not decode yet (doc/modem/ieee802154.md).
     ap.add_argument("--channels", default="11,15,20,25")
     ap.add_argument("--frames", type=int, default=200)
     ap.add_argument("--payload", type=int, default=16)

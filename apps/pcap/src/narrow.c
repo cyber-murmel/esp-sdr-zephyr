@@ -1,10 +1,10 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * The channel mode (doc/pcap.md, "Modes"): the C6's paced receive (ESDR_MODE_RX, one channel
- * without a gap at its rate, the LO on the channel, the DC taken out on the C6) cut into bursts
- * by a power detector: the power of blocks of NB_BLOCK samples against a floor learnt from the
- * quietest of the first blocks and following the quiet ones; a block above floor * ratio opens
+ * The channel mode (apps/pcap/README.rst, "Modes"): the C6's paced receive (ESDR_MODE_RX, one
+ * channel without a gap at its rate, the LO on the channel, the DC taken out on the C6) cut into
+ * bursts by a power detector: the power of blocks of NB_BLOCK samples against a floor learnt from
+ * the quietest of the first blocks and following the quiet ones; a block above floor * ratio opens
  * a burst (with NB_PRE samples before it), NB_HANG quiet blocks close it. Run by the stream
  * thread (survey.c).
  */

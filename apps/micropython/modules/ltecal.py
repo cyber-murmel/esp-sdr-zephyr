@@ -14,8 +14,8 @@ here, in FILE, and goes to the radio again at every start (restore(), from the l
     ltecal.clear()
     ltecal.restore()        # FILE's record to the radio (session only there)
 
-Terms as in doc/lte-calibration.md: ppb is the crystal's error, positive when the LO runs high;
-the correction in force is what the radio tunes with; an estimate is relative to that.
+Terms as in doc/radio/crystal-calibration.md: ppb is the crystal's error, positive when the LO runs
+high; the correction in force is what the radio tunes with; an estimate is relative to that.
 """
 
 import os

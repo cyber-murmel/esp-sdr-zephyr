@@ -2,7 +2,7 @@
 #
 # Hardware integration test of the esp_sdr DAC-engine replay (esp_sdr_replay.h) on a real
 # board: argument checks, pass timing at both rates, the repeat count, restarts, and the
-# return to receive. See doc/testing.md.
+# return to receive. See doc/dev/testing.md.
 
 cmake_minimum_required(VERSION 3.20.0)
 

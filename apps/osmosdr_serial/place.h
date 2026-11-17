@@ -2,7 +2,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * osmosdr_serial's placement rules (esp_sdr_place.h), ahead of the SoC's. Pins marked "as before"
- * keep code and data where it was, each a candidate for a measured change (doc/code-placement.md).
+ * keep code and data where it was, each a candidate for a measured change
+ * (doc/dev/code-placement.md).
  */
 
 /* As before: the paced loops themselves run from flash. */

@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 --
--- Wireshark dissector of the pcap app's burst record (doc/pcap.md): the packets on the
--- stream's LINKTYPE_USER0 interface, struct pcap_burst_hdr of apps/pcap/src/pcap_proto.h and
+-- Wireshark dissector of the pcap app's burst record (doc/apps/pcap-internals.md): the packets on
+-- the stream's LINKTYPE_USER0 interface, struct pcap_burst_hdr of apps/pcap/src/pcap_proto.h and
 -- then the bits (the most significant bit of each byte first), little endian. The header is
 -- read by its own length: fields a later version appends are skipped, the bits follow them.
 -- Load it from Wireshark's personal Lua plugins folder (Help > About > Folders), or with

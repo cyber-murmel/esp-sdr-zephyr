@@ -4,7 +4,7 @@
  * multiapp's placement rules (esp_sdr_place.h), ahead of the SoC's: the host's (ESP_SDR_PLACE_SCOPE
  * multiapp) and those of the apps it builds as extensions, whose scope is the extension's name.
  * Pins marked "as before" keep data where it was, each a candidate for a measured change
- * (doc/code-placement.md).
+ * (doc/dev/code-placement.md).
  */
 
 #include "../capture/place.h"

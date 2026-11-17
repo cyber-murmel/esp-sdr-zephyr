@@ -1,12 +1,12 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * Refinement of a narrow burst (refine.h, doc/pcap.md "Refinement"): a mixer from a 32-bit phase
- * accumulator and a cascade of half-band decimators in float, block by block: each stage keeps
- * its last inputs as history before a linear block, so that the scratch is the stages' blocks
- * whatever the burst's length and the output may overwrite the input. Each stage is an 11-tap
- * equiripple half-band (Lawson's minimax on its pass band): flat within 0.014 dB up to an eighth
- * of its input rate (a quarter of its output rate), 55 dB down from three eighths, where the
+ * Refinement of a narrow burst (refine.h, doc/modem/bursts.md "Recursive refinement"): a mixer from
+ * a 32-bit phase accumulator and a cascade of half-band decimators in float, block by block: each
+ * stage keeps its last inputs as history before a linear block, so that the scratch is the stages'
+ * blocks whatever the burst's length and the output may overwrite the input. Each stage is an
+ * 11-tap equiripple half-band (Lawson's minimax on its pass band): flat within 0.014 dB up to an
+ * eighth of its input rate (a quarter of its output rate), 55 dB down from three eighths, where the
  * images of that band lie. Every output sample is centred on input sample decim k (the stages
  * zero phase, the stream zero beyond its ends), so that sample indices scale exactly. Plain C, no
  * Zephyr: tests/unit/pcap_generic runs it on native_sim.

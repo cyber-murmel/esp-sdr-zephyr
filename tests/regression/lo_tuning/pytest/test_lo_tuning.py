@@ -17,7 +17,7 @@ What it guards:
 
 Both boards run apps/rfprobe: its `probe` shell tunes, loops the tone on the S3 and
 dumps a raw capture from the C6, which is analysed here (analyse()). Needs two
-connected boards and a hardware map with required_devices (see doc/testing.md);
+connected boards and a hardware map with required_devices (see doc/dev/testing.md);
 twister flashes and resets both. The levels depend on the RF path
 between the boards (the C6 image listens on its U.FL port): RX_GAIN and TX_STEP are
 set for this desk, and the radios fixture checks the link at 2412 MHz first, so a weak
@@ -162,7 +162,7 @@ def check_pairs(radios: Radios, pairs) -> None:
 def radios(shells: list[Shell]) -> Radios:
     assert len(shells) > 1, (
         "this test needs two connected boards (a hardware map with required_devices; "
-        "see doc/testing.md)"
+        "see doc/dev/testing.md)"
     )
     # shells[0] is the scenario's own board, the C6; shells[1] the S3, the only one
     # with a transmitter.

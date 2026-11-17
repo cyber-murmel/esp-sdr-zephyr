@@ -49,8 +49,9 @@
 #define UBT_RSSI_NOISE_RAW (-46)
 /*
  * Placeholder calibration, half dB: 0 dBFS at -66 dBm at the receive gain of the sniffer and the
- * spectrum analyser (index 60), from the noise floor measured in doc/ubertooth.md and a 7 dB
- * noise figure. Replace per gain index with ubt_rssi_set_cal() once a known source is measured.
+ * spectrum analyser (index 60), from the noise floor measured in doc/apps/ubertooth-internals.md
+ * and a 7 dB noise figure. Replace per gain index with ubt_rssi_set_cal() once a known source is
+ * measured.
  */
 #define UBT_RSSI_K_DEFAULT (-132)
 

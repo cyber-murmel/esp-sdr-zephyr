@@ -12,13 +12,13 @@ as lost or corrupted frames between two real boards (never on native_sim,
 and not reliably from a single board's own counters):
 
 - the Wi-Fi MAC interrupt running inside the receive ring's interrupt
-  windows, starving it (doc/hardware-quirks.md, "The Wi-Fi MAC interrupt
-  must not run inside the ring");
+  windows, starving it (doc/samples/rings.md, "Interrupts
+  inside the ring");
 - the sample ring generation race (the PHY thread pairing a stale
   generation with another run's write index).
 
 Needs two connected boards and a hardware map with required_devices (see
-doc/testing.md); twister flashes and resets both.
+doc/dev/testing.md); twister flashes and resets both.
 """
 import logging
 import re
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 RX_RE = re.compile(r"rx frames (\d+) test (\d+) bad (\d+) dups (\d+) lost (\d+)")
 TX_RE = re.compile(r"tx sent (\d+) ok (\d+) noack (\d+) busy (\d+) err (\d+)")
 CHANNELS = (11, 15, 20, 25)  # not 26: the C6's waveform there does not decode (parked, see
-# doc/ieee802154.md)
+# doc/modem/ieee802154.md)
 FRAMES = 100
 PAYLOAD = 100
 INTERVAL_MS = 5
@@ -97,7 +97,7 @@ def check_direction(direction: str, channel: int, tx: Shell, rx: Shell) -> None:
 def radios_on(shells: list[Shell]):
     assert len(shells) > 1, (
         "this test needs two connected boards (a hardware map with required_devices; "
-        "see doc/testing.md)"
+        "see doc/dev/testing.md)"
     )
     # shells[0] must be the native radio (the scenario's own board), shells[1] the software one.
     for shell, radio in zip(shells, ("radio ieee802154 ", "radio esp_sdr_154 ")):

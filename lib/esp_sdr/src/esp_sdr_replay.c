@@ -19,7 +19,9 @@
 #if defined(CONFIG_SOC_SERIES_ESP32S31)
 #include <esp_cpu.h>
 
-/* The scale the tone stop leaves (0xff) is kept: the S31's is no plain gain (hardware-quirks). */
+/* The scale the tone stop leaves (0xff) is kept: the S31's is no plain gain
+ * (doc/samples/transmit.md).
+ */
 #define SCALE_DEFAULT 0U
 
 /* The reader's rate codes in DUMP_MODE: 80, 40 and 20 MS/s; others were not measured. */

@@ -4,7 +4,7 @@
  * The receive engine: a cooperative thread pinned to CPU 1 runs esp_sdr_ring_run(), whose
  * sink copies into the capture buffer and ends the run when the capture is complete. The
  * state shared with the REPL's CPU lives in internal RAM: atomics in PSRAM are emulated and
- * not safe across the CPUs (doc/hardware-quirks.md, Memory). The buffer itself may be PSRAM.
+ * not safe across the CPUs (doc/dev/code-placement.md). The buffer itself may be PSRAM.
  */
 
 #include <errno.h>

@@ -19,7 +19,7 @@
 #include <esp_sdr/esp_sdr_rx.h>
 #include <esp_sdr/esp_sdr_tx.h>
 
-/* A pass costs the samples plus a start of about 50 CPU cycles (doc/hardware-quirks.md). */
+/* A pass costs the samples plus a start of about 50 CPU cycles (doc/samples/transmit.md). */
 #define START_CYCLES_MAX 400U
 
 /* CPU cycles a word: the samples' part of a pass. */

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Placement goes through usage categories (include/esp_sdr/esp_sdr_place.h,
-doc/code-placement.md): no source names a region's attribute or section itself, apart from the
+doc/dev/code-placement.md): no source names a region's attribute or section itself, apart from the
 files that define the regions and the exceptions listed here."""
 
 import re

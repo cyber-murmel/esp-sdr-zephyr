@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Two-board hardware regression test (pytest/test_interop.py, see
-# doc/testing.md). The DUT image is the apps/wpan application, unmodified:
+# doc/dev/testing.md). The DUT image is the apps/wpan application, unmodified:
 # this test's whole job is to regress what that application actually ships,
 # not a rebuilt stand-in. src/main.c is built from there by path, and
 # APPLICATION_CONFIG_DIR points Zephyr's own board-aware config lookup at

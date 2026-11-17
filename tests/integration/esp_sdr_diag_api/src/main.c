@@ -17,7 +17,7 @@
 #include <esp_sdr/esp_sdr_diag.h>
 
 /* A bound on the CPU's share: box16 and the CIC cost about 4.4 cycles per byte at 240 MHz
- * (budget 6.0, doc/hardware-quirks.md). */
+ * (budget 6.0, doc/samples/rings.md). */
 #define MAX_SINK_CYCLES_X100 600U
 
 static void *suite_setup(void)

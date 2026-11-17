@@ -1,8 +1,8 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * The decoder thread (doc/pcap.md, "Decoders"): every closed burst through the decoders that
- * fit it (Bluetooth LE on a channel of its grid at 4 or 2 MS/s, IEEE 802.15.4 on a channel of
+ * The decoder thread (doc/modem/bursts.md, "Decoders"): every closed burst through the decoders
+ * that fit it (Bluetooth LE on a channel of its grid at 4 or 2 MS/s, IEEE 802.15.4 on a channel of
  * its grid at 4 MS/s, from one bin or two neighbouring ones), wideband bursts as burst records;
  * each packet goes out as a pcapng packet with its metadata. What no decoder claimed goes to the
  * generic analysis, threads of its own at the lowest priority with a short queue (with two cores

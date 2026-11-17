@@ -15,7 +15,7 @@ config ESP_SDR_IEEE802154
 	  ieee154_esp_sdr_set_rx_cb() (raw 802.15.4 mode would compile out
 	  the interface layer the Wi-Fi driver needs). Waits for ACKs, sends
 	  them with ESP_SDR_IEEE802154_AUTO_ACK; no CCA: see
-	  doc/ieee802154.md. Needs CONFIG_IEEE802154 (packet fields) and
+	  doc/modem/ieee802154.md. Needs CONFIG_IEEE802154 (packet fields) and
 	  CONFIG_HWINFO (the extended address comes from the chip's id).
 
 if ESP_SDR_IEEE802154
@@ -31,14 +31,14 @@ config ESP_SDR_IEEE802154_RX_SUMS
 	  the simulation, scripts/unit-tables.sh dsp). The sums cost the
 	  ring's CPU some 4 cycles a pair more, which it keeps up with in
 	  units of 2048 pairs, not 1024: the receiver takes 2048, and its
-	  verdict on a frame comes too late for an ACK (doc/ieee802154.md).
+	  verdict on a frame comes too late for an ACK (doc/modem/ieee802154.md).
 
 config ESP_SDR_IEEE802154_AUTO_ACK
 	bool "Send ACKs"
 	default y
 	help
 	  Acknowledge frames to this node that ask for it, from inside the
-	  ring run (doc/ieee802154-ack.md): the ring rotates through two banks,
+	  ring run (doc/modem/ieee802154.md): the ring rotates through two banks,
 	  the third holds the ACK waveform, and the run stops at the end of
 	  such a frame, plays the ACK 192 us after it once the PHY has checked
 	  the FCS, and restarts. Not in promiscuous mode.

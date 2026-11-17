@@ -115,7 +115,7 @@ typedef bool (*esp_sdr_tx_paced_input_t)(void *user, int16_t *i, int16_t *q);
  * @param interp Interpolation factor: 1 (input straight to the DAC), 2, 4 or 8.
  * @param power Power step, 0 weakest to esp_sdr_tx_paced_power_max(). No effect on the
  *        ESP32-C5 and ESP32-S31, whose level follows the samples only
- *        (doc/hardware-quirks.md).
+ *        (doc/radio/gain.md).
  * @param input Called once per input sample from esp_sdr_tx_paced_poll().
  * @param user Passed to @p input.
  * @return 0, -EINVAL, -ERANGE outside the transmit range, -EAGAIN before

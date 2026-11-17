@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Two-board hardware regression test of the gapless receive and transmit streams
-# (pytest/test_gapless.py, see doc/testing.md). The DUT image is the apps/osmosdr_serial
+# (pytest/test_gapless.py, see doc/dev/testing.md). The DUT image is the apps/osmosdr_serial
 # application, unmodified: the test's job is to regress what that application ships.
 # Its sources come from there through its sources.cmake, APPLICATION_CONFIG_DIR points Zephyr's
 # board-aware config lookup at that directory (prj.conf, boards/, diag.conf for

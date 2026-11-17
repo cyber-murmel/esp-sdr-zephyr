@@ -5,7 +5,7 @@
  * ahead of the SoC's: the demodulator and the LE decoder run per sample from IRAM; the rest of the
  * receive path runs from flash, its hottest part in the hot block (hot_text_s3.ld). Pins marked
  * "as before" keep code and data where it was, each a candidate for a measured change
- * (doc/code-placement.md).
+ * (doc/dev/code-placement.md).
  */
 
 #define ESP_SDR_PLACE_ubertooth_SAMPLE ESP_SDR_IRAM

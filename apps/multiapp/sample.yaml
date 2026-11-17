@@ -2,7 +2,7 @@ sample:
   name: ESP-SDR multiapp
   description: >-
     One firmware that runs the other apps as loadable extensions
-    (doc/multiapp.md): capture, rfprobe, wpan, stream, osmosdr and link,
+    (doc/apps/multiapp-internals.md): capture, rfprobe, wpan, stream, osmosdr and link,
     loaded from files on a FAT volume, with built-in copies
 common:
   tags: esp-sdr

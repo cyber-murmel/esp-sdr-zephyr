@@ -3,7 +3,7 @@
  *
  * The capture app's placement rules (esp_sdr_place.h), for its sources (ESP_SDR_PLACE_SCOPE
  * capture, here and as multiapp's extension), ahead of the SoC's. Pins marked "as before" keep
- * data where it was, each a candidate for a measured change (doc/code-placement.md).
+ * data where it was, each a candidate for a measured change (doc/dev/code-placement.md).
  */
 
 /* As before: the FFT's work arrays in the DRAM image. */

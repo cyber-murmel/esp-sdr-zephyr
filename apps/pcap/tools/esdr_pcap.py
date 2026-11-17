@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The pcap app's capture into Wireshark: an extcap, and a standalone tool.
 
-The badge (apps/pcap, doc/pcap.md) sends one pcapng section on a vendor bulk IN endpoint: the
-section header, an interface block per PCAP_IF_* (Bluetooth LE, IEEE 802.15.4 TAP, burst
-records), then packets and statistics. This tool sets the radio, the channelizer and the
+The badge (apps/pcap, doc/apps/pcap-internals.md) sends one pcapng section on a vendor bulk IN
+endpoint: the section header, an interface block per PCAP_IF_* (Bluetooth LE, IEEE 802.15.4 TAP,
+burst records), then packets and statistics. This tool sets the radio, the channelizer and the
 decoders up with vendor requests (esdr_proto.h's below 0x40, pcap_proto.h's from 0x40), starts
 the capture and copies the stream as it comes, whole blocks only, into Wireshark's fifo or a
 file until it is stopped (SIGTERM, SIGINT, the reader gone), then stops the capture.

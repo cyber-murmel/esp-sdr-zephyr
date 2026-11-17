@@ -24,7 +24,7 @@ manifest:
     # rebased), the ESP32-P4 and the ESP32-S31, the ESP32-S31 itself (SoC,
     # CoreBoard, 200 and 250 MHz PSRAM) and the VIEWE 4.3 inch board with its
     # LCD-CAM RGB panel, the CDC-NCM NTB aggregation the USB stream relies
-    # on, the llext and Xtensa changes apps/multiapp needs (doc/multiapp.md,
+    # on, the llext and Xtensa changes apps/multiapp needs (doc/apps/multiapp-internals.md,
     # "Zephyr changes"), LVGL allocating from the MicroPython heap
     # (apps/micropython), the options that make the USB stack and DWC2
     # threads preemptible (apps/chancap), application code in the S3's flash

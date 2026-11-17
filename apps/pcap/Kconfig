@@ -24,7 +24,7 @@ config APP_PCAP_STREAM_CPU
 	  CPU 0 (SCHED_CPU_MASK_PIN_ONLY), where the interrupts and the
 	  tick are. With the stream alone on CPU 1 and the decoders on
 	  CPU 0, a 40 MS/s survey lost no bursts; the other way round the
-	  reader and the stream overloaded CPU 0 (doc/pcap.md).
+	  reader and the stream overloaded CPU 0 (doc/apps/pcap-internals.md).
 
 config APP_PCAP_DECODE_CPU
 	int "CPU of the decoder and the generic analysis"

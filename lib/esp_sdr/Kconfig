@@ -136,7 +136,7 @@ config ESP_SDR_GAPLESS_THR_LOST_PCT
 	help
 	  A period in which the CPU abandoned more than this share of the
 	  samples kept raises the threshold by 2 dB. 0: any lost sample does,
-	  which keeps some 40 % fewer samples at 80 MS/s (doc/pcap.md). Past
+	  which keeps some 40 % fewer samples at 80 MS/s (doc/samples/rings.md). Past
 	  the link's budget it rises by 2 dB whatever this says.
 
 config ESP_SDR_DIAG
@@ -312,7 +312,7 @@ config ESP_SDR_HOT_TEXT
 	  profiles) and the code its rules place in ESP_SDR_HOTBLOCK
 	  (esp_sdr_place.h) as one block of flash text aligned to the
 	  instruction cache's way: its lines keep their cache sets whatever
-	  code comes before or after it (doc/code-placement.md). Needs the
+	  code comes before or after it (doc/dev/code-placement.md). Needs the
 	  TEXT_SECTIONS hook of the ESP32-S3 linker script (Zephyr commit
 	  "soc: espressif: let applications place code in esp32s3 flash
 	  text"); the build stops without it.
@@ -335,7 +335,7 @@ config ESP_SDR_CHANCAP
 	  hand-over ring in SRAM bank 2, a channelizer (filter bank or
 	  decimator bank) and a detector per channel on the other CPU, one
 	  I/Q capture per packet per channel from a PSRAM slab to a callback
-	  thread. Design: doc/chancap.md.
+	  thread. Design: doc/modem/channelizer.md.
 
 if ESP_SDR_CHANCAP
 

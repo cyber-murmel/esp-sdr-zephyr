@@ -2,7 +2,7 @@
 #
 # Hardware integration test of the esp_sdr diagnostic-bus ring (esp_sdr_diag.h) on a real
 # board: argument checks, the ring's byte rate and integrity, the decimated stream. See
-# doc/testing.md.
+# doc/dev/testing.md.
 
 cmake_minimum_required(VERSION 3.20.0)
 

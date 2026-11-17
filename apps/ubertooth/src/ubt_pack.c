@@ -4,8 +4,8 @@
  * The ring sink's samples to the sample ring's 8 bits (ubt_radio.c): on the vector unit
  * (ubt_pack8.S) once a check at boot found it equal to the C below, else in C. The check runs
  * from flash: the flash code CPU 0 runs hot has a place of its own (hot_text_s3.ld), which flash
- * code added elsewhere no longer moves (doc/ubertooth.md). ubt_radio.c's pack() keeps its C loop,
- * starting where ubt_pack() stopped.
+ * code added elsewhere no longer moves (doc/apps/ubertooth-internals.md). ubt_radio.c's pack()
+ * keeps its C loop, starting where ubt_pack() stopped.
  */
 
 #include <stdbool.h>
