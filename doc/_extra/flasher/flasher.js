@@ -9,6 +9,9 @@ const ESPTOOL_JS = "https://cdn.jsdelivr.net/npm/esptool-js@0.7.1/bundle.js";
 const RELEASES = "https://github.com/cyber-murmel/esp-sdr-zephyr/releases";
 // The esp-sdr apps' USB vendor ID (doc/apps/index.md, USB IDs and host access).
 const ESP_SDR_VID = 0x2fe3;
+// The USB-Serial-JTAG of the S3, C5, C6, P4 and S31.
+const ESPRESSIF_VID = 0x303a;
+const USJ_PID = 0x1001;
 
 // esptool-js's CHIP_NAME per chip of firmware.json.
 const CHIPS = {
@@ -21,40 +24,43 @@ const CHIPS = {
   rp2040: "RP2040",
 };
 
-const USJ = "<p>Its USB-Serial-JTAG resets the chip into download mode by itself.</p>";
-const HANDOVER =
-  "<p>A running esp-sdr app (MicroPython's launcher included) owns the USB port: pick its port " +
-  "(\"ESP-SDR ...\") and the flasher sends it <code>usj</code>, which hands the port to the " +
-  "USB-Serial-JTAG. Then press <b>Connect and flash</b> again and pick the new port.</p>";
+// How the page reaches the ROM bootloader, on its own: an esp-sdr app's port (USB vendor 2fe3)
+// is asked to hand over to the USB-Serial-JTAG (shell "usj", or esdr.shell("usj") from
+// MicroPython); any other port is first tried as it is, for a board already in download mode,
+// then reset by esptool (RTS and DTR, or the USB-Serial-JTAG's own sequence). The hints say what
+// to do when none of that reaches the chip.
+const AUTO = "<p>Pick the board's port: the page finds out whether an esp-sdr app, MicroPython " +
+  "or the bootloader answers and gets it into download mode.</p>";
+const BOOT_PLUG = "<p>If nothing answers, hold BOOT while plugging the board in and try again.</p>";
+const BOOT_RST = "<p>If nothing answers, hold BOOT while pressing RST and try again.</p>";
 
-// Display names and how each board reaches its ROM bootloader (doc/apps/index.md, Building and
-// flashing; doc/dev/chips.md), per chip where a board has two.
+// Display names and hints (doc/apps/index.md, Building and flashing; doc/dev/chips.md), per chip
+// where a board has two.
 const BOARDS = {
   xiao_esp32s3: {
     name: "Seeed XIAO ESP32S3",
-    hint: HANDOVER + "<p>A board without an esp-sdr app: plug it in. If nothing answers, hold " +
-      "BOOT while plugging it in and choose \"Already in download mode\".</p>",
+    hint: AUTO + "<p>A running esp-sdr app hands its USB port to the USB-Serial-JTAG, which " +
+      "comes up as a new port (\"USB JTAG/serial debug unit\"): the first time, the browser asks " +
+      "for it once more.</p>" + BOOT_PLUG,
   },
   communicator_badge: {
     name: "Hackaday Communicator badge (ESP32-S3)",
-    hint: HANDOVER + "<p>The badge has no boot button. When no app answers <code>usj</code>, " +
-      "short test pad TP1 (IO0) to ground while pressing reset, then choose \"Already in " +
-      "download mode\".</p>",
+    hint: AUTO + "<p>The badge has no boot button. When no app answers, short test pad TP1 (IO0) " +
+      "to ground while pressing reset and try again.</p>",
   },
   xiao_esp32c6: {
     name: "Seeed XIAO ESP32C6",
-    hint: USJ + "<p>If not, hold BOOT while plugging it in and choose \"Already in download " +
-      "mode\".</p>",
+    hint: AUTO + BOOT_PLUG,
   },
   waveshare_esp32c5_zero: {
     name: "Waveshare ESP32-C5-Zero",
-    hint: USJ + "<p>If not, hold BOOT while plugging it in and choose \"Already in download " +
-      "mode\".</p>",
+    hint: AUTO + BOOT_PLUG,
   },
   why2025_badge: {
     name: "WHY2025 badge (ESP32-P4 and ESP32-C6)",
+    hint: AUTO,
     chips: {
-      esp32p4: "<p>Connect to the P4's USB port; the automatic reset puts it into download mode.</p>",
+      esp32p4: "<p>Connect to the P4's USB port.</p>",
       esp32c6: "<p>The C6 reaches USB-C port J8 only while the P4 drives its GPIO2 high: run " +
         "<code>esdr.usb_to_c6()</code> in the P4's MicroPython, or a P4 image built with " +
         "<code>CONFIG_WHY2025_BADGE_USB_TO_C6=y</code>, then connect to J8.</p>",
@@ -62,22 +68,20 @@ const BOARDS = {
   },
   esp32p4_function_ev_board: {
     name: "ESP32-P4-Function-EV-Board",
+    hint: AUTO,
     chips: {
-      esp32p4: "<p>Connect to the board's USB-UART port; RTS and DTR reset the P4 into download " +
-        "mode.</p>",
+      esp32p4: "<p>Connect to the board's USB-UART port.</p>" + BOOT_RST,
       esp32c6: "<p>The on-board ESP32-C6 has no USB port of its own: <code>c6_bootstrap</code> on " +
         "the P4 installs C6 images. Download them from here.</p>",
     },
   },
   esp32s31_function_coreboard: {
     name: "ESP32-S31 Function CoreBoard",
-    hint: "<p>Connect to the UART bridge's USB port; RTS and DTR reset the chip into download " +
-      "mode. If not, hold BOOT while pressing RST and choose \"Already in download mode\".</p>",
+    hint: AUTO + "<p>Connect to the UART bridge's USB port.</p>" + BOOT_RST,
   },
   ues31s043h800v480c_u: {
     name: "VIEWE UES31S043H800V480C-U (ESP32-S31, 4.3\" display)",
-    hint: "<p>The USB-C socket is a CH340C; RTS and DTR reset the chip into download mode. If " +
-      "not, hold BOOT while pressing RST and choose \"Already in download mode\".</p>",
+    hint: AUTO + "<p>The USB-C socket is a CH340C.</p>" + BOOT_RST,
   },
   mch2022: {
     name: "MCH2022 badge (ESP32)",
@@ -93,7 +97,7 @@ const BOARDS = {
 };
 
 const $ = (id) => document.getElementById(id);
-const state = { release: null, board: null, image: null, busy: false };
+const state = { release: null, board: null, image: null, busy: false, wantUsj: false };
 
 function store(key, value) {
   try {
@@ -159,7 +163,6 @@ function selectBoard(board) {
   for (const [chip, text] of Object.entries(info.chips ?? {})) {
     hint.append(el("h3", {}, CHIPS[chip]), el("div", { html: text }));
   }
-  $("reset").value = store(`esp-sdr-flasher-reset-${board}`) ?? "default_reset";
   renderImages();
 }
 
@@ -275,14 +278,75 @@ async function handOver(port) {
   }
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const isUsj = (port) => {
+  const info = port.getInfo();
+  return info.usbVendorId === ESPRESSIF_VID && info.usbProductId === USJ_PID;
+};
+
+// The USB-Serial-JTAG that comes up after a handover, if the browser may use it already (it was
+// picked before); null when it needs the user's permission first.
+async function waitForUsj(before, ms) {
+  for (const end = Date.now() + ms; Date.now() < end;) {
+    await sleep(300);
+    const port = (await navigator.serial.getPorts()).find((p) => isUsj(p) && !before.includes(p));
+    if (port) return port;
+  }
+  return null;
+}
+
+// esptool-js on the port in the ROM bootloader: first as it is, with one short attempt, for a
+// board already in download mode (opening the port may have reset it out of it); then with
+// esptool's reset into download mode, RTS and DTR or the USB-Serial-JTAG's sequence.
+async function connect({ ESPLoader, Transport }, port) {
+  const terminal = { clean() {}, writeLine: log, write: (s) => log(s) };
+  const attempt = async (mode, attempts) => {
+    const transport = new Transport(port, false);
+    const loader = new ESPLoader({
+      transport,
+      baudrate: Number($("baud").value),
+      romBaudrate: 115200,
+      terminal,
+    });
+    if (attempts) {
+      // main() takes no attempt count: one try is enough to see a waiting bootloader.
+      const detect = loader.detectChip.bind(loader);
+      loader.detectChip = (mode) => detect(mode, attempts);
+    }
+    try {
+      await loader.main(mode);
+      return { transport, loader };
+    } catch (e) {
+      try {
+        await transport.disconnect();
+      } catch {
+        // Closed already.
+      }
+      throw e;
+    }
+  };
+
+  status("Connecting: is the bootloader waiting already?");
+  try {
+    return await attempt("no_reset", 1);
+  } catch (e) {
+    log(`No bootloader without a reset (${e?.message ?? e}): resetting into download mode.`);
+  }
+  status("Connecting: resetting into download mode...");
+  return attempt("default_reset");
+}
+
 async function flash() {
   const img = state.image;
   let port;
   try {
-    port = await navigator.serial.requestPort();
+    // After a handover the new port is the USB-Serial-JTAG: only Espressif's are offered.
+    port = await navigator.serial.requestPort(
+      state.wantUsj ? { filters: [{ usbVendorId: ESPRESSIF_VID }] } : {});
   } catch {
     return; // Chooser closed.
   }
+  state.wantUsj = false;
 
   state.busy = true;
   updateButton();
@@ -292,31 +356,27 @@ async function flash() {
   let transport;
   try {
     if (port.getInfo().usbVendorId === ESP_SDR_VID) {
-      status("Asking the app to hand over the USB port...");
-      log("esp-sdr app port: sending usj");
+      status("An esp-sdr app has the port: asking it to hand over...");
+      const before = (await navigator.serial.getPorts()).filter(isUsj);
       await handOver(port);
-      status("Handed over. Press Connect and flash again and pick the new port " +
-        "(USB JTAG/serial debug unit).", "ok");
-      return;
+      status("Waiting for the USB-Serial-JTAG...");
+      port = await waitForUsj(before, 8000);
+      if (!port) {
+        state.wantUsj = true;
+        status("Handed over. Press Connect and flash again and pick \"USB JTAG/serial debug " +
+          "unit\": the browser asks once for the new port.", "ok");
+        return;
+      }
+      log("USB-Serial-JTAG is up.");
     }
 
     status("Downloading the image...");
     const data = await fetchImage(img);
     log(`${img.file}: ${data.length} bytes, sha256 ok`);
 
-    status("Connecting...");
-    const { ESPLoader, Transport } = await import(ESPTOOL_JS);
-    transport = new Transport(port, false);
-    const terminal = { clean() {}, writeLine: log, write: (s) => log(s) };
-    const loader = new ESPLoader({
-      transport,
-      baudrate: Number($("baud").value),
-      romBaudrate: 115200,
-      terminal,
-    });
-    // RTS/DTR or the USB-Serial-JTAG reset, or none for a board already in download mode.
-    const before = $("reset").value;
-    await loader.main(before);
+    const esptool = await import(ESPTOOL_JS);
+    let loader;
+    ({ transport, loader } = await connect(esptool, port));
     const found = loader.chip.CHIP_NAME;
     if (found !== CHIPS[img.chip]) {
       throw new Error(`this is an ${found}, the image is for the ${CHIPS[img.chip]}`);
@@ -412,9 +472,6 @@ async function start() {
   $("release").replaceChildren("Images of release ", tag, `: ${release.images.length} images.`);
   for (const id of ["step-board", "step-image", "step-flash"]) $(id).hidden = false;
   $("flash").addEventListener("click", flash);
-  $("reset").addEventListener("change", () => {
-    store(`esp-sdr-flasher-reset-${state.board}`, $("reset").value);
-  });
   renderBoards();
 }
 
