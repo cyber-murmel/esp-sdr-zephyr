@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 540" width="1000" height="540" font-family="sans-serif">
+<rect width="1000" height="540" fill="#ffffff"/>
+<text x="70" y="28" font-size="18" font-weight="bold" fill="#000">Receive low-pass attenuation</text>
+<line x1="90.3" y1="50" x2="90.3" y2="480" stroke="#dddddd"/>
+<text x="90.3" y="498" font-size="12" text-anchor="middle" fill="#333">5</text>
+<line x1="191.9" y1="50" x2="191.9" y2="480" stroke="#dddddd"/>
+<text x="191.9" y="498" font-size="12" text-anchor="middle" fill="#333">10</text>
+<line x1="293.4" y1="50" x2="293.4" y2="480" stroke="#dddddd"/>
+<text x="293.4" y="498" font-size="12" text-anchor="middle" fill="#333">15</text>
+<line x1="395.0" y1="50" x2="395.0" y2="480" stroke="#dddddd"/>
+<text x="395.0" y="498" font-size="12" text-anchor="middle" fill="#333">20</text>
+<line x1="496.6" y1="50" x2="496.6" y2="480" stroke="#dddddd"/>
+<text x="496.6" y="498" font-size="12" text-anchor="middle" fill="#333">25</text>
+<line x1="598.1" y1="50" x2="598.1" y2="480" stroke="#dddddd"/>
+<text x="598.1" y="498" font-size="12" text-anchor="middle" fill="#333">30</text>
+<line x1="699.7" y1="50" x2="699.7" y2="480" stroke="#dddddd"/>
+<text x="699.7" y="498" font-size="12" text-anchor="middle" fill="#333">35</text>
+<line x1="70" y1="434.3" x2="720" y2="434.3" stroke="#dddddd"/>
+<text x="62" y="438.3" font-size="12" text-anchor="end" fill="#333">-40</text>
+<line x1="70" y1="342.8" x2="720" y2="342.8" stroke="#dddddd"/>
+<text x="62" y="346.8" font-size="12" text-anchor="end" fill="#333">-30</text>
+<line x1="70" y1="251.3" x2="720" y2="251.3" stroke="#dddddd"/>
+<text x="62" y="255.3" font-size="12" text-anchor="end" fill="#333">-20</text>
+<line x1="70" y1="159.8" x2="720" y2="159.8" stroke="#dddddd"/>
+<text x="62" y="163.8" font-size="12" text-anchor="end" fill="#333">-10</text>
+<line x1="70" y1="68.3" x2="720" y2="68.3" stroke="#dddddd"/>
+<text x="62" y="72.3" font-size="12" text-anchor="end" fill="#333">0</text>
+<rect x="70" y="50" width="650" height="430" fill="none" stroke="#000"/>
+<text x="395.0" y="522" font-size="13" text-anchor="middle" fill="#000">Distance of the line from the LO (MHz)</text>
+<text x="18" y="265.0" font-size="13" text-anchor="middle" transform="rotate(-90 18 265.0)" fill="#000">Level against the pass band (dB)</text>
+<line x1="70" y1="434.3" x2="720" y2="434.3" stroke="#555" stroke-dasharray="3 3"/>
+<text x="714" y="428.3" font-size="11" text-anchor="end" fill="#555">measurement floor</text>
+<polyline points="110.6,86.6 130.9,159.8 151.2,242.1 171.6,278.7 191.9,351.9 232.5,434.3" fill="none" stroke="#1f6fb4" stroke-width="2"/>
+<circle cx="110.6" cy="86.6" r="4" fill="#1f6fb4"/>
+<circle cx="130.9" cy="159.8" r="4" fill="#1f6fb4"/>
+<circle cx="151.2" cy="242.1" r="4" fill="#1f6fb4"/>
+<circle cx="171.6" cy="278.7" r="4" fill="#1f6fb4"/>
+<circle cx="191.9" cy="351.9" r="4" fill="#1f6fb4"/>
+<polygon points="226.5,429.3 238.5,429.3 232.5,440.3" fill="#fff" stroke="#1f6fb4" stroke-width="2"/>
+<polyline points="110.6,68.3 130.9,77.4 151.2,114.0 171.6,196.4 191.9,242.1 232.5,351.9 273.1,434.3" fill="none" stroke="#d9541e" stroke-width="2"/>
+<rect x="106.6" y="64.3" width="8" height="8" fill="#d9541e"/>
+<rect x="126.9" y="73.4" width="8" height="8" fill="#d9541e"/>
+<rect x="147.2" y="110.0" width="8" height="8" fill="#d9541e"/>
+<rect x="167.6" y="192.4" width="8" height="8" fill="#d9541e"/>
+<rect x="187.9" y="238.1" width="8" height="8" fill="#d9541e"/>
+<rect x="228.5" y="347.9" width="8" height="8" fill="#d9541e"/>
+<polygon points="267.1,429.3 279.1,429.3 273.1,440.3" fill="#fff" stroke="#d9541e" stroke-width="2"/>
+<polyline points="110.6,68.3 130.9,77.4 151.2,77.4 171.6,68.3 191.9,132.3 232.5,251.3 273.1,306.2 313.8,397.7" fill="none" stroke="#2a9d3c" stroke-width="2"/>
+<polygon points="110.6,63.3 115.6,68.3 110.6,73.3 105.6,68.3" fill="#2a9d3c"/>
+<polygon points="130.9,72.4 135.9,77.4 130.9,82.4 125.9,77.4" fill="#2a9d3c"/>
+<polygon points="151.2,72.4 156.2,77.4 151.2,82.4 146.2,77.4" fill="#2a9d3c"/>
+<polygon points="171.6,63.3 176.6,68.3 171.6,73.3 166.6,68.3" fill="#2a9d3c"/>
+<polygon points="191.9,127.3 196.9,132.3 191.9,137.3 186.9,132.3" fill="#2a9d3c"/>
+<polygon points="232.5,246.3 237.5,251.3 232.5,256.3 227.5,251.3" fill="#2a9d3c"/>
+<polygon points="273.1,301.2 278.1,306.2 273.1,311.2 268.1,306.2" fill="#2a9d3c"/>
+<polygon points="313.8,392.7 318.8,397.7 313.8,402.7 308.8,397.7" fill="#2a9d3c"/>
+<polyline points="110.6,68.3 130.9,86.6 151.2,68.3 171.6,86.6 191.9,77.4 232.5,141.5 273.1,233.0 313.8,324.5 395.0,434.3" fill="none" stroke="#c0392b" stroke-width="2"/>
+<polygon points="110.6,63.3 115.6,72.3 105.6,72.3" fill="#c0392b"/>
+<polygon points="130.9,81.6 135.9,90.6 125.9,90.6" fill="#c0392b"/>
+<polygon points="151.2,63.3 156.2,72.3 146.2,72.3" fill="#c0392b"/>
+<polygon points="171.6,81.6 176.6,90.6 166.6,90.6" fill="#c0392b"/>
+<polygon points="191.9,72.4 196.9,81.4 186.9,81.4" fill="#c0392b"/>
+<polygon points="232.5,136.5 237.5,145.5 227.5,145.5" fill="#c0392b"/>
+<polygon points="273.1,228.0 278.1,237.0 268.1,237.0" fill="#c0392b"/>
+<polygon points="313.8,319.5 318.8,328.5 308.8,328.5" fill="#c0392b"/>
+<polygon points="389.0,429.3 401.0,429.3 395.0,440.3" fill="#fff" stroke="#c0392b" stroke-width="2"/>
+<polyline points="110.6,68.3 130.9,77.4 151.2,77.4 171.6,77.4 191.9,86.6 232.5,141.5 273.1,233.0 313.8,324.5 395.0,351.9" fill="none" stroke="#7e57c2" stroke-width="2"/>
+<path d="M106.6,64.3 L114.6,72.3 M106.6,72.3 L114.6,64.3" stroke="#7e57c2" stroke-width="2"/>
+<path d="M126.9,73.4 L134.9,81.4 M126.9,81.4 L134.9,73.4" stroke="#7e57c2" stroke-width="2"/>
+<path d="M147.2,73.4 L155.2,81.4 M147.2,81.4 L155.2,73.4" stroke="#7e57c2" stroke-width="2"/>
+<path d="M167.6,73.4 L175.6,81.4 M167.6,81.4 L175.6,73.4" stroke="#7e57c2" stroke-width="2"/>
+<path d="M187.9,82.6 L195.9,90.6 M187.9,90.6 L195.9,82.6" stroke="#7e57c2" stroke-width="2"/>
+<path d="M228.5,137.5 L236.5,145.5 M228.5,145.5 L236.5,137.5" stroke="#7e57c2" stroke-width="2"/>
+<path d="M269.1,229.0 L277.1,237.0 M269.1,237.0 L277.1,229.0" stroke="#7e57c2" stroke-width="2"/>
+<path d="M309.8,320.5 L317.8,328.5 M309.8,328.5 L317.8,320.5" stroke="#7e57c2" stroke-width="2"/>
+<path d="M391.0,347.9 L399.0,355.9 M391.0,355.9 L399.0,347.9" stroke="#7e57c2" stroke-width="2"/>
+<circle cx="496.6" cy="95.7" r="4" fill="#fff" stroke="#8d6e3f" stroke-width="2"/>
+<circle cx="598.1" cy="132.3" r="4" fill="#fff" stroke="#8d6e3f" stroke-width="2"/>
+<line x1="496.6" y1="214.7" x2="496.6" y2="260.4" stroke="#d6338a" stroke-width="3"/>
+<line x1="490.6" y1="214.7" x2="502.6" y2="214.7" stroke="#d6338a" stroke-width="2"/>
+<line x1="490.6" y1="260.4" x2="502.6" y2="260.4" stroke="#d6338a" stroke-width="2"/>
+<rect x="695.7" y="384.5" width="8" height="8" fill="#d6338a"/>
+<rect x="293.4" y="68.3" width="406.2" height="64.0" fill="#4d4d4d" fill-opacity="0.18" stroke="#4d4d4d" stroke-dasharray="4 3"/>
+<rect x="90.3" y="68.3" width="264.1" height="27.4" fill="#17a2b8" fill-opacity="0.18" stroke="#17a2b8" stroke-dasharray="4 3"/>
+<line x1="738" y1="60" x2="766" y2="60" stroke="#1f6fb4" stroke-width="2"/>
+<circle cx="752.0" cy="60.0" r="4" fill="#1f6fb4"/>
+<text x="774" y="64" font-size="12" fill="#000">ESP32-S31, 13 MHz</text>
+<line x1="738" y1="84" x2="766" y2="84" stroke="#d9541e" stroke-width="2"/>
+<rect x="748.0" y="80.0" width="8" height="8" fill="#d9541e"/>
+<text x="774" y="88" font-size="12" fill="#000">ESP32-S31, 15 MHz</text>
+<line x1="738" y1="108" x2="766" y2="108" stroke="#2a9d3c" stroke-width="2"/>
+<polygon points="752.0,103.0 757.0,108.0 752.0,113.0 747.0,108.0" fill="#2a9d3c"/>
+<text x="774" y="112" font-size="12" fill="#000">ESP32-S31, 17 MHz</text>
+<line x1="738" y1="132" x2="766" y2="132" stroke="#c0392b" stroke-width="2"/>
+<polygon points="752.0,127.0 757.0,136.0 747.0,136.0" fill="#c0392b"/>
+<text x="774" y="136" font-size="12" fill="#000">ESP32-S31, 21 MHz</text>
+<line x1="738" y1="156" x2="766" y2="156" stroke="#7e57c2" stroke-width="2"/>
+<path d="M748.0,152.0 L756.0,160.0 M748.0,160.0 L756.0,152.0" stroke="#7e57c2" stroke-width="2"/>
+<text x="774" y="160" font-size="12" fill="#000">ESP32-S31, AUTO</text>
+<line x1="738" y1="180" x2="766" y2="180" stroke="#8d6e3f" stroke-width="2" stroke-opacity="0"/>
+<circle cx="752.0" cy="180.0" r="4" fill="#fff" stroke="#8d6e3f" stroke-width="2"/>
+<text x="774" y="184" font-size="12" fill="#000">ESP32-S31, 54 MHz</text>
+<line x1="738" y1="204" x2="766" y2="204" stroke="#d6338a" stroke-width="2" stroke-opacity="0"/>
+<rect x="748.0" y="200.0" width="8" height="8" fill="#d6338a"/>
+<text x="774" y="208" font-size="12" fill="#000">ESP32-C6, 40 MHz mode</text>
+<rect x="738" y="222" width="28" height="12" fill="#4d4d4d" fill-opacity="0.18" stroke="#4d4d4d" stroke-dasharray="4 3"/>
+<text x="774" y="232" font-size="12" fill="#000">ESP32-C6, 20 MHz mode</text>
+<rect x="738" y="246" width="28" height="12" fill="#17a2b8" fill-opacity="0.18" stroke="#17a2b8" stroke-dasharray="4 3"/>
+<text x="774" y="256" font-size="12" fill="#000">ESP32-S3, 40 MHz mode (TX+RX)</text>
+<text x="738" y="292" font-size="11" fill="#555">Open triangles: over 40 dB down.</text>
+<text x="738" y="308" font-size="11" fill="#555">Bars: a span the source gives;</text>
+<text x="738" y="324" font-size="11" fill="#555">bands: within that many dB.</text>
+<text x="738" y="340" font-size="11" fill="#555">S31 settings: fixed gain, 80 MS/s.</text>
+</svg>

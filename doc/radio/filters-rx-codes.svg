@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 540" width="1000" height="540" font-family="sans-serif">
+<rect width="1000" height="540" fill="#ffffff"/>
+<text x="70" y="28" font-size="18" font-weight="bold" fill="#000">Receive low-pass: code against bandwidth</text>
+<line x1="70.0" y1="50" x2="70.0" y2="480" stroke="#dddddd"/>
+<text x="70.0" y="498" font-size="12" text-anchor="middle" fill="#333">0</text>
+<line x1="151.2" y1="50" x2="151.2" y2="480" stroke="#dddddd"/>
+<text x="151.2" y="498" font-size="12" text-anchor="middle" fill="#333">16</text>
+<line x1="232.5" y1="50" x2="232.5" y2="480" stroke="#dddddd"/>
+<text x="232.5" y="498" font-size="12" text-anchor="middle" fill="#333">32</text>
+<line x1="313.8" y1="50" x2="313.8" y2="480" stroke="#dddddd"/>
+<text x="313.8" y="498" font-size="12" text-anchor="middle" fill="#333">48</text>
+<line x1="395.0" y1="50" x2="395.0" y2="480" stroke="#dddddd"/>
+<text x="395.0" y="498" font-size="12" text-anchor="middle" fill="#333">64</text>
+<line x1="476.2" y1="50" x2="476.2" y2="480" stroke="#dddddd"/>
+<text x="476.2" y="498" font-size="12" text-anchor="middle" fill="#333">80</text>
+<line x1="557.5" y1="50" x2="557.5" y2="480" stroke="#dddddd"/>
+<text x="557.5" y="498" font-size="12" text-anchor="middle" fill="#333">96</text>
+<line x1="638.8" y1="50" x2="638.8" y2="480" stroke="#dddddd"/>
+<text x="638.8" y="498" font-size="12" text-anchor="middle" fill="#333">112</text>
+<line x1="720.0" y1="50" x2="720.0" y2="480" stroke="#dddddd"/>
+<text x="720.0" y="498" font-size="12" text-anchor="middle" fill="#333">128</text>
+<line x1="70" y1="480.0" x2="720" y2="480.0" stroke="#dddddd"/>
+<text x="62" y="484.0" font-size="12" text-anchor="end" fill="#333">0</text>
+<line x1="70" y1="418.6" x2="720" y2="418.6" stroke="#dddddd"/>
+<text x="62" y="422.6" font-size="12" text-anchor="end" fill="#333">10</text>
+<line x1="70" y1="357.1" x2="720" y2="357.1" stroke="#dddddd"/>
+<text x="62" y="361.1" font-size="12" text-anchor="end" fill="#333">20</text>
+<line x1="70" y1="295.7" x2="720" y2="295.7" stroke="#dddddd"/>
+<text x="62" y="299.7" font-size="12" text-anchor="end" fill="#333">30</text>
+<line x1="70" y1="234.3" x2="720" y2="234.3" stroke="#dddddd"/>
+<text x="62" y="238.3" font-size="12" text-anchor="end" fill="#333">40</text>
+<line x1="70" y1="172.9" x2="720" y2="172.9" stroke="#dddddd"/>
+<text x="62" y="176.9" font-size="12" text-anchor="end" fill="#333">50</text>
+<line x1="70" y1="111.4" x2="720" y2="111.4" stroke="#dddddd"/>
+<text x="62" y="115.4" font-size="12" text-anchor="end" fill="#333">60</text>
+<line x1="70" y1="50.0" x2="720" y2="50.0" stroke="#dddddd"/>
+<text x="62" y="54.0" font-size="12" text-anchor="end" fill="#333">70</text>
+<rect x="70" y="50" width="650" height="430" fill="none" stroke="#000"/>
+<text x="395.0" y="522" font-size="13" text-anchor="middle" fill="#000">Capacitor code (larger is narrower)</text>
+<text x="18" y="265.0" font-size="13" text-anchor="middle" transform="rotate(-90 18 265.0)" fill="#000">Two-sided bandwidth (MHz)</text>
+<polyline points="70.0,56.1 90.3,166.7 110.6,203.6 151.2,277.3 191.9,326.4 232.5,351.0 313.8,381.7 374.7,400.1" fill="none" stroke="#1f6fb4" stroke-width="2"/>
+<circle cx="70.0" cy="56.1" r="4" fill="#1f6fb4"/>
+<circle cx="90.3" cy="166.7" r="4" fill="#1f6fb4"/>
+<circle cx="110.6" cy="203.6" r="4" fill="#1f6fb4"/>
+<circle cx="151.2" cy="277.3" r="4" fill="#1f6fb4"/>
+<circle cx="191.9" cy="326.4" r="4" fill="#1f6fb4"/>
+<circle cx="232.5" cy="351.0" r="4" fill="#1f6fb4"/>
+<circle cx="313.8" cy="381.7" r="4" fill="#1f6fb4"/>
+<circle cx="374.7" cy="400.1" r="4" fill="#1f6fb4"/>
+<polyline points="70.0,148.3 90.3,185.1 110.6,240.4 130.9,277.3 151.2,308.0 191.9,338.7 232.5,357.1 273.1,375.6 313.8,387.9 374.7,406.3" fill="none" stroke="#d9541e" stroke-width="2"/>
+<rect x="66.0" y="144.3" width="8" height="8" fill="#d9541e"/>
+<rect x="86.3" y="181.1" width="8" height="8" fill="#d9541e"/>
+<rect x="106.6" y="236.4" width="8" height="8" fill="#d9541e"/>
+<rect x="126.9" y="273.3" width="8" height="8" fill="#d9541e"/>
+<rect x="147.2" y="304.0" width="8" height="8" fill="#d9541e"/>
+<rect x="187.9" y="334.7" width="8" height="8" fill="#d9541e"/>
+<rect x="228.5" y="353.1" width="8" height="8" fill="#d9541e"/>
+<rect x="269.1" y="371.6" width="8" height="8" fill="#d9541e"/>
+<rect x="309.8" y="383.9" width="8" height="8" fill="#d9541e"/>
+<rect x="370.7" y="402.3" width="8" height="8" fill="#d9541e"/>
+<polyline points="70.0,338.7 90.3,344.9 110.6,351.0 130.9,357.1 151.2,369.4 191.9,381.7 232.5,387.9 273.1,400.1 313.8,406.3 374.7,412.4" fill="none" stroke="#2a9d3c" stroke-width="2"/>
+<polygon points="70.0,333.7 75.0,338.7 70.0,343.7 65.0,338.7" fill="#2a9d3c"/>
+<polygon points="90.3,339.9 95.3,344.9 90.3,349.9 85.3,344.9" fill="#2a9d3c"/>
+<polygon points="110.6,346.0 115.6,351.0 110.6,356.0 105.6,351.0" fill="#2a9d3c"/>
+<polygon points="130.9,352.1 135.9,357.1 130.9,362.1 125.9,357.1" fill="#2a9d3c"/>
+<polygon points="151.2,364.4 156.2,369.4 151.2,374.4 146.2,369.4" fill="#2a9d3c"/>
+<polygon points="191.9,376.7 196.9,381.7 191.9,386.7 186.9,381.7" fill="#2a9d3c"/>
+<polygon points="232.5,382.9 237.5,387.9 232.5,392.9 227.5,387.9" fill="#2a9d3c"/>
+<polygon points="273.1,395.1 278.1,400.1 273.1,405.1 268.1,400.1" fill="#2a9d3c"/>
+<polygon points="313.8,401.3 318.8,406.3 313.8,411.3 308.8,406.3" fill="#2a9d3c"/>
+<polygon points="374.7,407.4 379.7,412.4 374.7,417.4 369.7,412.4" fill="#2a9d3c"/>
+<polyline points="70.0,185.1 90.3,203.6 110.6,222.0 130.9,234.3 151.2,252.7 191.9,271.1 232.5,295.7 273.1,314.1 313.8,326.4 354.4,338.7 374.7,344.9" fill="none" stroke="#c0392b" stroke-width="2"/>
+<polygon points="70.0,180.1 75.0,189.1 65.0,189.1" fill="#c0392b"/>
+<polygon points="90.3,198.6 95.3,207.6 85.3,207.6" fill="#c0392b"/>
+<polygon points="110.6,217.0 115.6,226.0 105.6,226.0" fill="#c0392b"/>
+<polygon points="130.9,229.3 135.9,238.3 125.9,238.3" fill="#c0392b"/>
+<polygon points="151.2,247.7 156.2,256.7 146.2,256.7" fill="#c0392b"/>
+<polygon points="191.9,266.1 196.9,275.1 186.9,275.1" fill="#c0392b"/>
+<polygon points="232.5,290.7 237.5,299.7 227.5,299.7" fill="#c0392b"/>
+<polygon points="273.1,309.1 278.1,318.1 268.1,318.1" fill="#c0392b"/>
+<polygon points="313.8,321.4 318.8,330.4 308.8,330.4" fill="#c0392b"/>
+<polygon points="354.4,333.7 359.4,342.7 349.4,342.7" fill="#c0392b"/>
+<polygon points="374.7,339.9 379.7,348.9 369.7,348.9" fill="#c0392b"/>
+<polyline points="70.0,148.3 110.6,258.9 151.2,295.7 212.2,351.0 232.5,369.4 313.8,387.9 374.7,400.1" fill="none" stroke="#7e57c2" stroke-width="2"/>
+<path d="M66.0,144.3 L74.0,152.3 M66.0,152.3 L74.0,144.3" stroke="#7e57c2" stroke-width="2"/>
+<path d="M106.6,254.9 L114.6,262.9 M106.6,262.9 L114.6,254.9" stroke="#7e57c2" stroke-width="2"/>
+<path d="M147.2,291.7 L155.2,299.7 M147.2,299.7 L155.2,291.7" stroke="#7e57c2" stroke-width="2"/>
+<path d="M208.2,347.0 L216.2,355.0 M208.2,355.0 L216.2,347.0" stroke="#7e57c2" stroke-width="2"/>
+<path d="M228.5,365.4 L236.5,373.4 M228.5,373.4 L236.5,365.4" stroke="#7e57c2" stroke-width="2"/>
+<path d="M309.8,383.9 L317.8,391.9 M309.8,391.9 L317.8,383.9" stroke="#7e57c2" stroke-width="2"/>
+<path d="M370.7,396.1 L378.7,404.1 M370.7,404.1 L378.7,396.1" stroke="#7e57c2" stroke-width="2"/>
+<polyline points="110.6,68.4 130.9,142.1 151.2,185.1 191.9,246.6 232.5,283.4 313.8,326.4 395.0,357.1 476.2,375.6 557.5,387.9 638.8,394.0 714.9,406.3" fill="none" stroke="#8d6e3f" stroke-width="2" stroke-dasharray="6 4"/>
+<circle cx="110.6" cy="68.4" r="4" fill="#fff" stroke="#8d6e3f" stroke-width="2"/>
+<circle cx="130.9" cy="142.1" r="4" fill="#fff" stroke="#8d6e3f" stroke-width="2"/>
+<circle cx="151.2" cy="185.1" r="4" fill="#fff" stroke="#8d6e3f" stroke-width="2"/>
+<circle cx="191.9" cy="246.6" r="4" fill="#fff" stroke="#8d6e3f" stroke-width="2"/>
+<circle cx="232.5" cy="283.4" r="4" fill="#fff" stroke="#8d6e3f" stroke-width="2"/>
+<circle cx="313.8" cy="326.4" r="4" fill="#fff" stroke="#8d6e3f" stroke-width="2"/>
+<circle cx="395.0" cy="357.1" r="4" fill="#fff" stroke="#8d6e3f" stroke-width="2"/>
+<circle cx="476.2" cy="375.6" r="4" fill="#fff" stroke="#8d6e3f" stroke-width="2"/>
+<circle cx="557.5" cy="387.9" r="4" fill="#fff" stroke="#8d6e3f" stroke-width="2"/>
+<circle cx="638.8" cy="394.0" r="4" fill="#fff" stroke="#8d6e3f" stroke-width="2"/>
+<circle cx="714.9" cy="406.3" r="4" fill="#fff" stroke="#8d6e3f" stroke-width="2"/>
+<line x1="738" y1="60" x2="766" y2="60" stroke="#1f6fb4" stroke-width="2"/>
+<circle cx="752.0" cy="60.0" r="4" fill="#1f6fb4"/>
+<text x="774" y="64" font-size="12" fill="#000">ESP32-S3</text>
+<line x1="738" y1="84" x2="766" y2="84" stroke="#d9541e" stroke-width="2"/>
+<rect x="748.0" y="80.0" width="8" height="8" fill="#d9541e"/>
+<text x="774" y="88" font-size="12" fill="#000">ESP32-C6</text>
+<line x1="738" y1="108" x2="766" y2="108" stroke="#2a9d3c" stroke-width="2"/>
+<polygon points="752.0,103.0 757.0,108.0 752.0,113.0 747.0,108.0" fill="#2a9d3c"/>
+<text x="774" y="112" font-size="12" fill="#000">ESP32-C5, mode 0</text>
+<line x1="738" y1="132" x2="766" y2="132" stroke="#c0392b" stroke-width="2"/>
+<polygon points="752.0,127.0 757.0,136.0 747.0,136.0" fill="#c0392b"/>
+<text x="774" y="136" font-size="12" fill="#000">ESP32-C5, mode 1</text>
+<line x1="738" y1="156" x2="766" y2="156" stroke="#7e57c2" stroke-width="2"/>
+<path d="M748.0,152.0 L756.0,160.0 M748.0,160.0 L756.0,152.0" stroke="#7e57c2" stroke-width="2"/>
+<text x="774" y="160" font-size="12" fill="#000">ESP32-S31</text>
+<line x1="738" y1="180" x2="766" y2="180" stroke="#8d6e3f" stroke-width="2" stroke-dasharray="6 4"/>
+<circle cx="752.0" cy="180.0" r="4" fill="#fff" stroke="#8d6e3f" stroke-width="2"/>
+<text x="774" y="184" font-size="12" fill="#000">ESP32 (7-bit codes)</text>
+<text x="738" y="220" font-size="11" fill="#555">Approximate full -3 dB widths</text>
+<text x="738" y="236" font-size="11" fill="#555">from median noise spectra</text>
+<text x="738" y="252" font-size="11" fill="#555">(rx_bandwidth.h)</text>
+</svg>

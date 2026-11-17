@@ -28,39 +28,39 @@ The filter has one capacitor code per branch, I and Q, in the analog block BBTOP
 The [capture](../../apps/capture/README.rst) app's sample output shows the receiver's noise shaped
 by the filter, at code 0 against code 60.
 
-### Range per chip
+### Code against bandwidth
 
-Two-sided widths:
+The two-sided bandwidth each code gives, every chip in one plot. These are the curves
+`esp_sdr_rx_set_bandwidth()` interpolates in (upstream's
+`modules/lib/esp-sdr/main/common/rx_bandwidth.h`): approximate full -3 dB widths from median
+noise spectra.
 
-| Chip | Widest | Narrowest | Source |
-|---|---|---|---|
-| ESP32-S3 | about 69 MHz (code 0) | 13 MHz (code 60); the PHY's default about 22 MHz | [ESP32-S3 registers](../dev/registers-esp32s3.md#register-bbtop_r4-bbtop_r5-0x674-0x675) |
-| ESP32-C6 | 54 MHz | 12 MHz | [ESP32-C6 registers](../dev/registers-esp32c6.md#register-bbtop_r4-bbtop_r5-0x674-0x675); the survey of [capture](../../apps/capture/README.rst) clamps to it |
-| ESP32-C5 | 48 MHz | 11 MHz | the survey of [capture](../../apps/capture/README.rst) clamps to it |
-| ESP32-S31 | 54 MHz | 13 MHz | the settings below |
-| ESP32 | about 67 MHz (code 8) | 12 MHz (code 127) | upstream's curve, `modules/lib/esp-sdr/main/common/rx_bandwidth.h` |
+![Receive low-pass: code against bandwidth](filters-rx-codes.svg)
 
-On the C5 the range spans two PHY channel modes: the codes give 23 to 11 MHz in mode 0 and 48 to
-22 MHz in mode 1, the PHY's wide path. Above 23 MHz, or for the widest setting,
-`esp_sdr_rx_set_bandwidth()` selects mode 1 with a full channel setup, as upstream does (upstream's
-curves in `rx_bandwidth.h`; `lib/esp_sdr/src/esp_sdr_rx.c`).
+- ESP32-S3: the PHY's default is about 22 MHz
+  ([ESP32-S3 registers](../dev/registers-esp32s3.md#register-bbtop_r4-bbtop_r5-0x674-0x675)).
+- ESP32-C6 and ESP32-C5: the survey of [capture](../../apps/capture/README.rst) clamps to their
+  range ([ESP32-C6 registers](../dev/registers-esp32c6.md#register-bbtop_r4-bbtop_r5-0x674-0x675)).
+- ESP32: seven-bit codes; code 0 is wider than the measured span, so the widest point is code 8.
+- On the C5 the range spans two PHY channel modes: mode 0, and mode 1, the PHY's wide path. Above
+  23 MHz, or for the widest setting, `esp_sdr_rx_set_bandwidth()` selects mode 1 with a full channel
+  setup, as upstream does (`lib/esp_sdr/src/esp_sdr_rx.c`).
 
-#### ESP32-S31 attenuation
+### Attenuation
 
-Measured from a line at a fixed gain and 80 MS/s, in dB below its level in the pass band, by the
-line's distance from the LO:
+How far a line drops below its level in the pass band, by its distance from the LO: every chip
+and setting the sources measured, in one plot.
 
-| Setting | 6 MHz | 7 | 8 | 9 | 10 | 12 | 14 | 16 | 20 |
-|---|---|---|---|---|---|---|---|---|---|
-| 13 MHz | 2 | 10 | 19 | 23 | 31 | over 40 (the floor) | | | |
-| 15 MHz | 0 | 1 | 5 | 14 | 19 | 31 | over 40 | | |
-| 17 MHz | 0 | 1 | 1 | 0 | 7 | 20 | 26 | 36 | |
-| 21 MHz | 0 | 2 | 0 | 2 | 1 | 8 | 18 | 28 | over 40 |
-| AUTO | 0 | 1 | 1 | 1 | 2 | 8 | 18 | 28 | 31 |
+![Receive low-pass attenuation](filters-attenuation.svg)
 
-- AUTO, the PHY's own setting, therefore cuts the outer parts of a 40 or 80 MS/s burst.
-- The widest, 54 MHz, keeps a line within some 3 dB out to 25 MHz and some 7 dB down at 30 (one
-  burst each, with a few dB of scatter).
+- ESP32-S31, one curve per low-pass setting: a line at a fixed gain and 80 MS/s. AUTO, the PHY's
+  own setting, therefore cuts the outer parts of a 40 or 80 MS/s burst.
+- ESP32-S31, the widest setting (54 MHz): a line within some 3 dB out to 25 MHz and some 7 dB down
+  at 30 (one burst each, with a few dB of scatter).
+- ESP32-C6 and ESP32-S3: the channel bandwidth modes, [below](#channel-bandwidth-mode).
+
+`doc/radio/filters.py` holds the data and draws both plots; finer measurements go into its tables.
+With `--check` it exits 1 when a committed SVG differs from what it would write.
 
 ### RC calibration
 
@@ -81,11 +81,9 @@ The PHY's channel bandwidth mode (`esp_sdr_set_channel_bw()`, the second argumen
 
 ### ESP32-S3
 
-| cbw | Mode | Passband, TX and RX end to end |
-|---|---|---|
-| 0 | 20 MHz | cuts a 36 MHz OFDM frame off |
-| 2 | 40 MHz | +-18 MHz within +-3 dB: a 36 MHz OFDM frame decodes error free |
-
+- cbw 0, the 20 MHz mode, cuts a 36 MHz OFDM frame off.
+- cbw 2, the 40 MHz mode, passes +-18 MHz within +-3 dB, TX and RX end to end
+  ([Attenuation](#attenuation)): a 36 MHz OFDM frame decodes error free.
 - There is no 80 MHz mode ([Transceiver](transceiver.md#tuning-calls)).
 - `apps/link` defaults to `CONFIG_APP_CBW=2`.
 - The spectrum edge of a single-carrier signal is a misleading measure of this, since it mixes the
@@ -95,12 +93,12 @@ The PHY's channel bandwidth mode (`esp_sdr_set_channel_bw()`, the second argumen
 ### ESP32-C6
 
 On the C6 the 20 MHz mode with the widest low-pass passes the whole band; the 40 MHz mode does not.
-Measured in the WHY2025 badge's survey (`apps/pcap`):
+Measured in the WHY2025 badge's survey (`apps/pcap`), plotted under [Attenuation](#attenuation):
 
-| Mode | Passband |
-|---|---|
-| 20 MHz, widest low-pass | an 802.15.4 sender read within 7 dB of its level at +-15 MHz out to +-35 MHz (2026-10-27) |
-| 40 MHz | 16 to 21 dB down at +-25 MHz and some 35 dB at +-35 MHz; ignores the low-pass setting |
+- 20 MHz mode, widest low-pass: an 802.15.4 sender read within 7 dB of its level at +-15 MHz out
+  to +-35 MHz (2026-10-27).
+- 40 MHz mode: 16 to 21 dB down at +-25 MHz and some 35 dB at +-35 MHz; it ignores the low-pass
+  setting.
 
 The run used the 40 MHz mode before: the survey's edges, the advertising channels 37 and 39 among
 them, reached the P4 30 to 50 dB down. The gapless run of
