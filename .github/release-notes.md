@@ -32,8 +32,9 @@ The list of every image is at the end. The rest of these notes is for the Seeed 
 
 ## gqrx
 
-1. Flash, with the board in download mode (hold BOOT while plugging it in, or run `usj` on the
-   shell of a running esp-sdr app):
+1. Flash with the web flasher, or with esptool and the board in download mode (hold BOOT while
+   plugging it in, or run `usj` on the shell of a running esp-sdr app, `esdr.shell("usj")` in
+   its MicroPython REPL):
    ```
    esptool --chip esp32s3 write-flash 0x0 esp-sdr-multiapp-@TAG@-xiao_esp32s3.bin
    ```
@@ -42,10 +43,11 @@ The list of every image is at the end. The rest of these notes is for the Seeed 
    mkdir -p ~/.local/lib/esdr && cp @PLUGIN@ ~/.local/lib/esdr/
    export SOAPY_SDR_PLUGIN_PATH=~/.local/lib/esdr
    ```
-3. Start osmosdr on the board, which reboots into it (again after every power cycle);
-   `SoapySDRUtil --find=driver=esdr` then lists it:
+3. Start osmosdr on the board. multiapp boots into MicroPython's launcher (again after every
+   power cycle), whose REPL runs the shell's `multiapp run osmosdr`: Ctrl-C stops the launcher,
+   the board reboots into osmosdr, and `SoapySDRUtil --find=driver=esdr` then lists it:
    ```
-   printf 'multiapp run osmosdr\r' > /dev/serial/by-id/usb-Zephyr_Project_ESP-SDR_multiapp_*
+   printf '\x03\rimport esdr; esdr.shell("multiapp run osmosdr")\r' > /dev/serial/by-id/usb-Zephyr_Project_ESP-SDR*-if00
    ```
 4. Run `gqrx` from the same shell. In its I/O device configuration: device string
    `driver=esdr,soapy=1`, input rate 250000 (the most USB full speed carries).

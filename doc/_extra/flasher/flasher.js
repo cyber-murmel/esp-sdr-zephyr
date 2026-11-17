@@ -23,9 +23,9 @@ const CHIPS = {
 
 const USJ = "<p>Its USB-Serial-JTAG resets the chip into download mode by itself.</p>";
 const HANDOVER =
-  "<p>A running esp-sdr app owns the USB port: pick its port (\"ESP-SDR ...\") and the flasher " +
-  "sends it <code>usj</code>, which hands the port to the USB-Serial-JTAG. Then press " +
-  "<b>Connect and flash</b> again and pick the new port.</p>";
+  "<p>A running esp-sdr app (MicroPython's launcher included) owns the USB port: pick its port " +
+  "(\"ESP-SDR ...\") and the flasher sends it <code>usj</code>, which hands the port to the " +
+  "USB-Serial-JTAG. Then press <b>Connect and flash</b> again and pick the new port.</p>";
 
 // Display names and how each board reaches its ROM bootloader (doc/apps/index.md, Building and
 // flashing; doc/dev/chips.md), per chip where a board has two.
@@ -230,13 +230,39 @@ async function fetchImage(img) {
   return data;
 }
 
-// An esp-sdr app's shell (USB CDC-ACM) hands the port to the USB-Serial-JTAG on "usj".
+// What the port says within ms milliseconds.
+async function readFor(port, ms) {
+  const reader = port.readable.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  const timer = setTimeout(() => reader.cancel(), ms);
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    clearTimeout(timer);
+    reader.releaseLock();
+  }
+  return text;
+}
+
+// An esp-sdr app's shell (USB CDC-ACM) hands the port to the USB-Serial-JTAG on "usj". Where
+// MicroPython runs (multiapp's autostart on the XIAO and the Communicator) the port is its REPL,
+// whose esdr.shell() runs the shell's commands: as west dfu does, Ctrl-C stops the running Python
+// app and a ">>>" tells the REPL from the shell.
 async function handOver(port) {
   await port.open({ baudRate: 115200 });
   try {
     await port.setSignals({ dataTerminalReady: true });
     const writer = port.writable.getWriter();
-    await writer.write(new TextEncoder().encode("\r\nusj\r\n"));
+    const send = (text) => writer.write(new TextEncoder().encode(text));
+    await send("\x03\r\n");
+    const repl = (await readFor(port, 700)).includes(">>>");
+    log(repl ? "MicroPython REPL: esdr.shell(\"usj\")" : "shell: usj");
+    await send(repl ? "import esdr; esdr.shell(\"usj\")\r\n" : "usj\r\n");
     writer.releaseLock();
     await new Promise((r) => setTimeout(r, 500));
   } catch {

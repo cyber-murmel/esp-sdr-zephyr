@@ -215,7 +215,7 @@ Boards
 - ``/SD:`` is the card, and the PC sees two drives, the volume and the card, of which a boot
   without an app offers only the volume.
 - A restart comes up without an app, with the panel dark: ``multiapp run micropython`` starts it,
-  or ``CONFIG_MULTIAPP_AUTOSTART`` at every boot, which the Communicator sets.
+  or ``CONFIG_MULTIAPP_AUTOSTART`` at every boot, which the XIAO and the Communicator set.
 - On the Communicator it has the display and the keyboard, and no SD card.
 - A board without a display builds it headless, with ``manifest_headless.py``.
 - SD writes have not been checked on this image for want of a working card
