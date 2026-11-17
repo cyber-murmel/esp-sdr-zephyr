@@ -88,9 +88,10 @@ let
       # The MCH2022 badge's FPGA gateware (gateware/).
       amaranth
       jsonschema
-      # Markdown pages in the Sphinx docs (doc/), and their tabs.
+      # Markdown pages in the Sphinx docs (doc/), their tabs and mermaid diagrams.
       myst-parser
       sphinx-design
+      sphinxcontrib-mermaid
       # nanopb's generator (Zephyr's esp-hosted-mcu driver, apps/c6_bootstrap).
       protobuf
       # The MCH2022 badge's console bridge for twister (tests/integration/esdr_fpga/mch2022_pty.py).
