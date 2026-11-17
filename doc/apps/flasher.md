@@ -41,7 +41,9 @@ The ROM bootloader takes the image. The page reaches it one of three ways:
 - From a running esp-sdr app: the apps own the S3's USB port (USB IDs 2fe3:0005), where no reset
   reaches the bootloader. Picking that port makes the page send the shell command `usj`, which
   hands the port to the USB-Serial-JTAG ([Handing the port over](index.md#handing-the-port-over));
-  the second attempt then picks the new port.
+  the second attempt then picks the new port. Where multiapp runs MicroPython (its autostart on
+  the XIAO ESP32S3 and the Communicator), the port is the REPL: the page stops the running
+  Python app with Ctrl-C and sends `esdr.shell("usj")` instead, as `west dfu` does.
 
 The boards' own ways are in [Badges](index.md#badges) and the page's hints.
 

@@ -311,7 +311,7 @@ Boards
   without an app offers only the volume. MicroPython registers the proxies of both
   (``usb_disks.c``) and the host's own proxy for the volume stays out of that boot.
 - A restart comes up without an app, with the panel dark: ``multiapp run micropython`` starts it,
-  or ``CONFIG_MULTIAPP_AUTOSTART`` at every boot, which the Communicator sets.
+  or ``CONFIG_MULTIAPP_AUTOSTART`` at every boot, which the XIAO and the Communicator set.
 - On the Communicator it has the display and the keyboard, and no SD card.
 - A board without a display builds it headless, with ``manifest_headless.py``.
 - SD writes have not been checked on this image for want of a working card
