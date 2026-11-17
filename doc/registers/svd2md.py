@@ -16,11 +16,13 @@ Espressif documents them: the register description's line "Other bits:
 documented" names their ranges ("31:29, 22"), or all of them without any. Peripherals in group ANALOG_I2C are analog I2C blocks: base
 address block << 8, one 8-bit register per offset, shown as block:register,
 named PERIPHERAL_REGISTER.
-Each register gets a mermaid packet diagram of its fields (bit 0 first, the field's own name
-without the prefix; 8 bits a row for the analog registers) above its bit-field table.
+<!-- svd:overview --> gets the register map: one mermaid packet diagram, a row per register (its
+name, then bits 31 to 0; 8-bit analog registers right-aligned), each field by its own name without
+the prefix, cut to its width (the last name part where that fits, else ending in "~").
 --check: exit 1 if a page is not up to date.
 """
 
+import os
 import re
 import sys
 import textwrap
@@ -29,6 +31,9 @@ from pathlib import Path
 
 DOC = Path(__file__).resolve().parent.parent
 ACCESS = {"read-write": "R/W", "read-only": "RO", "write-only": "WO"}
+# The register map overview: blocks for the name, characters that fit one bit's block.
+NAME_CELLS = 10
+CELL_CHARS = 4
 
 
 def num(text):
@@ -146,17 +151,29 @@ class Register:
             top = lsb - 1
         return cols + self.gaps(top, 0)
 
-    def packet(self):
-        """A mermaid packet diagram of the fields, bit 0 first (as mermaid numbers the bits)."""
-        out = ["```mermaid"]
-        if self.size != 32:
-            out.append(f'%%{{init: {{"packet": {{"bitsPerRow": {self.size}}}}}}}%%')
-        out.append("packet-beta")
-        for msb, lsb, name in reversed(self.columns()):
-            short = name if name.startswith("(") else name[self.cut(name):]
-            span = str(lsb) if msb == lsb else f"{lsb}-{msb}"
-            out.append(f'{span}: "{short}"')
-        return out + ["```"]
+    def row(self, pos):
+        """The register's row of the overview from block pos on: its name, then its bits from 31
+        down (an 8-bit register right-aligned), each field by its own name, cut to its width."""
+        names = [n[:-4] if n.endswith("_REG") else n for n in self.names]
+        common = os.path.commonprefix(names)
+        cut = common.rfind("_") + 1 if len(names) > 1 else len(names[0])
+        out = [(NAME_CELLS, "/".join([names[0]] + [n[cut:] for n in names[1:]]))]
+        if self.size < 32:
+            out.append((32 - self.size, ""))
+        for msb, lsb, name in self.columns():
+            short = {"(unknown)": "?", "(documented)": "doc"}.get(name, name[self.cut(name):])
+            width = msb - lsb + 1
+            room = width * CELL_CHARS
+            if len(short) > room:
+                last = short.rsplit("_", 1)[-1]
+                short = last if len(last) <= room else short[:max(room - 1, 1)] + "~"
+            out.append((width, short))
+        lines = []
+        for width, label in out:
+            span = str(pos) if width == 1 else f"{pos}-{pos + width - 1}"
+            lines.append(f'{span}: "{label}"')
+            pos += width
+        return lines, pos
 
     def cut(self, name):
         """Where the field's own name starts after the register's prefix."""
@@ -178,8 +195,7 @@ class Register:
         return out + ["| " + " | ".join(r) + " |" for r in rows[1:]]
 
     def markdown(self):
-        out = [f"#### {self.title}", "", self.desc[0], ""] + self.packet() + [""]
-        out += self.table() + [""]
+        out = [f"#### {self.title}", "", self.desc[0], ""] + self.table() + [""]
         for _, _, name, desc, access, _ in self.fields:
             out += [f"**{name}** {desc} ({access})", ""]
         notes = "\n".join(self.desc[1:]).strip()
@@ -198,6 +214,7 @@ def render(svd):
     root = ET.parse(svd).getroot()
     summary = ["| Name | Description | Address | Access |", "|---|---|---|---|"]
     body = []
+    rows, pos = [], 0
     for p in root.iterfind("peripherals/peripheral"):
         analog = (p.findtext("groupName") or "") == "ANALOG_I2C"
         desc = lines(p, "description")
@@ -211,7 +228,12 @@ def render(svd):
             link = f"[{', '.join(reg.names)}](#{anchor(reg.title)})"
             summary.append(f"| {link} | {reg.desc[0]} | {', '.join(reg.addrs)} | {reg.access} |")
             body += reg.markdown()
-    return {"summary": summary, "registers": body}
+            row, pos = reg.row(pos)
+            rows += row
+    overview = ["```mermaid",
+                f'%%{{init: {{"packet": {{"bitsPerRow": {NAME_CELLS + 32}, "showBits": false}}}}}}%%',
+                "packet-beta"] + rows + ["```"]
+    return {"overview": overview, "summary": summary, "registers": body}
 
 
 def update(page, parts):

@@ -17,6 +17,286 @@ values seen, and how sure we are.
 - How the library copes with the chips' quirks is in those guides and in
   [Chip notes](chips.md).
 
+## Register map
+
+One row per register, in the order of the [Register summary](#register-summary): its name, then
+its bits from 31 on the left to 0 on the right. The analog I2C blocks' 8-bit registers sit
+right-aligned. `?` marks unknown bits, `doc` bits Espressif documents, and a field name cut to fit
+ends in `~`; each register's table under [Registers](#registers) has the bits and full names.
+
+<!-- svd:overview -->
+
+```mermaid
+%%{init: {"packet": {"bitsPerRow": 42, "showBits": false}}}%%
+packet-beta
+0-9: "DUMP_CTRL"
+10: "RUN"
+11-13: "TRIG_SEL"
+14-21: "SRC"
+22: "TRI~"
+23: "DONE"
+24: "CIR~"
+25: "16M"
+26: "40M"
+27-41: "COUNT"
+42-51: "DUMP_WRITE_INDEX"
+52-68: "?"
+69-83: "WRITE_INDEX"
+84-93: "DUMP_DAC_TRIG"
+94: "RUN"
+95-97: "?"
+98-105: "B27_20"
+106: "DAC~"
+107: "DONE"
+108: "?"
+109: "B16"
+110: "80M"
+111: "?"
+112-125: "DAC_COUNT"
+126-135: "DUMP_CONFIG"
+136-142: "?"
+143: "AGC"
+144-149: "LANE3"
+150-155: "LANE2"
+156-161: "LANE1"
+162-167: "LANE0"
+168-177: "SENSITIVE_INTERNAL_SRAM_USAGE_3"
+178-205: "?"
+206-209: "USAGE"
+210-219: "AGC_FORCE"
+220-227: "FORCE_INDEX"
+228: "EN"
+229-236: "?"
+237-243: "GAIN_MAX"
+244-251: "?"
+252-261: "AGC_R6C"
+262-277: "?"
+278-285: "RSSI"
+286-293: "?"
+294-303: "AGC_R80"
+304-327: "?"
+328-329: "B7_6"
+330-335: "?"
+336-345: "FE_TX_CTRL"
+346-351: "?"
+352-359: "BASE_INDEX"
+360-367: "TX_GAIN_INDEX"
+368-375: "?"
+376: "TXON"
+377: "?"
+378-387: "FE_R100"
+388-400: "?"
+401-403: "B18_16"
+404-419: "?"
+420-429: "FE_R110"
+430-447: "?"
+448-449: "B13_12"
+450-451: "?"
+452-453: "B9_8"
+454-461: "?"
+462-471: "FE_IQ_EST_CONF0"
+472-503: "?"
+504-513: "FE_IQ_EST_CONF1"
+514-545: "?"
+546-555: "FE_R174"
+556-570: "?"
+571: "DONE"
+572-587: "?"
+588-597: "BB_SPUR_NOTCH0"
+598-629: "?"
+630-639: "BB_SPUR_NOTCH1"
+640-671: "?"
+672-681: "BB_CCA_BUSY_CNT0/CNT1/CNT2"
+682-713: "?"
+714-723: "RTC_CNTL_USB_CONF"
+724-734: "?"
+735: "SEL"
+736: "SEL"
+737-755: "doc"
+756-765: "I2C_ANA_MST_I2C0_CTRL/I2C1_CTRL"
+766-770: "?"
+771: "B26"
+772: "BUSY"
+773: "WRI~"
+774-781: "DATA"
+782-789: "REG_ADDR"
+790-797: "BLOCK"
+798-807: "I2C_ANA_MST_ANA_CONFIG"
+808-816: "?"
+817: "ULP"
+818-820: "?"
+821: "SAR"
+822: "BBP~"
+823: "CKG~"
+824: "BLK~"
+825: "DIG"
+826: "BIAS"
+827: "TXRF"
+828: "RFP~"
+829: "BBT~"
+830: "SDM"
+831: "RFRX"
+832-839: "?"
+840-849: "I2C_ANA_MST_ANA_CONFIG2"
+850-864: "?"
+865: "SAR"
+866: "ULP"
+867: "BBP~"
+868: "CKG~"
+869: "?"
+870: "BLK~"
+871: "DIG"
+872: "BIAS"
+873: "TXRF"
+874: "RFP~"
+875: "BBT~"
+876: "SDM"
+877: "RFRX"
+878-881: "?"
+882-891: "I2C_ANA_MST_HOP_CTRL"
+892-897: "?"
+898: "OFF"
+899: "EN"
+900-903: "HOP_PARAM1"
+904-907: "HOP_PARAM0"
+908-913: "?"
+914: "WR"
+915: "HOP~"
+916-923: "HOP_MEM_ADDR"
+924-933: "I2C_ANA_MST_R130"
+934-947: "?"
+948: "N"
+949-965: "?"
+966-975: "I2C_ANA_MST_HOP_WDATA"
+976-1007: "HOP_WDATA"
+1008-1017: "I2C_ANA_MST_R150"
+1018-1021: "?"
+1022-1029: "HOP_CHAN"
+1030-1049: "?"
+1050-1059: "I2C_ANA_MST_R170"
+1060-1067: "?"
+1068-1074: "HOP_CUR_CHAN"
+1075-1091: "?"
+1092-1101: "ULP_R8"
+1102-1125: ""
+1126-1130: "?"
+1131: "B2"
+1132-1133: "?"
+1134-1143: "RFPLL_R0"
+1144-1167: ""
+1168: "?"
+1169: "B6"
+1170: "CAL~"
+1171-1175: "?"
+1176-1185: "RFPLL_R1"
+1186-1209: ""
+1210-1217: "MANUAL_CODE"
+1218-1227: "RFPLL_R2"
+1228-1251: ""
+1252: "OVR"
+1253-1254: "?"
+1255: "B8"
+1256-1259: "CODE4_VAL"
+1260-1269: "RFPLL_R5"
+1270-1293: ""
+1294-1301: "CAP_CODE"
+1302-1311: "RFPLL_R6"
+1312-1335: ""
+1336-1339: "?"
+1340-1343: "CODE4_CAL"
+1344-1353: "RFPLL_R7"
+1354-1377: ""
+1378-1382: "?"
+1383: "B8"
+1384: "DONE"
+1385: "B0"
+1386-1395: "RFPLL_R11"
+1396-1419: ""
+1420: "?"
+1421: "SRC"
+1422-1427: "?"
+1428-1437: "RFPLL_R12"
+1438-1461: ""
+1462-1465: "?"
+1466-1467: "WINDOW"
+1468: "B1"
+1469: "B0"
+1470-1479: "RFPLL_SDM_R0"
+1480-1503: ""
+1504-1506: "?"
+1507: "LOAD"
+1508-1511: "?"
+1512-1521: "RFPLL_SDM_R3"
+1522-1545: ""
+1546-1553: "INTEGER"
+1554-1563: "RFPLL_SDM_R4"
+1564-1587: ""
+1588-1595: "FRAC_H"
+1596-1605: "RFPLL_SDM_R5"
+1606-1629: ""
+1630-1637: "FRAC_L"
+1638-1647: "CKGEN_R0"
+1648-1671: ""
+1672-1674: "?"
+1675: "DIV"
+1676-1679: "?"
+1680-1689: "BBTOP_R2"
+1690-1713: ""
+1714-1717: "?"
+1718-1719: "R2_B3_2"
+1720-1721: "?"
+1722-1731: "BBTOP_R3"
+1732-1755: ""
+1756-1760: "?"
+1761: "B2"
+1762-1763: "?"
+1764-1773: "BBTOP_R4/R5"
+1774-1797: ""
+1798-1799: "?"
+1800-1805: "RX_LPF"
+1806-1815: "BBTOP_R6/R7"
+1816-1839: ""
+1840-1841: "?"
+1842-1847: "CAP2"
+1848-1857: "BBTOP_R12/R13"
+1858-1881: ""
+1882-1883: "?"
+1884-1889: "TX_LPF_A"
+1890-1899: "BBTOP_R14/R15"
+1900-1923: ""
+1924-1925: "?"
+1926-1931: "TX_LPF_B"
+1932-1941: "BBTOP_R20/R21/R22/R23"
+1942-1965: ""
+1966-1967: "?"
+1968-1973: "B5_0"
+1974-1983: "BBTOP_R28/R29/R30/R31"
+1984-2007: ""
+2008-2009: "?"
+2010-2015: "B5_0"
+2016-2025: "BIAS_R2"
+2026-2049: ""
+2050: "?"
+2051-2052: "R2_B6_5"
+2053-2057: "?"
+2058-2067: "BIAS_R4"
+2068-2091: ""
+2092-2095: "R4_B7_4"
+2096: "B3"
+2097-2098: "?"
+2099: "B0"
+2100-2109: "BIAS_R5"
+2110-2133: ""
+2134-2135: "?"
+2136-2141: "RC_DOUT"
+2142-2151: "BIAS_R6"
+2152-2175: ""
+2176-2178: "?"
+2179-2183: "R6_B4_0"
+```
+
+<!-- svd:end -->
+
 ## How to read this page
 
 ### Conventions
@@ -207,19 +487,6 @@ librftest's `dactrig()`.
 
 Receive side: run, trigger and count of a capture
 
-```mermaid
-packet-beta
-0-14: "COUNT"
-15: "RATE_40M"
-16: "RATE_16M"
-17: "CIRCULAR"
-18: "DONE"
-19: "TRIGGER"
-20-27: "SRC"
-28-30: "TRIG_SEL"
-31: "RUN"
-```
-
 | Bits | 31 | 30:28 | 27:20 | 19 | 18 | 17 | 16 | 15 | 14:0 |
 |---|---|---|---|---|---|---|---|---|---|
 | Field | DUMP_RUN | DUMP_TRIG_SEL | DUMP_SRC | DUMP_TRIGGER | DUMP_DONE | DUMP_CIRCULAR | DUMP_RATE_16M | DUMP_RATE_40M | DUMP_COUNT |
@@ -266,12 +533,6 @@ Evidence:
 
 Words written by a capture; the live write index in circular mode
 
-```mermaid
-packet-beta
-0-14: "WRITE_INDEX"
-15-31: "(unknown)"
-```
-
 | Bits | 31:15 | 14:0 |
 |---|---|---|
 | Field | (unknown) | DUMP_WRITE_INDEX |
@@ -290,20 +551,6 @@ Evidence:
 #### Register DUMP_DAC_TRIG_REG (0x60033d64)
 
 Transmit side: run, trigger and count of a playback
-
-```mermaid
-packet-beta
-0-13: "DAC_COUNT"
-14: "(unknown)"
-15: "DAC_RATE_80M"
-16: "B16"
-17: "(unknown)"
-18: "DAC_DONE"
-19: "DAC_TRIGGER"
-20-27: "B27_20"
-28-30: "(unknown)"
-31: "DAC_RUN"
-```
 
 | Bits | 31 | 30:28 | 27:20 | 19 | 18 | 17 | 16 | 15 | 14 | 13:0 |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -356,16 +603,6 @@ Evidence:
 
 Lane selectors: the sources packed into a dump word
 
-```mermaid
-packet-beta
-0-5: "LANE0"
-6-11: "LANE1"
-12-17: "LANE2"
-18-23: "LANE3"
-24: "RX_AGC"
-25-31: "(unknown)"
-```
-
 | Bits | 31:25 | 24 | 23:18 | 17:12 | 11:6 | 5:0 |
 |---|---|---|---|---|---|---|
 | Field | (unknown) | DUMP_RX_AGC | DUMP_LANE3 | DUMP_LANE2 | DUMP_LANE1 | DUMP_LANE0 |
@@ -400,12 +637,6 @@ Evidence:
 #### Register SENSITIVE_INTERNAL_SRAM_USAGE_3_REG (0x600c101c)
 
 Hands SRAM banks to the dump engine
-
-```mermaid
-packet-beta
-0-3: "INTERNAL_SRAM_MAC_DUMP_USAGE"
-4-31: "(unknown)"
-```
 
 | Bits | 31:4 | 3:0 |
 |---|---|---|
@@ -451,15 +682,6 @@ Evidence:
 
 Forced receive gain index, force bit and largest calibrated index
 
-```mermaid
-packet-beta
-0-7: "(unknown)"
-8-14: "GAIN_MAX"
-15-22: "(unknown)"
-23: "FORCE_EN"
-24-31: "FORCE_INDEX"
-```
-
 | Bits | 31:24 | 23 | 22:15 | 14:8 | 7:0 |
 |---|---|---|---|---|---|
 | Field | AGC_FORCE_INDEX | AGC_FORCE_EN | (unknown) | AGC_GAIN_MAX | (unknown) |
@@ -496,13 +718,6 @@ Evidence:
 
 AGC RSSI; lead, not tried
 
-```mermaid
-packet-beta
-0-7: "(unknown)"
-8-15: "RSSI"
-16-31: "(unknown)"
-```
-
 | Bits | 31:16 | 15:8 | 7:0 |
 |---|---|---|---|
 | Field | (unknown) | AGC_RSSI | (unknown) |
@@ -516,13 +731,6 @@ Evidence:
 #### Register AGC_R80_REG (0x6001c080)
 
 Unknown; bits 7:6 cleared by `bt_rx_force(0)`
-
-```mermaid
-packet-beta
-0-5: "(unknown)"
-6-7: "B7_6"
-8-31: "(unknown)"
-```
 
 | Bits | 31:8 | 7:6 | 5:0 |
 |---|---|---|---|
@@ -541,16 +749,6 @@ The FE block, `DR_REG_FE_BASE` 0x60006000: the HAL has the base, no registers.
 #### Register FE_TX_CTRL_REG (0x60006000)
 
 Force TX on and the TX gain memory index
-
-```mermaid
-packet-beta
-0: "(unknown)"
-1: "FORCE_TXON"
-2-9: "(unknown)"
-10-17: "TX_GAIN_INDEX"
-18-25: "BASE_INDEX"
-26-31: "(unknown)"
-```
 
 | Bits | 31:26 | 25:18 | 17:10 | 9:2 | 1 | 0 |
 |---|---|---|---|---|---|---|
@@ -577,13 +775,6 @@ Evidence:
 
 Unknown; bits 18:16 listed by upstream's filter probe
 
-```mermaid
-packet-beta
-0-15: "(unknown)"
-16-18: "B18_16"
-19-31: "(unknown)"
-```
-
 | Bits | 31:19 | 18:16 | 15:0 |
 |---|---|---|---|
 | Field | (unknown) | FE_B18_16 | (unknown) |
@@ -597,15 +788,6 @@ Evidence:
 #### Register FE_R110_REG (0x60006110)
 
 Unknown; written by `force_txon_mode()` and `bt_rx_force(0)`
-
-```mermaid
-packet-beta
-0-7: "(unknown)"
-8-9: "B9_8"
-10-11: "(unknown)"
-12-13: "B13_12"
-14-31: "(unknown)"
-```
 
 | Bits | 31:14 | 13:12 | 11:10 | 9:8 | 7:0 |
 |---|---|---|---|---|---|
@@ -624,11 +806,6 @@ Evidence:
 
 IQ estimator configuration; lead, not tried
 
-```mermaid
-packet-beta
-0-31: "(unknown)"
-```
-
 | Bits | 31:0 |
 |---|---|
 | Field | (unknown) |
@@ -646,11 +823,6 @@ Evidence:
 
 IQ estimator configuration; lead, not tried
 
-```mermaid
-packet-beta
-0-31: "(unknown)"
-```
-
 | Bits | 31:0 |
 |---|---|
 | Field | (unknown) |
@@ -664,13 +836,6 @@ Evidence:
 #### Register FE_R174_REG (0x60006174)
 
 IQ estimator done flag; lead, not tried
-
-```mermaid
-packet-beta
-0-15: "(unknown)"
-16: "IQ_EST_DONE"
-17-31: "(unknown)"
-```
 
 | Bits | 31:17 | 16 | 15:0 |
 |---|---|---|---|
@@ -691,11 +856,6 @@ the CPU.
 
 Spur notch; lead, not tried
 
-```mermaid
-packet-beta
-0-31: "(unknown)"
-```
-
 | Bits | 31:0 |
 |---|---|
 | Field | (unknown) |
@@ -710,11 +870,6 @@ Evidence:
 
 Spur notch; lead, not tried
 
-```mermaid
-packet-beta
-0-31: "(unknown)"
-```
-
 | Bits | 31:0 |
 |---|---|
 | Field | (unknown) |
@@ -728,11 +883,6 @@ Evidence:
 #### Register BB_CCA_BUSY_CNT0_REG, BB_CCA_BUSY_CNT1_REG, BB_CCA_BUSY_CNT2_REG (0x6001d058, 0x6001d05c, 0x6001d060)
 
 CCA busy counters; lead, not tried
-
-```mermaid
-packet-beta
-0-31: "(unknown)"
-```
 
 | Bits | 31:0 |
 |---|---|
@@ -749,14 +899,6 @@ Evidence:
 #### Register RTC_CNTL_USB_CONF_REG (0x60008120)
 
 USB PHY select; documented, descriptions empty
-
-```mermaid
-packet-beta
-0-18: "(documented)"
-19: "SW_USB_PHY_SEL"
-20: "SW_HW_USB_PHY_SEL"
-21-31: "(unknown)"
-```
 
 | Bits | 31:21 | 20 | 19 | 18:0 |
 |---|---|---|---|---|
@@ -798,17 +940,6 @@ I2C_ANA_MST_HOP_WDATA_REG, I2C_ANA_MST_R150_REG and I2C_ANA_MST_R170_REG.
 
 Command word, master 0 (I2C0) and master 1 (I2C1)
 
-```mermaid
-packet-beta
-0-7: "BLOCK"
-8-15: "REG_ADDR"
-16-23: "DATA"
-24: "WRITE"
-25: "BUSY"
-26: "B26"
-27-31: "(unknown)"
-```
-
 | Bits | 31:27 | 26 | 25 | 24 | 23:16 | 15:8 | 7:0 |
 |---|---|---|---|---|---|---|---|
 | Field | (unknown) | I2C_ANA_MST_B26 | I2C_ANA_MST_BUSY | I2C_ANA_MST_WRITE | I2C_ANA_MST_DATA | I2C_ANA_MST_REG_ADDR | I2C_ANA_MST_BLOCK |
@@ -836,25 +967,6 @@ Evidence:
 #### Register I2C_ANA_MST_ANA_CONFIG_REG (0x6000e044)
 
 Readback enable, one bit per block
-
-```mermaid
-packet-beta
-0-7: "(unknown)"
-8: "RFRX"
-9: "RFPLL_SDM"
-10: "BBTOP"
-11: "RFPLL"
-12: "TXRF"
-13: "BIAS"
-14: "DIG"
-15: "BLK68"
-16: "CKGEN"
-17: "BBPLL"
-18: "SAR"
-19-21: "(unknown)"
-22: "ULP"
-23-31: "(unknown)"
-```
 
 | Bits | 31:23 | 22 | 21:19 | 18 | 17 | 16 | 15 | 14 | 13 | 12 | 11 | 10 | 9 | 8 | 7:0 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -894,25 +1006,6 @@ Evidence:
 #### Register I2C_ANA_MST_ANA_CONFIG2_REG (0x6000e048)
 
 Master select, one bit per block
-
-```mermaid
-packet-beta
-0-3: "(unknown)"
-4: "RFRX"
-5: "RFPLL_SDM"
-6: "BBTOP"
-7: "RFPLL"
-8: "TXRF"
-9: "BIAS"
-10: "DIG"
-11: "BLK68"
-12: "(unknown)"
-13: "CKGEN"
-14: "BBPLL"
-15: "ULP"
-16: "SAR"
-17-31: "(unknown)"
-```
 
 | Bits | 31:17 | 16 | 15 | 14 | 13 | 12 | 11 | 10 | 9 | 8 | 7 | 6 | 5 | 4 | 3:0 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -955,19 +1048,6 @@ Evidence:
 
 Frequency hop engine control (speculative)
 
-```mermaid
-packet-beta
-0-7: "HOP_MEM_ADDR"
-8: "HOP_START"
-9: "HOP_MEM_WR"
-10-15: "(unknown)"
-16-19: "HOP_PARAM0"
-20-23: "HOP_PARAM1"
-24: "HOP_EN"
-25: "HOP_OFF"
-26-31: "(unknown)"
-```
-
 | Bits | 31:26 | 25 | 24 | 23:20 | 19:16 | 15:10 | 9 | 8 | 7:0 |
 |---|---|---|---|---|---|---|---|---|---|
 | Field | (unknown) | I2C_ANA_MST_HOP_OFF | I2C_ANA_MST_HOP_EN | I2C_ANA_MST_HOP_PARAM1 | I2C_ANA_MST_HOP_PARAM0 | (unknown) | I2C_ANA_MST_HOP_MEM_WR | I2C_ANA_MST_HOP_START | I2C_ANA_MST_HOP_MEM_ADDR |
@@ -994,13 +1074,6 @@ Evidence:
 
 Frequency hop engine module reset (speculative)
 
-```mermaid
-packet-beta
-0-16: "(unknown)"
-17: "HOP_RST_N"
-18-31: "(unknown)"
-```
-
 | Bits | 31:18 | 17 | 16:0 |
 |---|---|---|---|
 | Field | (unknown) | I2C_ANA_MST_HOP_RST_N | (unknown) |
@@ -1014,11 +1087,6 @@ Evidence:
 #### Register I2C_ANA_MST_HOP_WDATA_REG (0x6000e148)
 
 Frequency hop engine table write data (speculative)
-
-```mermaid
-packet-beta
-0-31: "HOP_WDATA"
-```
 
 | Bits | 31:0 |
 |---|---|
@@ -1034,13 +1102,6 @@ Evidence:
 
 Frequency hop engine channel index (speculative)
 
-```mermaid
-packet-beta
-0-19: "(unknown)"
-20-27: "HOP_CHAN"
-28-31: "(unknown)"
-```
-
 | Bits | 31:28 | 27:20 | 19:0 |
 |---|---|---|---|
 | Field | (unknown) | I2C_ANA_MST_HOP_CHAN | (unknown) |
@@ -1054,13 +1115,6 @@ Evidence:
 #### Register I2C_ANA_MST_R170_REG (0x6000e170)
 
 Frequency hop engine current channel (speculative)
-
-```mermaid
-packet-beta
-0-16: "(unknown)"
-17-23: "HOP_CUR_CHAN"
-24-31: "(unknown)"
-```
 
 | Bits | 31:24 | 23:17 | 16:0 |
 |---|---|---|---|
@@ -1079,14 +1133,6 @@ One bit of this block takes part in the RC calibration of block 0x6a.
 #### Register ULP_R8 (0x61:8)
 
 Bit 2 set during the RC time-constant measurement
-
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0-1: "(unknown)"
-2: "R8_B2"
-3-7: "(unknown)"
-```
 
 | Bits | 7:3 | 2 | 1:0 |
 |---|---|---|---|
@@ -1119,15 +1165,6 @@ clamps to 0x1ff); a higher code means a lower VCO frequency.
 
 VCO calibration start
 
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0-4: "(unknown)"
-5: "CAL_START"
-6: "R0_B6"
-7: "(unknown)"
-```
-
 | Bits | 7 | 6 | 5 | 4:0 |
 |---|---|---|---|---|
 | Field | (unknown) | RFPLL_R0_B6 | RFPLL_CAL_START | (unknown) |
@@ -1151,12 +1188,6 @@ Evidence:
 
 Manual capacitor code, bits 7:0
 
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0-7: "MANUAL_CODE"
-```
-
 | Bits | 7:0 |
 |---|---|
 | Field | RFPLL_MANUAL_CODE |
@@ -1170,15 +1201,6 @@ Evidence:
 #### Register RFPLL_R2 (0x62:2)
 
 4-bit code override and manual capacitor code bit 8
-
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0-3: "CODE4_VAL"
-4: "MANUAL_CODE_B8"
-5-6: "(unknown)"
-7: "CODE4_OVR"
-```
 
 | Bits | 7 | 6:5 | 4 | 3:0 |
 |---|---|---|---|---|
@@ -1206,12 +1228,6 @@ Evidence:
 
 Capacitor code readback, bits 7:0
 
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0-7: "CAP_CODE"
-```
-
 | Bits | 7:0 |
 |---|---|
 | Field | RFPLL_CAP_CODE |
@@ -1226,13 +1242,6 @@ Evidence:
 
 Calibrated 4-bit code
 
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0-3: "CODE4_CAL"
-4-7: "(unknown)"
-```
-
 | Bits | 7:4 | 3:0 |
 |---|---|---|
 | Field | (unknown) | RFPLL_CODE4_CAL |
@@ -1246,15 +1255,6 @@ Evidence:
 #### Register RFPLL_R7 (0x62:7)
 
 Capacitor code bit 8 and calibration done
-
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0: "R7_B0"
-1: "CAL_DONE"
-2: "CAP_CODE_B8"
-3-7: "(unknown)"
-```
 
 | Bits | 7:3 | 2 | 1 | 0 |
 |---|---|---|---|---|
@@ -1276,14 +1276,6 @@ Evidence:
 
 Capacitor code source
 
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0-5: "(unknown)"
-6: "CODE_SRC"
-7: "(unknown)"
-```
-
 | Bits | 7 | 6 | 5:0 |
 |---|---|---|---|
 | Field | (unknown) | RFPLL_CODE_SRC | (unknown) |
@@ -1300,15 +1292,6 @@ Evidence:
 #### Register RFPLL_R12 (0x62:12)
 
 VCO window comparator and two unknown status bits
-
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0: "R12_B0"
-1: "R12_B1"
-2-3: "VCO_WINDOW"
-4-7: "(unknown)"
-```
 
 | Bits | 7:4 | 3:2 | 1 | 0 |
 |---|---|---|---|---|
@@ -1356,14 +1339,6 @@ The crystal selector of the vendor calls picks the divisor, as on the C6: 1 =
 
 Divider word load (presumed)
 
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0-3: "(unknown)"
-4: "LOAD"
-5-7: "(unknown)"
-```
-
 | Bits | 7:5 | 4 | 3:0 |
 |---|---|---|---|
 | Field | (unknown) | RFPLL_SDM_LOAD | (unknown) |
@@ -1378,12 +1353,6 @@ Evidence:
 
 Integer part above 32
 
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0-7: "INTEGER"
-```
-
 | Bits | 7:0 |
 |---|---|
 | Field | RFPLL_SDM_INTEGER |
@@ -1394,12 +1363,6 @@ packet-beta
 
 Fraction, high byte
 
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0-7: "FRAC_H"
-```
-
 | Bits | 7:0 |
 |---|---|
 | Field | RFPLL_SDM_FRAC_H |
@@ -1409,12 +1372,6 @@ packet-beta
 #### Register RFPLL_SDM_R5 (0x63:5)
 
 Fraction, low byte
-
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0-7: "FRAC_L"
-```
 
 | Bits | 7:0 |
 |---|---|
@@ -1436,14 +1393,6 @@ block 0x65; its selector is in block 0x62.
 #### Register CKGEN_R0 (0x65:0)
 
 LO 5/6 divider select
-
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0-3: "(unknown)"
-4: "LO_DIV"
-5-7: "(unknown)"
-```
 
 | Bits | 7:5 | 4 | 3:0 |
 |---|---|---|---|
@@ -1502,14 +1451,6 @@ Registers 0x24 to 0x38 (36 to 56) take init constants, bits 7:0 (*decompile* S3
 
 Unknown 2-bit field, 1 at init
 
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0-1: "(unknown)"
-2-3: "R2_B3_2"
-4-7: "(unknown)"
-```
-
 | Bits | 7:4 | 3:2 | 1:0 |
 |---|---|---|---|
 | Field | (unknown) | BBTOP_R2_B3_2 | (unknown) |
@@ -1525,14 +1466,6 @@ Evidence:
 #### Register BBTOP_R3 (0x67:3)
 
 Unknown bit, changed by the receive calibration
-
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0-1: "(unknown)"
-2: "R3_B2"
-3-7: "(unknown)"
-```
 
 | Bits | 7:3 | 2 | 1:0 |
 |---|---|---|---|
@@ -1550,13 +1483,6 @@ Evidence:
 #### Register BBTOP_R4, BBTOP_R5 (0x67:4, 0x67:5)
 
 Receive low-pass capacitor code, I (BBTOP_R4) and Q (BBTOP_R5)
-
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0-5: "RX_LPF"
-6-7: "(unknown)"
-```
 
 | Bits | 7:6 | 5:0 |
 |---|---|---|
@@ -1577,13 +1503,6 @@ Evidence:
 
 Second capacitor pair, unknown
 
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0-5: "CAP2"
-6-7: "(unknown)"
-```
-
 | Bits | 7:6 | 5:0 |
 |---|---|---|
 | Field | (unknown) | BBTOP_CAP2 |
@@ -1601,13 +1520,6 @@ Evidence:
 
 Transmit low-pass pair A (0x0c, 0x0d)
 
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0-5: "TX_LPF_A"
-6-7: "(unknown)"
-```
-
 | Bits | 7:6 | 5:0 |
 |---|---|---|
 | Field | (unknown) | BBTOP_TX_LPF_A |
@@ -1621,13 +1533,6 @@ Evidence:
 #### Register BBTOP_R14, BBTOP_R15 (0x67:14, 0x67:15)
 
 Transmit low-pass pair B (0x0e, 0x0f)
-
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0-5: "TX_LPF_B"
-6-7: "(unknown)"
-```
 
 | Bits | 7:6 | 5:0 |
 |---|---|---|
@@ -1643,13 +1548,6 @@ Evidence:
 
 Unknown pairs (0x14 to 0x17), written from PHY parameters at init
 
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0-5: "B5_0"
-6-7: "(unknown)"
-```
-
 | Bits | 7:6 | 5:0 |
 |---|---|---|
 | Field | (unknown) | BBTOP_B5_0 |
@@ -1663,13 +1561,6 @@ Evidence:
 #### Register BBTOP_R28, BBTOP_R29, BBTOP_R30, BBTOP_R31 (0x67:28, 0x67:29, 0x67:30, 0x67:31)
 
 Unknown pairs (0x1c to 0x1f), written from PHY parameters at init
-
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0-5: "B5_0"
-6-7: "(unknown)"
-```
 
 | Bits | 7:6 | 5:0 |
 |---|---|---|
@@ -1697,14 +1588,6 @@ the filter codes follow process spread. Evidence: *decompile* S3
 
 RC measurement setting in bits 6:5
 
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0-4: "(unknown)"
-5-6: "R2_B6_5"
-7: "(unknown)"
-```
-
 | Bits | 7 | 6:5 | 4:0 |
 |---|---|---|---|
 | Field | (unknown) | BIAS_R2_B6_5 | (unknown) |
@@ -1718,15 +1601,6 @@ Evidence:
 #### Register BIAS_R4 (0x6a:4)
 
 RC measurement mode and control bits
-
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0: "R4_B0"
-1-2: "(unknown)"
-3: "R4_B3"
-4-7: "R4_B7_4"
-```
 
 | Bits | 7:4 | 3 | 2:1 | 0 |
 |---|---|---|---|---|
@@ -1746,13 +1620,6 @@ Evidence:
 
 RC measurement result
 
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0-5: "RC_DOUT"
-6-7: "(unknown)"
-```
-
 | Bits | 7:6 | 5:0 |
 |---|---|---|
 | Field | (unknown) | BIAS_RC_DOUT |
@@ -1766,13 +1633,6 @@ Evidence:
 #### Register BIAS_R6 (0x6a:6)
 
 RC measurement setting in bits 4:0
-
-```mermaid
-%%{init: {"packet": {"bitsPerRow": 8}}}%%
-packet-beta
-0-4: "R6_B4_0"
-5-7: "(unknown)"
-```
 
 | Bits | 7:5 | 4:0 |
 |---|---|---|
