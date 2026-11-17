@@ -1,0 +1,371 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 1090" width="1400" height="1090" font-family="sans-serif" role="img">
+<title>ESP32-C6 transceiver</title>
+<desc>ESP32-C6 transceiver block diagram: receive chain left to right on top, shared LO in the middle, transmit chain right to left at the bottom; each block annotated with the registers that influence it.</desc>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L10,5 L0,9 z" fill="#000000"/></marker>
+<marker id="tip" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,1 L10,5 L0,9 z" fill="#000000"/></marker>
+</defs>
+<rect x="0" y="0" width="1400" height="1090" fill="#ffffff"/>
+<text x="20" y="32" font-size="22" font-weight="bold">ESP32-C6 transceiver</text>
+<text x="20" y="54" font-size="13" fill="#616161">Direct conversion (zero IF, inferred), half duplex, one LO for both chains</text>
+<text x="820" y="26" font-size="12" fill="#c62828">receive</text>
+<text x="878" y="26" font-size="12" fill="#1565c0">transmit</text>
+<text x="944" y="26" font-size="12" fill="#2e7d32">shared</text>
+<rect x="1006" y="15" width="22" height="14" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<text x="1034" y="26" font-size="12">register known</text>
+<rect x="1134" y="15" width="22" height="14" fill="#ffffff" stroke="#000000" stroke-width="1.4" stroke-dasharray="5 3"/>
+<text x="1162" y="26" font-size="12">inferred block, no register known</text>
+<rect x="1006" y="37" width="22" height="14" rx="3" fill="#f2f2f2" stroke="#9e9e9e" stroke-width="1"/>
+<text x="1034" y="48" font-size="11" font-family="monospace" fill="#212121">REGISTER location [bits]: effect</text>
+<text x="1270" y="48" font-size="11" font-family="monospace" fill="#7b1fa2">esp_sdr_call()</text>
+<path d="M32,530 L55,530" fill="none" stroke="#000000" stroke-width="1.4"/>
+<path d="M100,495 L100,320 L155,320" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M195,320 L240,320" fill="none" stroke="#000000" stroke-width="1.4"/>
+<path d="M240,320 L240,270 L290,270" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M240,320 L240,370 L290,370" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M320,270 L416,270" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M320,370 L416,370" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M464,270 L550,270" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M464,370 L550,370" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M590,270 L667,270" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M590,370 L667,370" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M723,270 L925,270" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M723,370 L925,370" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M800,270 L800,302" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M800,370 L800,338" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M1035,320 L1072,320" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M1168,320 L1230,320" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M1092,510 L1042,510" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M978,510 L910,510" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M870,510 L820,510" fill="none" stroke="#000000" stroke-width="1.4"/>
+<path d="M820,510 L768,510" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M820,510 L820,590 L872,590" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M968,590 L1010,590 L1010,530" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M712,510 L655,510" fill="none" stroke="#000000" stroke-width="1.4"/>
+<path d="M655,510 L370,510 L370,459" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M370,431 L370,376 A6,6 0 0 0 370,364 L370,320 L320,320" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M305,309 L305,285" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M305,331 L305,355" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M655,510 L655,616" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M655,644 L655,714 A6,6 0 0 1 655,726 L655,770 L605,770" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M590,759 L590,735" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M590,781 L590,805" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M1300,840 L1248,840" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M1162,840 L1110,840" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M1300,770 L1110,770" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M990,700 L958,700" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M990,770 L958,770" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M990,840 L958,840" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M902,720 L873,720" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M902,820 L873,820" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M817,720 L749,720" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M817,820 L749,820" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M701,720 L605,720" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M701,820 L605,820" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M575,720 L505,720 L505,757" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M575,820 L505,820 L505,783" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M492,770 L430,770" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M390,770 L308,770" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<path d="M262,770 L100,770 L100,565" fill="none" stroke="#000000" stroke-width="1.4" marker-end="url(#arrow)"/>
+<line x1="32" y1="530" x2="32" y2="422" stroke="#000000" stroke-width="1.4"/>
+<path d="M21,422 L43,422 L32,440 z" fill="none" stroke="#000000" stroke-width="1.4"/>
+<rect x="55" y="495" width="60" height="70" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<line x1="55" y1="530" x2="69" y2="530" stroke="#000000" stroke-width="1.4"/>
+<line x1="100" y1="516" x2="100" y2="495" stroke="#000000" stroke-width="1.4"/>
+<line x1="100" y1="544" x2="100" y2="565" stroke="#000000" stroke-width="1.4"/>
+<line x1="69" y1="530" x2="97" y2="517" stroke="#000000" stroke-width="1.4"/>
+<circle cx="69" cy="530" r="2.6" fill="#ffffff" stroke="#000000" stroke-width="1.2"/>
+<circle cx="100" cy="516" r="2.6" fill="#ffffff" stroke="#000000" stroke-width="1.2"/>
+<circle cx="100" cy="544" r="2.6" fill="#ffffff" stroke="#000000" stroke-width="1.2"/>
+<path d="M89,522 Q97,530 89,538" fill="none" stroke="#000000" stroke-width="1" marker-end="url(#tip)"/>
+<text x="123" y="490" font-size="13" fill="#2e7d32">T/R switch</text>
+<polygon points="155,302 155,338 195,320" fill="#ffffff" stroke="#000000" stroke-width="1.4" stroke-dasharray="5 3"/>
+<text x="175" y="354" font-size="13" text-anchor="middle" fill="#c62828">LNA</text>
+<circle cx="240" cy="320" r="3.2" fill="#000000"/>
+<circle cx="305" cy="270" r="15" fill="#ffffff" stroke="#000000" stroke-width="1.4" stroke-dasharray="5 3"/>
+<line x1="294.4" y1="259.4" x2="315.6" y2="280.6" stroke="#000000" stroke-width="1.2"/>
+<line x1="294.4" y1="280.6" x2="315.6" y2="259.4" stroke="#000000" stroke-width="1.2"/>
+<circle cx="305" cy="370" r="15" fill="#ffffff" stroke="#000000" stroke-width="1.4" stroke-dasharray="5 3"/>
+<line x1="294.4" y1="359.4" x2="315.6" y2="380.6" stroke="#000000" stroke-width="1.2"/>
+<line x1="294.4" y1="380.6" x2="315.6" y2="359.4" stroke="#000000" stroke-width="1.2"/>
+<text x="305" y="401" font-size="13" text-anchor="middle" fill="#c62828">I/Q mixers</text>
+<rect x="290" y="309" width="30" height="22" fill="#ffffff" stroke="#000000" stroke-width="1.4" stroke-dasharray="5 3"/>
+<text x="305" y="324" font-size="11" text-anchor="middle">90°</text>
+<rect x="416" y="252" width="48" height="36" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<path d="M429,263 Q434.5,254 440,263 T451,263" fill="none" stroke="#000000" stroke-width="1.1"/>
+<line x1="436" y1="267" x2="444" y2="259" stroke="#000000" stroke-width="1.1"/>
+<path d="M429,272 Q434.5,263 440,272 T451,272" fill="none" stroke="#000000" stroke-width="1.1"/>
+<line x1="436" y1="276" x2="444" y2="268" stroke="#000000" stroke-width="1.1"/>
+<path d="M429,281 Q434.5,272 440,281 T451,281" fill="none" stroke="#000000" stroke-width="1.1"/>
+<text x="440" y="324" font-size="13" text-anchor="middle" fill="#c62828">RX LPF</text>
+<rect x="416" y="352" width="48" height="36" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<path d="M429,363 Q434.5,354 440,363 T451,363" fill="none" stroke="#000000" stroke-width="1.1"/>
+<line x1="436" y1="367" x2="444" y2="359" stroke="#000000" stroke-width="1.1"/>
+<path d="M429,372 Q434.5,363 440,372 T451,372" fill="none" stroke="#000000" stroke-width="1.1"/>
+<line x1="436" y1="376" x2="444" y2="368" stroke="#000000" stroke-width="1.1"/>
+<path d="M429,381 Q434.5,372 440,381 T451,381" fill="none" stroke="#000000" stroke-width="1.1"/>
+<polygon points="550,252 550,288 590,270" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<line x1="553.2" y1="292.3" x2="584.4" y2="246.2" stroke="#000000" stroke-width="1.1" marker-end="url(#tip)"/>
+<text x="570" y="324" font-size="13" text-anchor="middle" fill="#c62828">BB VGA</text>
+<polygon points="550,352 550,388 590,370" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<line x1="553.2" y1="392.3" x2="584.4" y2="346.2" stroke="#000000" stroke-width="1.1" marker-end="url(#tip)"/>
+<rect x="667" y="253" width="56" height="34" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<text x="695" y="274.6" font-size="13" text-anchor="middle" fill="#c62828">ADC</text>
+<text x="695" y="324" font-size="13" text-anchor="middle" fill="#c62828">10 bit, 80 MS/s</text>
+<rect x="667" y="353" width="56" height="34" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<text x="695" y="374.6" font-size="13" text-anchor="middle" fill="#c62828">ADC</text>
+<circle cx="800" cy="270" r="3.2" fill="#000000"/>
+<circle cx="800" cy="370" r="3.2" fill="#000000"/>
+<rect x="780" y="302" width="100" height="36" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<text x="830" y="324.6" font-size="13" text-anchor="middle" fill="#c62828">IQ estimator</text>
+<rect x="925" y="245" width="110" height="150" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<text x="980" y="316.6" font-size="13" text-anchor="middle" fill="#c62828">Capture</text>
+<text x="980" y="332.6" font-size="13" text-anchor="middle" fill="#c62828">engine</text>
+<rect x="1072" y="288" width="96" height="64" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<text x="1120" y="307" font-size="13" text-anchor="middle" fill="#c62828">SRAM block</text>
+<line x1="1082" y1="318" x2="1158" y2="318" stroke="#9e9e9e" stroke-width="1"/>
+<line x1="1082" y1="326" x2="1158" y2="326" stroke="#9e9e9e" stroke-width="1"/>
+<line x1="1082" y1="334" x2="1158" y2="334" stroke="#9e9e9e" stroke-width="1"/>
+<rect x="1092" y="490" width="56" height="40" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<line x1="1111" y1="500" x2="1111" y2="520" stroke="#000000" stroke-width="1.4"/>
+<line x1="1129" y1="500" x2="1129" y2="520" stroke="#000000" stroke-width="1.4"/>
+<rect x="1115" y="498" width="10" height="24" fill="#ffffff" stroke="#000000" stroke-width="1.2"/>
+<line x1="1098" y1="510" x2="1111" y2="510" stroke="#000000" stroke-width="1.2"/>
+<line x1="1129" y1="510" x2="1142" y2="510" stroke="#000000" stroke-width="1.2"/>
+<text x="1120" y="546" font-size="13" text-anchor="middle" fill="#2e7d32">XTAL 40 MHz</text>
+<rect x="978" y="490" width="64" height="40" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<text x="1010" y="514.5" font-size="13" text-anchor="middle" fill="#2e7d32">PFD/CP</text>
+<circle cx="890" cy="510" r="20" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<path d="M878,511 Q884,502 890,511 T902,511" fill="none" stroke="#000000" stroke-width="1.1"/>
+<line x1="875" y1="528" x2="905" y2="491" stroke="#000000" stroke-width="1.1" marker-end="url(#tip)"/>
+<text x="890" y="546" font-size="13" text-anchor="middle" fill="#2e7d32">VCO + cap bank</text>
+<text x="890" y="562" font-size="13" text-anchor="middle" fill="#2e7d32">2140..2884 MHz</text>
+<circle cx="820" cy="510" r="3.2" fill="#000000"/>
+<rect x="872" y="575" width="96" height="30" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<text x="920" y="594.5" font-size="13" text-anchor="middle" fill="#2e7d32">ΣΔ ÷N.F</text>
+<rect x="712" y="493" width="56" height="34" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<text x="740" y="514.5" font-size="13" text-anchor="middle" fill="#2e7d32">÷1.2</text>
+<text x="740" y="543" font-size="13" text-anchor="middle" fill="#2e7d32">5/6 divider</text>
+<circle cx="655" cy="510" r="3.2" fill="#000000"/>
+<polygon points="356,459 384,459 370,431" fill="#ffffff" stroke="#000000" stroke-width="1.4" stroke-dasharray="5 3"/>
+<text x="390" y="449" font-size="13" fill="#2e7d32">LO buffer</text>
+<polygon points="641,616 669,616 655,644" fill="#ffffff" stroke="#000000" stroke-width="1.4" stroke-dasharray="5 3"/>
+<text x="635" y="634" font-size="13" text-anchor="end" fill="#2e7d32">LO buffer</text>
+<rect x="990" y="683" width="120" height="34" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<text x="1050" y="704.5" font-size="13" text-anchor="middle" fill="#1565c0">tone generator</text>
+<rect x="990" y="753" width="120" height="34" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<text x="1050" y="774.5" font-size="13" text-anchor="middle" fill="#1565c0">TX DC value</text>
+<rect x="990" y="823" width="120" height="34" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<text x="1050" y="844.5" font-size="13" text-anchor="middle" fill="#1565c0">DAC engine</text>
+<rect x="1162" y="812" width="86" height="56" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<text x="1205" y="831" font-size="13" text-anchor="middle" fill="#1565c0">SRAM block</text>
+<line x1="1172" y1="842" x2="1238" y2="842" stroke="#9e9e9e" stroke-width="1"/>
+<line x1="1172" y1="850" x2="1238" y2="850" stroke="#9e9e9e" stroke-width="1"/>
+<line x1="1172" y1="858" x2="1238" y2="858" stroke="#9e9e9e" stroke-width="1"/>
+<polygon points="902,705 958,695 958,845 902,835" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<text x="930" y="766.5" font-size="13" text-anchor="middle" fill="#1565c0">DAC</text>
+<text x="930" y="782.5" font-size="13" text-anchor="middle" fill="#1565c0">source</text>
+<rect x="817" y="703" width="56" height="34" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<text x="845" y="724.5" font-size="13" text-anchor="middle" fill="#1565c0">DAC</text>
+<text x="845" y="774" font-size="13" text-anchor="middle" fill="#1565c0">10 bit</text>
+<rect x="817" y="803" width="56" height="34" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<text x="845" y="824.5" font-size="13" text-anchor="middle" fill="#1565c0">DAC</text>
+<rect x="701" y="702" width="48" height="36" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<path d="M714,713 Q719.5,704 725,713 T736,713" fill="none" stroke="#000000" stroke-width="1.1"/>
+<line x1="721" y1="717" x2="729" y2="709" stroke="#000000" stroke-width="1.1"/>
+<path d="M714,722 Q719.5,713 725,722 T736,722" fill="none" stroke="#000000" stroke-width="1.1"/>
+<line x1="721" y1="726" x2="729" y2="718" stroke="#000000" stroke-width="1.1"/>
+<path d="M714,731 Q719.5,722 725,731 T736,731" fill="none" stroke="#000000" stroke-width="1.1"/>
+<text x="725" y="774" font-size="13" text-anchor="middle" fill="#1565c0">TX LPF</text>
+<rect x="701" y="802" width="48" height="36" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<path d="M714,813 Q719.5,804 725,813 T736,813" fill="none" stroke="#000000" stroke-width="1.1"/>
+<line x1="721" y1="817" x2="729" y2="809" stroke="#000000" stroke-width="1.1"/>
+<path d="M714,822 Q719.5,813 725,822 T736,822" fill="none" stroke="#000000" stroke-width="1.1"/>
+<line x1="721" y1="826" x2="729" y2="818" stroke="#000000" stroke-width="1.1"/>
+<path d="M714,831 Q719.5,822 725,831 T736,831" fill="none" stroke="#000000" stroke-width="1.1"/>
+<circle cx="590" cy="720" r="15" fill="#ffffff" stroke="#000000" stroke-width="1.4" stroke-dasharray="5 3"/>
+<line x1="579.4" y1="709.4" x2="600.6" y2="730.6" stroke="#000000" stroke-width="1.2"/>
+<line x1="579.4" y1="730.6" x2="600.6" y2="709.4" stroke="#000000" stroke-width="1.2"/>
+<text x="590" y="698" font-size="13" text-anchor="middle" fill="#1565c0">I/Q modulator</text>
+<circle cx="590" cy="820" r="15" fill="#ffffff" stroke="#000000" stroke-width="1.4" stroke-dasharray="5 3"/>
+<line x1="579.4" y1="809.4" x2="600.6" y2="830.6" stroke="#000000" stroke-width="1.2"/>
+<line x1="579.4" y1="830.6" x2="600.6" y2="809.4" stroke="#000000" stroke-width="1.2"/>
+<rect x="575" y="759" width="30" height="22" fill="#ffffff" stroke="#000000" stroke-width="1.4" stroke-dasharray="5 3"/>
+<text x="590" y="774" font-size="11" text-anchor="middle">90°</text>
+<rect x="492" y="757" width="26" height="26" fill="#ffffff" stroke="#000000" stroke-width="1.4" stroke-dasharray="5 3"/>
+<text x="505" y="775" font-size="15" text-anchor="middle">Σ</text>
+<polygon points="430,752 430,788 390,770" fill="#ffffff" stroke="#000000" stroke-width="1.4"/>
+<line x1="393.2" y1="792.3" x2="424.4" y2="746.2" stroke="#000000" stroke-width="1.1" marker-end="url(#tip)"/>
+<text x="406" y="743" font-size="13" text-anchor="end" fill="#1565c0">TX power</text>
+<polygon points="308,750 308,790 262,770" fill="#ffffff" stroke="#000000" stroke-width="1.4" stroke-dasharray="5 3"/>
+<text x="285" y="743" font-size="13" text-anchor="middle" fill="#1565c0">PA</text>
+<text x="1238" y="324" font-size="12" fill="#c62828">to samples</text>
+<text x="1308" y="844" font-size="12" fill="#1565c0">from samples</text>
+<text x="1308" y="774" font-size="12" fill="#1565c0">from CPU</text>
+<text x="262" y="288" font-size="12" fill="#c62828">I</text>
+<text x="262" y="362" font-size="12" fill="#c62828">Q</text>
+<text x="778" y="738" font-size="12" fill="#1565c0">I</text>
+<text x="778" y="812" font-size="12" fill="#1565c0">Q</text>
+<line x1="175" y1="205" x2="175" y2="311" stroke="#757575" stroke-width="1.3" stroke-dasharray="0.1 3.2" stroke-linecap="round"/>
+<circle cx="175" cy="311" r="2.2" fill="#757575"/>
+<line x1="305" y1="131" x2="305" y2="255" stroke="#757575" stroke-width="1.3" stroke-dasharray="0.1 3.2" stroke-linecap="round"/>
+<circle cx="305" cy="255" r="2.2" fill="#757575"/>
+<line x1="440" y1="191.5" x2="440" y2="252" stroke="#757575" stroke-width="1.3" stroke-dasharray="0.1 3.2" stroke-linecap="round"/>
+<circle cx="440" cy="252" r="2.2" fill="#757575"/>
+<line x1="562" y1="131" x2="562" y2="257.4" stroke="#757575" stroke-width="1.3" stroke-dasharray="0.1 3.2" stroke-linecap="round"/>
+<circle cx="562" cy="257.4" r="2.2" fill="#757575"/>
+<line x1="695" y1="205" x2="695" y2="253" stroke="#757575" stroke-width="1.3" stroke-dasharray="0.1 3.2" stroke-linecap="round"/>
+<circle cx="695" cy="253" r="2.2" fill="#757575"/>
+<line x1="830" y1="131" x2="830" y2="302" stroke="#757575" stroke-width="1.3" stroke-dasharray="0.1 3.2" stroke-linecap="round"/>
+<circle cx="830" cy="302" r="2.2" fill="#757575"/>
+<line x1="980" y1="205" x2="980" y2="245" stroke="#757575" stroke-width="1.3" stroke-dasharray="0.1 3.2" stroke-linecap="round"/>
+<circle cx="980" cy="245" r="2.2" fill="#757575"/>
+<line x1="1120" y1="131" x2="1120" y2="288" stroke="#757575" stroke-width="1.3" stroke-dasharray="0.1 3.2" stroke-linecap="round"/>
+<circle cx="1120" cy="288" r="2.2" fill="#757575"/>
+<line x1="125" y1="556" x2="115" y2="530" stroke="#757575" stroke-width="1.3" stroke-dasharray="0.1 3.2" stroke-linecap="round"/>
+<circle cx="115" cy="530" r="2.2" fill="#757575"/>
+<line x1="740" y1="470" x2="740" y2="493" stroke="#757575" stroke-width="1.3" stroke-dasharray="0.1 3.2" stroke-linecap="round"/>
+<circle cx="740" cy="493" r="2.2" fill="#757575"/>
+<line x1="890" y1="470" x2="890" y2="490" stroke="#757575" stroke-width="1.3" stroke-dasharray="0.1 3.2" stroke-linecap="round"/>
+<circle cx="890" cy="490" r="2.2" fill="#757575"/>
+<line x1="1084" y1="470" x2="1010" y2="490" stroke="#757575" stroke-width="1.3" stroke-dasharray="0.1 3.2" stroke-linecap="round"/>
+<circle cx="1010" cy="490" r="2.2" fill="#757575"/>
+<line x1="911.7" y1="618" x2="920" y2="605" stroke="#757575" stroke-width="1.3" stroke-dasharray="0.1 3.2" stroke-linecap="round"/>
+<circle cx="920" cy="605" r="2.2" fill="#757575"/>
+<line x1="1170" y1="510" x2="1148" y2="510" stroke="#757575" stroke-width="1.3" stroke-dasharray="0.1 3.2" stroke-linecap="round"/>
+<circle cx="1148" cy="510" r="2.2" fill="#757575"/>
+<line x1="1185" y1="625" x2="1050" y2="683" stroke="#757575" stroke-width="1.3" stroke-dasharray="0.1 3.2" stroke-linecap="round"/>
+<circle cx="1050" cy="683" r="2.2" fill="#757575"/>
+<line x1="1185" y1="697" x2="1104" y2="753" stroke="#757575" stroke-width="1.3" stroke-dasharray="0.1 3.2" stroke-linecap="round"/>
+<circle cx="1104" cy="753" r="2.2" fill="#757575"/>
+<line x1="285" y1="870" x2="285" y2="780" stroke="#757575" stroke-width="1.3" stroke-dasharray="0.1 3.2" stroke-linecap="round"/>
+<circle cx="285" cy="780" r="2.2" fill="#757575"/>
+<line x1="418" y1="946" x2="418" y2="782.6" stroke="#757575" stroke-width="1.3" stroke-dasharray="0.1 3.2" stroke-linecap="round"/>
+<circle cx="418" cy="782.6" r="2.2" fill="#757575"/>
+<line x1="590" y1="870" x2="590" y2="835" stroke="#757575" stroke-width="1.3" stroke-dasharray="0.1 3.2" stroke-linecap="round"/>
+<circle cx="590" cy="835" r="2.2" fill="#757575"/>
+<line x1="725" y1="946" x2="725" y2="838" stroke="#757575" stroke-width="1.3" stroke-dasharray="0.1 3.2" stroke-linecap="round"/>
+<circle cx="725" cy="838" r="2.2" fill="#757575"/>
+<line x1="845" y1="870" x2="845" y2="837" stroke="#757575" stroke-width="1.3" stroke-dasharray="0.1 3.2" stroke-linecap="round"/>
+<circle cx="845" cy="837" r="2.2" fill="#757575"/>
+<line x1="930" y1="946" x2="930" y2="845" stroke="#757575" stroke-width="1.3" stroke-dasharray="0.1 3.2" stroke-linecap="round"/>
+<circle cx="930" cy="845" r="2.2" fill="#757575"/>
+<line x1="1050" y1="870" x2="1050" y2="857" stroke="#757575" stroke-width="1.3" stroke-dasharray="0.1 3.2" stroke-linecap="round"/>
+<circle cx="1050" cy="857" r="2.2" fill="#757575"/>
+<rect x="50" y="140" width="221.7" height="65" rx="3" fill="#f2f2f2" stroke="#9e9e9e" stroke-width="1"/>
+<text x="57" y="155" font-size="11" font-family="monospace" fill="#212121">no register known; gain is</text>
+<text x="57" y="168.5" font-size="11" font-family="monospace" fill="#212121">one index, AGC_FORCE_REG,</text>
+<text x="57" y="182" font-size="11" font-family="monospace" fill="#212121">its split across stages unknown</text>
+<text x="57" y="195.5" font-size="11" font-family="monospace" fill="#7b1fa2">esp_sdr_rx_set_gain()</text>
+<rect x="204" y="66" width="201.6" height="65" rx="3" fill="#f2f2f2" stroke="#9e9e9e" stroke-width="1"/>
+<text x="211" y="81" font-size="11" font-family="monospace" fill="#212121">I/Q mixers, 90° split:</text>
+<text x="211" y="94.5" font-size="11" font-family="monospace" fill="#212121">no register known (zero IF,</text>
+<text x="211" y="108" font-size="11" font-family="monospace" fill="#212121">inferred from BBTOP I and Q)</text>
+<text x="211" y="121.5" font-size="11" font-family="monospace" fill="#7b1fa2">esp_sdr_set_freq()</text>
+<rect x="322" y="140" width="221.7" height="51.5" rx="3" fill="#f2f2f2" stroke="#9e9e9e" stroke-width="1"/>
+<text x="329" y="155" font-size="11" font-family="monospace" fill="#212121">BBTOP_R4/R5 0x67:4/5 [5:0]</text>
+<text x="329" y="168.5" font-size="11" font-family="monospace" fill="#212121">BBTOP_RX_LPF, 0..60: 54..12 MHz</text>
+<text x="329" y="182" font-size="11" font-family="monospace" fill="#7b1fa2">esp_sdr_rx_set_lpf()</text>
+<rect x="472" y="66" width="181.5" height="65" rx="3" fill="#f2f2f2" stroke="#9e9e9e" stroke-width="1"/>
+<text x="479" y="81" font-size="11" font-family="monospace" fill="#212121">AGC_FORCE_REG 0x600a702c</text>
+<text x="479" y="94.5" font-size="11" font-family="monospace" fill="#212121">[31:24] index, [23] force</text>
+<text x="479" y="108" font-size="11" font-family="monospace" fill="#212121">[14:8] max index (cap 79)</text>
+<text x="479" y="121.5" font-size="11" font-family="monospace" fill="#7b1fa2">esp_sdr_rx_set_gain()</text>
+<rect x="590" y="140" width="215" height="65" rx="3" fill="#f2f2f2" stroke="#9e9e9e" stroke-width="1"/>
+<text x="597" y="155" font-size="11" font-family="monospace" fill="#212121">FE_FORCE_REG [15:14] FE_RX_CLK</text>
+<text x="597" y="168.5" font-size="11" font-family="monospace" fill="#212121">set_rxclk_en(1): RX clock on</text>
+<text x="597" y="182" font-size="11" font-family="monospace" fill="#212121">Q [9:0], I [19:10] (assumed)</text>
+<text x="597" y="195.5" font-size="11" font-family="monospace" fill="#7b1fa2">esp_sdr_rx_rate_hz()</text>
+<rect x="712" y="66" width="221.7" height="65" rx="3" fill="#f2f2f2" stroke="#9e9e9e" stroke-width="1"/>
+<text x="719" y="81" font-size="11" font-family="monospace" fill="#212121">FE_IQE_CTRL0/1_REG 0x600a0470/4</text>
+<text x="719" y="94.5" font-size="11" font-family="monospace" fill="#212121">sums 80 MHz I/Q, up to 32768</text>
+<text x="719" y="108" font-size="11" font-family="monospace" fill="#212121">FE_IQE_SUM_I/Q, FE_IQE_POW_I/Q</text>
+<text x="719" y="121.5" font-size="11" font-family="monospace" fill="#7b1fa2">esp_sdr_rx_paced_start()</text>
+<rect x="862" y="140" width="235.1" height="65" rx="3" fill="#f2f2f2" stroke="#9e9e9e" stroke-width="1"/>
+<text x="869" y="155" font-size="11" font-family="monospace" fill="#212121">DUMP_CTRL_REG 0x600a9004</text>
+<text x="869" y="168.5" font-size="11" font-family="monospace" fill="#212121">[31] RUN [19] TRIGGER [18] DONE</text>
+<text x="869" y="182" font-size="11" font-family="monospace" fill="#212121">[15] 40 MS/s (code; doc: 80 only)</text>
+<text x="869" y="195.5" font-size="11" font-family="monospace" fill="#7b1fa2">esp_sdr_rx_capture()</text>
+<rect x="1016" y="66" width="221.7" height="65" rx="3" fill="#f2f2f2" stroke="#9e9e9e" stroke-width="1"/>
+<text x="1023" y="81" font-size="11" font-family="monospace" fill="#212121">HP_SYSTEM_SRAM_USAGE_CONF_REG</text>
+<text x="1023" y="94.5" font-size="11" font-family="monospace" fill="#212121">0x60095004 [11:8] one-hot block</text>
+<text x="1023" y="108" font-size="11" font-family="monospace" fill="#212121">128 KiB block to the engine</text>
+<text x="1023" y="121.5" font-size="11" font-family="monospace" fill="#7b1fa2">esp_sdr_gapless_run()</text>
+<rect x="125" y="556" width="228.4" height="65" rx="3" fill="#f2f2f2" stroke="#9e9e9e" stroke-width="1"/>
+<text x="132" y="571" font-size="11" font-family="monospace" fill="#212121">FE_FORCE_REG 0x600a0910</text>
+<text x="132" y="584.5" font-size="11" font-family="monospace" fill="#212121">[9:8] RX, [11:10] TX force pairs</text>
+<text x="132" y="598" font-size="11" font-family="monospace" fill="#212121">U.FL: XIAO_ESP32C6_EXT_ANTENNA</text>
+<text x="132" y="611.5" font-size="11" font-family="monospace" fill="#7b1fa2">esp_sdr_init()</text>
+<rect x="600" y="405" width="241.8" height="65" rx="3" fill="#f2f2f2" stroke="#9e9e9e" stroke-width="1"/>
+<text x="607" y="420" font-size="11" font-family="monospace" fill="#212121">RFPLL_R16 0x62:16 [3] RFPLL_LO_DIV</text>
+<text x="607" y="433.5" font-size="11" font-family="monospace" fill="#212121">1: LO = PLL / 1.2, below 2210 MHz</text>
+<text x="607" y="447" font-size="11" font-family="monospace" fill="#212121">one selector; no block 0x65</text>
+<text x="607" y="460.5" font-size="11" font-family="monospace" fill="#7b1fa2">esp_sdr_set_freq()</text>
+<rect x="852" y="405" width="215" height="65" rx="3" fill="#f2f2f2" stroke="#9e9e9e" stroke-width="1"/>
+<text x="859" y="420" font-size="11" font-family="monospace" fill="#212121">0x62:0 [5] RFPLL_CAL_START</text>
+<text x="859" y="433.5" font-size="11" font-family="monospace" fill="#212121">0x62:1 [7:0] RFPLL_MANUAL_CODE</text>
+<text x="859" y="447" font-size="11" font-family="monospace" fill="#212121">0x62:12 [3:2] RFPLL_VCO_WINDOW</text>
+<text x="859" y="460.5" font-size="11" font-family="monospace" fill="#7b1fa2">esp_sdr_set_freq(): -ERANGE</text>
+<rect x="1084" y="405" width="228.4" height="65" rx="3" fill="#f2f2f2" stroke="#9e9e9e" stroke-width="1"/>
+<text x="1091" y="420" font-size="11" font-family="monospace" fill="#212121">RFPLL_R14/R15 0x62:14/15</text>
+<text x="1091" y="433.5" font-size="11" font-family="monospace" fill="#212121">charge pump cal: [4:0] CHGP_CODE</text>
+<text x="1091" y="447" font-size="11" font-family="monospace" fill="#212121">code = min(31, 7r/6 + 9)</text>
+<text x="1091" y="460.5" font-size="11" font-family="monospace" fill="#7b1fa2">esp_sdr_set_freq()</text>
+<rect x="690" y="618" width="221.7" height="65" rx="3" fill="#f2f2f2" stroke="#9e9e9e" stroke-width="1"/>
+<text x="697" y="633" font-size="11" font-family="monospace" fill="#212121">RFPLL_SDM_R3..R6 0x63:3..6</text>
+<text x="697" y="646.5" font-size="11" font-family="monospace" fill="#212121">f_PLL = 1.5 f_xtal (32 + r3</text>
+<text x="697" y="660" font-size="11" font-family="monospace" fill="#212121">+ (r4*2^11 + r5*2^3 + r6)/2^19)</text>
+<text x="697" y="673.5" font-size="11" font-family="monospace" fill="#7b1fa2">esp_sdr_set_freq()</text>
+<rect x="1170" y="487" width="194.9" height="65" rx="3" fill="#f2f2f2" stroke="#9e9e9e" stroke-width="1"/>
+<text x="1177" y="502" font-size="11" font-family="monospace" fill="#212121">LO and sample clock; no</text>
+<text x="1177" y="515.5" font-size="11" font-family="monospace" fill="#212121">register: ppb correction</text>
+<text x="1177" y="529" font-size="11" font-family="monospace" fill="#212121">scales the PLL word</text>
+<text x="1177" y="542.5" font-size="11" font-family="monospace" fill="#7b1fa2">esp_sdr_set_freq_corr_ppb()</text>
+<rect x="1185" y="560" width="194.9" height="65" rx="3" fill="#f2f2f2" stroke="#9e9e9e" stroke-width="1"/>
+<text x="1192" y="575" font-size="11" font-family="monospace" fill="#212121">FE_TONE0/1_REG 0x600a0420/4</text>
+<text x="1192" y="588.5" font-size="11" font-family="monospace" fill="#212121">[18] EN [17:10] ATTEN</text>
+<text x="1192" y="602" font-size="11" font-family="monospace" fill="#212121">[9:0] FREQ; turns chain on</text>
+<text x="1192" y="615.5" font-size="11" font-family="monospace" fill="#7b1fa2">esp_sdr_tx_paced_start()</text>
+<rect x="1185" y="632" width="194.9" height="65" rx="3" fill="#f2f2f2" stroke="#9e9e9e" stroke-width="1"/>
+<text x="1192" y="647" font-size="11" font-family="monospace" fill="#212121">FE_TXDC_REG 0x600a0444</text>
+<text x="1192" y="660.5" font-size="11" font-family="monospace" fill="#212121">[9:0] I, [19:10] Q: the DAC</text>
+<text x="1192" y="674" font-size="11" font-family="monospace" fill="#212121">value, written CPU-paced</text>
+<text x="1192" y="687.5" font-size="11" font-family="monospace" fill="#7b1fa2">esp_sdr_tx_paced_start()</text>
+<rect x="171" y="870" width="228.4" height="65" rx="3" fill="#f2f2f2" stroke="#9e9e9e" stroke-width="1"/>
+<text x="178" y="885" font-size="11" font-family="monospace" fill="#212121">no PA register known</text>
+<text x="178" y="898.5" font-size="11" font-family="monospace" fill="#212121">FE_FORCE_REG [11:10] FE_TX_FORCE</text>
+<text x="178" y="912" font-size="11" font-family="monospace" fill="#212121">[17:16] FE_TX_CLK; vendor CW on</text>
+<text x="178" y="925.5" font-size="11" font-family="monospace" fill="#7b1fa2">esp_sdr_tx_paced_start()</text>
+<rect x="292" y="946" width="235.1" height="65" rx="3" fill="#f2f2f2" stroke="#9e9e9e" stroke-width="1"/>
+<text x="299" y="961" font-size="11" font-family="monospace" fill="#212121">FE_PWR_INDEX_REG 0x600a0410</text>
+<text x="299" y="974.5" font-size="11" font-family="monospace" fill="#212121">[23] force [21:16] index (unused)</text>
+<text x="299" y="988" font-size="11" font-family="monospace" fill="#212121">power: CW tone backoff, 2 dB/step</text>
+<text x="299" y="1001.5" font-size="11" font-family="monospace" fill="#7b1fa2">esp_sdr_tx_paced_start(.., power)</text>
+<rect x="483" y="870" width="215" height="65" rx="3" fill="#f2f2f2" stroke="#9e9e9e" stroke-width="1"/>
+<text x="490" y="885" font-size="11" font-family="monospace" fill="#212121">I/Q modulator, 90° split, sum:</text>
+<text x="490" y="898.5" font-size="11" font-family="monospace" fill="#212121">no register known (inferred)</text>
+<text x="490" y="912" font-size="11" font-family="monospace" fill="#212121">same LO as RX (RFPLL_LO_DIV)</text>
+<text x="490" y="925.5" font-size="11" font-family="monospace" fill="#7b1fa2">esp_sdr_set_freq()</text>
+<rect x="580" y="946" width="235.1" height="51.5" rx="3" fill="#f2f2f2" stroke="#9e9e9e" stroke-width="1"/>
+<text x="587" y="961" font-size="11" font-family="monospace" fill="#212121">BBTOP_R12..R15 0x67:12..15</text>
+<text x="587" y="974.5" font-size="11" font-family="monospace" fill="#212121">probably the TX pairs (decompile)</text>
+<text x="587" y="988" font-size="11" font-family="monospace" fill="#7b1fa2">esp_sdr_tx_set_lpf(): -ENOTSUP</text>
+<rect x="742" y="870" width="174.8" height="65" rx="3" fill="#f2f2f2" stroke="#9e9e9e" stroke-width="1"/>
+<text x="749" y="885" font-size="11" font-family="monospace" fill="#212121">DUMP_DAC_TRIG_REG [15]</text>
+<text x="749" y="898.5" font-size="11" font-family="monospace" fill="#212121">DUMP_DAC_RATE_80M:</text>
+<text x="749" y="912" font-size="11" font-family="monospace" fill="#212121">engine 80 or 40 MS/s</text>
+<text x="749" y="925.5" font-size="11" font-family="monospace" fill="#7b1fa2">esp_sdr_tx_paced_start()</text>
+<rect x="850" y="946" width="221.7" height="65" rx="3" fill="#f2f2f2" stroke="#9e9e9e" stroke-width="1"/>
+<text x="857" y="961" font-size="11" font-family="monospace" fill="#212121">FE_DAC_SRC_REG 0x600a0414 [1:0]</text>
+<text x="857" y="974.5" font-size="11" font-family="monospace" fill="#212121">0: tone generator (engine too)</text>
+<text x="857" y="988" font-size="11" font-family="monospace" fill="#212121">3: data path (TX DC value)</text>
+<text x="857" y="1001.5" font-size="11" font-family="monospace" fill="#7b1fa2">esp_sdr_tx_paced_start()</text>
+<rect x="946" y="870" width="228.4" height="65" rx="3" fill="#f2f2f2" stroke="#9e9e9e" stroke-width="1"/>
+<text x="953" y="885" font-size="11" font-family="monospace" fill="#212121">DUMP_DAC_TRIG_REG 0x600a900c</text>
+<text x="953" y="898.5" font-size="11" font-family="monospace" fill="#212121">[31] RUN [19] LOOP [15] RATE_80M</text>
+<text x="953" y="912" font-size="11" font-family="monospace" fill="#212121">plays the owned SRAM block;</text>
+<text x="953" y="925.5" font-size="11" font-family="monospace" fill="#212121">not used by esp_sdr</text>
+<text x="20" y="1049" font-size="11" font-family="monospace" fill="#616161">Analog I2C: blocks 0x62 (RF PLL), 0x63 (SDM) and 0x67 (bbtop) are reached through I2C_ANA_MST_I2C0_CTRL_REG / I2C_ANA_MST_I2C1_CTRL_REG</text>
+<text x="20" y="1062.5" font-size="11" font-family="monospace" fill="#616161">(0x600af800 / 0x600af804) under regi2c_enter_critical(); MODEM_SYSCON_MODEM_RST_CONF_REG and MODEM_LPCON_RST_CONF_REG are pulsed at boot.</text>
+<text x="20" y="1076" font-size="11" font-family="monospace" fill="#616161">Capture setup: DUMP_MODE_REG 0x600a9008 [18:15] DUMP_SRC = 15 (raw I/Q), dump clocks forced on (MODEM_SYSCON_CLK_CONF_REG), BTBB_RB4_REG [0] cleared.</text>
+</svg>
