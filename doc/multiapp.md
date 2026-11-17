@@ -668,24 +668,25 @@ module find it by its class.
 
 ## Zephyr changes
 
-Commits on the fork's `zsdr` branch, which `west.yml` pins, on top of the SMP port: exec alias, llext repackage dependency, NCM/ECM unregister before init, Xtensa
-GLOB_DAT addend, alignment padding, PSRAM atomics (two commits), shared object region alignment.
+Commits on the fork's `zsdr` branch, which `west.yml` pins, on top of the SMP port: exec alias,
+llext repackage dependency, NCM/ECM unregister before init, Xtensa GLOB_DAT addend, alignment
+padding, PSRAM atomics (two commits), shared object region alignment.
 They are candidates for upstream Zephyr. The modules add `CONFIG_LLEXT_REGION_HEAPS` with
 `LLEXT_MEM_TEXT_ALT` (`subsys/llext`), and `CONFIG_ESP32_WIFI_NET_ALLOC_SPIRAM` moves to
 `soc/espressif/common/Kconfig.spiram`, because it also serves the network stack without Wi-Fi.
 
-The display adds two: `arch/xtensa/core/elf.c` takes a pointer one past the end of a section (see "Bugs
-found"), and LVGL's source lists move to `modules/lvgl/sources.cmake`, in the same order, so that an
-application can build LVGL its own way.
+The display adds two: `arch/xtensa/core/elf.c` takes a pointer one past the end of a section (see
+"Bugs found"), and LVGL's source lists move to `modules/lvgl/sources.cmake`, in the same order, so
+that an application can build LVGL its own way.
 
 On the MicroPython fork, the port's source lists move to `ports/zephyr/sources.cmake`, for
 `micropython.cmake` to use.
 
-The ESP32-S31 adds two, on `zsdr` past the commit `west.yml` pins, as is the S31's support
-itself: `CONFIG_LLEXT_REGION_HEAPS` depends on
-`CONFIG_LLEXT_HEAP_DYNAMIC` alone (the exec alias it required is Xtensa's), and
-`arch/riscv/core/elf.c` checks `R_RISCV_JAL` against the J type's +-1 MiB instead of the
-2 GiB of an `auipc` pair, which let a jump between regions too far apart through.
+The ESP32-S31 needs two more, both in the pinned `zsdr` with the S31's support itself:
+`CONFIG_LLEXT_REGION_HEAPS` depends on `CONFIG_LLEXT_HEAP_DYNAMIC` alone (the exec alias is
+Xtensa's), part of the region heaps commit, and `arch/riscv/core/elf.c` checks `R_RISCV_JAL`
+against the J type's +-1 MiB instead of the 2 GiB of an `auipc` pair, which let a jump between
+regions too far apart through.
 
 ## The standalone apps (2026-10-09)
 
