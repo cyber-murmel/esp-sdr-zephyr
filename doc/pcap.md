@@ -310,7 +310,8 @@ PID 0x0005, product "ESP-SDR pcap". The P4's OTG controller has 896 words of FIF
 words: `g-tx-fifo-size = <16 128 128 64 64 64 64>` gives CDC-ACM's notification endpoint 16 words
 and the two bulk IN endpoints 128 each (816 words in all with the RX FIFO and EP0's); three FIFOs
 of 128 did not fit, the driver refused them, USB never came up and MCUboot reverted the image.
-The image's version must be MicroPython's (0.2.0) or later: MCUboot refuses downgrades.
+The image carries the repository's `VERSION`, as MicroPython does: MCUboot refuses a
+downgrade, so neither may fall behind the other.
 
 Vendor requests: `esdr_proto.h`'s below 0x40 go to the C6 (frequency and gapless settings are
 kept and applied at the start; `ESDR_REQ_SET_CHANNELIZER` sets the bank), the app's own from
