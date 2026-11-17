@@ -336,28 +336,14 @@ header or source file that states a limit.
 
 ### Conflicting figures
 
-- **S3 ring decimation:** `esp_sdr_ring.h` and [osmosdr](../../apps/osmosdr/README.rst) (32 times,
-  500 kS/s) give a minimum of 32; `lib/esp_sdr/Kconfig` and [Channelizer](../modem/channelizer.md)
-  say 64 to 1024.
-- **C6 paced receive ceiling:** the library summary of
-  [ESP-SDR on Zephyr](../../README.rst) gave "up to 250 kS/s"; osmosdr_serial measures 2 MS/s over
-  SDIO ([Paced streams](paced.md)); `esp_sdr_paced.h` states gapless up to about 4.7 MS/s "with
-  nothing else in the loop", in its paragraph on the C6.
 - **C5 transmit at 250 kS/s:** "keeps up on the C5" against "starves on the C5 too", both in
   [Host transports](transports.md#host-fed-transmit).
-- **ESP32 rates:** "at 2 MS/s the library makes some 2 MB/s of samples" does not match "the ESP32
-  could give 670 kS/s" or the 676 kS/s derived here. "The 520 bursts a second the library could
-  make" matches the 125 kS/s cycle (1 / 1.905 ms = 525), not 2 MS/s; the source does not say which
-  rate. All in [MCH2022 badge](../apps/mch2022.md).
 - **S3 low LO edge:** 1817 and 1828 MHz (`esp_sdr.h`, [Tuning](../radio/tuning.md)), about
   1865 MHz ([Crystal calibration](../radio/crystal-calibration.md)), 1840 MHz (Scan grid).
 - **S3 high LO edge:** the S3 locks up to 2793 MHz, yet the C6 measurement had the S3 transmitter
   reach at least 2856 MHz ([Tuning](../radio/tuning.md)). These may be different boards; the
   sources do not say.
 - **S31 high edge:** "some 2900" MHz stated, 2870 MHz reached by the VIEWE Scan.
-- **S31 burst rates in the API:** the rate list in `include/esp_sdr/esp_sdr.h` names the S3,
-  ESP32, C5 and C6 rates but not the S31's, which `esp_sdr_rx_rate_hz()` in
-  `lib/esp_sdr/src/esp_sdr_rx.c` returns (80 to 4 MS/s).
 
 ### Not measured
 

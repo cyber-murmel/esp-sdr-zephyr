@@ -247,10 +247,6 @@ bank, a TX DC value register the CPU writes sample by sample, or the vendor's to
 API: `esp_sdr_tx_play()` and `esp_sdr_tx_loop_buf()` on the S3; `esp_sdr_tx_paced_start()` on the
 C6, C5 and S31; `esp_sdr_replay_*()` on the C5 and S31.
 
-The sources differ on FE_TXDC_REG: the C6 register page calls it untested on the C6 and says the
-library has no C6 transmit path, while `lib/esp_sdr/src/esp_sdr_paced.c` drives the C6's paced
-transmit through it (`TXDC_REG` in `lib/esp_sdr/src/esp_sdr_priv.h`).
-
 ### DAC
 
 Two 10-bit converters, I and Q.

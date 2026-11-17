@@ -859,7 +859,8 @@
       <name>FE</name>
       <description>
         Front end
-        Unused by the library (it has no C6 transmit path). Evidence marked *decompile* in this
+        The library uses the IQ estimator (paced receive) and the TX DC value (paced transmit);
+        the rest is the vendor's. Evidence marked *decompile* in this
         section comes from C6 `libphy.a` `phy_reg.o`, `phy_pbus.o`, `phy_init.o` and
         `phy_tx_cal.o`, `librftest.a` `rf_test.o`, `esp_phy_api.o`, `phy_test.o` and `wifi.o`,
         and the C6 ROM.
@@ -1099,8 +1100,10 @@
             The C6 `set_txdc_dig(i, q)`, the only code that writes the register, writes only
             FE_TXDC_I and FE_TXDC_Q; the identical C61 function writes 0x600a0c08, the register
             upstream's first C5 code drove CPU-paced I/Q through (`TXDC_REG`, `emit_iq()`).
-            Untested on the C6.
-            Evidence: *decompile* C6 and C61 `librftest.a` `phy_test.o`; *upstream*
+            The library's paced transmit (`esp_sdr_paced.c`, `TXDC_REG`) writes it CPU-paced
+            after the vendor CW and `ram_stop_tx_tone()`, keeping bits 31:20.
+            Evidence: *decompile* C6 and C61 `librftest.a` `phy_test.o`; *measured* a XIAO
+            ESP32C6 transmitting through it (bench 2026-10-12); *upstream*
             `git show e605684:main/c5_main.c:32, 211-238`
           </description>
           <addressOffset>0x444</addressOffset>

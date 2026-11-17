@@ -1200,10 +1200,9 @@ in its list).
   125 kS/s, ``cmod/esdr_rates.h``) is 20 MS/s bursts, 0.8 ms each, taken back to back with gaps
   between them, each finished while the next is captured: at 2 MS/s 42 % of the stream, from
   1.25 MS/s down some 49 %.
-- A stream into a buffer at 312.5 kS/s and below has no gaps: it runs through the dump ring
-  (``esp_sdr_dumpring.h``).
-- Measured, which disagrees at 312.5 kS/s: 250 kS/s and below ran 30 to 60 s without a gap;
-  312.5 kS/s restarts some 1.3 times a second, a gap each.
+- A stream into a buffer at 312.5 kS/s and below runs through the dump ring
+  (``esp_sdr_dumpring.h``). At 250 kS/s and below it has no gaps (30 to 60 s measured); at
+  312.5 kS/s the ring restarts some 1.3 times a second, a gap each, against the bursts' 44 %.
 - A stream into a buffer at 2 MS/s goes through the dump ring too, without a gap while CPU 0
   idles.
 - A request that needs the radio (a gain, a tuning) pauses the run for its few milliseconds, a

@@ -142,7 +142,7 @@ The inputs per chip, as of 2026-10-15 (sources: [Gapless receive](../samples/rin
 
 | Chip | Input | Cost against the budget |
 |---|---|---|
-| ESP32-S3, two-stage FIR | the ring at 16 MS/s, 15 cycles per pair | fits at decimation 64 and up (about 12.7 cycles), not at decimation 4 |
+| ESP32-S3, two-stage FIR | the ring at 16 MS/s, 15 cycles per pair | fits at decimation 64 and up (about 12.7 cycles) and at 32 (14.4, with the second stage rounded to whole 8-tap groups), not at decimation 4 |
 | ESP32-S3, boxcar of 4 | the same ring | about 9.5 cycles per pair |
 | ESP32-S3, every 4th pair | the same ring | about 1 |
 | ESP32-C5 | the diagnostic-bus ring: 40 MS/s of 4-bit I/Q gaplessly, 6.0 cycles per byte | box16 and a CIC3: 4.1 to 4.4 (5.7 with the USB service) |
