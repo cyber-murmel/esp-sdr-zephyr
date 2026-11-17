@@ -8,8 +8,10 @@
 # a west.yml change, run `west2nix` (in the shell) and commit west2nix.toml. One image is one
 # derivation: nix-build -A firmware.xiao_esp32s3.osmosdr builds just that one.
 #
-# Attributes: firmware, gateware (the MCH2022 badge's FPGA bitstream), tools, soapy-esdr, soapysdr
-# (with the esdr module), westWorkspace, dev (the packages shell.nix has) and shell.
+# Attributes: firmware, firmwareByBoard (one board's images in one result, as the release builds
+# them), gateware (the MCH2022 badge's FPGA bitstream), tools, soapy-esdr, soapysdr (with the esdr
+# module), westWorkspace, ciDeps (what every image build shares, for CI's cache), dev (the
+# packages shell.nix has) and shell.
 
 let
   nixpkgs-ref = "c9bfd86ed684d27e63b0ff9ebb18699f84f27a3b"; # nixos-25.11-small
@@ -451,6 +453,17 @@ let
   firmware = lib.mapAttrs (board: images: lib.listToAttrs (map (img: lib.nameValuePair img.name (mkImage img)) images))
     (lib.groupBy (img: img.board) imageList);
 
+  # firmwareByBoard.<board>: <board>/<name>/ of each of its images, one derivation (release.yml).
+  firmwareByBoard = lib.mapAttrs (board: images: pkgs.symlinkJoin {
+    name = "esp-sdr-${board}-${version}";
+    paths = lib.attrValues images;
+  }) firmware;
+
+  # What every image build shares, without an image: realising it fills the store that CI caches
+  # (.github/workflows/nix.yml) for the release's per-board builds.
+  ciDeps = pkgs.writeText "esp-sdr-ci-deps-${version}" (lib.concatMapStringsSep "\n" toString
+    (build ++ [ westWorkspace mpy-cross gateware yamlPython pkgs.gitMinimal pkgs.gcc ]));
+
   # Host tools
 
   apps = lib.filter (app: !(lib.elem app excludeApps)) (lib.attrNames (lib.filterAttrs (n: t: t == "directory") (builtins.readDir ./apps)));
@@ -515,8 +528,8 @@ pkgs.symlinkJoin {
   name = "esp-sdr-zephyr-${version}";
   paths = lib.concatMap lib.attrValues (lib.attrValues firmware) ++ [ tools ];
   passthru = {
-    inherit pkgs dev shell firmware gateware tools host-tools soapy-esdr soapysdr westWorkspace
-      riscv32-esp-binutils;
+    inherit pkgs dev shell firmware firmwareByBoard ciDeps gateware tools host-tools soapy-esdr
+      soapysdr westWorkspace riscv32-esp-binutils;
     west2nix = west2nix-update;
   };
 }
