@@ -369,6 +369,13 @@ let
   westWorkspace = pkgs.stdenvNoCC.mkDerivation {
     name = "esp-sdr-west-workspace-${version}";
     src = firmwareSrc;
+    # The hook's commits would start git gc in the background, which packs a project's loose
+    # objects while the build phase's chmod -R walks them (failed so in CI).
+    GIT_CONFIG_COUNT = 2;
+    GIT_CONFIG_KEY_0 = "gc.auto";
+    GIT_CONFIG_VALUE_0 = "0";
+    GIT_CONFIG_KEY_1 = "maintenance.auto";
+    GIT_CONFIG_VALUE_1 = "false";
     nativeBuildInputs = [
       (west2nix.mkWest2nixHook { manifest = hookLock; })
       pkgs.gitMinimal
