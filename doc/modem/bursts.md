@@ -1,5 +1,9 @@
 # Burst detection
 
+<!-- nav-start -->
+Previous: [GFSK and Bluetooth LE](gfsk.md) · Up: [Modulation and coding](index.md) · Next: [QAM and OFDM](qam-ofdm.md)
+<!-- nav-end -->
+
 This page describes how a sample stream becomes classified bursts: detected, cut out, decoded
 when the protocol is known, and analysed when it is not. The detector and decoders are those of
 [pcap](../../apps/pcap/README.rst), which runs them on the WHY2025 badge's ESP32-P4 for what its
@@ -231,3 +235,7 @@ after the previous channelization, recursively".
 
 How the host tool merges the records of several channels of one stream is in
 [pcap](../../apps/pcap/README.rst).
+
+<!-- nav-start -->
+Previous: [GFSK and Bluetooth LE](gfsk.md) · Up: [Modulation and coding](index.md) · Next: [QAM and OFDM](qam-ofdm.md)
+<!-- nav-end -->

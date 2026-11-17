@@ -6,6 +6,12 @@
 link
 ####
 
+.. nav-start
+
+Previous: `chancap <../chancap/README.rst>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `wpan <../wpan/README.rst>`__
+
+.. nav-end
+
 A packet radio link between two ESP32-S3 boards on the raw Wi-Fi I/Q paths of the ``esp-sdr``
 module, at the native 80 MS/s, with an iperf style throughput test on the USB shell.
 
@@ -153,3 +159,9 @@ See also
 - `QAM and OFDM <../../doc/modem/qam-ofdm.md>`__: the PHYs, the MAC, the measurements.
 - `Error correction <../../doc/modem/fec.md>`__: RS, Hamming and BCH codes.
 - `Applications <../../doc/apps/index.md>`__: DFU updates and USB access.
+
+.. nav-start
+
+Previous: `chancap <../chancap/README.rst>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `wpan <../wpan/README.rst>`__
+
+.. nav-end

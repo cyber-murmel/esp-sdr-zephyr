@@ -1,5 +1,9 @@
 # ZigBit reference
 
+<!-- nav-start -->
+Previous: [Testing](testing.md) · Up: [Reference](index.md) · Next: [ESP32-S3 registers](registers-esp32s3.md)
+<!-- nav-end -->
+
 A plan, nothing built yet. The ATZB-X-233-XPRO (ZigBit ATxmega256A3U + AT86RF233) becomes a second
 native 802.15.4 radio next to the ESP32-C6 or -S3. It checks the software radio of
 [IEEE 802.15.4](../modem/ieee802154.md) against independent silicon and an independent vendor
@@ -233,3 +237,7 @@ badge, not an S3 app.
 - A cable for the RF test connector, and an attenuator.
 - Where the XMEGA firmware lives (for example `firmware/zigbit-rcp/`), the binding's vendor prefix,
   and the `shell.nix` change: decided when code is written.
+
+<!-- nav-start -->
+Previous: [Testing](testing.md) · Up: [Reference](index.md) · Next: [ESP32-S3 registers](registers-esp32s3.md)
+<!-- nav-end -->

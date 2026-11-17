@@ -1,5 +1,9 @@
 # Modulation and coding
 
+<!-- nav-start -->
+Previous: [Host transports](../samples/transports.md) · Up: [esp-sdr-zephyr](../index.rst) · Next: [Channelizer](channelizer.md)
+<!-- nav-end -->
+
 This is the third part of the docs. [The radio](../radio/index.md) ends with complex baseband
 I/Q samples, and [Samples in and out](../samples/index.md) brings them into memory as bursts,
 gapless rings and paced streams. This part turns those samples into packets and packets back into
@@ -117,3 +121,7 @@ Recovering from bit errors, or at least detecting them: the codes of
 6. [Error correction](fec.md): the link's codes, their decoders, and how to choose one.
 
 Part 4, [Applications](../apps/index.md), describes the apps that use these pages.
+
+<!-- nav-start -->
+Previous: [Host transports](../samples/transports.md) · Up: [esp-sdr-zephyr](../index.rst) · Next: [Channelizer](channelizer.md)
+<!-- nav-end -->

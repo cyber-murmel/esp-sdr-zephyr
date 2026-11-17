@@ -6,6 +6,12 @@
 micropython
 ###########
 
+.. nav-start
+
+Previous: `multiapp internals <../../doc/apps/multiapp-internals.md>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `mch2022_coproc <../mch2022_coproc/README.rst>`__
+
+.. nav-end
+
 MicroPython with a GNU Radio stand-in that runs GRC exports unmodified, on ESP32-S3, ESP32-C5,
 ESP32-P4, ESP32 and ESP32-S31 boards.
 
@@ -1328,3 +1334,9 @@ See also
 - `MCH2022 badge <../../doc/apps/mch2022.md>`__: the badge's RP2040 and FPGA.
 - `Crystal calibration <../../doc/radio/crystal-calibration.md>`__: what ``ltecal`` measures.
 - `Applications <../../doc/apps/index.md>`__: DFU updates and recovery.
+
+.. nav-start
+
+Previous: `multiapp internals <../../doc/apps/multiapp-internals.md>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `mch2022_coproc <../mch2022_coproc/README.rst>`__
+
+.. nav-end

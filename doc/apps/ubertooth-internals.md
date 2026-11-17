@@ -1,5 +1,9 @@
 # ubertooth internals
 
+<!-- nav-start -->
+Previous: [ubertooth](../../apps/ubertooth/README.rst) · Up: [Applications](index.md) · Next: [pcap](../../apps/pcap/README.rst)
+<!-- nav-end -->
+
 The design and measurement log of [ubertooth](../../apps/ubertooth/README.rst), which runs the
 device side of an [Ubertooth One](https://github.com/greatscottgadgets/ubertooth) on the ESP32-S3's
 software radio, so the unmodified upstream host tools work.
@@ -594,3 +598,7 @@ The BLE finder's clock callback got the promiscuous mode's context: a division b
 - The hot block's list from the BR and promiscuous modes.
 - RSSI and spectrum level calibration with a source of known power.
 - The demodulator's timing and estimation: [GFSK and Bluetooth LE](../modem/gfsk.md).
+
+<!-- nav-start -->
+Previous: [ubertooth](../../apps/ubertooth/README.rst) · Up: [Applications](index.md) · Next: [pcap](../../apps/pcap/README.rst)
+<!-- nav-end -->

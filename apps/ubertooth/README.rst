@@ -6,6 +6,12 @@
 ubertooth
 #########
 
+.. nav-start
+
+Previous: `zstack <../zstack/README.rst>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `ubertooth internals <../../doc/apps/ubertooth-internals.md>`__
+
+.. nav-end
+
 The device firmware of an `Ubertooth One <https://github.com/greatscottgadgets/ubertooth>`__ on
 the ESP32-S3 software radio, for the unmodified upstream host tools.
 
@@ -284,3 +290,9 @@ See also
 - `ubertooth internals <../../doc/apps/ubertooth-internals.md>`__: design and measurement log.
 - `GFSK and Bluetooth LE <../../doc/modem/gfsk.md>`__: the demodulator.
 - `Applications <../../doc/apps/index.md>`__: DFU updates and USB access.
+
+.. nav-start
+
+Previous: `zstack <../zstack/README.rst>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `ubertooth internals <../../doc/apps/ubertooth-internals.md>`__
+
+.. nav-end

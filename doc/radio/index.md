@@ -1,5 +1,9 @@
 # The radio
 
+<!-- nav-start -->
+Previous: [ESP-SDR on Zephyr](../../README.rst) · Up: [esp-sdr-zephyr](../index.rst) · Next: [Transceiver](transceiver.md)
+<!-- nav-end -->
+
 This part follows the signal through the analog radio of each chip: from the antenna to the ADC on
 receive, and from the DAC back to the antenna on transmit. Part 2,
 [Samples in and out](../samples/index.md), starts where the samples leave the ADC.
@@ -112,3 +116,7 @@ the Function CoreBoard, while the carrier, paced and replay entries name the VIE
    the clock offset between boards and phase noise.
 6. [Crystal calibration](crystal-calibration.md): the crystal's error measured against LTE, its
    temperature model and storage.
+
+<!-- nav-start -->
+Previous: [ESP-SDR on Zephyr](../../README.rst) · Up: [esp-sdr-zephyr](../index.rst) · Next: [Transceiver](transceiver.md)
+<!-- nav-end -->

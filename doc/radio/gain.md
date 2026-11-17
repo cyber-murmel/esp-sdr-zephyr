@@ -1,5 +1,9 @@
 # Gain
 
+<!-- nav-start -->
+Previous: [Tuning](tuning.md) · Up: [The radio](index.md) · Next: [Filters](filters.md)
+<!-- nav-end -->
+
 This page covers the receive gain, one index or the hardware AGC, and the transmit power, and where
 each of them breaks. It builds on the baseband amplifier and transmit gain blocks of
 [Transceiver](transceiver.md), which list the registers.
@@ -220,3 +224,7 @@ clip:
 
 - The compression is the S31's: the knee has the same shape at two XIAO gains 10 dB apart.
 - Full scale is 16384 (256 DAC counts); the library maps 32767 to 511.
+
+<!-- nav-start -->
+Previous: [Tuning](tuning.md) · Up: [The radio](index.md) · Next: [Filters](filters.md)
+<!-- nav-end -->

@@ -1,5 +1,9 @@
 # pcap internals
 
+<!-- nav-start -->
+Previous: [pcap](../../apps/pcap/README.rst) · Up: [Applications](index.md) · Next: [multiapp](../../apps/multiapp/README.rst)
+<!-- nav-end -->
+
 The design and measurement log of [pcap](../../apps/pcap/README.rst): the WHY2025 badge's ESP32-P4
 demodulates and decodes what its ESP32-C6 radio receives and streams it over USB as pcapng for
 Wireshark. Design note, 2026-10-26; implemented and measured on the badge on 2026-10-27.
@@ -425,3 +429,7 @@ A busier hour:
 - The WHY2025 badge's P4, no display: 1407 to 1635 in 15 s on one CPU, all of the stream seen, 12
   bursts without a buffer (228 before the shedding). On two CPUs see
   [ESP32-P4: two CPUs](#esp32-p4-two-cpus).
+
+<!-- nav-start -->
+Previous: [pcap](../../apps/pcap/README.rst) · Up: [Applications](index.md) · Next: [multiapp](../../apps/multiapp/README.rst)
+<!-- nav-end -->

@@ -1,5 +1,9 @@
 # Crystal calibration
 
+<!-- nav-start -->
+Previous: [Impairments](impairments.md) · Up: [The radio](index.md) · Next: [Samples in and out](../samples/index.md)
+<!-- nav-end -->
+
 This page shows how the library measures a board's crystal error against an LTE base station,
 follows it over temperature, stores it and applies it to every tuning. It is the cure for the clock
 offset of [Impairments](impairments.md) and closes Part 1.
@@ -322,3 +326,7 @@ alone they gave -5482 to -5648 ppb, median about -5520. Through the reference si
 At two other spots the same badge received the band 1 carriers' power, but no PSS stood out, or
 the band was flat (every MHz within 2 dB of the median). Check reception first (the `esdr`
 waterfall, `ltecal.survey()`, or a capture) when a run finds no cell.
+
+<!-- nav-start -->
+Previous: [Impairments](impairments.md) · Up: [The radio](index.md) · Next: [Samples in and out](../samples/index.md)
+<!-- nav-end -->

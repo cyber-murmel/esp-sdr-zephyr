@@ -6,6 +6,12 @@
 rfprobe
 #######
 
+.. nav-start
+
+Previous: `capture <../capture/README.rst>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `stream <../stream/README.rst>`__
+
+.. nav-end
+
 A radio bench probe for the ESP32-S3, the ESP32-C6, the ESP32-C5 and the ESP32-S31.
 
 Overview
@@ -305,3 +311,9 @@ See also
 - `ESP32-S3 registers <../../doc/dev/registers-esp32s3.md>`__,
   `ESP32-C6 registers <../../doc/dev/registers-esp32c6.md>`__.
 - `Applications <../../doc/apps/index.md>`__: DFU updates and recovery.
+
+.. nav-start
+
+Previous: `capture <../capture/README.rst>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `stream <../stream/README.rst>`__
+
+.. nav-end

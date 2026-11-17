@@ -1,5 +1,9 @@
 # Host transports
 
+<!-- nav-start -->
+Previous: [Paced streams](paced.md) · Up: [Samples in and out](index.md) · Next: [Modulation and coding](../modem/index.md)
+<!-- nav-end -->
+
 The link to the host sets the rates of every path in this part: a ring that runs gapless on the
 chip still loses samples if the link cannot carry them. This page lists the links, what each
 carries and which chip uses which. It builds on the paths of [Samples in and out](index.md).
@@ -159,3 +163,7 @@ without flow control wires. The plain transport works through any RP2040 firmwar
   RP2040, which merges them onto interface 6.
 
 Both, their throughput and the stream rates they give are in [MCH2022 badge](../apps/mch2022.md).
+
+<!-- nav-start -->
+Previous: [Paced streams](paced.md) · Up: [Samples in and out](index.md) · Next: [Modulation and coding](../modem/index.md)
+<!-- nav-end -->

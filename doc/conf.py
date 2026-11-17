@@ -10,14 +10,11 @@ import re
 import shutil
 from pathlib import Path
 
-from pygments.lexers.special import TextLexer
-from sphinx.highlighting import lexers
-
 project = "esp-sdr-zephyr"
 author = "The esp-sdr-zephyr contributors"
 copyright = author
 
-extensions = ["myst_parser", "sphinx.ext.intersphinx", "sphinx_design"]
+extensions = ["myst_parser", "sphinx.ext.intersphinx", "sphinx_design", "sphinxcontrib.mermaid"]
 
 # ::: fences for directives such as tab-set: GitHub shows their Markdown content
 # (images, text) where it would show a ``` fence as code.
@@ -32,8 +29,10 @@ intersphinx_mapping = {"zephyr": ("https://docs.zephyrproject.org/latest/", None
 # Links to headings inside the Markdown guides (file.md#section).
 myst_heading_anchors = 4
 
-# The diagram sources in the guides (GitHub renders them, Pygments cannot).
-lexers["mermaid"] = TextLexer()
+# ```mermaid fences (the guides' diagrams, the register pages' packet diagrams) render as
+# diagrams here, as they do on GitHub. Packet diagrams need mermaid 11.
+myst_fence_as_directive = ["mermaid"]
+mermaid_version = "11.4.1"
 
 DOC = Path(__file__).resolve().parent
 REPO = DOC.parent

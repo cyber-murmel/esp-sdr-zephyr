@@ -1,5 +1,9 @@
 # Filters
 
+<!-- nav-start -->
+Previous: [Gain](gain.md) · Up: [The radio](index.md) · Next: [Impairments](impairments.md)
+<!-- nav-end -->
+
 This page covers the analog low-pass filters on both paths and the one digital decimation filter
 before the samples reach memory. The receive filter decides how wide a band a capture sees and what
 folds into it at a lower sample rate. It builds on the low-pass blocks of
@@ -153,3 +157,7 @@ MicroPython app's bursts run at 20 MS/s, the LO 5 MHz below the centre, the filt
 - A signal exactly at the centre goes with the burst's mean.
 
 The app's settings are in [micropython](../../apps/micropython/README.rst).
+
+<!-- nav-start -->
+Previous: [Gain](gain.md) · Up: [The radio](index.md) · Next: [Impairments](impairments.md)
+<!-- nav-end -->

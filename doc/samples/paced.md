@@ -1,5 +1,9 @@
 # Paced streams
 
+<!-- nav-start -->
+Previous: [Transmit](transmit.md) · Up: [Samples in and out](index.md) · Next: [Host transports](transports.md)
+<!-- nav-end -->
+
 Where no engine path fits, or the rate is low, the CPU paces register reads and writes at the
 sample instants. Receive reads the modem's IQ estimator, transmit writes the TX DC value register;
 both are introduced in [Samples in and out](index.md#hardware-that-moves-samples). The chain-on
@@ -148,3 +152,7 @@ value.
 | ESP32-C6 | on [ESP32-C6 registers](../dev/registers-esp32c6.md) | on [ESP32-C6 registers](../dev/registers-esp32c6.md) |
 | ESP32-C5 | the same as the C6 (0x24 lower) | `0x600a0c08`; bit 26 enables the injection |
 | ESP32-S31 | none: transmit only | `0x20100c08` (I 9:0, Q 19:10) |
+
+<!-- nav-start -->
+Previous: [Transmit](transmit.md) · Up: [Samples in and out](index.md) · Next: [Host transports](transports.md)
+<!-- nav-end -->

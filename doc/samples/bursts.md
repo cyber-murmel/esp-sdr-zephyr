@@ -1,5 +1,9 @@
 # Burst capture
 
+<!-- nav-start -->
+Previous: [Samples in and out](index.md) · Up: [Samples in and out](index.md) · Next: [Gapless receive](rings.md)
+<!-- nav-end -->
+
 A burst is a one-shot capture: the dump engine fills a bank at its rate, and the CPU reads the bank
 afterwards. It is the first and simplest path out of the radio. The engine and its banks are
 introduced in [Samples in and out](index.md); [Gapless receive](rings.md) continues where a burst
@@ -145,3 +149,7 @@ keeps the whole 80 MS/s, but only around bursts. [osmosdr](../../apps/osmosdr/RE
   [osmosdr_serial](../../apps/osmosdr_serial/README.rst).
 - A continuous 40 MS/s stream does not fit the SDIO link, hence the snapshots
   ([SDIO ceiling](transports.md#sdio-ceiling)).
+
+<!-- nav-start -->
+Previous: [Samples in and out](index.md) · Up: [Samples in and out](index.md) · Next: [Gapless receive](rings.md)
+<!-- nav-end -->

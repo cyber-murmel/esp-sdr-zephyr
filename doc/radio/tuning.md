@@ -1,5 +1,9 @@
 # Tuning
 
+<!-- nav-start -->
+Previous: [Transceiver](transceiver.md) · Up: [The radio](index.md) · Next: [Gain](gain.md)
+<!-- nav-end -->
+
 This page explains how the radio makes its LO, where the LO can go on each chip, what a retune
 costs and where the apps put the LO relative to the channel they want. It builds on the LO section
 of [Transceiver](transceiver.md), which lists the registers involved.
@@ -264,3 +268,7 @@ The common placement puts the LO 4 MHz below the channel:
 | micropython bursts on the VIEWE S31 board | 5 MHz below the centre | out of the band with the receiver's DC and its noise | [micropython](../../apps/micropython/README.rst) |
 | osmosdr_serial (paced receive) | on the centre: no offset tuning | the LO leakage stays at the centre | [osmosdr_serial](../../apps/osmosdr_serial/README.rst) |
 | chancap | between two channels (filter bank) or off the grid's centre (decimator bank) | the leakage falls on a channel edge | [Channelizer](../modem/channelizer.md) |
+
+<!-- nav-start -->
+Previous: [Transceiver](transceiver.md) · Up: [The radio](index.md) · Next: [Gain](gain.md)
+<!-- nav-end -->

@@ -1,5 +1,9 @@
 # QAM and OFDM
 
+<!-- nav-start -->
+Previous: [Burst detection](bursts.md) · Up: [Modulation and coding](index.md) · Next: [Error correction](fec.md)
+<!-- nav-end -->
+
 [link](../../apps/link/README.rst) is a packet radio link between two ESP32-S3 boards on the raw
 Wi-Fi I/Q paths of the `esp-sdr` module, at the native 80 MS/s. It has two PHYs under one MAC:
 
@@ -437,3 +441,7 @@ Results:
 ### Memory
 
 `OFDM_NFFT_MAX` is 256: 512 cost 8 KB of internal RAM that the 16-bit tables need.
+
+<!-- nav-start -->
+Previous: [Burst detection](bursts.md) · Up: [Modulation and coding](index.md) · Next: [Error correction](fec.md)
+<!-- nav-end -->

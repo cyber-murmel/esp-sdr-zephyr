@@ -6,6 +6,12 @@
 osmosdr_bridge
 ##############
 
+.. nav-start
+
+Previous: `osmosdr_serial <../osmosdr_serial/README.rst>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `osmosdr_hs <../osmosdr_hs/README.rst>`__
+
+.. nav-end
+
 The WHY2025 badge's ESP32-P4 as an osmosdr USB device on USB high speed, with the badge's
 ESP32-C6 as the radio.
 
@@ -117,3 +123,9 @@ See also
 - `osmosdr <../osmosdr/README.rst>`__: the protocol, the host tool and the Soapy module.
 - `Channelizer <../../doc/modem/channelizer.md>`__: the filterbank behind ``ESDR_BLK_CHAN``.
 - `Host transports <../../doc/samples/transports.md>`__: the bridge among the other links.
+
+.. nav-start
+
+Previous: `osmosdr_serial <../osmosdr_serial/README.rst>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `osmosdr_hs <../osmosdr_hs/README.rst>`__
+
+.. nav-end

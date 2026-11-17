@@ -1,5 +1,9 @@
 # Transmit
 
+<!-- nav-start -->
+Previous: [Gapless receive](rings.md) · Up: [Samples in and out](index.md) · Next: [Paced streams](paced.md)
+<!-- nav-end -->
+
 This page covers the engine paths into the radio: playback and gapless streaming on the ESP32-S3,
 replay through the DAC engine on the C5 and S31, and the carrier. It ends with the turnaround
 between receive and transmit. CPU-paced transmit follows in [Paced streams](paced.md); the word
@@ -227,3 +231,7 @@ A ring run can send one burst and go on receiving, with a spare bank for the wav
 - The C5 is half duplex only: while the chain transmits, the receive output freezes at a constant.
 - Turning the receive power and clock back on (`phy_pbus_xpd_rx_on()`, `phy_set_rxclk_en()`)
   revives the receiver and stops the transmitter.
+
+<!-- nav-start -->
+Previous: [Gapless receive](rings.md) · Up: [Samples in and out](index.md) · Next: [Paced streams](paced.md)
+<!-- nav-end -->

@@ -1,5 +1,9 @@
 # Code placement
 
+<!-- nav-start -->
+Previous: [Chip notes](chips.md) · Up: [Reference](index.md) · Next: [Testing](testing.md)
+<!-- nav-end -->
+
 Where a function runs from and where a buffer lives decides, on these chips, whether a paced loop
 keeps up. The firmware therefore says how its code and data are used, and rules per SoC, board and
 app say where that goes. Code moves by a change of the rules, one at a time, each measured.
@@ -427,3 +431,7 @@ them is in [multiapp internals](../apps/multiapp-internals.md#modules).
 
 A hot block inside an extension is out of scope: the loader places modules at load time, and
 `sdr` and `ieee154` build without `-ffunction-sections`.
+
+<!-- nav-start -->
+Previous: [Chip notes](chips.md) · Up: [Reference](index.md) · Next: [Testing](testing.md)
+<!-- nav-end -->

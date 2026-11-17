@@ -1,5 +1,9 @@
 # Impairments
 
+<!-- nav-start -->
+Previous: [Filters](filters.md) · Up: [The radio](index.md) · Next: [Crystal calibration](crystal-calibration.md)
+<!-- nav-end -->
+
 This page lists what the direct conversion front end, the boards and the shared crystal add to the
 samples, chip by chip, and the cures. It builds on [The radio](index.md) (direct conversion, one
 crystal) and points back to [Tuning](tuning.md) and [Gain](gain.md) for the cures that live there.
@@ -229,3 +233,7 @@ board's crystal and corrects it.
 
 Phase noise over one loop period makes the copies of a looped frame differ in phase.
 [QAM and OFDM](../modem/qam-ofdm.md) ("Looped frames") shows how its receivers decode such frames.
+
+<!-- nav-start -->
+Previous: [Filters](filters.md) · Up: [The radio](index.md) · Next: [Crystal calibration](crystal-calibration.md)
+<!-- nav-end -->

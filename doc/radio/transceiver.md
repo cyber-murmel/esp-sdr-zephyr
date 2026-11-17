@@ -1,5 +1,9 @@
 # Transceiver
 
+<!-- nav-start -->
+Previous: [The radio](index.md) · Up: [The radio](index.md) · Next: [Tuning](tuning.md)
+<!-- nav-end -->
+
 This page walks the radio's analog chain block by block, in the order the signal passes: the
 receive path from the antenna to the ADC, the local oscillator (LO) both paths share, and the
 transmit path from the DAC back to the antenna.
@@ -491,3 +495,7 @@ The table sums up where the five diagrams differ:
 - librftest's `mac_init()` sets it, among much that the receive path does not need. The last thing
   it writes, `0x20104c5c`, takes the signal away again.
 - Do not call `rftest_init()`: it stops the system timer under Zephyr.
+
+<!-- nav-start -->
+Previous: [The radio](index.md) · Up: [The radio](index.md) · Next: [Tuning](tuning.md)
+<!-- nav-end -->

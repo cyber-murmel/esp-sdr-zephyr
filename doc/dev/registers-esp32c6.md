@@ -1,5 +1,9 @@
 # ESP32-C6 registers
 
+<!-- nav-start -->
+Previous: [ESP32-S3 registers](registers-esp32s3.md) · Up: [Reference](index.md)
+<!-- nav-end -->
+
 This page records what this project knows about the ESP32-C6 registers that `lib/esp_sdr` relies
 on, or that a later feature could use, and that Espressif does not document, or documents without
 the behaviour that matters. For each register it gives where it is, its fields, what it does, the
@@ -2077,3 +2081,7 @@ The HAL names the block (`I2C_BIAS`). Registers 0 to 3 at 2412 MHz read
 `cf 7c 1a 07` (bench 2026-10-09).
 
 <!-- svd:end -->
+
+<!-- nav-start -->
+Previous: [ESP32-S3 registers](registers-esp32s3.md) · Up: [Reference](index.md)
+<!-- nav-end -->

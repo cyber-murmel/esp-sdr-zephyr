@@ -6,6 +6,12 @@
 osmosdr
 #######
 
+.. nav-start
+
+Previous: `stream <../stream/README.rst>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `osmosdr_serial <../osmosdr_serial/README.rst>`__
+
+.. nav-end
+
 A USB SDR after HackRF's model, for osmosdr and GNU Radio hosts, on the XIAO ESP32S3.
 
 Overview
@@ -301,3 +307,9 @@ See also
 - `Transmit <../../doc/samples/transmit.md>`__: the DAC stream.
 - `Host transports <../../doc/samples/transports.md>`__: the vendor bulk link among the others.
 - `Applications <../../doc/apps/index.md>`__: USB IDs, udev rules and DFU updates.
+
+.. nav-start
+
+Previous: `stream <../stream/README.rst>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `osmosdr_serial <../osmosdr_serial/README.rst>`__
+
+.. nav-end

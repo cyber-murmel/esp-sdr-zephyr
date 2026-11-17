@@ -6,6 +6,12 @@
 zstack
 ######
 
+.. nav-start
+
+Previous: `wpan <../wpan/README.rst>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `ubertooth <../ubertooth/README.rst>`__
+
+.. nav-end
+
 A Zigbee coordinator with the Z-Stack ZNP serial protocol: a Zigbee USB stick for the XIAO
 ESP32-C6.
 
@@ -148,3 +154,9 @@ See also
 - `IEEE 802.15.4 <../../doc/modem/ieee802154.md>`__: the software radio's PHY and driver.
 - `wpan <../wpan/README.rst>`__: the 802.15.4 test shell.
 - `Testing <../../doc/dev/testing.md>`__: the unit tests.
+
+.. nav-start
+
+Previous: `wpan <../wpan/README.rst>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `ubertooth <../ubertooth/README.rst>`__
+
+.. nav-end

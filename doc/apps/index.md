@@ -1,5 +1,9 @@
 # Applications
 
+<!-- nav-start -->
+Previous: [Error correction](../modem/fec.md) · Up: [esp-sdr-zephyr](../index.rst) · Next: [capture](../../apps/capture/README.rst)
+<!-- nav-end -->
+
 Part 4 puts the earlier parts to work: the radio, its sample paths and the modems of
 [Modulation and coding](../modem/index.md) become apps you build, flash and drive from a host.
 Each app is a Zephyr application in `apps/<name>`; several also run inside
@@ -264,3 +268,7 @@ CPU wedged with interrupts masked.
 - A measured peak up to 85 % of the size is enough margin.
 - An overflowing shell stack shows as 100 % on the logging stack below it.
 - Xtensa frame sizes are in the disassembly as `entry a1, N`.
+
+<!-- nav-start -->
+Previous: [Error correction](../modem/fec.md) · Up: [esp-sdr-zephyr](../index.rst) · Next: [capture](../../apps/capture/README.rst)
+<!-- nav-end -->

@@ -1,5 +1,9 @@
 # ESP32-S3 registers
 
+<!-- nav-start -->
+Previous: [ZigBit reference](zigbit.md) · Up: [Reference](index.md) · Next: [ESP32-C6 registers](registers-esp32c6.md)
+<!-- nav-end -->
+
 This page records what this project knows about the ESP32-S3 registers that `lib/esp_sdr` relies
 on, or that a later feature could use, and that Espressif does not document, or documents without
 the behaviour that matters. For each register it gives where it is, its fields, what it does, the
@@ -1781,3 +1785,7 @@ Evidence:
 - *decompile* S3 `phy_analog_cal.o`
 
 <!-- svd:end -->
+
+<!-- nav-start -->
+Previous: [ZigBit reference](zigbit.md) · Up: [Reference](index.md) · Next: [ESP32-C6 registers](registers-esp32c6.md)
+<!-- nav-end -->

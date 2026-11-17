@@ -1,5 +1,9 @@
 # Samples in and out
 
+<!-- nav-start -->
+Previous: [Crystal calibration](../radio/crystal-calibration.md) · Up: [esp-sdr-zephyr](../index.rst) · Next: [Burst capture](bursts.md)
+<!-- nav-end -->
+
 Part 2 takes the samples from the ADC and the DAC of [The radio](../radio/index.md) to the host
 and back. It covers the sample words, the hardware that moves them, the memory that hardware takes
 and the paths each chip offers. [Modulation and coding](../modem/index.md) starts from the complex
@@ -11,11 +15,6 @@ The flowchart follows `apps/stream`: receive from the ADC to a host sample, tran
 sample to the DAC. Its labels name that app's path (`vrt_rx.c`, `transport_udp.c`, USB CDC-NCM);
 the packet types and sample formats are in [stream](../../apps/stream/README.rst). The analog
 blocks before the ADC and after the DAC are in [Transceiver](../radio/transceiver.md).
-
-![Receive and transmit chain of apps/stream](digital-chain.svg)
-
-<details>
-<summary>Mermaid source</summary>
 
 ```mermaid
 flowchart LR
@@ -68,8 +67,6 @@ The radio, Part 1`"]
         T1 --> T2 --> T3 --> T4 --> T5 --> T6 --> T7 --> T8 --> T9
     end
 ```
-
-</details>
 
 ### Receive chain
 
@@ -382,3 +379,7 @@ and then to the links that carry samples to a host.
 - [Transmit](transmit.md): playback, gapless streaming, replay, the carrier and the turnaround.
 - [Paced streams](paced.md): receive and transmit paced by the CPU through two registers.
 - [Host transports](transports.md): the links to a host and what each carries.
+
+<!-- nav-start -->
+Previous: [Crystal calibration](../radio/crystal-calibration.md) · Up: [esp-sdr-zephyr](../index.rst) · Next: [Burst capture](bursts.md)
+<!-- nav-end -->

@@ -6,6 +6,12 @@
 pcap
 ####
 
+.. nav-start
+
+Previous: `ubertooth internals <../../doc/apps/ubertooth-internals.md>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `pcap internals <../../doc/apps/pcap-internals.md>`__
+
+.. nav-end
+
 On the WHY2025 badge, the ESP32-P4 demodulates and decodes what its ESP32-C6 radio receives and
 sends it to the computer over USB as a pcapng stream for Wireshark.
 
@@ -390,3 +396,9 @@ See also
 - `Gapless receive <../../doc/samples/rings.md>`__: the C6's gapless 80 MS/s receive.
 - `osmosdr_serial <../osmosdr_serial/README.rst>`__, `osmosdr_hs <../osmosdr_hs/README.rst>`__,
   `micropython <../micropython/README.rst>`__.
+
+.. nav-start
+
+Previous: `ubertooth internals <../../doc/apps/ubertooth-internals.md>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `pcap internals <../../doc/apps/pcap-internals.md>`__
+
+.. nav-end

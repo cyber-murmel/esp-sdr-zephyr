@@ -1,5 +1,9 @@
 # multiapp internals
 
+<!-- nav-start -->
+Previous: [multiapp](../../apps/multiapp/README.rst) · Up: [Applications](index.md) · Next: [micropython](../../apps/micropython/README.rst)
+<!-- nav-end -->
+
 The design and measurement log of [multiapp](../../apps/multiapp/README.rst), one firmware that
 runs the others. Its README has the usage: building and flashing, the shell commands, adding an
 app, the S31 board. This page follows it in [Applications](index.md).
@@ -1317,3 +1321,7 @@ Two more, both in the pinned `zsdr` with the S31's support itself:
   in ROM mode, with none of this firmware running, until a later replug.
 - So the USB path or the chip's USB pins are involved, not only the firmware. A reset through the
   devkit's UART bridge recovered it after that.
+
+<!-- nav-start -->
+Previous: [multiapp](../../apps/multiapp/README.rst) · Up: [Applications](index.md) · Next: [micropython](../../apps/micropython/README.rst)
+<!-- nav-end -->

@@ -1,5 +1,9 @@
 # GFSK and Bluetooth LE
 
+<!-- nav-start -->
+Previous: [IEEE 802.15.4](ieee802154.md) · Up: [Modulation and coding](index.md) · Next: [Burst detection](bursts.md)
+<!-- nav-end -->
+
 This page covers three of the tree's GFSK receivers in turn:
 
 - the [Ubertooth demodulator](#ubertooth-demodulator), on the ESP32-S3 ring's 4 MS/s stream, the
@@ -529,3 +533,7 @@ with `digital/_fsk.py`, in C in `cmod/esdr_fsk.c`.
 
 How to choose the access code and pad packets for `gfsk_mod`, and the data link's 2-GFSK
 parameters and frame, are in the micropython README.
+
+<!-- nav-start -->
+Previous: [IEEE 802.15.4](ieee802154.md) · Up: [Modulation and coding](index.md) · Next: [Burst detection](bursts.md)
+<!-- nav-end -->

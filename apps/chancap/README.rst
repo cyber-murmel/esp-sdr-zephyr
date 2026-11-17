@@ -6,6 +6,12 @@
 chancap
 #######
 
+.. nav-start
+
+Previous: `osmosdr_hs <../osmosdr_hs/README.rst>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `link <../link/README.rst>`__
+
+.. nav-end
+
 Channelized burst capture on the XIAO ESP32S3: one I/Q capture per packet per channel of a
 uniform grid, sent to the host as VITA 49.2 over a vendor bulk endpoint.
 
@@ -296,3 +302,9 @@ See also
 - `GFSK and Bluetooth LE <../../doc/modem/gfsk.md>`__: Bluetooth LE from the captures.
 - `stream <../stream/README.rst>`__: VITA 49.2 over CDC-NCM.
 - `Applications <../../doc/apps/index.md>`__: DFU updates and USB access.
+
+.. nav-start
+
+Previous: `osmosdr_hs <../osmosdr_hs/README.rst>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `link <../link/README.rst>`__
+
+.. nav-end

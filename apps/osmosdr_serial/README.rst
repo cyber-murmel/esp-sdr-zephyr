@@ -6,6 +6,12 @@
 osmosdr_serial
 ##############
 
+.. nav-start
+
+Previous: `osmosdr <../osmosdr/README.rst>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `osmosdr_bridge <../osmosdr_bridge/README.rst>`__
+
+.. nav-end
+
 The osmosdr protocol over a serial link, for the ESP32-C6 and the ESP32-C5, whose only USB port
 is USB-Serial-JTAG, and for the MCH2022 badge's ESP32.
 
@@ -337,3 +343,9 @@ See also
   and `Burst capture <../../doc/samples/bursts.md>`__: the receive and transmit paths.
 - `Host transports <../../doc/samples/transports.md>`__: the serial links and their throughput.
 - `MCH2022 badge <../../doc/apps/mch2022.md>`__: the RP2040's links and the rates through them.
+
+.. nav-start
+
+Previous: `osmosdr <../osmosdr/README.rst>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `osmosdr_bridge <../osmosdr_bridge/README.rst>`__
+
+.. nav-end

@@ -6,6 +6,12 @@
 stream
 ######
 
+.. nav-start
+
+Previous: `rfprobe <../rfprobe/README.rst>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `osmosdr <../osmosdr/README.rst>`__
+
+.. nav-end
+
 A XIAO ESP32S3 as a small SDR on a USB network link: VITA 49.2 over UDP and IPv6, receive and
 transmit.
 
@@ -217,3 +223,9 @@ See also
   links.
 - `Transmit <../../doc/samples/transmit.md>`__: the DAC stream.
 - `osmosdr <../osmosdr/README.rst>`__: the same radio as a USB SDR for GNU Radio hosts.
+
+.. nav-start
+
+Previous: `rfprobe <../rfprobe/README.rst>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `osmosdr <../osmosdr/README.rst>`__
+
+.. nav-end

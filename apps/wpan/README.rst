@@ -6,6 +6,12 @@
 wpan
 ####
 
+.. nav-start
+
+Previous: `link <../link/README.rst>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `zstack <../zstack/README.rst>`__
+
+.. nav-end
+
 An IEEE 802.15.4 test shell for the ESP32-C6 and the ESP32-S3: it sends and receives test frames
 through any Zephyr 802.15.4 radio driver.
 
@@ -174,3 +180,9 @@ See also
 - `Testing <../../doc/dev/testing.md>`__: the regression tests that use these frames.
 - `zstack <../zstack/README.rst>`__: a Zigbee coordinator on the C6's radio.
 - `Applications <../../doc/apps/index.md>`__: shell conventions, DFU updates and USB access.
+
+.. nav-start
+
+Previous: `link <../link/README.rst>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `zstack <../zstack/README.rst>`__
+
+.. nav-end

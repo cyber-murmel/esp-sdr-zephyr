@@ -1,5 +1,9 @@
 # Gapless receive
 
+<!-- nav-start -->
+Previous: [Burst capture](bursts.md) · Up: [Samples in and out](index.md) · Next: [Transmit](transmit.md)
+<!-- nav-end -->
+
 A burst ([Burst capture](bursts.md)) leaves a gap between one capture and the next. Two pieces of hardware give a
 stream without gaps: the dump engine in its circular mode, which a CPU turns between banks, and
 the modem diagnostic bus looped into a GDMA ring.
@@ -544,3 +548,7 @@ Upstream does not handle this.
   panel driver.
 - Lines 12 to 15 of the ring would also leave on `LCD_DATA_OUT_PAD_OUT0..3`, the panel's blue bits.
   Not tried.
+
+<!-- nav-start -->
+Previous: [Burst capture](bursts.md) · Up: [Samples in and out](index.md) · Next: [Transmit](transmit.md)
+<!-- nav-end -->

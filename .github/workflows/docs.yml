@@ -51,6 +51,13 @@ jobs:
           python3 doc/registers/svd2md.py --check
           python3 doc/registers/svdmerge.py --out _svd
 
+      # The radio diagrams, the filter plots and the pages' Previous/Up/Next links are generated.
+      - name: Generated pages
+        run: |
+          python3 doc/radio/transceiver.py --check
+          python3 doc/radio/filters.py --check
+          python3 doc/nav.py --check
+
       - name: Save the documentation's inputs
         if: steps.inputs.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

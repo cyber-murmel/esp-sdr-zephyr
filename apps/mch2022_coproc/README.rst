@@ -6,6 +6,12 @@
 mch2022_coproc
 ##############
 
+.. nav-start
+
+Previous: `micropython <../micropython/README.rst>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `MCH2022 badge <../../doc/apps/mch2022.md>`__
+
+.. nav-end
+
 Firmware for the RP2040 of the MCH2022 badge, in place of the stock
 `mch2022-firmware-rp2040 <https://github.com/badgeteam/mch2022-firmware-rp2040>`_.
 
@@ -92,3 +98,9 @@ See also
   flash layout, the ROM bootloader and the ways back.
 - `osmosdr_serial <../osmosdr_serial/README.rst>`__: the SDR app on the badge's ESP32.
 - `micropython <../micropython/README.rst>`__: MicroPython on the badge's ESP32.
+
+.. nav-start
+
+Previous: `micropython <../micropython/README.rst>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `MCH2022 badge <../../doc/apps/mch2022.md>`__
+
+.. nav-end

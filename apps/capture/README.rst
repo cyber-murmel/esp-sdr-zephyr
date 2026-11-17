@@ -6,6 +6,12 @@
 capture
 #######
 
+.. nav-start
+
+Previous: `Applications <../../doc/apps/index.md>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `rfprobe <../rfprobe/README.rst>`__
+
+.. nav-end
+
 A fixed survey of raw I/Q bursts from the Wi-Fi receiver, printed as numbers and a text
 spectrum, on ESP32-S3, ESP32-C6, ESP32-C5, ESP32-S31 and ESP32 boards.
 
@@ -118,3 +124,9 @@ See also
 - `Filters <../../doc/radio/filters.md>`__: the analog low-pass filter and its codes.
 - `Impairments <../../doc/radio/impairments.md>`__: the DC offset, as at 1900 MHz above.
 - `rfprobe <../rfprobe/README.rst>`__: the radio bench probe.
+
+.. nav-start
+
+Previous: `Applications <../../doc/apps/index.md>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `rfprobe <../rfprobe/README.rst>`__
+
+.. nav-end

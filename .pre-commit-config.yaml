@@ -24,6 +24,14 @@ repos:
         files: ^doc/(registers/|dev/registers-)
         pass_filenames: false
 
+      # docs.yml "Generated pages"
+      - id: docs-generated
+        name: diagrams, filter plots and page links up to date
+        entry: sh -c 'python3 doc/radio/transceiver.py --check && python3 doc/radio/filters.py --check && python3 doc/nav.py --check'
+        language: system
+        files: ^(doc/|README\.rst$|apps/[^/]+/README\.rst$)
+        pass_filenames: false
+
       - id: svdmerge
         name: register SVDs merge into Espressif's (svdmerge)
         entry: scripts/pre-commit/svdmerge.sh

@@ -1,5 +1,9 @@
 # Chip notes
 
+<!-- nav-start -->
+Previous: [Reference](index.md) · Up: [Reference](index.md) · Next: [Code placement](code-placement.md)
+<!-- nav-end -->
+
 This page collects chip and board behaviour that Parts 1 and 2 do not cover: CPU and toolchain
 costs, reset and boot quirks, board files and displays. Each entry says what happens, how it
 shows up and how the code deals with it.
@@ -364,3 +368,7 @@ With the controller first, the FIFO fills in the first blanking and all of these
   [Filters](../radio/filters.md#esp32-s31-display-bursts).
 - The panel's and the PSRAM's spurs in the receive band:
   [Impairments](../radio/impairments.md#display-panel-and-psram-clock).
+
+<!-- nav-start -->
+Previous: [Reference](index.md) · Up: [Reference](index.md) · Next: [Code placement](code-placement.md)
+<!-- nav-end -->

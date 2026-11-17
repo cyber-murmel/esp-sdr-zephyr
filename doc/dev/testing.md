@@ -1,5 +1,9 @@
 # Testing
 
+<!-- nav-start -->
+Previous: [Code placement](code-placement.md) · Up: [Reference](index.md) · Next: [ZigBit reference](zigbit.md)
+<!-- nav-end -->
+
 Every pass/fail test of the firmware is a twister test. All but the S3 variant of
 `esp_sdr_rx_api` and `esp_sdr_chancap_api` also run end to end under twister; those two are
 deployed by hand ([ESP32-S3](#esp32-s3)). The Python tools have host tests of their own (pytest).
@@ -894,3 +898,7 @@ Measuring tools, not pass/fail gates; the sweep tables are under [Sweep tables](
 - The pcap bench check: `apps/pcap/tools/esdr_pcap.py -w` on the badge, then tshark, with 802.15.4 from
   `apps/wpan` on an S3 (`wpan on`, `wpan set chan 25`, `wpan tx 400 20 20`). The test frames'
   bytes follow from their counter, so every wrong symbol shows.
+
+<!-- nav-start -->
+Previous: [Code placement](code-placement.md) · Up: [Reference](index.md) · Next: [ZigBit reference](zigbit.md)
+<!-- nav-end -->

@@ -6,6 +6,12 @@
 multiapp
 ########
 
+.. nav-start
+
+Previous: `pcap internals <../../doc/apps/pcap-internals.md>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `multiapp internals <../../doc/apps/multiapp-internals.md>`__
+
+.. nav-end
+
 One firmware that runs the others, on the ESP32-S3 and the ESP32-S31.
 
 Overview
@@ -298,3 +304,9 @@ See also
 - `Testing <../../doc/dev/testing.md>`__: the desk checks ``sample.esp_sdr.multiapp.*``.
 - `micropython <../micropython/README.rst>`__, `osmosdr_hs <../osmosdr_hs/README.rst>`__.
 - `Applications <../../doc/apps/index.md>`__: DFU updates and esptool recovery.
+
+.. nav-start
+
+Previous: `pcap internals <../../doc/apps/pcap-internals.md>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `multiapp internals <../../doc/apps/multiapp-internals.md>`__
+
+.. nav-end

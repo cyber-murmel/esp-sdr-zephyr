@@ -1,5 +1,9 @@
 # Reference
 
+<!-- nav-start -->
+Previous: [MCH2022 badge](../apps/mch2022.md) · Up: [esp-sdr-zephyr](../index.rst) · Next: [Chip notes](chips.md)
+<!-- nav-end -->
+
 This is the fifth and last part of the docs. The first four parts teach the radio, its sample
 paths, the modems and the apps in reading order. This part holds what you look up while working
 on them: chip and board quirks, where code and data are placed, how the tree is tested, a plan
@@ -27,3 +31,7 @@ explained in [ESP32-S3 registers](registers-esp32s3.md#how-to-read-this-page);
 5. [ESP32-S3 registers](registers-esp32s3.md): the undocumented S3 radio registers the library
    relies on, with fields and evidence.
 6. [ESP32-C6 registers](registers-esp32c6.md): the same for the ESP32-C6.
+
+<!-- nav-start -->
+Previous: [MCH2022 badge](../apps/mch2022.md) · Up: [esp-sdr-zephyr](../index.rst) · Next: [Chip notes](chips.md)
+<!-- nav-end -->

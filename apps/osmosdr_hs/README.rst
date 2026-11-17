@@ -6,6 +6,12 @@
 osmosdr_hs
 ##########
 
+.. nav-start
+
+Previous: `osmosdr_bridge <../osmosdr_bridge/README.rst>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `chancap <../chancap/README.rst>`__
+
+.. nav-end
+
 The ESP32-S31 as an osmosdr device over USB high speed: receive only, 8-bit items, up to
 20 MS/s.
 
@@ -253,3 +259,9 @@ See also
 - `Gapless receive <../../doc/samples/rings.md>`__: the diagnostic-bus ring.
 - `Host transports <../../doc/samples/transports.md>`__: the high-speed USB controller and its
   FIFOs.
+
+.. nav-start
+
+Previous: `osmosdr_bridge <../osmosdr_bridge/README.rst>`__ · Up: `Applications <../../doc/apps/index.md>`__ · Next: `chancap <../chancap/README.rst>`__
+
+.. nav-end

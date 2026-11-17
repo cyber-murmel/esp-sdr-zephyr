@@ -1,5 +1,9 @@
 # Channelizer
 
+<!-- nav-start -->
+Previous: [Modulation and coding](index.md) · Up: [Modulation and coding](index.md) · Next: [IEEE 802.15.4](ieee802154.md)
+<!-- nav-end -->
+
 A channelizer splits one wideband sample stream into a grid of narrow channels, so that a
 receiver can watch many channels of a band at once.
 
@@ -482,3 +486,7 @@ answered itself for that chip; the C5 stays open.
   stage;
 - mixed grids;
 - the PHY's own energy detection as a cheaper wideband gate.
+
+<!-- nav-start -->
+Previous: [Modulation and coding](index.md) · Up: [Modulation and coding](index.md) · Next: [IEEE 802.15.4](ieee802154.md)
+<!-- nav-end -->

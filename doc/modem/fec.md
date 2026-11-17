@@ -1,5 +1,9 @@
 # Error correction
 
+<!-- nav-start -->
+Previous: [QAM and OFDM](qam-ofdm.md) · Up: [Modulation and coding](index.md) · Next: [Applications](../apps/index.md)
+<!-- nav-end -->
+
 The frames of [link](../../apps/link/README.rst) carry their payload under an error correcting
 code, or under the CRC-32 alone. This page lists the codes, how they are decoded, and how to
 choose one. It is the last page of [Modulation and coding](index.md) and builds on
@@ -116,3 +120,7 @@ lost, by parity bytes and MER:
   general, only 4 % over flat 64-QAM at equal error rate, so neither is built.
 - What the lower MER needs is 16-QAM (2.3 Mbit/s loss-free in the same state): a rate adaptation,
   not more parity.
+
+<!-- nav-start -->
+Previous: [QAM and OFDM](qam-ofdm.md) · Up: [Modulation and coding](index.md) · Next: [Applications](../apps/index.md)
+<!-- nav-end -->
