@@ -392,4 +392,37 @@ static int cmd_usj(const struct shell *sh, size_t argc, char **argv)
 }
 SHELL_CMD_REGISTER(usj, NULL, "Hand the USB port to the USB-Serial-JTAG (esptool, OpenOCD)",
 		   cmd_usj);
+
+/*
+ * "download": restart into the ROM's download mode on the USB-Serial-JTAG, the
+ * state BOOT held during a reset gives. The PHY select survives the software
+ * reset and FORCE_DOWNLOAD_BOOT makes the ROM wait for esptool; unlike "usj",
+ * no app runs afterwards that a reset could bring back onto the port.
+ */
+static void download_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	if (usb_ctx != NULL) {
+		(void)usbd_disable(usb_ctx);
+	}
+	k_msleep(200);
+	REG_SET_BIT(RTC_CNTL_USB_CONF_REG, RTC_CNTL_SW_HW_USB_PHY_SEL);
+	REG_CLR_BIT(RTC_CNTL_USB_CONF_REG, RTC_CNTL_SW_USB_PHY_SEL);
+	REG_WRITE(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
+	sys_reboot(SYS_REBOOT_COLD);
+}
+static K_WORK_DELAYABLE_DEFINE(download_work, download_handler);
+
+static int cmd_download(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	shell_print(sh, "Restarting into download mode on the USB-Serial-JTAG");
+	/* After the reply has left over CDC-ACM. */
+	k_work_schedule(&download_work, K_MSEC(100));
+	return 0;
+}
+SHELL_CMD_REGISTER(download, NULL,
+		   "Restart into the ROM's download mode on the USB-Serial-JTAG (esptool)",
+		   cmd_download);
 #endif
