@@ -341,6 +341,8 @@ let
         ./dts
         ./include
         ./lib
+        # lib/esp_sdr/place.cmake runs place_report.py after each link.
+        ./scripts/place
         ./scripts/west-commands.yml
         ./scripts/west_commands
         ./zephyr
@@ -357,6 +359,7 @@ let
   isNested = project: lib.any (other: other != project
     && lib.hasPrefix "${projectPath other}/" (projectPath project)) lock.manifest.projects;
   nestedProjects = lib.filter isNested lock.manifest.projects;
+  nanopbProject = lib.findFirst (p: p.name == "nanopb") null lock.manifest.projects;
   hookLock = lock // {
     manifest = lock.manifest // { projects = lib.filter (p: !isNested p) lock.manifest.projects; };
   };
@@ -384,6 +387,9 @@ let
         rm -rf ${projectPath project}
         __west2nix_copyProject ${fetchProject project} ${projectPath project}
       '') nestedProjects}
+      # Nanopb's generator scripts (protoc, run by the esp_hosted_mcu driver) start with
+      # /usr/bin/env, which the build sandbox lacks: this python has their protobuf.
+      patchShebangs ${projectPath nanopbProject}/generator
       # West would write this on its first command, read-only later.
       west config zephyr.base modules/zephyr
       ${lib.concatMapStrings (blob: ''
@@ -406,22 +412,26 @@ let
     installPhase = "install -Dm755 mpy-cross/build/mpy-cross $out/bin/mpy-cross";
   };
 
+  # The images that build MicroPython: its port, and multiapp's micropython extension (with the
+  # LVGL binding where CONFIG_MULTIAPP_MICROPYTHON_GUI is set).
+  usesMicropython = img: lib.elem img.app [ "micropython" "multiapp" ];
+
   # LVGL's gen_json.py (the MicroPython binding) copies LVGL's sources with their modes and then
   # cannot delete the read-only copy: MicroPython images build with a writable copy of LVGL.
   lvglPath = projectPath (lib.findFirst (p: p.name == "lvgl") null lock.manifest.projects);
-  writableLvgl = img: lib.optionalString (img.app == "micropython") ''
+  writableLvgl = img: lib.optionalString (usesMicropython img) ''
     cp -r --no-preserve=mode ${westWorkspace}/${lvglPath} $TMPDIR/lvgl
     modules=$(west list -f '{abspath}' | sed "s|^${westWorkspace}/${lvglPath}\$|$TMPDIR/lvgl|" | paste -sd';')
   '';
-  lvglArg = img: lib.optionalString (img.app == "micropython") "\"-DZEPHYR_MODULES=$modules\"";
+  lvglArg = img: lib.optionalString (usesMicropython img) "\"-DZEPHYR_MODULES=$modules\"";
 
-  mkImage = img: pkgs.stdenvNoCC.mkDerivation (env // lib.optionalAttrs (img.app == "micropython") {
+  mkImage = img: pkgs.stdenvNoCC.mkDerivation (env // lib.optionalAttrs (usesMicropython img) {
     MICROPY_MPYCROSS = "${mpy-cross}/bin/mpy-cross";
   } // {
     name = "esp-sdr-${img.board}-${img.name}-${version}";
     # A host compiler for MicroPython images: LVGL's gen_json.py preprocesses lvgl.h with gcc and
     # writes an empty description without one, so the binding's callbacks lose their user_data.
-    nativeBuildInputs = build ++ [ pkgs.gitMinimal ] ++ lib.optional (img.app == "micropython") pkgs.gcc;
+    nativeBuildInputs = build ++ [ pkgs.gitMinimal ] ++ lib.optional (usesMicropython img) pkgs.gcc;
     buildCommand = ''
       export HOME=$TMPDIR
       # Zephyr's caches, which it would otherwise put into ZEPHYR_BASE.
