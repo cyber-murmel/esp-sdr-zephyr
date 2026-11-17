@@ -141,10 +141,10 @@ let
   # (src/esdr_pfbq_pie.S); a build without it runs the C reference kernels, some 40 times slower.
   riscv32-esp-binutils = pkgs.stdenv.mkDerivation rec {
     pname = "riscv32-esp-elf-binutils";
-    version = "16.2.0_20260914";
+    version = "16.2.0_20261109";
     src = pkgs.fetchurl {
       url = "https://github.com/espressif/crosstool-NG/releases/download/esp-${version}/riscv32-esp-elf-${version}-x86_64-linux-gnu.tar.xz";
-      sha256 = "1vp7idp43a9x9qcicr3z9bazsf0z8yhqahshfx37dbzkylb0m6qz";
+      sha256 = "sha256-PSxCB0IbRuC0QuwpS0/targBn4Lm0MYdfgK5YsdcvMA=";
     };
     nativeBuildInputs = [ pkgs.autoPatchelfHook ];
     buildInputs = [ pkgs.stdenv.cc.cc.lib pkgs.zlib pkgs.zstd ];
