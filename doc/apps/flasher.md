@@ -37,11 +37,12 @@ the board there by itself, in this order:
 
 1. An esp-sdr app (USB vendor 2fe3): the apps own the S3's USB port, where no reset reaches the
    bootloader. The page sends Ctrl-C; a `>>>` means MicroPython (multiapp's autostart on the
-   XIAO ESP32S3 and the Communicator), which gets `esdr.shell("usj")`, else the shell gets
-   `usj`, as `west dfu` does. Either hands the port to the USB-Serial-JTAG
-   ([Handing the port over](index.md#handing-the-port-over)), which comes up as a new port. The
-   page goes on with it when the browser may use it already; the first time it asks for one more
-   pick.
+   XIAO ESP32S3 and the Communicator), which gets `esdr.shell("download")`, else the shell gets
+   `download` (the shell and the REPL as `west dfu` tells them apart). Both restart the S3 into
+   the ROM's download mode on the USB-Serial-JTAG
+   ([Handing the port over](index.md#handing-the-port-over)), which comes up as a new port;
+   firmware without the command gets `usj` instead. The page goes on with the new port when the
+   browser may use it already; the first time it asks for one more pick.
 2. One short attempt without a reset, for a bootloader that waits already (BOOT held while
    plugging in or while pressing reset).
 3. esptool's reset into download mode: the USB-Serial-JTAG's sequence on chips that have one,

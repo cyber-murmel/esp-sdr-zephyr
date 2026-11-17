@@ -25,9 +25,9 @@ const CHIPS = {
 };
 
 // How the page reaches the ROM bootloader, on its own: an esp-sdr app's port (USB vendor 2fe3)
-// is asked to hand over to the USB-Serial-JTAG (shell "usj", or esdr.shell("usj") from
-// MicroPython); any other port is first tried as it is, for a board already in download mode,
-// then reset by esptool (RTS and DTR, or the USB-Serial-JTAG's own sequence). The hints say what
+// restarts into the ROM's download mode on the USB-Serial-JTAG (shell "download", or that through
+// esdr.shell() from MicroPython; "usj" on older firmware); any other port is first tried as it is,
+// for a board already in download mode, then reset by esptool (RTS and DTR, or the USB-Serial-JTAG's own sequence). The hints say what
 // to do when none of that reaches the chip.
 const AUTO = "<p>Pick the board's port: the page finds out whether an esp-sdr app, MicroPython " +
   "or the bootloader answers and gets it into download mode.</p>";
@@ -39,9 +39,9 @@ const BOOT_RST = "<p>If nothing answers, hold BOOT while pressing RST and try ag
 const BOARDS = {
   xiao_esp32s3: {
     name: "Seeed XIAO ESP32S3",
-    hint: AUTO + "<p>A running esp-sdr app hands its USB port to the USB-Serial-JTAG, which " +
-      "comes up as a new port (\"USB JTAG/serial debug unit\"): the first time, the browser asks " +
-      "for it once more.</p>" + BOOT_PLUG,
+    hint: AUTO + "<p>A running esp-sdr app restarts into download mode, which comes up as a new " +
+      "port (\"USB JTAG/serial debug unit\"): the first time, the browser asks for it once " +
+      "more.</p>" + BOOT_PLUG,
   },
   communicator_badge: {
     name: "Hackaday Communicator badge (ESP32-S3)",
@@ -252,22 +252,30 @@ async function readFor(port, ms) {
   return text;
 }
 
-// An esp-sdr app's shell (USB CDC-ACM) hands the port to the USB-Serial-JTAG on "usj". Where
-// MicroPython runs (multiapp's autostart on the XIAO and the Communicator) the port is its REPL,
-// whose esdr.shell() runs the shell's commands: as west dfu does, Ctrl-C stops the running Python
-// app and a ">>>" tells the REPL from the shell.
+// An esp-sdr app's shell (USB CDC-ACM) restarts the S3 into the ROM's download mode on the
+// USB-Serial-JTAG on "download", as BOOT held during a reset does. Firmware from before that
+// command gets "usj", which only hands the port to the USB-Serial-JTAG while the app runs on (a
+// reset then brings the app back). Where MicroPython runs (multiapp's autostart on the XIAO and
+// the Communicator) the port is its REPL, whose esdr.shell() runs the shell's commands: as west
+// dfu does, Ctrl-C stops the running Python app and a ">>>" tells the REPL from the shell.
 async function handOver(port) {
   await port.open({ baudRate: 115200 });
   try {
     await port.setSignals({ dataTerminalReady: true });
     const writer = port.writable.getWriter();
     const send = (text) => writer.write(new TextEncoder().encode(text));
+    const command = (repl, cmd) => send(repl ? `import esdr; esdr.shell("${cmd}")\r\n` : `${cmd}\r\n`);
     await send("\x03\r\n");
     const repl = (await readFor(port, 700)).includes(">>>");
-    log(repl ? "MicroPython REPL: esdr.shell(\"usj\")" : "shell: usj");
-    await send(repl ? "import esdr; esdr.shell(\"usj\")\r\n" : "usj\r\n");
+    log(repl ? "MicroPython REPL: esdr.shell(\"download\")" : "shell: download");
+    await command(repl, "download");
+    const reply = await readFor(port, 800);
+    if (/not found/i.test(reply)) {
+      log("No download command (older firmware): usj");
+      await command(repl, "usj");
+    }
     writer.releaseLock();
-    await new Promise((r) => setTimeout(r, 500));
+    await sleep(500);
   } catch {
     // The app leaves the bus as it answers.
   }
@@ -370,7 +378,7 @@ async function flash() {
   let transport;
   try {
     if (port.getInfo().usbVendorId === ESP_SDR_VID) {
-      status("An esp-sdr app has the port: asking it to hand over...");
+      status("An esp-sdr app has the port: asking it to restart into download mode...");
       const before = (await navigator.serial.getPorts()).filter(isUsj);
       await handOver(port);
       status("Waiting for the USB-Serial-JTAG...");
@@ -383,8 +391,8 @@ async function flash() {
       }
       if (!port) {
         state.wantUsj = true;
-        status("Handed over. Press Connect and flash again and pick \"USB JTAG/serial debug " +
-          "unit\": the browser asks once for the new port.", "ok");
+        status("The board left its app. Press Connect and flash again and pick \"USB " +
+          "JTAG/serial debug unit\": the browser asks once for the new port.", "ok");
         return;
       }
       log("USB-Serial-JTAG is up.");

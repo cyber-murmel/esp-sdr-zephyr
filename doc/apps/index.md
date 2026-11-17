@@ -194,6 +194,11 @@ Without DFU, esptool writes the images over the USB-Serial-JTAG.
 - esptool's reset at the end boots the app, which takes the port back.
 - MicroPython on an S3 hands the port over with `esdr.shell("usj")`, as the shell apps' `usj`
   does.
+- `usj` leaves the app running on the USB-Serial-JTAG, and a change of DTR and RTS there resets
+  the chip back into the app. The shell command `download` (`apps/common`) instead restarts the
+  S3 into the ROM's download mode on the USB-Serial-JTAG, as BOOT held during a reset does: it
+  selects the USB-Serial-JTAG, sets `RTC_CNTL_FORCE_DOWNLOAD_BOOT` and restarts. The web flasher
+  uses it.
 - `CONFIG_APP_USB_START_DELAY_MS` keeps the USB-Serial-JTAG alive for a few seconds after reset,
   for recovery builds.
 

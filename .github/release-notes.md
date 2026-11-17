@@ -33,8 +33,8 @@ The list of every image is at the end. The rest of these notes is for the Seeed 
 ## gqrx
 
 1. Flash with the web flasher, or with esptool and the board in download mode (hold BOOT while
-   plugging it in, or run `usj` on the shell of a running esp-sdr app, `esdr.shell("usj")` in
-   its MicroPython REPL):
+   plugging it in, or run `download` on the shell of a running esp-sdr app,
+   `esdr.shell("download")` in its MicroPython REPL):
    ```
    esptool --chip esp32s3 write-flash 0x0 esp-sdr-multiapp-@TAG@-xiao_esp32s3.bin
    ```
