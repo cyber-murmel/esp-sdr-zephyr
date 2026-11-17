@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""doc/registers/svd2md.py: the register pages match the SVDs (as docs.yml checks)."""
+"""doc/registers/svd2md.py: the register pages (doc/dev/registers-<chip>.md) match the
+SVDs (as docs.yml checks)."""
 
 import pytest
 
@@ -16,6 +17,13 @@ def test_render_has_regions():
     for svd in sorted((svd2md.Path(svd2md.__file__).parent).glob("*.svd")):
         parts = svd2md.render(svd)
         assert parts and all(isinstance(v, list) and v for v in parts.values()), svd.name
+
+
+def test_pages_in_reference_part():
+    for svd in sorted((svd2md.Path(svd2md.__file__).parent).glob("*.svd")):
+        page = svd2md.page_of(svd)
+        assert page == svd2md.DOC / "dev" / f"registers-{svd.stem}.md", page
+        assert page.is_file(), page
 
 
 def test_missing_region(tmp_path):

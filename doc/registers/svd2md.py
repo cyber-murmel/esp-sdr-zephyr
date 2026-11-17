@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Render doc/registers/<chip>.svd into doc/undocumented-registers-<chip>.md.
+"""Render doc/registers/<chip>.svd into doc/dev/registers-<chip>.md.
 
 The page keeps its prose; the generator replaces what stands between
 <!-- svd:summary --> or <!-- svd:registers --> and the next <!-- svd:end -->.
@@ -199,11 +199,16 @@ def update(page, parts):
     return text
 
 
+def page_of(svd):
+    """The register page doc/dev/registers-<chip>.md that <chip>.svd renders into."""
+    return DOC / "dev" / f"registers-{svd.stem}.md"
+
+
 def main():
     check = "--check" in sys.argv[1:]
     stale = []
     for svd in sorted(Path(__file__).parent.glob("*.svd")):
-        page = DOC / f"undocumented-registers-{svd.stem}.md"
+        page = page_of(svd)
         text = update(page, render(svd))
         if text != page.read_text():
             stale.append(page.name)

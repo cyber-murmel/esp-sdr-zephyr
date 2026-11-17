@@ -2,61 +2,38 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+/*
+ * Doxygen lists the topics in the order this file defines them: keep it the reading order of
+ * the guides (doc/index.rst). Part 1, the radio: radio, rx, gain_guard, tx, cal, lte. Part 2,
+ * samples in and out: trig, ring, gapless, diag, diag16, dumpring, replay, paced. Part 3,
+ * modulation and coding: chancap, dsp. Support: place, prof. Then the IEEE 802.15.4 groups, a
+ * top-level group of their own, so they cannot sit among the library's groups.
+ */
+
 /**
  * @defgroup esp_sdr ESP-SDR library
  * @brief Raw I/Q receive and transmit on the Wi-Fi radio (CONFIG_ESP_SDR).
  *
- * One user of the radio at a time; all calls may sleep. The ESP32-S3 has the
- * whole library; the ESP32-C6 burst capture at 80 MS/s, triggered snapshots,
- * CPU-paced streaming and the gapless 80 MS/s receive; the ESP32-C5 bursts,
- * paced streaming, the diagnostic-bus ring and the DAC-engine replay; the
- * ESP32-S31 bursts, its 16-lane diagnostic-bus ring, a carrier, paced
- * transmit and the DAC-engine replay.
+ * One user of the radio at a time; all calls may sleep. A group limited to some chips names
+ * them in its brief. Which chip has which sample path:
+ * [Samples in and out](../samples/index.html).
  */
 
 /**
  * @defgroup esp_sdr_radio Radio
  * @ingroup esp_sdr
  * @brief Bring-up, tuning, front end turnaround and housekeeping (esp_sdr.h).
+ *
+ * Guides: [Transceiver](../radio/transceiver.html), [Tuning](../radio/tuning.html).
  */
 
 /**
  * @defgroup esp_sdr_rx Receive
  * @ingroup esp_sdr
  * @brief Gain, analog low-pass filter, burst and decimated capture (esp_sdr_rx.h).
- */
-
-/**
- * @defgroup esp_sdr_tx Transmit
- * @ingroup esp_sdr
- * @brief Power steps, one-shot and loop playback, sweeps and streaming (esp_sdr_tx.h).
- */
-
-/**
- * @defgroup esp_sdr_ring Continuous receive
- * @ingroup esp_sdr
- * @brief The gapless ring through three dump banks, ESP32-S3 (esp_sdr_ring.h).
- */
-
-/**
- * @defgroup esp_sdr_chancap Channelized burst capture
- * @ingroup esp_sdr
- * @brief One I/Q capture per packet per channel of a uniform grid, from the ring on the
- * other CPU, ESP32-S3 (esp_sdr_chancap.h, CONFIG_ESP_SDR_CHANCAP).
- */
-
-/**
- * @defgroup esp_sdr_place Code and data placement
- * @ingroup esp_sdr
- * @brief Usage categories for functions and buffers, placed in memory by rules for the SoC, the
- * board and the app (esp_sdr_place.h, doc/code-placement.md).
- */
-
-/**
- * @defgroup esp_sdr_prof CPU profiler
- * @ingroup esp_sdr
- * @brief The other CPU's program counter, sampled while the ring runs, ESP32-S3
- * (esp_sdr_prof.h, CONFIG_ESP_SDR_CPU_PROF).
+ *
+ * Guides: [Gain](../radio/gain.html), [Filters](../radio/filters.html),
+ * [Burst capture](../samples/bursts.html).
  */
 
 /**
@@ -64,6 +41,61 @@
  * @ingroup esp_sdr
  * @brief The receive gain down a level when packets reach full scale, up again after a quiet
  * hold (esp_sdr_gain_guard.h, CONFIG_ESP_SDR_GAIN_GUARD).
+ *
+ * Guide: [Gain](../radio/gain.html).
+ */
+
+/**
+ * @defgroup esp_sdr_tx Transmit
+ * @ingroup esp_sdr
+ * @brief Power steps, one-shot and loop playback, sweeps and streaming, ESP32-S3; a carrier on the
+ * ESP32-S31 (esp_sdr_tx.h, streaming with CONFIG_ESP_SDR_TX).
+ *
+ * Guides: [Transmit](../samples/transmit.html), [Gain](../radio/gain.html) for the power steps.
+ */
+
+/**
+ * @defgroup esp_sdr_cal Crystal calibration
+ * @ingroup esp_sdr
+ * @brief The crystal's error measured against an LTE cell and kept in flash (esp_sdr_cal.h;
+ * CONFIG_ESP_SDR_LTE_CAL measures, CONFIG_ESP_SDR_CALSTORE stores).
+ *
+ * Guide: [Crystal calibration](../radio/crystal-calibration.html).
+ */
+
+/**
+ * @defgroup esp_sdr_lte LTE synchronization signals
+ * @ingroup esp_sdr
+ * @brief LTE downlink synchronization signals as a frequency reference, header only, plain C and
+ * libm without Zephyr (esp_sdr_lte.h).
+ *
+ * Guide: [Crystal calibration](../radio/crystal-calibration.html).
+ */
+
+/**
+ * @defgroup esp_sdr_trig Triggered snapshots
+ * @ingroup esp_sdr
+ * @brief The full 80 MS/s kept from before a burst, ESP32-C6 (esp_sdr_trig.h,
+ * CONFIG_ESP_SDR_TRIG).
+ *
+ * Guide: [Burst capture](../samples/bursts.html).
+ */
+
+/**
+ * @defgroup esp_sdr_ring Continuous receive
+ * @ingroup esp_sdr
+ * @brief The gapless ring through three dump banks, ESP32-S3 (esp_sdr_ring.h).
+ *
+ * Guide: [Gapless receive](../samples/rings.html).
+ */
+
+/**
+ * @defgroup esp_sdr_gapless Gapless receive
+ * @ingroup esp_sdr
+ * @brief The whole 80 MS/s through a ring in SRAM blocks 1 and 2, pruned to the windows above
+ * the noise, ESP32-C6 (esp_sdr_gapless.h, CONFIG_ESP_SDR_GAPLESS).
+ *
+ * Guide: [Gapless receive](../samples/rings.html).
  */
 
 /**
@@ -71,13 +103,8 @@
  * @ingroup esp_sdr
  * @brief Gapless 40 MS/s receive through the modem diagnostic bus and PARLIO, ESP32-C5
  * (esp_sdr_diag.h, CONFIG_ESP_SDR_DIAG).
- */
-
-/**
- * @defgroup esp_sdr_dumpring Dump-engine ring on the ESP32-S31
- * @ingroup esp_sdr
- * @brief Gapless 10+10 bit receive at 20 MS/s through the dump engine alone, turned between two TCM
- * groups, with no pads (esp_sdr_dumpring.h, CONFIG_ESP_SDR_DUMPRING).
+ *
+ * Guide: [Gapless receive](../samples/rings.html).
  */
 
 /**
@@ -85,6 +112,17 @@
  * @ingroup esp_sdr
  * @brief Gapless 8+8 bit receive up to 40 MS/s through the modem diagnostic bus and PARLIO, a ring
  * with room for a block header (esp_sdr_diag16.h, CONFIG_ESP_SDR_DIAG16).
+ *
+ * Guide: [Gapless receive](../samples/rings.html).
+ */
+
+/**
+ * @defgroup esp_sdr_dumpring Dump-engine ring on the ESP32-S31
+ * @ingroup esp_sdr
+ * @brief Gapless 10+10 bit receive at 20 MS/s through the dump engine alone, turned between two TCM
+ * groups, with no pads (esp_sdr_dumpring.h, CONFIG_ESP_SDR_DUMPRING).
+ *
+ * Guide: [Gapless receive](../samples/rings.html).
  */
 
 /**
@@ -92,6 +130,8 @@
  * @ingroup esp_sdr
  * @brief Waveform loops through the modem DAC engine, ESP32-C5 (80 or 40 MS/s) and
  * ESP32-S31 (80, 40 or 20 MS/s) (esp_sdr_replay.h, CONFIG_ESP_SDR_REPLAY).
+ *
+ * Guide: [Transmit](../samples/transmit.html).
  */
 
 /**
@@ -100,25 +140,49 @@
  * @brief Continuous receive and transmit, one sample at a time from the caller's loop,
  * ESP32-C6 and ESP32-C5, transmit only on the ESP32-S31 (esp_sdr_paced.h,
  * CONFIG_ESP_SDR_PACED).
+ *
+ * Guide: [Paced streams](../samples/paced.html).
  */
 
 /**
- * @defgroup esp_sdr_trig Triggered snapshots
+ * @defgroup esp_sdr_chancap Channelized burst capture
  * @ingroup esp_sdr
- * @brief The full 80 MS/s kept from before a burst, ESP32-C6 (esp_sdr_trig.h,
- * CONFIG_ESP_SDR_TRIG).
+ * @brief One I/Q capture per packet per channel of a uniform grid, from the ring on the
+ * other CPU, ESP32-S3 (esp_sdr_chancap.h, CONFIG_ESP_SDR_CHANCAP).
+ *
+ * Guide: [Channelizer](../modem/channelizer.html).
  */
 
 /**
- * @defgroup esp_sdr_gapless Gapless receive
+ * @defgroup esp_sdr_dsp Signal processing helpers
  * @ingroup esp_sdr
- * @brief The whole 80 MS/s through a ring in SRAM blocks 1 and 2, pruned to the windows above
- * the noise, ESP32-C6 (esp_sdr_gapless.h, CONFIG_ESP_SDR_GAPLESS).
+ * @brief The turn constant, windows, sinc, FFT and whole-cycle tones, header only and free of
+ * Zephyr (esp_sdr_dsp.h).
+ */
+
+/**
+ * @defgroup esp_sdr_place Code and data placement
+ * @ingroup esp_sdr
+ * @brief Usage categories for functions and buffers, placed in memory by rules for the SoC, the
+ * board and the app (esp_sdr_place.h).
+ *
+ * Guide: [Code placement](../dev/code-placement.html).
+ */
+
+/**
+ * @defgroup esp_sdr_prof CPU profiler
+ * @ingroup esp_sdr
+ * @brief The other CPU's program counter, sampled while the ring runs, ESP32-S3
+ * (esp_sdr_prof.h, CONFIG_ESP_SDR_CPU_PROF).
+ *
+ * Guide: [Code placement](../dev/code-placement.html).
  */
 
 /**
  * @defgroup ieee154 IEEE 802.15.4
  * @brief Software O-QPSK PHY and the esp_sdr radio driver (CONFIG_ESP_SDR_IEEE802154).
+ *
+ * Guide: [IEEE 802.15.4](../modem/ieee802154.html).
  */
 
 /**
@@ -130,12 +194,5 @@
 /**
  * @defgroup ieee154_esp_sdr Radio driver diagnostics
  * @ingroup ieee154
- * @brief Counters, measurements and traces of the esp_sdr_154 device (ieee154_esp_sdr.h).
- */
-
-/**
- * @defgroup esp_sdr_dsp Signal processing helpers
- * @ingroup esp_sdr
- * @brief The turn constant, windows, sinc, FFT and whole-cycle tones, header only and free of
- * Zephyr (esp_sdr_dsp.h).
+ * @brief Counters, measurements and traces of the esp_sdr_154 device, ESP32-S3 (ieee154_esp_sdr.h).
  */

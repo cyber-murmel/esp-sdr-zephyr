@@ -5,7 +5,17 @@ For the Seeed XIAO ESP32S3 (8 MB flash) and an x86_64 Linux PC:
   Ubuntu 24.04 for SoapySDR ABI @ABI@ and libusb 1.0. Elsewhere, build it from
   `apps/osmosdr/soapy`.
 - `esp32s3-esp-sdr-@TAG@.svd`, `esp32c6-esp-sdr-@TAG@.svd`: Espressif's SVDs with the radio
-  registers this project documents (`doc/undocumented-registers-*.md`), for debuggers.
+  registers this project documents
+  ([ESP32-S3 registers](https://cyber-murmel.github.io/esp-sdr-zephyr/dev/registers-esp32s3.html),
+  [ESP32-C6 registers](https://cyber-murmel.github.io/esp-sdr-zephyr/dev/registers-esp32c6.html)),
+  for debuggers.
+
+## Host setup
+
+- On Ubuntu, `apt install gqrx-sdr soapysdr-tools` brings gqrx and SoapySDR.
+- Without root, the PC needs udev rules for the board (USB vendor 2fe3):
+  [USB IDs and host access](https://cyber-murmel.github.io/esp-sdr-zephyr/apps/index.html#usb-ids-and-host-access)
+  has them.
 
 ## gqrx
 
@@ -27,14 +37,7 @@ For the Seeed XIAO ESP32S3 (8 MB flash) and an x86_64 Linux PC:
 4. Run `gqrx` from the same shell. In its I/O device configuration: device string
    `driver=esdr,soapy=1`, input rate 250000 (the most USB full speed carries).
 
-On Ubuntu, `apt install gqrx-sdr soapysdr-tools` brings gqrx and SoapySDR. Without root, the PC
-needs udev rules for the board (USB vendor 2fe3), for example in
-`/etc/udev/rules.d/70-esp-sdr.rules`:
-```
-SUBSYSTEM=="usb", ATTRS{idVendor}=="2fe3", MODE="660", GROUP="plugdev", TAG+="uaccess"
-SUBSYSTEM=="tty", ATTRS{idVendor}=="2fe3", MODE="660", GROUP="dialout", TAG+="uaccess"
-ATTRS{idVendor}=="2fe3", ENV{ID_MM_DEVICE_IGNORE}="1"
-```
+## Other apps
 
 The other apps: `multiapp list` and `multiapp run <name>` on the board's USB shell
-(`apps/multiapp/README.rst`).
+([multiapp](https://cyber-murmel.github.io/esp-sdr-zephyr/apps/multiapp.html)).

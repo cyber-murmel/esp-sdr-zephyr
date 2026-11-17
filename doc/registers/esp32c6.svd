@@ -3,7 +3,7 @@
 <device schemaVersion="1.3" xmlns:xs="http://www.w3.org/2001/XMLSchema-instance" xs:noNamespaceSchemaLocation="CMSIS-SVD.xsd">
   <name>ESP32C6_RADIO</name>
   <version>0.1.0</version>
-  <description>Undocumented ESP32-C6 radio registers as esp-sdr-zephyr knows them, additions to Espressif's SVD (github.com/espressif/svd at be20aa1): doc/registers/svdmerge.py merges them, doc/registers/svd2md.py renders doc/undocumented-registers-esp32c6.md. Peripherals in group ANALOG_I2C are analog I2C blocks, not memory-mapped: base address block &lt;&lt; 8, one 8-bit register per offset.</description>
+  <description>Undocumented ESP32-C6 radio registers as esp-sdr-zephyr knows them, additions to Espressif's SVD (github.com/espressif/svd at be20aa1): doc/registers/svdmerge.py merges them, doc/registers/svd2md.py renders doc/dev/registers-esp32c6.md. Peripherals in group ANALOG_I2C are analog I2C blocks, not memory-mapped: base address block &lt;&lt; 8, one 8-bit register per offset.</description>
   <addressUnitBits>8</addressUnitBits>
   <width>32</width>
   <size>32</size>
@@ -199,7 +199,8 @@
             8 bytes above DUMP_CTRL_REG, as on the S3. Bits 14, 16 and 17 do not read back.
 
             - One word per sample, I in bits 9:0 and Q in 19:10, as for the S3's DAC (see
-              "Sample word formats"): a complex tone of k cycles in n words plays at +k/n
+              [Samples in and out](../samples/index.md#sample-word-formats)): a complex
+              tone of k cycles in n words plays at +k/n
               of the rate (200 cycles in 16000 words: 0.5 MHz at 40 MS/s, 1 MHz at
               80 MS/s), its image 37 to 40 dB down. All-zero words play nothing, a
               constant word a carrier.
@@ -245,8 +246,8 @@
               <name>B27_20</name>
               <description>
                 Read back as written; effect untested. The S3 `dactrig()` writes the count's
-                low byte here (see the ESP32-S3 page); upstream's C5 replay uses it as a
-                repeat count, 0 meaning endless with bit 19 set.
+                low byte here (see [ESP32-S3 registers](registers-esp32s3.md)); upstream's C5
+                replay uses it as a repeat count, 0 meaning endless with bit 19 set.
                 Evidence: *measured* bench 2026-10-11 (read-back only); *upstream*
                 `git show e605684:main/c5_main.c`, comment above `emit_dma()`
               </description>
@@ -306,8 +307,9 @@
             <field>
               <name>LANES</name>
               <description>
-                Lane selectors as the S3's DUMP_CONFIG_REG (0x60033d90, see the ESP32-S3
-                page): four 6-bit lane selectors, lane n in bits 6n+5:6n. The library
+                Lane selectors as the S3's DUMP_CONFIG_REG (0x60033d90, see
+                [ESP32-S3 registers](registers-esp32s3.md#register-dump_config_reg-0x60033d90)):
+                four 6-bit lane selectors, lane n in bits 6n+5:6n. The library
                 clears the field, then sets it to 0x000c2040. `adctrig()` mode 8, the BLE
                 dump, uses lanes 0x0e to 0x11 (see "Receive rate" above).
                 Evidence: *working* `lib/esp_sdr/src/esp_sdr_rx.c:258`; *upstream*
@@ -493,8 +495,9 @@
             Wi-Fi driver starts, through `modem_syscon_ll_reset_all()` and
             `modem_lpcon_ll_reset_all()`, as ESP-IDF's
             `esp_system_reset_modules_on_exit()` does on a restart.
-            Evidence: *measured* bench 2026-10-09 (symptoms under "Stale modem
-            state"); *working* `lib/esp_sdr/src/esp_sdr.c:29-48`;
+            Evidence: *measured* bench 2026-10-09 (symptoms in
+            [Chip notes](chips.md#modem-state-survives-a-chip-reset));
+            *working* `lib/esp_sdr/src/esp_sdr.c:29-48`;
             `modules/hal/espressif/components/hal/esp32c6/include/hal/modem_syscon_ll.h:325-329`,
             `modules/hal/espressif/components/esp_system/port/soc/esp32c6/system_internal.c:45-46`
           </description>
@@ -558,8 +561,9 @@
             The library writes 0xf, then 0, at `PRE_KERNEL_1` through
             `modem_lpcon_ll_reset_all()`, with MODEM_SYSCON_MODEM_RST_CONF_REG (see there
             for why).
-            Evidence: *measured* bench 2026-10-09 (symptoms under "Stale modem
-            state"); *working* `lib/esp_sdr/src/esp_sdr.c:29-48`;
+            Evidence: *measured* bench 2026-10-09 (symptoms in
+            [Chip notes](chips.md#modem-state-survives-a-chip-reset));
+            *working* `lib/esp_sdr/src/esp_sdr.c:29-48`;
             `modules/hal/espressif/components/hal/esp32c6/include/hal/modem_lpcon_ll.h:266-270`,
             `modules/hal/espressif/components/esp_system/port/soc/esp32c6/system_internal.c:45-46`
           </description>
@@ -877,8 +881,9 @@
           it is untested.
         - `force_txon(on)` clears `0x600a70dc` bit 16 and sets FE_RX_FORCE to 2, then
           FE_TX_FORCE to 3; off goes in reverse.
-        - In `force_txon_mode(on, bt, idx)` the second argument, which the ESP32-S3 page calls
-          mode, acts as a BT flag: the function always writes the power index force
+        - In `force_txon_mode(on, bt, idx)` the second argument, which
+          [Transceiver](../radio/transceiver.md#vendor-phy-functions) calls mode on the S3,
+          acts as a BT flag: the function always writes the power index force
           (FE_PWR_INDEX_FORCE = `on`, index in FE_PWR_INDEX), then calls `force_txon(0)` and
           `force_txon(on)`; only with the flag it first adds 32 to the index, stops the
           hardware frequency engine (FE_HW_FREQ_STOP), writes `0x600af4b4` bit 0, FE_BT_FORCE
@@ -1519,7 +1524,7 @@
               <description>
                 HAL name `I2C_ULP_OCODE`; the function is undocumented. Reads 0x4f instead
                 of 0x53 after the native 802.15.4 radio ran in the previous firmware (see
-                "Stale modem state").
+                [Chip notes](chips.md#clean-and-stale-registers)).
                 Evidence: *measured* bench 2026-10-09;
                 `modules/hal/espressif/components/soc/esp32c6/include/soc/regi2c_lp_bias.h:45`
               </description>
@@ -1533,8 +1538,8 @@
           <description>
             Unknown
             Init: 0x59
-            Reads 0x5a in the same stale state as ULP_OCODE (see "Stale modem
-            state").
+            Reads 0x5a in the same stale state as ULP_OCODE (see
+            [Chip notes](chips.md#clean-and-stale-registers)).
             Evidence: *measured* bench 2026-10-09
           </description>
           <addressOffset>9</addressOffset>
@@ -1606,7 +1611,7 @@
           <name>R1</name>
           <description>
             Manual capacitor code, bits 7:0
-            Init: 0xbb, the same as RFPLL_R5 (see also "Stale modem state")
+            Init: 0xbb, the same as RFPLL_R5 (see also [Chip notes](chips.md#clean-and-stale-registers))
           </description>
           <addressOffset>1</addressOffset>
           <size>8</size>
@@ -1689,7 +1694,7 @@
               <name>CAP_CODE</name>
               <description>
                 Bits 7:0 of the capacitor code; bit 8 is RFPLL_CAP_CODE_B8. Values: see
-                "Measured PLL behaviour".
+                [Tuning](../radio/tuning.md#vco-window-and--erange).
                 Evidence: *decompile* S3 `phy_rfpll.o`; *measured*
               </description>
               <bitRange>[7:0]</bitRange>

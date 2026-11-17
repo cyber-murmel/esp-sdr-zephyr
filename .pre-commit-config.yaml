@@ -5,7 +5,7 @@
 # files it checks are staged. On commit: the register pages and SVDs, the host tests,
 # the SoapySDR module. On push: the documentation and the unit tests. By hand only (they take
 # long): the board builds, `pre-commit run --hook-stage manual build-boards -a`.
-# doc/testing.md has the table.
+# doc/dev/testing.md has the table.
 # SKIP=<id>[,<id>] git commit skips a hook, e.g. offline (docs fetch Zephyr's
 # intersphinx inventory, svdmerge Espressif's SVDs on first use, into the west
 # workspace's .cache/).
@@ -21,7 +21,7 @@ repos:
         name: register pages up to date (svd2md --check)
         entry: python3 doc/registers/svd2md.py --check
         language: system
-        files: ^doc/(registers/|undocumented-registers-)
+        files: ^doc/(registers/|dev/registers-)
         pass_filenames: false
 
       - id: svdmerge
