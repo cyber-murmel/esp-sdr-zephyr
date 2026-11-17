@@ -102,6 +102,11 @@ jobs:
           west blobs fetch hal_espressif
           west blobs fetch esp-sdr-zephyr
 
+      # Every MicroPython image's build runs make in the shared mpy-cross tree: two at once
+      # relink it under each other ("Text file busy"). Built once here, it is up to date for them.
+      - name: Build mpy-cross
+        run: make -C modules/micropython/mpy-cross USER_C_MODULES= FROZEN_MANIFEST=
+
       # NSI_OPT=-O2 as in scripts/run-unit-tests.sh; only native_sim reads it.
       - name: Twister
         env:
