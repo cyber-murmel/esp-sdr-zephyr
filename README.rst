@@ -2,6 +2,11 @@
 ESP-SDR on Zephyr
 #################
 
+.. image:: doc/logo/logo.svg
+   :alt: The ESP-SDR logo: the MicroPython snake on a chip, the Zephyr kite and the GNU Radio rings
+   :width: 240
+   :align: center
+
 A software defined radio on the Wi-Fi radio of the ESP32-S3, ESP32-C6, ESP32-C5, ESP32-S31 and
 the classic ESP32, for Zephyr: I/Q capture from the receiver, and I/Q playback through the
 transmit DAC on all but the classic ESP32, which only receives.
@@ -162,7 +167,9 @@ Building the site
    make html
 
 The site is in ``doc/_build_sphinx/html``, with the API reference in its ``doxygen/`` folder. CI
-builds it with warnings as errors (``SPHINXOPTS=-W``) and publishes it.
+builds it with warnings as errors (``SPHINXOPTS=-W``) and publishes it. The build also makes the
+logo's favicon and PNG formats from ``doc/logo/logo.svg`` (``doc/logo/logo.py``), which needs
+``rsvg-convert`` (librsvg; the nix dev shell has it).
 
 Repository layout
 *****************
@@ -320,3 +327,6 @@ License
 *******
 
 GPL-3.0-or-later, like upstream esp-sdr; images that enable the library are subject to the GPL.
+
+The logo combines the logos of the Zephyr Project, MicroPython and GNU Radio, which belong to
+their owners.

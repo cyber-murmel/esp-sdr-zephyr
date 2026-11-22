@@ -39,11 +39,20 @@ DOC = Path(__file__).resolve().parent
 REPO = DOC.parent
 sys.path.insert(0, str(DOC))
 import nav  # noqa: E402  (doc/nav.py: the Previous/Up/Next links)
+sys.path.insert(0, str(DOC / "logo"))
+import logo  # noqa: E402  (doc/logo/logo.py: the logo's formats from doc/logo/logo.svg)
 DOXYGEN_HTML = DOC / "_build_doxygen" / "html"
 
 VERSION = dict(re.findall(r"^(\w+) = (\d+)$", (REPO / "VERSION").read_text(), re.M))
 version = release = "{VERSION_MAJOR}.{VERSION_MINOR}.{PATCHLEVEL}".format(**VERSION)
 html_title = f"{project} {release}"
+# The logo (README.rst shows it too) and, cut to the drawing, the favicon: made from
+# doc/logo/logo.svg at every build. favicon.ico and apple-touch-icon.png go to the site's root,
+# where browsers look for them.
+LOGO_OUT = logo.build()
+html_logo = str(LOGO_OUT / "logo.svg")
+html_favicon = str(LOGO_OUT / "favicon.svg")
+html_extra_path = [str(LOGO_OUT / "root")]
 
 # Pages shown from outside doc/: overview.rst shows README.rst, doc/apps/<app>.rst
 # shows apps/<app>/README.rst. Both are placeholders whose source this hook replaces.
@@ -58,6 +67,7 @@ RST_LINK = re.compile(r"`([^`<]+?)\s*<([^>\s]+)>`__")
 MD_LINK = re.compile(r"(?<!!)\[([^\]]+)\]\(([^)\s]+)\)")
 MD_FENCE = re.compile(r"^(```|~~~).*?^\1[^\n]*$", re.M | re.S)
 APP_README = re.compile(r"apps/(\w+)/README\.rst")
+LOGO = re.compile(r"^\.\. image:: doc/logo/logo\.svg\n(?:   :.*\n)*\n", re.M)
 
 
 def shown_from(docname):
@@ -137,6 +147,8 @@ def rewrite_source(app, docname, source):
         if docname == "overview":
             # README.rst has no nav block (GitHub's front page); the overview page gets it here
             source[0] = nav.overview(source[0])
+            # the sidebar shows the logo already (html_logo)
+            source[0] = LOGO.sub("", source[0], count=1)
     else:
         file = Path(app.env.doc2path(docname))
     base = os.path.relpath(file.parent, REPO)

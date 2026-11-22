@@ -44,6 +44,9 @@ jobs:
           fi
           echo "${PWD}/doxygen-${DOXYGEN_VERSION}/bin" >> "$GITHUB_PATH"
           pip install -r doc/requirements.txt
+          # rsvg-convert, for the logo's PNG and ICO formats (doc/logo/logo.py)
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends librsvg2-bin
 
       # The register pages are generated from doc/registers/*.svd, which merge into Espressif's SVD.
       - name: Register pages
