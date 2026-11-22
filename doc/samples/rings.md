@@ -136,6 +136,35 @@ Measured on 2026-10-12 on the XIAO S3 against the C6, for the 802.15.4 ACK:
 - Why the 802.15.4 driver keeps to 1024-pair units is in
   [IEEE 802.15.4](../modem/ieee802154.md#sending-acks).
 
+### Switch lateness histogram
+
+`esp_sdr_ring_stats.late_hist` counts every unit switch by how many pairs it came after its
+threshold, in power-of-two bins: 0, 1, 2-3, 4-7, ... 1024-2047, 2048 and more (13 bins,
+`esp_sdr_ring_late_bin()`). One `nsau` and an increment where `late_max` is updated, with
+interrupts masked: a few cycles a unit. A unit later than the limit is counted too, then the run
+fails with `ESP_SDR_RING_LATE`.
+
+- wpan: `wpan status` prints `ring switch lateness, pairs:units: ...` (all runs, empty bins left
+  out) next to `late max`.
+- osmosdr: `sdr status` prints the same line (all runs since boot; not in the USB stats struct,
+  so `esdr_usb stats` still shows only `late max`).
+
+`CONFIG_ESP_SDR_RING_LATE_PAIRS` (0 to 2000, default 0) sets the lateness the ring allows.
+0 keeps `late = min(2000, sg - 128)`, `sg = min(3072, unit)` and `eg = min(4096, 2 late + 128)`
+(896, 1024 and 1920 at 1024-pair units: 2944 sentinel words a unit; 7168 at the default unit).
+A value from 64 uses `late = min(value, that)`, `sg = late + 128` and `eg = 2 late + 128`: a
+unit starts at most `late` after its earliest start and ends at most `2 late` after its earliest
+end, plus 64 pairs of margin each. With 256 that is 384 + 640 words a unit at any unit length.
+A switch later than the limit still fails the run with LATE and restarts it, counted. A smaller
+`late` also moves the point where the filter stops starting slices (`thr + late / 2`) earlier.
+`geom_init()` is in `lib/esp_sdr/src/esp_sdr_ring_geom.h` and unit tested for every unit length
+(`tests/unit/ring_geom`).
+
+Measured 2026-11-24: worst switch 439 pairs under osmosdr on the XIAO (rx at 250 kS/s and 1 MS/s,
+30 s each; 104 in a second run), 65 to 69 under wpan on the DevKitC (about a million units in 60
+s); nearly every unit is at most 7 pairs late. A limit of 768 ran without a LATE error and left
+cycles a pair unchanged (osmosdr 14.28 and 13.32, wpan 8.65), so the default stays.
+
 ### Raw mode
 
 - `ESP_SDR_RING_DECIM_RAW` (`CONFIG_ESP_SDR_RING_RAW`) gives the sink the unpacked 16 MS/s stream,

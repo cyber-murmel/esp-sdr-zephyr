@@ -61,7 +61,7 @@ manifest:
     # overrides the revision Zephyr's own manifest pins.
     - name: hal_espressif
       remote: cyber-murmel
-      revision: 6a6c905c7a5caee7f8a9356846fdb066553fa3bd # zsdr branch
+      revision: 1943516575873c835ce61679dc6f29b9d3cb2c09 # zsdr branch
       path: modules/hal/espressif
       groups:
         - hal

@@ -97,6 +97,8 @@ static uint32_t cur_lo_mhz;
 static int32_t cur_lo_khz;
 
 static struct esdr_stats stats;
+/* Lateness histogram of all ring runs (not on the wire: sdr status). */
+static uint32_t late_hist[ESP_SDR_RING_LATE_BINS];
 
 static K_SEM_DEFINE(rx_wake, 0, 1);
 static K_SEM_DEFINE(usb_wake, 0, 1);
@@ -941,6 +943,9 @@ static void rx_thread_fn(void *a, void *b, void *c)
 		stats.ring_abandoned += rst.abandoned;
 		stats.ring_gain_refreshed += rst.gain_refreshed;
 		stats.ring_late_max = MAX(stats.ring_late_max, rst.late_max);
+		for (unsigned int i = 0; i < ESP_SDR_RING_LATE_BINS; i++) {
+			late_hist[i] += rst.late_hist[i];
+		}
 		stats.ring_cycles_x100 = rst.cycles_x100;
 		if (ret != 0) {
 			stats.ring_errors++;
@@ -1009,6 +1014,11 @@ int sdr_bench(unsigned int decim, bool real_sink, bool rot, struct esp_sdr_ring_
 void sdr_get_stats(struct esdr_stats *s)
 {
 	*s = stats;
+}
+
+void sdr_get_late_hist(uint32_t *hist)
+{
+	memcpy(hist, late_hist, sizeof(late_hist));
 }
 
 int sdr_init(void)

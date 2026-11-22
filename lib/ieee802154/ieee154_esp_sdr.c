@@ -33,6 +33,9 @@
 #include <esp_attr.h>
 
 #include <esp_sdr/esp_sdr.h>
+#if defined(CONFIG_ESP_SDR_DMA)
+#include <esp_sdr/esp_sdr_dma.h>
+#endif
 #include <esp_sdr/esp_sdr_place.h>
 #include <esp_sdr/esp_sdr_ring.h>
 #include <esp_sdr/esp_sdr_xtensa.h>
@@ -789,6 +792,9 @@ static void ring_thread_fn(void *p1, void *p2, void *p3)
 				d->stats.ring_irq_windows = st.irq_windows;
 				d->stats.ring_irq_lines = st.irq_lines;
 				d->stats.ring_late_max = MAX(d->stats.ring_late_max, st.late_max);
+				for (unsigned int i = 0; i < ESP_SDR_RING_LATE_BINS; i++) {
+					d->stats.ring_late_hist[i] += st.late_hist[i];
+				}
 			});
 		}
 		if (ret != 0) {
@@ -1320,6 +1326,129 @@ int ieee154_esp_sdr_bench(struct ieee154_esp_sdr_bench *b)
 	radio_give(d);
 	return ret;
 }
+
+#if defined(CONFIG_ESP_SDR_DMA)
+/* Slot s's template word offset: parity, this chip, the previous one (see ieee154_dsp_tx_gen). */
+#define TAIL_SLOT0 416U
+
+/* Points the source descriptors of slots TAIL_SLOT0 .. nchips at their templates. */
+static void tail_patch(const struct ieee154_dsp_tx *t, struct esp_sdr_dma_desc *d)
+{
+	enum { PAR = 9 * IEEE154_DSP_SLOT, CUR = 3 * IEEE154_DSP_SLOT, PRV = IEEE154_DSP_SLOT };
+	const uint32_t *base = &(*t->tmpl)[0][0][0][0];
+	const uint32_t last = t->nchips;
+	uint32_t prv = (uint32_t)ieee154_dsp_chip(t, TAIL_SLOT0 - 1U);
+	uint32_t cur = (uint32_t)ieee154_dsp_chip(t, TAIL_SLOT0);
+	uint32_t par = (TAIL_SLOT0 & 1U) != 0U ? PAR : 0U;
+	/* w holds the chips from c on, the next slot's first. */
+	uint32_t c = TAIL_SLOT0 + 1U;
+	uint32_t w = t->chips[c / 32U] << (c % 32U);
+
+	for (uint32_t s = TAIL_SLOT0; s <= last; s++) {
+		esp_sdr_dma_desc_set_buf(d++, base + par + cur * CUR + prv * PRV);
+		prv = cur;
+		/* 1 for a 0 chip, 2 for a 1 chip, 0 past the end (the last slot's pulse tail). */
+		cur = c < last ? 1U + (w >> 31) : 0U;
+		w <<= 1;
+		par = PAR - par;
+		if ((++c & 31U) == 0U) {
+			w = t->chips[c / 32U];
+		}
+	}
+}
+
+int ieee154_esp_sdr_bench_dma(struct ieee154_esp_sdr_dma_bench *b, struct esp_sdr_dma *h,
+			      struct esp_sdr_dma_desc *tx, uint32_t ntx,
+			      struct esp_sdr_dma_desc *rx, uint32_t nrx)
+{
+	struct sdr154_data *d = &sdr154;
+	uint8_t ack[5] = {0x02, 0x00, 0x5a};
+	struct esp_sdr_dma_seg seg = {0};
+	struct esp_sdr_dma_job job = {.tx = tx, .tx_max = ntx, .rx = rx, .rx_max = nrx};
+	uint32_t *bank, *ref, t0, t1;
+	size_t words;
+	uint32_t n, slots, tail;
+	int ret;
+
+	radio_take(d);
+	if (!d->sdr_up) {
+		radio_give(d);
+		return -ENETDOWN;
+	}
+	(void)ieee154_phy_append_fcs(ack, 3U);
+	/* Bank 2 gets the DMA's copy, bank 1 the CPU's: both the CPUs' while the radio is held. */
+	bank = esp_sdr_tx_loop_buf(0, &words);
+	ref = esp_sdr_tx_loop_buf(1, &words);
+	ieee154_dsp_tx_build(&high->tx, ack, sizeof(ack));
+	n = (uint32_t)ieee154_dsp_tx_samples(&high->tx);
+	slots = n / IEEE154_DSP_SLOT - TAIL_SLOT0;
+	tail = n - TAIL_SLOT0 * IEEE154_DSP_SLOT;
+	*b = (struct ieee154_esp_sdr_dma_bench){.slots = slots, .bytes = 4U * tail};
+	if (n > words || slots > ntx) {
+		radio_give(d);
+		return -ENOMEM;
+	}
+
+	/* The CPU's tail, as the ring builds it: the reference and its time. */
+	b->cpu_cyc = UINT32_MAX;
+	for (int i = 0; i < 8; i++) {
+		unsigned int key = arch_irq_lock();
+		uint32_t cp;
+
+		__asm__ volatile("rsr.cpenable %0" : "=r"(cp));
+		esp_sdr_pie_enable();
+		t0 = esp_sdr_ccount();
+		tx_gen(NULL, ref, TAIL_SLOT0 * IEEE154_DSP_SLOT, tail);
+		t1 = esp_sdr_ccount();
+		__asm__ volatile("wsr.cpenable %0\n\trsync" : : "r"(cp));
+		arch_irq_unlock(key);
+		b->cpu_cyc = MIN(b->cpu_cyc, t1 - t0);
+	}
+
+	/* Lists: one piece per slot, built whole once (fixed words and pointers), then patched. */
+	seg.len = 4U * IEEE154_DSP_SLOT;
+	seg.src = &(*high->tx.tmpl)[0][0][0][0];
+	t0 = esp_sdr_ccount();
+	ret = esp_sdr_dma_copy_build(&job, bank + TAIL_SLOT0 * IEEE154_DSP_SLOT, seg.src,
+				     slots * seg.len, seg.len, ESP_SDR_DMA_CPU_OWNS_BANKS);
+	tail_patch(&high->tx, tx);
+	t1 = esp_sdr_ccount();
+	b->build_cyc = t1 - t0;
+	if (ret != 0) {
+		radio_give(d);
+		return ret;
+	}
+	b->patch_cyc = UINT32_MAX;
+	b->dma_cyc = UINT32_MAX;
+	for (int i = 0; i < 8; i++) {
+		unsigned int key = arch_irq_lock();
+
+		memset(bank + TAIL_SLOT0 * IEEE154_DSP_SLOT, 0xa5, 4U * tail);
+		t0 = esp_sdr_ccount();
+		tail_patch(&high->tx, tx);
+		t1 = esp_sdr_ccount();
+		b->patch_cyc = MIN(b->patch_cyc, t1 - t0);
+		t0 = esp_sdr_ccount();
+		ret = esp_sdr_dma_start(h, &job);
+		t1 = esp_sdr_ccount();
+		b->start_cyc = t1 - t0;
+		if (ret == 0) {
+			ret = esp_sdr_dma_wait(h, 2000U);
+		}
+		b->dma_cyc = MIN(b->dma_cyc, esp_sdr_ccount() - t0);
+		arch_irq_unlock(key);
+		if (ret != 0) {
+			break;
+		}
+	}
+	b->ret = ret;
+	for (uint32_t k = 0; k < tail; k++) {
+		b->mismatch += bank[TAIL_SLOT0 * IEEE154_DSP_SLOT + k] != ref[k];
+	}
+	radio_give(d);
+	return ret;
+}
+#endif
 
 void ieee154_esp_sdr_clear_stats(void)
 {

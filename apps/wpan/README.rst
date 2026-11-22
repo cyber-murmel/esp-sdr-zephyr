@@ -101,6 +101,12 @@ conventions").
    * - ``wpan bench [units] [subsample]|phy|ack``
      - ring decimation by 4 and PHY cost on synthetic data, or the ACK waveform build and front end
        switch times (S3, radio off after one ``wpan on``)
+   * - ``wpan bench dma [ack]``
+     - the ACK tail (289 slots from slot 416) gathered from the templates into bank 2 by the GDMA
+       (S3, ``CONFIG_ESP_SDR_DMA``, radio off but one ``wpan on`` since boot), compared word for word
+       with the CPU build, plain and with 16 byte bursts. The SRAM, register and backup DMA benches
+       are ``probe dma`` in `rfprobe <../rfprobe/README.rst>`__. Design and numbers:
+       ``doc/dev/dma-chains.md``.
    * - ``sniffer start|stop|channel|speed|stats|stats_reset``
      - capture every frame as a text line for Wireshark (`Sniffer`_)
 

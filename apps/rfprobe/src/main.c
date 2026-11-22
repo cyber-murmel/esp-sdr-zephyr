@@ -32,6 +32,12 @@
 #include <esp_sdr/esp_sdr_diag16.h>
 #endif
 #include <esp_sdr/esp_sdr_tx.h>
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
+#include "i2sbench.h"
+#if defined(CONFIG_ESP_SDR_DMA)
+#include "dmabench.h"
+#endif
+#endif
 #if defined(CONFIG_ESP_SDR_DIAG)
 #include <esp_sdr/esp_sdr_diag.h>
 #endif
@@ -1597,6 +1603,31 @@ static int cmd_cal_clear(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
+/* probe i2s <bck_div> [pattern hex] [slot bits] [src MHz 160|240|40] */
+static int cmd_i2s(const struct shell *sh, size_t argc, char **argv)
+{
+	const uint32_t div = (uint32_t)strtoul(argv[1], NULL, 0);
+	const uint32_t pat = argc > 2 ? (uint32_t)strtoul(argv[2], NULL, 16) : 0x55555555U;
+	const uint32_t slot = argc > 3 ? (uint32_t)strtoul(argv[3], NULL, 0) : 32U;
+	const uint32_t mhz = argc > 4 ? (uint32_t)strtoul(argv[4], NULL, 0) : 160U;
+	int ret = i2sbench_run(sh, div, pat, slot, mhz);
+
+	if (ret != 0) {
+		shell_error(sh, "i2s: bad argument (%d)", ret);
+	}
+	return ret;
+}
+
+#if defined(CONFIG_ESP_SDR_DMA)
+/* probe dma sram | reg [mac] | regs [n|mac] | map | kick */
+static int cmd_dma(const struct shell *sh, size_t argc, char **argv)
+{
+	return dmabench_run(sh, argc, argv);
+}
+#endif
+#endif
+
 SHELL_STATIC_SUBCMD_SET_CREATE(cal_cmds,
 #if defined(CONFIG_ESP_SDR_LTE_CAL)
 	SHELL_CMD_ARG(lte, NULL, "[start MHz] [stop MHz] [gain|-1]: measure against an LTE cell",
@@ -1618,6 +1649,12 @@ SHELL_STATIC_SUBCMD_SET_CREATE(probe_cmds,
 	SHELL_CMD_ARG(gain, NULL, "<rx index|-1> [tx step]", cmd_gain, 2, 1),
 #if defined(CONFIG_SOC_SERIES_ESP32S3)
 	SHELL_CMD(tone, &tone_cmds, "loop a tone", NULL),
+	SHELL_CMD_ARG(i2s, NULL, "<bck_div> [pattern hex] [slot bits] [src MHz]: I2S0 TX divider bench",
+		      cmd_i2s, 2, 3),
+#if defined(CONFIG_ESP_SDR_DMA)
+	SHELL_CMD_ARG(dma, NULL, "sram | reg [mac] | regs [n|mac] | map | kick: GDMA and backup DMA benches",
+		      cmd_dma, 2, 1),
+#endif
 #endif
 	SHELL_CMD_ARG(rx, NULL, "[n] [rate 0..6]: capture, base64 dump", cmd_rx, 1, 2),
 #if defined(CONFIG_ESP_SDR_DIAG)

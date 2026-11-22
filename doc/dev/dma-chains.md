@@ -4,13 +4,13 @@
 Previous: [ZigBit reference](zigbit.md) · Up: [Reference](index.md) · Next: [Hot loops](hot-loops.md)
 <!-- nav-end -->
 
-This page is a roadmap, not a description of working code. It asks whether descriptor lists
+This page is a roadmap, with two built pieces (the S3 gather, [below](#the-s3-layer-as-built), and the S3 backup DMA's register lists, [below](#the-s3-backup-dma-register-lists)). It asks whether descriptor lists
 (GDMA chains, rings and re-linking, REGDMA) can become one project-wide way of moving I/Q samples.
 It says how each chip moves samples today, ranks the four places where a list would replace a CPU
 copy, sketches one common layer (`esp_sdr_dma`) and lists the experiments that decide each lever.
 It sits in the reference part because it plans work; the guides of Part 2 describe what exists.
 
-Nothing here is built or measured, except where a figure cites a file or a page. Estimates are
+Only the S3 layer is built, and its sections give the numbers measured on the DevKitC; nothing else here is measured, except where a figure cites a file or a page. Estimates are
 marked **(estimate)** and claims not yet checked against the code or a board are marked
 **(check)**. Hal paths are relative to `modules/hal/espressif/components/`.
 
@@ -40,8 +40,9 @@ marked **(estimate)** and claims not yet checked against the code or a board are
 | --- | --- | --- | --- | --- |
 | 1 | GDMA gather of kept windows into staging | C6 | whole bursts from about 50 us to the staging limit | deferred: needs the C6 badge |
 | 2 | Hand ring nodes to USB by re-linking | S31 | no 32 KiB copy per batch | deferred: needs the S31 board |
-| 3 | TX waveforms as a gather of slots | S3 | 25k down to 3 to 6k cycles for the ACK tail | planned next (S3), as experiments 5 and 8 |
+| 3 | TX waveforms as a gather of slots | S3 | 25k down to 3 to 6k cycles for the ACK tail (the CPU build is now 11.9k) | measured: the gather loses on latency (389 us against 192 us), the CPU build stays |
 | 4 | REGDMA register lists for paced TX and RX | C6, C5, S31 | lifts the C6's 250 kS/s TX ceiling | deferred: needs the C6 (first), then C5 and S31 |
+| 5 | Backup DMA register lists (bank switch, dump trigger, GDMA start) fired by one CPU store | S3 | CPU work of a dump or replay step down to one store plus the wait | built (`esp_sdr_bkdma_*`), measured 2026-11-24: 12 to 15 cycles a word, about 400 cycles a run, starts a GDMA chain; pays for longer lists, not for two words (see [the section](#the-s3-backup-dma-register-lists)); the S3 has no REGDMA, this is its stand-in |
 
 Lever 3 has a decision gate: the gather goes into the tree only if it beats the CPU build of the
 ACK tail (see [Hot loops](hot-loops.md), item 1) in CPU cycles. Otherwise the numbers are
@@ -177,9 +178,10 @@ depends on the sequence number and FCS, 251 us for a whole ACK ([IEEE 802.15.4](
 **Why REGDMA.** Paced TX writes the TX DC value register once a sample and paced RX reads the IQ
 estimator's sums once a sample. [Paced](../samples/paced.md) says ETM has no task that writes a
 register value, and a memory-to-memory GDMA to a peripheral address is untested: ESP-IDF's async
-memcpy allows only RAM, and PMS/APM may block it (experiment 8). REGDMA (the PAU, present on C5,
-C6, P4 and S31, not on the S3) walks linked lists of register writes and backups in RAM. That is
-the paced path's job.
+memcpy allows only RAM, and PMS/APM may block it (experiment 8: on the S3 the GDMA itself refuses,
+the [backup DMA](#the-s3-backup-dma-register-lists) does not; the C6 part is still open). REGDMA
+(the PAU, present on C5, C6, P4 and S31, not on the S3) walks linked lists of register writes and
+backups in RAM. That is the paced path's job.
 
 **What the hal confirms** (read from the sources, nothing run):
 
@@ -235,6 +237,294 @@ Rules it enforces:
 - One channel claim per app. The S31's "every run resets the whole AXI GDMA group" (it kills the
   panel) means the layer resets only its own channel, never the group.
 
+## The S3 layer as built
+
+`include/esp_sdr/esp_sdr_dma.h` and `lib/esp_sdr/src/esp_sdr_dma.c` (Kconfig `ESP_SDR_DMA`, S3
+only, off by default in `apps/wpan`, on in `apps/rfprobe`, see "Open crash"). It is the S3 backend of the layer above: `gdma_ll.h` calls, a pair of
+GDMA channels in memory-to-memory mode (`mem_trans_en`), polled, no interrupt. The code is in
+flash; an IRAM start and wait is a later step if a caller needs it.
+
+| Piece | What it does |
+| --- | --- |
+| `esp_sdr_dma_claim()` / `_release()` | One of the five channel pairs, from channel 4 down; bus clock on, only the claimed channel reset, never the controller |
+| `struct esp_sdr_dma_job` | Two caller-owned descriptor lists: `tx` reads the pieces, `rx` writes the contiguous destination |
+| `esp_sdr_dma_gather_build()` | Pieces `(src, len)` (each up to 4092 B) into one destination, the source list ending in EOF; the destination list is cut at 4092 B |
+| `esp_sdr_dma_copy_build()` | The same for one source cut into pieces of a chosen size |
+| `esp_sdr_dma_desc_set_buf()` | Re-points a built source descriptor: the per-ACK cost of a gather whose lengths do not change |
+| `esp_sdr_dma_start()` / `_wait()` / `_done()` | Reset the pair, re-arm the destination list, start; poll the RX success EOF (errors reset the pair) |
+| `esp_sdr_dma_burst()` | 16 byte INCR bursts on both channels (pieces, source and destination multiples of 16) |
+| `esp_sdr_dma_in_bank()` | The guard's test |
+
+Decisions:
+
+- **Channel ownership.** Zephyr's `dma_esp32_gdma` driver owns the controller when the `dma` node
+  is enabled; the S3 devicetree leaves it `disabled`, and only the XIAO's `procpu_sense` board
+  overlay enables it (for the camera and sensor variant, which no app of this repo builds). So
+  the library keeps its own claim mask and `ESP_SDR_DMA` depends on `!DMA_ESP32`: the two never
+  share the controller. It resets only its channel, because a controller reset would stop any
+  other user (the S31 note above, "every run resets the whole AXI GDMA group"). SPI, LCD_CAM and
+  I2S users that go through Zephyr's driver exclude the layer; one that drives `gdma_ll` itself
+  has to pick another channel.
+- **Banks.** A source or destination inside the capture bank, bank 1 (`ESP_SDR_BANK1`) or bank 0
+  (`ESP_SDR_RING`) is refused with `-EACCES` unless the caller passes
+  `ESP_SDR_DMA_CPU_OWNS_BANKS`: no capture, ring or playback may run. The test uses the linker
+  symbols of `esp_sdr_bank_s3.ld`. `esp_sdr_bank_usage()` returns the usage word to write, not a
+  state, so it cannot serve as a check.
+- **Descriptors** are refused in any bank, flag or not. In the image they cannot be there: the
+  S3 snippet already asserts that the DRAM image ends below the lowest bank, so descriptor arrays
+  in `.bss` need no linker change (`apps/wpan` keeps 300 + 8, 3696 B of DRAM).
+- **Source and destination** words: destination 4-byte aligned and the total a multiple of 4;
+  bursts need multiples of 16.
+
+### The bench
+
+`probe dma sram|reg` in `apps/rfprobe` (`src/dmabench.c`, shell commands of the S3 build), and
+`wpan bench dma ack` in `apps/wpan` (radio off, one `wpan on` since boot: the ACK code needs the
+802.15.4 driver):
+
+- `probe dma sram`: the capture bank (the CPUs' while nothing captures or loops) as source and
+  destination, one 4092 B descriptor, then 16 KiB in pieces of 4092, 1600, 400, 160 and 80 B (the
+  last four also with bursts of 16): CPU cycles to write the lists, DMA cycles from start to EOF,
+  cycles per descriptor, MB/s, the result compared with the source; `memcpy` of 16 KiB for
+  reference; a loop of 1024 CPU reads alone and while a 1600 B chain runs, over image data and
+  over the destination. Moved from `wpan bench dma sram`, where the numbers below were taken
+  (bank 1 to bank 2).
+- `wpan bench dma ack`: the 289 slots from slot 416 of a 5-byte ACK gathered from the template
+  table into bank 2, compared word for word with `ieee154_dsp_tx_gen()` (the CPU build, run under
+  the ring's conditions). It reports the full list write, the pointer patch of an already built
+  list (`tail_patch()`, what an ACK needs: lengths and links are fixed), the start call and the
+  DMA time.
+- `probe dma reg [mac]`: one 32-bit GDMA write into `RTC_CNTL_STORE7` (a scratch register of the
+  always-on RTC block, used by the deep sleep wake stub only, no clock gate to stall the bus), or
+  with `mac` into the Wi-Fi MAC dump engine's `DUMP_CONFIG_REG` (0x60033d90, radio initialised
+  once, dump engine idle), with both PMS violation monitors (`DMA_APBPERI` and `BACKUP_BUS`)
+  armed, then a read back, the old value restored. Experiment 8, result below.
+
+### Measured numbers
+
+DevKitC (S3, 240 MHz), the earlier `wpan bench dma` (now `probe dma sram` and `wpan bench dma ack`), bank 1 to bank 2, best of 4. Setup is the CPU time to write
+both lists; a descriptor costs the CPU about 37 cycles to write.
+
+| Row | Setup (CPU cycles) | DMA cycles | Cycles per descriptor | MB/s | Bursts of 16: DMA cycles, MB/s |
+| --- | --- | --- | --- | --- | --- |
+| 1 x 4092 B | 363 | 19079 | 19079 | 51.5 | n/a |
+| 16 KiB in 5 x 4092 B | 535 | 74689 | 14937 | 52.6 | n/a |
+| 16 KiB in 11 x 1600 B | 745 | 74841 | 6803 | 52.5 | 62487, 62.9 |
+| 16 KiB in 41 x 400 B | 1795 | 75666 | 1845 | 52.0 | 63108, 62.3 |
+| 16 KiB in 103 x 160 B | 3965 | 77358 | 751 | 50.8 | 64406, 61.1 |
+| 16 KiB in 205 x 80 B | 7535 | 80102 | 390 | 49.1 | 66545, 59.1 |
+| `memcpy` of 16 KiB (CPU) | | 10281 | | 382 | |
+
+The transfer is bandwidth bound at about 50 MB/s (62 with bursts): the descriptor fetch costs
+about 3 % at 80 B pieces. The CPU copies the same bank to bank at 7 times the speed. A CPU read
+loop (1024 words) is not slowed by a chain running (image 4641 against 4500 cycles, destination
+bank 4108 against 4107): the copy overlaps CPU work.
+
+| ACK tail gather (289 slots, 23120 B) | Cycles |
+| --- | --- |
+| CPU build, ring conditions (item 3: 11.9k) | 11864 |
+| Gather: write both lists whole | about 21.5k to 28.8k (first run cold) |
+| Gather: patch the 289 pointers | 8140 (28 a slot, not the 7 estimated) |
+| Gather: start call | 580 (4563 on a cold cache, code in flash) |
+| Gather: patch + start, the CPU side | 8672 |
+| Gather: DMA, start to EOF | 112702 (469 us) |
+| Gather with bursts: DMA, start to EOF | 93574 (389 us) |
+| Words differing from the CPU build | 0 |
+| GDMA write to a peripheral register (`RTC_CNTL_STORE7`, `DUMP_CONFIG_REG`) | refused by the GDMA (IN_DSCR_ERR), nothing written; see "Experiment 8" below |
+
+### Experiment 8: the GDMA cannot write a register
+
+Measured 2026-11-24 on the DevKitC (`probe dma reg`, the same code ran first as
+`wpan bench dma reg`): a memory-to-memory GDMA write of one word to `RTC_CNTL_STORE7`, and to
+`DUMP_CONFIG_REG`, ends with the RX channel's raw `IN_DSCR_ERR` (0x8), the descriptor's owner bit
+still set and the destination unchanged. Neither PMS monitor records a violation
+(`SENSITIVE_DMA_APBPERI_PMS_MONITOR_*` for the GDMA's APB side, `SENSITIVE_BACKUP_BUS_PMS_MONITOR_*`
+for the backup bus). So it is an address check of the GDMA itself (a destination in peripheral
+space is a descriptor error), not a permission: no PMS flag, world or lock changes it. The CPU
+writes both registers fine. Experiment 8 on the S3 therefore ends here for the GDMA; the other DMA
+of the chip does write registers (next section).
+
+### Decision
+
+**The CPU build of the ACK tail stays.** The tail is built between the frame's end and the ACK
+(192 us turnaround, [IEEE 802.15.4](../modem/ieee802154.md)), and the gather alone takes 389 us
+with bursts, 469 us without: it cannot finish in time, whatever it overlaps. It would also save
+only about 3.2k CPU cycles of 11.9k, because writing the pointers costs 8.7k. A gather would pay
+for waveforms built well before they are sent (a burst queued ahead, a frame prepared while the
+radio listens), not for the ACK. `wpan bench dma ack` prints the verdict against both the CPU cycles
+and the 192 us.
+
+### Open crash
+
+With `CONFIG_ESP_SDR_DMA=y`, the earlier `wpan bench dma sram` (that bench has moved to
+`probe dma sram` in rfprobe, which has no `wpan on`, so this cannot be reproduced from wpan now)
+followed by `wpan on` resets the DevKitC a few
+seconds after "radio on: 0": reset reason 0x7 (TG0WDT_SYS_RST), saved PC `_DoubleExceptionVector`
+(`xtensa_asm2_util.S:649`), no fatal dump, garbage on the UART just before. `wpan on` alone and
+`wpan bench dma ack` followed by `wpan on` are fine. The cause is not found. Checked by reading:
+every chain ends (`next` NULL, EOF on the last source descriptor, sizes exact, the last
+destination descriptor holds the rest); sources, destinations and lists are 4-byte aligned and
+inside banks 1 and 2 and the image; nothing a chain targets is on a stack; `wait` now waits for
+the channel to go idle, `release` stops and resets it; the ring rewrites the ACK head
+(`ack_prefix()`) before each run, so bank 2's contents do not matter. Left unexplained: what
+`sram` does that `ack` does not (16 KiB random fill of bank 1, chains into bank 2 from word 0, the
+overlap rows with interrupts off, the shell stack, 2560 B with `cmd_bench` 240 B and `dma_row` 144
+B added). The bench now prints the address ranges and checks canary words after both buffers on
+every row. So the option is off by default in `apps/wpan` (`-DCONFIG_ESP_SDR_DMA=y` builds `bench dma ack`
+only); the layer and its numbers stay. In rfprobe, which has the option on, `probe dma sram`
+followed by `probe f 2440`, `probe rx 4096` and an 8 s `probe tone on` did not reset the DevKitC
+(2026-11-24, uptime kept counting): the radio alone does not bring it back, so it needs something
+wpan's path adds (the ring, the ACK build into bank 2). Still open.
+
+### Rules learned
+
+- The controller is gated and held in reset after boot; with Zephyr's driver off the layer
+  enables the clock and resets the controller when it was not running (first claim).
+- A chain into a dump bank must be waited for before the radio may take that bank:
+  `esp_sdr_dma_wait()` also waits for the FSM to go idle, `esp_sdr_dma_start()` refuses
+  while a chain runs (`-EBUSY`), `esp_sdr_dma_release()` stops and resets the channel.
+
+## The S3 backup DMA (register lists)
+
+Part of the same files (`esp_sdr_bkdma_*`, `include/esp_sdr/esp_sdr_dma.h:148` ff.,
+`lib/esp_sdr/src/esp_sdr_dma.c:386` ff., Kconfig `ESP_SDR_DMA`). The S3 has a second DMA that the
+GDMA layer does not use: the peripheral backup DMA (the "APB backup DMA"), which the ROM uses to
+save and restore peripheral registers around sleep. It copies a list of words between SRAM and the
+APB address space and, unlike the GDMA, writes registers.
+
+**Base address, and a hal bug.** The block is at **0x6001A000**. The hal's
+`DR_REG_PERI_BACKUP_BASE` was 0x6002A000
+(`components/soc/esp32s3/register/soc/reg_base.h:44`); that address reads 0 and ignores writes.
+The right one comes from the ROM: `ets_backup_dma_copy` (0x40000624, `esp32s3.rom.ld:30`, a jump to 0x40041804 and from there to the
+worker at 0x400416a0) programs 0x6001A000, found by dumping the ROM with `devmem`. The hal
+line is fixed in this workspace (the value above); nothing else in the hal or in Zephyr names the
+block (no linker symbol, no devicetree node). Without the fix every `PERI_BACKUP_*` macro points
+at the wrong place.
+
+**Fields** (`soc/peri_backup_reg.h`, names as the hal has them):
+
+| Register (offset) | Field | Meaning, as measured |
+| --- | --- | --- |
+| clock | `SYSTEM_PERIP_CLK_EN1_REG` `SYSTEM_PERI_BACKUP_CLK_EN`, reset `SYSTEM_PERIP_RST_EN1_REG` `SYSTEM_PERI_BACKUP_RST` | gated and held in reset after boot; the claim enables and releases them |
+| `CONFIG` (0x0), reset value 0x6480 | `ENA` bit 31 | engine enable |
+| | `TO_MEM` bit 30 | 0 SRAM to registers, 1 registers to SRAM |
+| | `START` bit 29 | write trigger |
+| | `SIZE` bits 28:19 | a word count (SIZE 1 wrote one word), at most 1023 |
+| | `TOUT_THRES` 18:9 (50), `BURST_LIMIT` 8:4 (8) | kept at the reset values (0x6480) |
+| | `ADDR_MAP_MODE` bit 3 | map mode, see below |
+| | `FLOW_ERR` bits 2:0 | read only |
+| `APB_ADDR` (0x4) | start register | word address of the first register |
+| `MEM_ADDR` (0x8) | start SRAM address | |
+| `REG_MAP0..3` (0xC to 0x18) | | in map mode a 128-bit mask of register words; the first set bit is `APB_ADDR` (below) |
+| `INT_RAW` (0x1C) | `DONE` bit 0, `ERR` bit 1 | cleared through `INT_CLR` (0x28) |
+
+Which registers it reaches is set by `SENSITIVE_BACKUP_BUS_PMS_CONSTRAIN_*` (one 2-bit field per
+peripheral, open at reset, the monitor `SENSITIVE_BACKUP_BUS_PMS_MONITOR_*` latches a violation).
+Measured to land on 2026-11-24: SRAM into `RTC_CNTL_STORE7`, into the MAC dump engine's
+`DUMP_CONFIG_REG` (0x60033d90) and into `GDMA_DATE_REG`.
+
+**The API** (S3 only, behind `CONFIG_ESP_SDR_DMA`, the GDMA backend untouched):
+
+| Call | What it does |
+| --- | --- |
+| `esp_sdr_bkdma_claim()` / `_release()` | Clock on and reset released, `CONFIG` to its default; refuses a second user (`-EBUSY`). Release puts the clock and reset back as found |
+| `esp_sdr_bkdma_prepare(run, apb, mem, words, flags, map)` | Builds the run: the `CONFIG` word (ENA, `TO_MEM`, SIZE, map mode), the two addresses and the map words. `ESP_SDR_BKDMA_TO_MEM`, `ESP_SDR_BKDMA_MAP`; a `mem` in a dump bank is refused like the GDMA's unless `ESP_SDR_DMA_CPU_OWNS_BANKS` |
+| `esp_sdr_bkdma_start(run)` | Stores `APB_ADDR`, `MEM_ADDR`, map words and `CONFIG` only where they differ from the last run, then one store of `CONFIG | START`. A repeat of the same run is one store |
+| `esp_sdr_bkdma_done()` / `_wait(cycles)` | Poll `INT_RAW`, clear it; `-EIO` on `ERR` or `FLOW_ERR`, `-ETIMEDOUT` after the cycles; a failed wait resets the engine (`esp_sdr_bkdma_reset()`) |
+| `esp_sdr_bkdma_forget()` | The next start stores everything again (for measuring the saving) |
+| `esp_sdr_dma_arm()`, `_kick_cpu()` | The GDMA side of "kick": everything `esp_sdr_dma_start()` does except the two starts, and the two link words and their register addresses (`struct esp_sdr_dma_kick`) for a run to store |
+
+The ROM entry `ets_backup_dma_copy()` and its lock hook `ets_apb_backup_init_lock_func`
+(`esp32s3.rom.ld:31`) are not used. Nothing else in our build uses the block: the hal's
+`apb_backup_dma.c` (which installs the hook) is not compiled and `esp_apb_backup_dma_lock_init()`
+is never called, and the IDF's one user, the Bluetooth controller, is the C3's. The software claim
+is therefore the whole exclusion. Anything that later brings in the IDF's light sleep with CPU
+retention must go through the claim (the hook would be the place to take the same lock).
+
+**Benches** (`apps/rfprobe`, `src/dmabench.c`). The register block is RMT RAM (0x60016800, 384
+words of plain read/write memory, no side effects, `SENSITIVE_BACKUP_BUS_PMS_CONSTRAIN_RMT`), with
+the RMT clock on only while a row runs; its words, `SYS_CONF`, clock and reset are saved and put
+back.
+
+| Command | What it measures |
+| --- | --- |
+| `probe dma regs [n]` | n words (default sweep 1 to 384) SRAM to RMT RAM and back: CPU cycles of the start call, START to DONE (cold: every register stored; warm: the same run again), cycles per word, marginal cycles per word, words landed |
+| `probe dma regs mac` | one word into `DUMP_CONFIG_REG` through the API (radio initialised once, MAC clock on, dump engine idle, value restored) |
+| `probe dma map` | `ADDR_MAP_MODE` and `REG_MAP0..3`: which register words got which SRAM words, and the reverse |
+| `probe dma kick` | the backup DMA stores a GDMA chain's `IN_LINK` and `OUT_LINK` (address and START in one word each) |
+
+**Map mode, measured** (`probe dma map`, RMT RAM). `REG_MAP0..3` is a 128-bit mask over register
+words, bit k of `REG_MAPj` being word 32j + k. The first set bit is the register at `APB_ADDR`;
+every further set bit is a register at its distance from the first. The SRAM side is packed, one
+word per set bit, in order. `SIZE` must equal the number of set bits: with more, the extra words
+land at offsets that make no sense (9 and 11 words on, in two rows).
+
+| Mask (`REG_MAP0`, `REG_MAP3`) | `SIZE` | Register words written, from `APB_ADDR` |
+| --- | --- | --- |
+| 0x5 (bits 0, 2) | 2 | 0, 2 |
+| 0x5 | 1 | 0 |
+| 0xa (bits 1, 3), registers to SRAM | 2 | 0, 2 read into SRAM words 0, 1 |
+| 0x80000000 and bit 96 | 2 | 0, 65 (96 minus 31) |
+| 0xffffffff | 16, 32 | 0 to 15, 0 to 31 |
+| 0x5 with `APB_ADDR` 16 words on | 2 | 16, 18 |
+| 0x5 | 3 | 0, 2, 11 (too large a `SIZE`) |
+| 0 | 2 | 0, 9 (too large a `SIZE`) |
+
+So a map run reaches up to 128 registers in a 512-byte window, in address order, from one packed
+SRAM list. Registers in different blocks need one run each.
+
+**Measured numbers** (DevKitC, 240 MHz, interrupts locked, CPU cycles; target RMT RAM unless named;
+"cold" stores every register of the run, "warm" repeats the same run, which is one `CONFIG` store):
+
+| Row | Cycles |
+| --- | --- |
+| `regs` 1 word, start call: first run after boot, cold, warm | 2093, 405 (to SRAM 849), 400 |
+| `regs` 1 to 16 words, START to DONE | 409 to 413, the same for any size up to 16 |
+| `regs` 64, 128, 256, 384 words to registers, START to DONE (warm) | 1197, 2085, 3861, 5637 (13.7 a word beyond the first) |
+| `regs` 64, 128, 256, 384 words to SRAM, START to DONE (warm) | 1095, 1791, 3183, 4575 (10.9 a word beyond the first) |
+| `regs mac` 1 word into `DUMP_CONFIG_REG`: start call, START to DONE (cold; warm) | 1595, 2049; 688, 697 |
+| A warm start (one `CONFIG` store) is enough | yes: every warm row landed n of n, `ENA` and both addresses survive a run |
+| `kick`, 4092 B chain: `esp_sdr_dma_start()` | 474 in the call; GDMA EOF after 18999 (79 us) |
+| `kick`: the same two link words stored by the CPU (`esp_sdr_dma_arm()` before, `_kick_cpu()`) | 22 in the call; EOF after 18599 (77 us) |
+| `kick`: two backup runs, `IN_LINK` then `OUT_LINK` | 127 in the calls; backup DONE after 320; EOF after 18904; data arrived |
+| `kick`: two backup runs, `OUT_LINK` first | 127; 320; 18649; data arrived |
+| `kick`: one map run (bits 0 and 24: `IN_LINK` 0x6003f320, `OUT_LINK` 0x6003f380) | 99; 150; 18726; data arrived |
+
+Reading them:
+
+- The start call into RMT RAM is about 400 cycles even warm, for one `CONFIG` store: the CPU's
+  store does not complete until the run has moved its first words (up to 16 words fit in that
+  time). Runs into the GDMA's registers take 99 to 127 cycles in the start calls and are done
+  after 150 to 320. Not explained; it depends on the block written, not on the library (the
+  timed window starts after a fence).
+- Past the fixed cost a run moves a word in 11 to 14 cycles (68 to 87 MB/s), about what a CPU
+  store to a GDMA register costs (11 cycles, from the `kick` row).
+- For a GDMA start the CPU's own two stores (22 cycles) beat any backup run. The saving in that
+  row is elsewhere: `esp_sdr_dma_start()` spends 474 cycles on work that `esp_sdr_dma_arm()` can do
+  ahead, leaving the 22-cycle kick.
+- Both orders of the link starts delivered the chain whole here (RX first stays the safe order).
+
+**What it gives continuous dump and replay on the S3.** A list of register writes (bank switch,
+dump trigger, a GDMA link start) is prepared once in SRAM and fired by one CPU store, with the CPU
+free until it wants the result. The S3 has no ETM and no REGDMA, and nothing starts a DMA from a
+hardware event: the GDMA cannot write its own `START` (the register is out of its reach, above) and
+the backup DMA is started by a store to its `CONFIG`. So a run cannot be fired by the radio, a
+timer or a GPIO: something on a CPU has to do the one store, at the right time (CPU 1 already
+does, `wait_until_locked()` in `esp_sdr_tx_dac.c`). What the DMA saves is the work after that
+store: the several register writes of a step, and the GDMA setup (`kick`).
+
+The measured costs set where that pays. A run costs about 400 cycles before its first words land
+and 11 to 14 a word after that, while the CPU's own stores to GDMA registers cost about 11 each.
+So a step of a few register writes is cheaper from the CPU (pre-arm the chain with
+`esp_sdr_dma_arm()`, then `esp_sdr_dma_kick_cpu()`). The backup DMA pays for a long list (a
+reconfiguration of dozens of registers, a snapshot of a register block into SRAM) that a CPU on
+a tight loop should not wait for, and it runs while the CPU does other work. For continuous dump
+and replay on the S3 the per-step trigger therefore stays a few CPU stores on CPU 1, fired from
+its loop, with the chains prepared ahead.
+
+Open: why the CPU's `START` store into a run on RMT RAM takes about 400 cycles, and what a store
+to the MAC dump registers costs the CPU directly (the comparison for a bank switch).
+
 ## Starting and stopping transfers
 
 The movers run on their own once started. What has to be on time is the start and the stop.
@@ -243,7 +533,9 @@ The movers run on their own once started. What has to be on time is the start an
   events with no CPU. The task ids are in `soc_etm_source.h` per chip (table above).
 - **S3:** no ETM and no REGDMA. CPU 1 already starts transfers on a cycle with interrupts locked
   (`wait_until_locked()` in `esp_sdr_tx_dac.c`, `burst_run()` in `esp_sdr_ring.c`). A shared
-  `esdr_seq` with "at cycle t, write register r" entries is the only sequencer the S3 needs.
+  `esdr_seq` with "at cycle t, write register r" entries is the only sequencer the S3 needs; the
+  [backup DMA](#the-s3-backup-dma-register-lists) can execute the register part of an entry (one
+  store fires a prepared list), the "at cycle t" stays a CPU's.
 - Branching on a CRC or waiting on ring positions stays in the apps that need it until a second
   user appears.
 
@@ -255,10 +547,11 @@ The movers run on their own once started. What has to be on time is the start an
 | 2 | osmosdr_hs with `esdr_dma_ring_swap()` instead of `memcpy()` (slabs of 8 nodes) | S31 | 40.157 MB/s for 300 s with no bad block; CPU time per second down by the copy's share (`esp_sdr_prof`) | deferred: needs the S31 |
 | 3 | C6 GDMA memory-to-memory: SRAM to SRAM throughput, and reading a block the engine just released while it writes the other | C6 (badge) | MB/s; data matches a CPU copy; markers unchanged | deferred: needs the C6 badge |
 | 4 | C6 gapless with the gather beside the CPU copy | C6 and P4 | longest whole burst over 50 us; an 802.15.4 ACK decoded whole on the P4 | deferred: needs the C6 badge and P4 |
-| 5 | S3 GDMA gather of the 802.15.4 ACK tail into bank 2 | S3 | bit-identical bank to the CPU's; CPU 0 cycles for the tail under 10k; ACK late count not worse | planned next (S3) |
+| 5 | S3 GDMA gather of the 802.15.4 ACK tail into bank 2 | S3 | bit-identical bank to the CPU's; CPU 0 cycles for the tail under 10k; ACK late count not worse | measured 2026-11-24: bit-exact, but 389 us against a 192 us turnaround: the CPU build stays (see [Decision](#decision)) |
 | 6 | REGDMA spike: one write node to a GPIO register, then to the TX DC value register, looped, paced by the read interval and by ETM | C6 | write rate and jitter on a logic analyser or in a capture; a tone heard | deferred: needs the C6 |
 | 7 | REGDMA backup of the estimator sums | C6 | samples equal to the CPU-paced ones at 250 kS/s | deferred: needs the C6 |
-| 8 | GDMA memory-to-memory into a peripheral register | C6, S3 | writes land, or a PMS/APM fault is recorded | S3 part planned next; C6 part deferred: needs the C6 |
+| 8 | GDMA memory-to-memory into a peripheral register | C6, S3 | writes land, or a PMS/APM fault is recorded | S3 measured 2026-11-24: refused by the GDMA itself (IN_DSCR_ERR, no PMS record), see [Experiment 8](#experiment-8-the-gdma-cannot-write-a-register); the backup DMA writes registers (`probe dma reg`, `probe dma regs`); C6 part deferred: needs the C6 |
+| 9 | S3 backup DMA: n words SRAM to registers and back, map mode, starting a GDMA chain | S3 | cycles per word, whether the list can start the GDMA | measured 2026-11-24: 11 to 14 cycles a word after about 400 a run; map mode decoded; one map run starts a GDMA chain, but two CPU stores do it in 22 cycles (see [the section](#the-s3-backup-dma-register-lists)) |
 
 The badge and the P4 board are not in `tests/regression/hardware-map.yaml` (it lists the XIAO C6, the C5-Zero, the S31 board and the two S3 boards), so experiments 3 and 4 also need a map entry.
 
@@ -268,6 +561,8 @@ The badge and the P4 board are not in `tests/regression/hardware-map.yaml` (it l
   (C6) or LCD_CAM (S3) plus a GDMA ring would give them the C5's or S31's gapless path.
 - GDMA throughput, memory-to-memory, on each chip.
 - REGDMA's pacing and its reach into the modem registers.
+- The S3 backup DMA: why a `START` store into a run on RMT RAM costs the CPU about 400 cycles;
+  the C6's answer to experiment 8.
 - The C6 dump engine's "four-slot mode", mentioned under "Chasing the engine" in
   [Rings](../samples/rings.md). If it takes several bank addresses, it is the closest the engine
   comes to a descriptor list.

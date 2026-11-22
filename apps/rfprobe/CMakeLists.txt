@@ -20,3 +20,7 @@ if(CONFIG_USB_DEVICE_STACK_NEXT)
 endif()
 
 target_sources(app PRIVATE src/main.c)
+if(CONFIG_SOC_SERIES_ESP32S3)
+  target_sources(app PRIVATE src/i2sbench.c)
+  target_sources_ifdef(CONFIG_ESP_SDR_DMA app PRIVATE src/dmabench.c)
+endif()

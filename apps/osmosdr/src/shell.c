@@ -9,6 +9,7 @@
 #include <zephyr/shell/shell.h>
 
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_ring.h>
 
 #include "sdr.h"
 
@@ -17,6 +18,8 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 	struct sdr_settings s;
 	struct esdr_stats st;
 	struct esp_sdr_stats d;
+	uint32_t lh[ESP_SDR_RING_LATE_BINS];
+	char lhs[160];
 
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
@@ -36,6 +39,9 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 		    st.ring_runs, st.ring_errors, st.ring_last_status, st.ring_last_detail,
 		    st.ring_abandoned, (unsigned long long)st.rx_ring_lost_pairs, st.ring_late_max,
 		    st.ring_cycles_x100 / 100U, st.ring_cycles_x100 % 100U, st.ring_gain_refreshed);
+	sdr_get_late_hist(lh);
+	esp_sdr_ring_late_hist_str(lh, lhs, sizeof(lhs));
+	shell_print(sh, "ring switch lateness, pairs:units: %s", lhs);
 	shell_print(sh, "usb: %llu bytes in, %llu bytes out", (unsigned long long)st.usb_in_bytes,
 		    (unsigned long long)st.usb_out_bytes);
 	return 0;

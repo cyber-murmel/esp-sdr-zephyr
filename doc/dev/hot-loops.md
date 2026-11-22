@@ -42,10 +42,10 @@ time of writing.
 | # | Hot loop | Where | Today | Trick | Gain (estimate) | Risk | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | S3 ACK and burst waveform build, CPU 1 between ring polls | `ieee154_dsp_tx_gen()` (`lib/ieee802154/ieee154_dsp.h:109`), `GEN_SLICE` (`esp_sdr_ring.c:1202`) | about 85 cycles a 20-word slot, 25k cycles (105 us) for the ACK's variable part ([IEEE 802.15.4](../modem/ieee802154.md)) | chip shift register, template offset table, 128-bit copy | 3 to 4x on the build: 6 to 8k cycles instead of 25k; frees CPU 1 for box4 at short units | low: bit-exact against today's words | done: 24.6k to 11.9k cycles |
-| 2 | GFSK modulator (Ubertooth TX, BLE advertising) | `emit_symbol()` (`apps/ubertooth/src/gfsk_mod.c:317`), `gen_steady()` (`gfsk_mod.c:344`) | 6.7 cycles a sample, a static count; 40 MS/s needs 267 MHz (`gfsk_mod.h:45`) | whole-symbol rows: 8 histories x 4 start phases x 40 words (h = 0.5), copied | 4 to 6x; first block in about 0.1 ms instead of 0.46 | low to medium: 5 KB of RAM per deviation, tight on the S3 | planned next (S3) |
+| 2 | GFSK modulator (Ubertooth TX, BLE advertising) | `emit_symbol()` (`apps/ubertooth/src/gfsk_mod.c:317`), `gen_steady()` (`gfsk_mod.c:344`) | 6.7 cycles a sample, a static count; 40 MS/s needs 267 MHz (`gfsk_mod.h:45`) | whole-symbol rows: 8 histories x 4 start phases x 40 words (h = 0.5), copied | 4 to 6x; first block in about 0.1 ms instead of 0.46 | low to medium: 5 KB of RAM per deviation, tight on the S3 | done: 7.9 to 1.5 cycles a sample |
 | 3 | C6 gapless markers | `fill_marks()` (`esp_sdr_gapless.c:357`), `prepare()` (`:400`), guards (`:47` to `:49`) | 1536 words a unit, about 2000 cycles, 9 % of the CPU ([Rings](../samples/rings.md)) | size `LATE_LIMIT` and the guards to the measured lateness (about 30 in IRAM) | about 1300 cycles a unit; per-unit cap about +15 to 20 % | low to medium: a late switch becomes a ring error and a restart | deferred: needs the C6 badge |
 | 4 | C6 gapless copy into staging | `copy_words()` (`esp_sdr_gapless.c:1039`) | 2.5 cycles a word (3.6 on the badge), unrolled by 8 | unroll by 32, or a computed entry into one unrolled block | 2.5 down to about 2.15 cycles a word, cap +10 to 15 % | low: about 300 B more IRAM | deferred: needs the C6 badge |
-| 5 | S3 ring sentinels | `geom_init()` (`esp_sdr_ring.c:74`) | `late` 896 (1024-pair units) up to 2000; 2944 to 7168 sentinel words a unit; measured worst 60 to 137 pairs late | `late` near 256 | about 0.3 to 0.6 cycles a pair of the 15 | low to medium: same failure mode as 3 | planned next (S3) |
+| 5 | S3 ring sentinels | `geom_init()` (`esp_sdr_ring.c:74`) | `late` 896 (1024-pair units) up to 2000; 2944 to 7168 sentinel words a unit; measured worst 60 to 137 pairs late | `late` near 256 | about 0.3 to 0.6 cycles a pair of the 15 | low to medium: same failure mode as 3 | built, value to be measured (S3) |
 | 6 | S31 paced TX | `esp_sdr_tx_paced_poll()` (`esp_sdr_paced.c:434`) | about 220 cycles a write at x8; DAC writes capped at 1 MHz ([Paced](../samples/paced.md)) | interpolate a block ahead into TCM so the timed loop only stores | DAC rate toward the 2 MS/s store-only ceiling; 250 kS/s x 8 becomes possible | medium: one block of latency; needs a fill-in schedule | deferred: needs the S31 |
 | 7 | C6 packer, shift 0 and 1 | `pack_run()` (`esp_sdr_gapless.c:571`), `sat_lut` (`:532`) | 9 to 13 cycles a sample, a 2 KB table in block 0 | branchless SWAR clamp instead of the table | same speed; frees 2 KB of block 0 | low | deferred: needs the C6 badge |
 | 8 | Ubertooth GFSK demodulator | `apps/ubertooth/src/gfsk_groups.S`, `gfsk_slice.S` | 53 of 60 cycles a sample open ([GFSK](../modem/gfsk.md)) | per-mode kernel variants (static, not self-modifying) | 1 to 2 cycles a sample | costs IRAM the S3 does not have (1.4 KB left); skip | deferred: skip for now, with the board |
@@ -102,6 +102,11 @@ frames and chunkings.
   [802.15.4](../modem/ieee802154.md#ack-waveform).
 - The estimate's target is about 6 to 8k cycles for the variable part, not yet measured.
 
+The GDMA gather of this tail was measured on the DevKitC (`wpan bench dma ack`,
+[DMA chains](dma-chains.md#measured-numbers)): bit-exact, but the DMA takes 389 us (469 us without
+bursts) against the 192 us turnaround, and writing its descriptors costs 8.7k CPU cycles against
+11.9k. It lost on latency; the CPU build stays.
+
 ## 2. GFSK as replayed symbols
 
 **Today.** `gen_steady()` computes each sample as accumulator plus step row, a LUT lookup and a
@@ -123,7 +128,13 @@ is 4 MHz at 40 samples a symbol, so its periods cancel.
 
 **Test.** `tests/unit/ubertooth_tx` (EVM, deviation, chunking) must hold for the replay path.
 
-**Status.** Planned next (S3).
+**Status.** Implemented (S3): `gfsk_rows_init()`, `gen_replay()` in `apps/ubertooth/src/gfsk_mod.c`,
+`CONFIG_APP_UBERTOOTH_GFSK_REPLAY` (default on), `ubt tx bench` on the board. The words equal the
+computed path's for the first 8192 symbols and differ by at most 4 LSB after (not 1 LSB: the IF
+drift is 16 of 2^32 a symbol); the unit test compares them word for word. Rows live in the ring
+scratch (no static RAM), 596 bytes of IRAM. Cycles a sample on the XIAO: 7.9 computed, 3.1 replayed with word stores, **1.5** with
+128-bit copies (target 1 to 1.5, [GFSK](../modem/gfsk.md#ubertooth-modulator-replayed-symbols)); a PC's
+Bluetooth adapter sees the advertising from both paths.
 
 ## 3 and 5. Guard bands sized to the beam
 
@@ -148,8 +159,12 @@ Both rings re-mark a window ahead of every unit switch. The window must cover th
   values. Wi-Fi MAC interrupts and flash cache misses were the past causes of lateness; both are
   excluded on these paths.
 
-**Status.** S3 (item 5): planned next, with a lateness histogram and a Kconfig fallback. C6
-(item 3): deferred: needs the C6 badge.
+**Status.** S3 (item 5): measured, no gain, default kept. The lateness histogram showed a worst
+switch of 439 pairs under osmosdr on the XIAO (104 in another run) and 65 to 69 under wpan on the
+DevKitC over about a million units, so the 137 measured earlier is not the worst case. With
+`CONFIG_ESP_SDR_RING_LATE_PAIRS=768` there was no LATE error, and cycles a pair did not change
+(osmosdr 14.28 and 13.32, wpan 8.65, the same as with the default). The histogram and the option
+stay; the default formula stays.
 
 ## 4. C6 copy: a deeper unroll
 

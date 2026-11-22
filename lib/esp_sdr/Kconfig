@@ -275,6 +275,15 @@ config ESP_SDR_S31_GROUP2
 	  TCM group 2 (0x2F040000, 128 KiB) reserved for the engine: the image
 	  ends below it.
 
+config ESP_SDR_DMA
+	bool "Memory-to-memory GDMA gathers (esp_sdr_dma.h)"
+	depends on SOC_SERIES_ESP32S3 && !ESP_SDR_AS_EXTENSION && !DMA_ESP32
+	help
+	  Descriptor-list copies and gathers by a GDMA channel pair (the S3 backend, hal
+	  gdma_ll.h), for I/Q and slot templates, refusing sources and destinations in a dump bank
+	  the engine may own. The library owns the GDMA controller: Zephyr's driver (DMA_ESP32)
+	  must be off, as it is when no devicetree node of the board enables the dma node.
+
 config ESP_SDR_BANK1
 	bool "Reserve a second dump bank"
 	depends on SOC_SERIES_ESP32S3
@@ -302,6 +311,21 @@ config ESP_SDR_RING
 # with the option it draws none.
 configdefault IPI_OPTIMIZE
 	default y if ESP_SDR_RING && SMP
+
+config ESP_SDR_RING_LATE_PAIRS
+	int "Ring unit switch lateness allowed (pairs, 0: as much as the windows hold)"
+	depends on ESP_SDR_RING
+	range 0 2000
+	default 0
+	help
+	  How many pairs after its threshold the ring may switch banks before the
+	  run fails with ESP_SDR_RING_LATE (and restarts). 0 keeps the old geometry:
+	  late is 896 at 1024-pair units and up to 2000, with sentinel windows of
+	  late + 128 (start, up to 3072) and 2 late + 128 (end, up to 4096) pairs
+	  re-marked every unit. A value from 64 caps late and shrinks both windows
+	  with it (late 256: 384 + 640 words a unit instead of 1024 + 1920), which
+	  frees filter cycles but fails sooner on a stall. The ring stats' lateness
+	  histogram (wpan status, osmosdr sdr status) shows what is needed.
 
 config ESP_SDR_RING_BOX4
 	bool "Ring decimation by 4 (boxcar, for 2 MHz wide signals)"

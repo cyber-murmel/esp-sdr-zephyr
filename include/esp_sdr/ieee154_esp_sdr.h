@@ -14,6 +14,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <esp_sdr/esp_sdr_ring.h>
 #include <esp_sdr/ieee154_phy.h>
 
 #ifdef __cplusplus
@@ -50,6 +51,8 @@ struct ieee154_esp_sdr_stats {
 	uint32_t ring_irq_windows, ring_irq_lines;
 	/** Worst bank switch lateness of all runs, in ring pairs. */
 	uint32_t ring_late_max;
+	/** Switch lateness histogram of all runs (esp_sdr_ring_late_bin()). */
+	uint32_t ring_late_hist[ESP_SDR_RING_LATE_BINS];
 	/**
 	 * Ring receive: frames decided, and the time from a frame's last
 	 * sample to the PHY's decision (min, max, sum), in us.
@@ -189,6 +192,33 @@ struct ieee154_esp_sdr_bench {
 
 /** @brief Time the ACK waveform build and the front end switches (radio taken meanwhile). */
 int ieee154_esp_sdr_bench(struct ieee154_esp_sdr_bench *b);
+
+#if defined(CONFIG_ESP_SDR_DMA)
+struct esp_sdr_dma;
+struct esp_sdr_dma_desc;
+
+struct ieee154_esp_sdr_dma_bench {
+	/** The ACK tail (slots from 416): slots, bytes. */
+	uint32_t slots, bytes;
+	/** CPU cycles: writing the whole lists, only the buffer pointers of built lists (best of 8). */
+	uint32_t build_cyc, patch_cyc;
+	/** CPU cycles of the start call; start to done (best of 8). */
+	uint32_t start_cyc, dma_cyc;
+	/** The CPU build of the same words (ring conditions, best of 8). */
+	uint32_t cpu_cyc;
+	/** Words that differ from the CPU build; result of the last wait (0 or -errno). */
+	uint32_t mismatch;
+	int ret;
+};
+
+/**
+ * @brief Gather the ACK tail from the slot templates into bank 2 by GDMA and compare it with the
+ * CPU build (radio taken meanwhile; the CPUs own the banks). tx needs 289 descriptors, rx 6.
+ */
+int ieee154_esp_sdr_bench_dma(struct ieee154_esp_sdr_dma_bench *b, struct esp_sdr_dma *h,
+			      struct esp_sdr_dma_desc *tx, uint32_t ntx,
+			      struct esp_sdr_dma_desc *rx, uint32_t nrx);
+#endif
 
 /**
  * @brief ACK timing (CONFIG_ESP_SDR_IEEE802154_AUTO_ACK): first sample @p delay_us

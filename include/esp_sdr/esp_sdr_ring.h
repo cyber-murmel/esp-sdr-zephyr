@@ -17,6 +17,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #include <esp_sdr/esp_sdr.h>
 
@@ -144,6 +145,54 @@ enum esp_sdr_ring_status {
 	ESP_SDR_RING_WINDOW,
 };
 
+/**
+ * Lateness histogram bins: 0, 1, 2-3, 4-7, ... 1024-2047, 2048 and more (pairs late).
+ * Bin 0 is the exact threshold; bin n is [2^(n-1), 2^n - 1].
+ */
+#define ESP_SDR_RING_LATE_BINS 13U
+
+/** The bin of a lateness of @p late pairs. */
+static inline unsigned int esp_sdr_ring_late_bin(uint32_t late)
+{
+	unsigned int n = late == 0U ? 0U : 32U - (unsigned int)__builtin_clz(late);
+
+	return n < ESP_SDR_RING_LATE_BINS ? n : ESP_SDR_RING_LATE_BINS - 1U;
+}
+
+/**
+ * Format the non-empty bins of @p hist (ESP_SDR_RING_LATE_BINS counts) as "0:12 2-3:7 ...",
+ * "-" when all are empty.
+ */
+static inline int esp_sdr_ring_late_hist_str(const uint32_t *hist, char *buf, size_t len)
+{
+	size_t n = 0;
+
+	if (len == 0U) {
+		return 0;
+	}
+	buf[0] = '\0';
+	for (unsigned int i = 0; i < ESP_SDR_RING_LATE_BINS && n + 1U < len; i++) {
+		unsigned int lo = i == 0U ? 0U : 1U << (i - 1U), hi = i == 0U ? 0U : (1U << i) - 1U;
+		int w;
+
+		if (hist[i] == 0U) {
+			continue;
+		}
+		if (i == ESP_SDR_RING_LATE_BINS - 1U) {
+			w = snprintf(buf + n, len - n, "%s%u+:%u", n ? " " : "", lo, hist[i]);
+		} else if (lo == hi) {
+			w = snprintf(buf + n, len - n, "%s%u:%u", n ? " " : "", lo, hist[i]);
+		} else {
+			w = snprintf(buf + n, len - n, "%s%u-%u:%u", n ? " " : "", lo, hi, hist[i]);
+		}
+		n += w > 0 ? (size_t)w : 0U;
+	}
+	if (n == 0U) {
+		snprintf(buf, len, "-");
+	}
+	return (int)n;
+}
+
 struct esp_sdr_ring_stats {
 	/** Ring pairs captured, output samples delivered. */
 	uint64_t pairs, samples;
@@ -152,6 +201,8 @@ struct esp_sdr_ring_stats {
 	uint32_t units, abandoned, lost_pairs;
 	/** Worst switch lateness in pairs past the threshold. */
 	uint32_t late_max;
+	/** Switch lateness histogram, one count a unit: see esp_sdr_ring_late_bin(). */
+	uint32_t late_hist[ESP_SDR_RING_LATE_BINS];
 	/** Longest filter slice in CPU cycles, and filter cycles per pair x 100. */
 	uint32_t slice_max, cycles_x100;
 	/** Forced gain re-applied during the run. */

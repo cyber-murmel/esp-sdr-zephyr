@@ -174,6 +174,64 @@ Tone, captures and registers
    * - ``probe dump <block> [regs]``
      - analog I2C registers 0..regs-1 of one block (read only)
 
+I2S divider bench (S3)
+----------------------
+
+``probe i2s <bck_div> [pattern hex] [slot bits] [src MHz]`` programs I2S0 TX straight through the
+hal LL (not Zephyr's I2S driver): source clock 160 (PLL_F160M, default), 240 (PLL_F240M) or 40
+(XTAL) MHz, mclk divider fixed at 2, bit clock divider ``bck_div`` (the hal writes the field as
+``bck_div - 1``, so 1 puts 0 in ``tx_bck_div_num``), slot width 1 to 32 bits (default 32), the
+pattern word (default ``55555555``, the data pad toggles every bit) from a one-descriptor GDMA
+ring on channel 0. Bit rate = source / (2 * bck_div). The data goes to GPIO4 and its GPIO-matrix
+inverse (``inv_sel``) to GPIO5; nothing may be wired to them (free on the DevKitC: no strapping,
+flash, PSRAM, USB or UART pin, I2C1 and TWAI are disabled). Both pads are read back through the
+matrix into four PCNT units (D edges, D edges while DN is high, DN edges while D is high, DN edges)
+and into one ``GPIO.in`` snapshot per sample. The ``esp32s3_devkitc`` build needs no PSRAM overlay.
+
+Output: configured and expected rates, measured rising edges per second on both pads, the measured
+bit rate (edges * 32 / rising edges per word), held-1 and held-0 pad levels, same-level samples,
+PCNT overlap per mille, ``complementary: yes|no`` (held levels swap, same-level and overlap each
+under 1 %), and the registers with ``tx_bck_div_num`` read back. Limits: PCNT counts on the 80 MHz
+APB clock and needs pulses of at least one APB cycle, so rising edges beyond about 40 MHz (bit
+rates above 80 Mb/s for the alternating pattern) are not counted reliably; measure at a larger
+``bck_div`` and extrapolate, and the pad itself is limited to about 40 MHz through the matrix.
+Counts wrap at 32767 and the gate loop (10 ms, interrupts locked) folds in the limit events. The
+overlap figures are only meaningful where the edges are well inside the PCNT limit.
+
+DMA benches (S3)
+----------------
+
+``probe dma`` (``src/dmabench.c``, ``CONFIG_ESP_SDR_DMA``, on in the S3 build) measures the S3's two
+DMAs as the radio's register writers and chain starters (``esp_sdr_dma.h``, design and numbers in
+`DMA chains <../../doc/dev/dma-chains.md>`__). Nothing may capture, loop or ring while it runs: the
+SRAM rows use the capture bank. The register rows use RMT RAM (idle, clock on only during the row,
+saved and restored); only ``regs mac`` touches the radio (radio initialised once, dump engine
+idle, value restored).
+
+.. list-table::
+   :header-rows: 1
+
+   * - Command
+     - Effect
+   * - ``probe dma sram``
+     - GDMA SRAM to SRAM: 4092 B in one descriptor, 16 KiB in pieces of 4092 to 80 B (also with
+       16 byte bursts) against ``memcpy``, and a CPU read loop during a chain
+   * - ``probe dma reg [mac]``
+     - one GDMA write into ``RTC_CNTL_STORE7`` (``mac``: the MAC's ``DUMP_CONFIG_REG``) with both PMS
+       monitors armed: refused with ``IN_DSCR_ERR``, kept to document it
+   * - ``probe dma regs [n]``
+     - the backup DMA (peripheral register list engine at 0x6001A000) writes n words (default
+       1, 2, 4 up to 384) from SRAM into RMT RAM and reads them back: cycles of the start call,
+       START to DONE (cold, warm), per word, words landed
+   * - ``probe dma regs mac``
+     - one word into ``DUMP_CONFIG_REG`` through ``esp_sdr_bkdma_*``
+   * - ``probe dma map``
+     - the backup DMA's map mode (``ADDR_MAP_MODE``, ``REG_MAP0..3``) by experiment: which words
+       landed where
+   * - ``probe dma kick``
+     - the backup DMA stores a GDMA chain's link registers: CPU cycles of ``esp_sdr_dma_start()``
+       against one backup run, two runs (both orders) and one map run, to backup DONE and to GDMA EOF
+
 Crystal calibration
 -------------------
 

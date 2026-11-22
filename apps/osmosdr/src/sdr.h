@@ -31,6 +31,8 @@ void sdr_get_settings(struct sdr_settings *s);
 /* Digital gain in dB for these settings. */
 unsigned int sdr_dgain_db(const struct sdr_settings *s);
 void sdr_get_stats(struct esdr_stats *s);
+/* Switch lateness counts of all ring runs, ESP_SDR_RING_LATE_BINS of them. */
+void sdr_get_late_hist(uint32_t *hist);
 /* Filter timing with a null sink or the stream's, in mode off. */
 int sdr_bench(unsigned int decim, bool real_sink, bool rot, struct esp_sdr_ring_bench_result *r);
 

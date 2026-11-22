@@ -41,6 +41,9 @@
 #if defined(CONFIG_ESP_SDR_RING)
 #include <esp_sdr/esp_sdr_ring.h>
 #endif
+#if defined(CONFIG_ESP_SDR_DMA)
+#include <esp_sdr/esp_sdr_dma.h>
+#endif
 #if defined(CONFIG_IEEE802154_ESP32)
 #include <esp_ieee802154.h>
 #endif
@@ -751,6 +754,12 @@ static void print_sdr_status(const struct shell *sh)
 		    s.ring_abandoned);
 	shell_print(sh, "ring irq windows %u, lines 0x%08x, late max %u pairs", s.ring_irq_windows,
 		    s.ring_irq_lines, s.ring_late_max);
+	{
+		char lh[160];
+
+		esp_sdr_ring_late_hist_str(s.ring_late_hist, lh, sizeof(lh));
+		shell_print(sh, "ring switch lateness, pairs:units: %s", lh);
+	}
 	shell_print(sh, "verdict after frame end: %u frames, min %u avg %u max %u us", s.verdict_n,
 		    s.verdict_min_us, s.verdict_n ? s.verdict_sum_us / s.verdict_n : 0U,
 		    s.verdict_max_us);
@@ -909,6 +918,66 @@ static int cmd_crash(const struct shell *sh, size_t argc, char **argv)
 }
 #endif
 
+#if defined(CONFIG_ESP_SDR_DMA) && defined(CONFIG_ESP_SDR_IEEE802154)
+/*
+ * wpan bench dma [ack]: the ACK tail gathered by the GDMA (esp_sdr_dma.h) against the CPU build.
+ * The SRAM, register and backup DMA benches are in rfprobe ("probe dma"). Descriptors in the
+ * image, below the banks: 300 sources cover the tail's 289 slots.
+ */
+#define DMA_TX_DESCS 300U
+#define DMA_RX_DESCS 8U
+
+static struct esp_sdr_dma_desc dma_tx[DMA_TX_DESCS], dma_rx[DMA_RX_DESCS];
+/* Not on the shell's stack (2560 B, 1952 used by the longest command before). */
+static char dma_dbg[300];
+
+static int bench_dma(const struct shell *sh, size_t argc, char **argv)
+{
+	const char *what = argc > 2 ? argv[2] : "ack";
+	struct esp_sdr_dma h;
+	struct ieee154_esp_sdr_dma_bench b;
+	int ret;
+
+	if (strcmp(what, "ack") != 0) {
+		shell_error(sh, "dma: only ack here, the rest is \"probe dma\" in rfprobe");
+		return -EINVAL;
+	}
+	ret = esp_sdr_dma_claim(&h);
+	if (ret != 0) {
+		shell_error(sh, "dma: no channel (%d)", ret);
+		return ret;
+	}
+	shell_print(sh, "dma channel pair %u, descriptors %u B each, cpu %u MHz", h.ch,
+		    (unsigned int)sizeof(struct esp_sdr_dma_desc),
+		    (unsigned int)(sys_clock_hw_cycles_per_sec() / 1000000U));
+	for (int burst = 0; burst < 2; burst++) {
+		esp_sdr_dma_burst(&h, burst != 0);
+		ret = ieee154_esp_sdr_bench_dma(&b, &h, dma_tx, DMA_TX_DESCS, dma_rx, DMA_RX_DESCS);
+		shell_print(sh, "dma ack tail%s %d: %u slots, %u B: cpu build %u cyc;"
+			    " gather lists %u cyc, patch %u cyc, start %u cyc, dma %u cyc"
+			    " (%u us); %u words differ",
+			    burst != 0 ? " burst" : "", ret, b.slots, b.bytes, b.cpu_cyc,
+			    b.build_cyc, b.patch_cyc, b.start_cyc, b.dma_cyc,
+			    b.dma_cyc / (sys_clock_hw_cycles_per_sec() / 1000000U), b.mismatch);
+		if (ret != 0) {
+			shell_print(sh, "  %s", esp_sdr_dma_debug(&h, dma_dbg, sizeof(dma_dbg)));
+		} else {
+			/* The tail is built between the frame's end and the ACK: 192 us. */
+			uint32_t cyc_us = sys_clock_hw_cycles_per_sec() / 1000000U;
+			uint32_t cpu_cost = b.patch_cyc + b.start_cyc;
+
+			shell_print(sh, "dma ack tail verdict: cpu cycles patch+start %u against"
+				    " %u (%s); done after %u us against the 192 us turnaround"
+				    " (%s)", cpu_cost, b.cpu_cyc,
+				    cpu_cost < b.cpu_cyc ? "gather wins" : "cpu build wins",
+				    b.dma_cyc / cyc_us, b.dma_cyc / cyc_us < 192U ? "fits" : "too late");
+		}
+	}
+	esp_sdr_dma_release(&h);
+	return ret;
+}
+#endif
+
 #if defined(CONFIG_ESP_SDR_RING)
 static void bench_sink(void *user, const int16_t *i, const int16_t *q, size_t n, uint64_t index)
 {
@@ -940,6 +1009,11 @@ static int cmd_bench(const struct shell *sh, size_t argc, char **argv)
 		shell_error(sh, "wpan off and tx stopped first");
 		return -EBUSY;
 	}
+#if defined(CONFIG_ESP_SDR_DMA) && defined(CONFIG_ESP_SDR_IEEE802154)
+	if (argc > 1 && strcmp(argv[1], "dma") == 0) {
+		return bench_dma(sh, argc, argv);
+	}
+#endif
 #if defined(CONFIG_ESP_SDR_IEEE802154)
 	if (argc > 1 && strcmp(argv[1], "ack") == 0) {
 		struct ieee154_esp_sdr_bench b = {0};
@@ -1055,9 +1129,9 @@ SHELL_STATIC_SUBCMD_SET_CREATE(wpan_cmds,
 #endif
 #if defined(CONFIG_ESP_SDR_RING)
 	SHELL_CMD_ARG(bench, NULL,
-		      "[units] [subsample] | phy | ack: ring decimation by 4, the PHY, or the ACK"
-		      " waveform and front end",
-		      cmd_bench, 1, 2),
+		      "[units] [subsample] | phy | ack | dma [ack]: ring decimation by 4, the"
+		      " PHY, the ACK waveform and front end, or the GDMA ACK tail",
+		      cmd_bench, 1, 3),
 #endif
 #if defined(CONFIG_SYS_HEAP_RUNTIME_STATS)
 	SHELL_CMD(mem, NULL, "System heap use", cmd_mem),

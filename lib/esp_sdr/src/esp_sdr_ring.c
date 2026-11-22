@@ -41,6 +41,7 @@
 #include <esp_sdr/esp_sdr_xtensa.h>
 
 #include "esp_sdr_mark.h"
+#include "esp_sdr_ring_geom.h"
 #include "esp_sdr_priv.h"
 #include "esp_sdr_prof_priv.h"
 
@@ -49,50 +50,10 @@
 #define DUMP_WRITE_INDEX_REG 0x60033d60U
 
 #define RING_BANKS     3U
-#define RING_PAIRS     16384U
-#define RING_MASK      (RING_PAIRS - 1U)
-/* Unit 0: its whole bank holds sentinels; stay clear of its start. */
-#define UNIT0_END_WIN  1024U
 
-/* Filter work per slice at most, and the input chunk through both stages. */
-#define SLICE_PAIRS 1024U
-#define FIR_CHUNK   512U
-
-/*
- * The unit geometry of a run, from its unit length (esp_sdr_ring_cfg):
- * the engine moves on after thr pairs, at most late pairs late; sentinels
- * cover sg pairs from a unit's earliest start and eg from its earliest end.
- * The default unit: thr 12288, sg 3072, eg 4096, late 2000.
- */
-struct geom {
-	uint32_t thr, sg, eg, late;
-	/* Unit 0: start window, shortest length. */
-	uint32_t sg0, min0;
-	uint32_t slice;
-};
-
-static int geom_init(struct geom *g, uint32_t unit)
-{
-	if (unit == 0U) {
-		unit = ESP_SDR_RING_UNIT_DEFAULT;
-	}
-	if (unit < ESP_SDR_RING_UNIT_MIN || unit > ESP_SDR_RING_UNIT_DEFAULT || unit % 64U != 0U) {
-		return -EINVAL;
-	}
-	g->thr = unit;
-	/* A start window longer than the unit would overlap the end window. */
-	g->sg = MIN(3072U, unit);
-	g->late = MIN(2000U, g->sg - 128U);
-	g->eg = MIN(4096U, 2U * g->late + 128U);
-	g->sg0 = 1024U + MIN(2048U, unit / 2U);
-	g->min0 = unit - MIN(1024U, unit / 2U);
-	g->slice = MIN(SLICE_PAIRS, unit / 4U);
-	if (g->late + 64U >= g->sg || 2U * g->late + 64U >= g->eg ||
-	    g->sg + g->thr > RING_PAIRS || g->eg + g->thr > RING_PAIRS) {
-		return -EINVAL;
-	}
-	return 0;
-}
+#define RING_LATE_CFG  CONFIG_ESP_SDR_RING_LATE_PAIRS
+BUILD_ASSERT(RING_LATE_CFG == 0 || (RING_LATE_CFG >= 64 && RING_LATE_CFG <= 2000),
+	     "ESP_SDR_RING_LATE_PAIRS: 0 or 64 to 2000");
 
 /*
  * Two banks: a bank gets the next unit but one while the unit before it may
@@ -1529,6 +1490,7 @@ static void ring_loop(void)
 		}
 		late = written - g.thr;
 		st->late_max = MAX(st->late_max, late);
+		st->late_hist[esp_sdr_ring_late_bin(late)]++;
 		if (late > g.late) {
 			fail(ESP_SDR_RING_LATE, written);
 			break;
@@ -1677,7 +1639,7 @@ int esp_sdr_ring_run(const struct esp_sdr_ring_cfg *cfg, struct esp_sdr_ring_sta
 		l++;
 	}
 	if (!decim_ok(d, l) ||
-	    cfg->sink == NULL || geom_init(&g_check, cfg->unit_pairs) != 0 ||
+	    cfg->sink == NULL || geom_init(&g_check, cfg->unit_pairs, RING_LATE_CFG) != 0 ||
 	    ((cfg->spare_bank || cfg->spare_bank_app) && !geom_two_banks(&g_check))) {
 		return -EINVAL;
 	}
@@ -1698,7 +1660,7 @@ int esp_sdr_ring_run(const struct esp_sdr_ring_cfg *cfg, struct esp_sdr_ring_sta
 	}
 	memset(stats, 0, sizeof(*stats));
 	memset(&rs, 0, sizeof(rs));
-	(void)geom_init(&rs.g, cfg->unit_pairs);
+	(void)geom_init(&rs.g, cfg->unit_pairs, RING_LATE_CFG);
 	rs.nbanks = (cfg->spare_bank || cfg->spare_bank_app) ? RING_BANKS - 1U : RING_BANKS;
 	rs.burst_ok = cfg->spare_bank && !cfg->spare_bank_app;
 	memset(&bst, 0, sizeof(bst));
@@ -1761,7 +1723,7 @@ int esp_sdr_ring_bench(const struct esp_sdr_ring_cfg *cfg, unsigned int units,
 		p[k] = x & 0xfffffU;
 	}
 	memset(&rs, 0, sizeof(rs));
-	(void)geom_init(&rs.g, 0);
+	(void)geom_init(&rs.g, 0, RING_LATE_CFG);
 	rs.nbanks = RING_BANKS;
 	rs.cfg = cfg;
 	rs.st = &st;

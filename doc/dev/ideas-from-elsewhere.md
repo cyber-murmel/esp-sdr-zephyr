@@ -24,7 +24,7 @@ there is.
 | cnlohr_tricks | 3: burst centre from three bins | pcap survey | deferred: low value, no consumer yet |
 | cnlohr_tricks | 4: Goertzel | any | deferred: no feature needs it |
 | fix32_fft | in-repo Q31 FFT for LTE calibration | C6, C5 | deferred: needs the C6 |
-| esp32s2-cookbook | 1: I2S bit clock divider of 1, inverted pin pair | S3 first | planned next (S3) |
+| esp32s2-cookbook | 1: I2S bit clock divider of 1, inverted pin pair | S3 first | done: 80 Mb/s, complementary pair |
 | esp32s2-cookbook | 2: APLL clock on a pin | P4, S31 | deferred: needs the P4 or S31 |
 | esp32s2-cookbook | 3: hot reload of one kernel | S3, S31 | later work, by decision |
 | lolra | hard-limited phase bitstream, chirp-table LoRa | S3, C5, C6 | deferred: waits for the divider result and a 1-bit DMA path; source scripts missing |
@@ -214,8 +214,39 @@ second pin through the GPIO matrix.
   the GPIO matrix (no wire), and checks that the pair is complementary. The result decides
   whether the lolra and PWM bitstream ideas below get a spike.
 
+**The bench as built:** `probe i2s <bck_div> [pattern hex] [slot bits] [src MHz]` in `apps/rfprobe`
+(`src/i2sbench.c`, ESP32-S3 only; rfprobe already has the shell and builds for `esp32s3_devkitc`
+with no overlay: `build-clanker/esp32s3_devkitc/rfprobe-i2s`). The hal LL programs I2S0 TX: source
+PLL_F160M (or 240 or XTAL by the last argument), mclk divider 2, `i2s_ll_tx_set_bck_div_num()`,
+slot 1 to 32 bits, a one-descriptor GDMA ring (channel 0) of the pattern word. GPIO4 carries
+`I2S0O_SD_OUT_IDX`, GPIO5 the same signal with `inv_sel`; both are read back through the matrix
+into four PCNT units (D, D while DN high, DN while D high, DN) and into a `GPIO.in` snapshot. Bit
+rate = source / (2 * bck_div). PCNT limit: APB 80 MHz clock, pulses of at least one cycle, so
+rising edges above about 40 MHz (80 Mb/s of an alternating pattern) are not counted reliably;
+the bench prints the configured and measured rates side by side, and bck_div 2, 4 and 8 give
+rates PCNT can count to extrapolate from. In the event PCNT counted the 40 MHz edges of bck_div 1
+cleanly (the same 0.05 % short as at the slower rates, the gate's timing).
+
+| Run (bck_div, src, pattern) | Configured bit rate | Measured bit rate | `tx_bck_div_num` read back | Complementary |
+| --- | --- | --- | --- | --- |
+| 1, 160 MHz, `55555555` | 80 Mb/s | 79.96 Mb/s | 0 | yes |
+| 2, 160 MHz, `55555555` | 40 Mb/s | 39.98 Mb/s | 1 | yes |
+| 4, 160 MHz, `55555555` | 20 Mb/s | 19.99 Mb/s | 3 | yes |
+| 8, 160 MHz, `55555555` | 10 Mb/s | 9.99 Mb/s | 7 | yes |
+| 1, 160 MHz, `FFFF0000` (duty) | 80 Mb/s | 79.96 Mb/s, high in 2000 of 4000 samples | 0 | yes |
+| 1, 240 MHz, `55555555` | 120 Mb/s | 39.98 Mb/s: not taken, the mux falls back | 0 | yes |
+
 **Applies to:** S3, C5, C6, P4, S31 (any I2S, PARL_IO or LCD_CAM TX with GPIO matrix inversion).
-**Status:** planned next (S3).
+Measured on the ESP32-S3 DevKitC (2026-11-24, `probe i2s`, no wires): the S3's I2S TX accepts
+bck_div 1 (the field holds 0) and puts out 80 Mb/s from the 160 MHz clock; the 240 MHz source
+does not reach I2S, so 80 Mb/s is the ceiling. The GPIO-matrix inverse on the second pad is
+complementary: with the line held, the pads never agree (0 of 200 samples either way), and during
+the pattern 0 of 4000 snapshots find them equal. Pad edge skew is below what PCNT and the CPU can
+resolve; the image a skew would leave needs a receiver to measure.
+
+**Status:** done (S3). The 1-bit bitstream DAC ideas (lolra's hard-limited phase, the PWM-coded
+bitstream) have their 80 Mb/s path; an S3 spike of them is the next step there, and it needs a
+receiver for the alias they would put on air.
 
 ### 2. APLL as a fractional clock on a pin
 
