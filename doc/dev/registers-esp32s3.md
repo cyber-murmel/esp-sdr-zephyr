@@ -1,7 +1,7 @@
 # ESP32-S3 registers
 
 <!-- nav-start -->
-Previous: [Network services on the S31 multiapp host](network-services.md) · Up: [Reference](index.md) · Next: [ESP32-C6 registers](registers-esp32c6.md)
+Previous: [Transmit from GNU Radio World to an S31](grworld-tx.md) · Up: [Reference](index.md) · Next: [ESP32-C6 registers](registers-esp32c6.md)
 <!-- nav-end -->
 
 This page records what this project knows about the ESP32-S3 registers that `lib/esp_sdr` relies
@@ -1647,5 +1647,5 @@ Evidence:
 <!-- svd:end -->
 
 <!-- nav-start -->
-Previous: [Network services on the S31 multiapp host](network-services.md) · Up: [Reference](index.md) · Next: [ESP32-C6 registers](registers-esp32c6.md)
+Previous: [Transmit from GNU Radio World to an S31](grworld-tx.md) · Up: [Reference](index.md) · Next: [ESP32-C6 registers](registers-esp32c6.md)
 <!-- nav-end -->

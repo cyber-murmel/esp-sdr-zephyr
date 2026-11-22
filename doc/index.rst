@@ -158,6 +158,7 @@ Contents
    dev/s31-fpga-bridge
    dev/txs
    dev/network-services
+   dev/grworld-tx
    dev/registers-esp32s3
    dev/registers-esp32c6
 

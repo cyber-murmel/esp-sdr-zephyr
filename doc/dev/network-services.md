@@ -1,7 +1,7 @@
 # Network services on the S31 multiapp host
 
 <!-- nav-start -->
-Previous: [Transmit stream library (lib/esp_sdr/src/txs)](txs.md) · Up: [Reference](index.md) · Next: [ESP32-S3 registers](registers-esp32s3.md)
+Previous: [Transmit stream library (lib/esp_sdr/src/txs)](txs.md) · Up: [Reference](index.md) · Next: [Transmit from GNU Radio World to an S31](grworld-tx.md)
 <!-- nav-end -->
 
 The ESP32-S31 CoreBoard's multiapp host is a network host: Ethernet, addresses and a name, as the
@@ -1040,5 +1040,5 @@ Not changed in the driver: its single hook slot stays the interface to the multi
   - The gain over a standalone image is switching apps without a reflash. A switch is a reboot anyway.
 
 <!-- nav-start -->
-Previous: [Transmit stream library (lib/esp_sdr/src/txs)](txs.md) · Up: [Reference](index.md) · Next: [ESP32-S3 registers](registers-esp32s3.md)
+Previous: [Transmit stream library (lib/esp_sdr/src/txs)](txs.md) · Up: [Reference](index.md) · Next: [Transmit from GNU Radio World to an S31](grworld-tx.md)
 <!-- nav-end -->

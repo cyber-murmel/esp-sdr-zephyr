@@ -8,7 +8,8 @@ This is the fifth and last part of the docs. The first four parts teach the radi
 paths, the modems and the apps in reading order. This part holds what you look up while working
 on them: chip and board quirks, where code and data are placed, how the tree is tested, a plan
 for a reference radio, three roadmap pages, a design for PHY-less Ethernet links between S31
-boards and the register pages.
+boards, the S31 transmit stream and network services, a plan for transmitting from the browser and
+the register pages.
 
 Each page stands on its own. The guides of Parts 1 to 4 link here for the details.
 
@@ -36,7 +37,8 @@ explained in [ESP32-S3 registers](registers-esp32s3.md#how-to-read-this-page);
 7. [Ideas from elsewhere](ideas-from-elsewhere.md): what was taken or left from six outside
    projects (cnlohr, bitluni, WCH).
 8. [S31 PHY-less Ethernet links](s31-link.md): a design (not built or measured) for MAC-to-MAC
-   links between S31 boards: two jumper setups in MII and a dual-module RGMII board.
+   links between S31 boards: two jumper setups in MII, a dual-module RGMII board, a one-way ring
+   and N boards behind one RJ45 port.
 9. [S31 to host at 80 MS/s](s31-fpga-bridge.md): a plan (not built) for a Colorlight 5A-75B
    bridge that taps the S31's diag bus at 80 MS/s and sends it over gigabit Ethernet.
 10. [Transmit stream](txs.md): the S31 streaming DAC transmit (txs): position model, flips,
@@ -44,9 +46,12 @@ explained in [ESP32-S3 registers](registers-esp32s3.md#how-to-read-this-page);
 11. [Network services](network-services.md): the S31 multiapp host on Ethernet: buffers and
    memory placement, the board findings, MCUmgr over UDP, the SSH server, MicroPython's REPL over SSH, and why SFTP
    and the Ethernet streamers as extensions were left out.
-12. [ESP32-S3 registers](registers-esp32s3.md): the undocumented S3 radio registers the library
+12. [Transmit from GNU Radio World](grworld-tx.md): a plan (not built) for transmitting from the
+   browser app through a GRWire daemon and the esdr Soapy module to an S31, hosted on GitHub
+   Pages.
+13. [ESP32-S3 registers](registers-esp32s3.md): the undocumented S3 radio registers the library
    relies on, with fields and evidence.
-13. [ESP32-C6 registers](registers-esp32c6.md): the same for the ESP32-C6.
+14. [ESP32-C6 registers](registers-esp32c6.md): the same for the ESP32-C6.
 
 <!-- nav-start -->
 Previous: [MCH2022 badge](../apps/mch2022.md) · Up: [esp-sdr-zephyr](../index.rst) · Next: [Chip notes](chips.md)
