@@ -120,11 +120,16 @@ ZTEST(vrt_eth, test_clock_past_2_32_samples)
 
 		vrt_clock_seek(&c, rates[r], start);
 		for (int k = 0; k < 20000; k++) {
-			unsigned __int128 num = (unsigned __int128)(c.index % rates[r]) *
-						1000000000000ULL;
+			/* rem * 10^12 / rate in two exact steps of 10^6 (no __int128 on the 32-bit
+			 * native_sim): rem < rate < 2^26, so neither product leaves 64 bits
+			 */
+			uint64_t rem = c.index % rates[r];
+			uint64_t hi = rem * 1000000ULL;
+			uint64_t ps = hi / rates[r] * 1000000ULL +
+				      (hi % rates[r]) * 1000000ULL / rates[r];
 
 			zassert_equal(c.sec, (uint32_t)(c.index / rates[r]));
-			zassert_equal(vrt_clock_ps(&c), (uint64_t)(num / rates[r]),
+			zassert_equal(vrt_clock_ps(&c), ps,
 				      "rate %u index %llu", rates[r], (unsigned long long)c.index);
 			zassert_true(vrt_clock_ps(&c) < 1000000000000ULL);
 			vrt_clock_advance(&c, 680U);
