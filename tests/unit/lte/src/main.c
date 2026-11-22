@@ -202,7 +202,7 @@ ZTEST(lte, test_detect)
 	};
 
 	for (size_t i = 0; i < ARRAY_SIZE(t); i++) {
-		struct esp_sdr_lte_cell c;
+		struct esp_sdr_lte_cell c = {0};
 
 		test_rng_seed(1000 + i);
 		synth(t[i].n_id1, t[i].n_id2, t[i].half, t[i].f_hz, t[i].first, t[i].amp);
@@ -269,7 +269,7 @@ ZTEST(lte, test_crs_fine_offset)
 	};
 
 	for (size_t i = 0; i < ARRAY_SIZE(t); i++) {
-		struct esp_sdr_lte_cell c;
+		struct esp_sdr_lte_cell c = {0};
 
 		test_rng_seed(2000 + i);
 		synth_cell(t[i].n_id1, t[i].n_id2, t[i].half, t[i].f_hz, t[i].first, 5.0, 5.0);
@@ -290,7 +290,7 @@ ZTEST(lte, test_crs_fine_offset)
 ZTEST(lte, test_crs_short_capture)
 {
 	/* 1 ms, one pair: two slots of reference signals still narrow it to tens of Hz. */
-	struct esp_sdr_lte_cell c;
+	struct esp_sdr_lte_cell c = {0};
 
 	test_rng_seed(17);
 	synth_cell(23, 0, 0, -312537.0, 700.5, 5.0, 5.0);
@@ -310,7 +310,7 @@ ZTEST(lte, test_search_window)
 	 * cell decoded and refined over all 10 ms.
 	 */
 	struct esp_sdr_lte_work small;
-	struct esp_sdr_lte_cell c;
+	struct esp_sdr_lte_cell c = {0};
 
 	esp_sdr_lte_work_init(&small, small_mem, 8192);
 	test_rng_seed(23);
@@ -339,7 +339,7 @@ ZTEST(lte, test_search_windows)
 
 	esp_sdr_lte_work_init(&small, small_mem, 4096);
 	for (size_t i = 0; i < ARRAY_SIZE(first); i++) {
-		struct esp_sdr_lte_cell c;
+		struct esp_sdr_lte_cell c = {0};
 
 		test_rng_seed(31 + i);
 		synth_cell(42, 2, 0, 250321.0, first[i], 5.0, 5.0);
@@ -357,7 +357,7 @@ ZTEST(lte, test_search_windows)
 ZTEST(lte, test_one_pair_in_a_short_capture)
 {
 	/* A 1 ms window with one pair: the parity of the half frame is free, the cell is not. */
-	struct esp_sdr_lte_cell c;
+	struct esp_sdr_lte_cell c = {0};
 
 	test_rng_seed(7);
 	synth(23, 0, 0, -312500.0, 700.5, 5.0);
@@ -372,7 +372,7 @@ ZTEST(lte, test_one_pair_in_a_short_capture)
 
 ZTEST(lte, test_noise_is_rejected)
 {
-	struct esp_sdr_lte_cell c;
+	struct esp_sdr_lte_cell c = {0};
 
 	test_rng_seed(99);
 	for (int i = 0; i < N; i++) {
