@@ -4,22 +4,22 @@ group-filter = ["-babblesim", "-optional", "-testing"]
 [[manifest.projects]]
 name = "zephyr"
 url = "https://github.com/cyber-murmel/zephyr"
-revision = "cb19e8426d8a6a81b69542f1f2e93b1017aa2734"
+revision = "f62f7fa1deef525a6566300af6fa719b80989ec7"
 path = "modules/zephyr"
 west-commands = "scripts/west-commands.yml"
 
 [manifest.projects.nix]
-hash = "sha256-UMDgsOeVgOjwp6YkAo717c0xYot9Zv4LFN+OH/CZsUA="
+hash = "sha256-f7vhjsioTK5Y8bnRdUmBY7nrJfefEo7ppjeQLmewQv4="
 
 [[manifest.projects]]
 name = "hal_espressif"
 url = "https://github.com/cyber-murmel/hal_espressif"
-revision = "5adb2b0dc8349ecbb4d081f3d3a5646536746188"
+revision = "bc20b3f8bfb02b9d2f010a38e9c4cb36559ab024"
 path = "modules/hal/espressif"
 groups = ["hal"]
 
 [manifest.projects.nix]
-hash = "sha256-MfshOuejsQyB3LLB/FwIVXC2xGS3ewQnCVLItex86ig="
+hash = "sha256-t2KUUWpBsUNqk3F1HEXORZoBurVsE2R9Q245MmIMYaw="
 
 [[manifest.projects]]
 name = "libvrt"
@@ -51,11 +51,11 @@ hash = "sha256-APW/rEinKZI4d0d+nej3FgoZ94P2IknzADzsdywHC1s="
 [[manifest.projects]]
 name = "micropython"
 url = "https://github.com/cyber-murmel/micropython"
-revision = "daffaee29caf7cae7486c02bcd0f1ec42ea8e0ae"
+revision = "cb8289081e815e2c0e12812c45cf6abf0d5a6894"
 path = "modules/micropython"
 
 [manifest.projects.nix]
-hash = "sha256-DvhJB5rXjzOcfH9l2nqEfnwpkxL/qLymZvtQUlCV6C0="
+hash = "sha256-tN++fMC3B/BtI+PPhHMpFg5IuWzrHqfSbjmI1gYG3Ig="
 
 [[manifest.projects]]
 name = "micropython-lib"
@@ -170,6 +170,15 @@ groups = ["crypto"]
 
 [manifest.projects.nix]
 hash = "sha256-/TE5i1wocpwhiKsn1wdtCYhJYusJWrcWiQA7bng0+hs="
+
+[[manifest.projects]]
+name = "zcbor"
+url = "https://github.com/zephyrproject-rtos/zcbor"
+revision = "9164bd18dcd88ff9d9ef98279501fc1093571017"
+path = "modules/lib/zcbor"
+
+[manifest.projects.nix]
+hash = "sha256-2lgS4KXxy3BsZvGn75vqu+v5lJOil7G1aq3/iQauH9s="
 
 [manifest.self]
 path = "esp-sdr-zephyr"
