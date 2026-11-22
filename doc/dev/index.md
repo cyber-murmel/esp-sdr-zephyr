@@ -7,7 +7,8 @@ Previous: [MCH2022 badge](../apps/mch2022.md) · Up: [esp-sdr-zephyr](../index.r
 This is the fifth and last part of the docs. The first four parts teach the radio, its sample
 paths, the modems and the apps in reading order. This part holds what you look up while working
 on them: chip and board quirks, where code and data are placed, how the tree is tested, a plan
-for a reference radio, three roadmap pages and the register pages.
+for a reference radio, three roadmap pages, a design for PHY-less Ethernet links between S31
+boards and the register pages.
 
 Each page stands on its own. The guides of Parts 1 to 4 link here for the details.
 
@@ -34,9 +35,13 @@ explained in [ESP32-S3 registers](registers-esp32s3.md#how-to-read-this-page);
    ranked, with locations and status.
 7. [Ideas from elsewhere](ideas-from-elsewhere.md): what was taken or left from six outside
    projects (cnlohr, bitluni, WCH).
-8. [ESP32-S3 registers](registers-esp32s3.md): the undocumented S3 radio registers the library
+8. [S31 PHY-less Ethernet links](s31-link.md): a design (not built or measured) for MAC-to-MAC
+   links between S31 boards: two jumper setups in MII and a dual-module RGMII board.
+9. [S31 to host at 80 MS/s](s31-fpga-bridge.md): a plan (not built) for a Colorlight 5A-75B
+   bridge that taps the S31's diag bus at 80 MS/s and sends it over gigabit Ethernet.
+10. [ESP32-S3 registers](registers-esp32s3.md): the undocumented S3 radio registers the library
    relies on, with fields and evidence.
-9. [ESP32-C6 registers](registers-esp32c6.md): the same for the ESP32-C6.
+11. [ESP32-C6 registers](registers-esp32c6.md): the same for the ESP32-C6.
 
 <!-- nav-start -->
 Previous: [MCH2022 badge](../apps/mch2022.md) · Up: [esp-sdr-zephyr](../index.rst) · Next: [Chip notes](chips.md)

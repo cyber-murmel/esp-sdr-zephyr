@@ -1,0 +1,215 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="905" viewBox="0 0 1280 905" font-family="DejaVu Sans, Verdana, Arial, sans-serif" role="img">
+<title>ESP32-S31 dual-module RGMII board, block diagram</title>
+<desc>Two ESP32-S31-WROOM-3 modules, RGMII MAC to MAC in both directions with a clock delay block per direction, USB-C power and USB-Serial-JTAG per module, UART and PPS headers. Design only, not built or measured.</desc>
+<defs>
+<marker id="a-blue" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1565c0"/></marker>
+<marker id="a-orange" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#d35400"/></marker>
+<marker id="a-red" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b71c1c"/></marker>
+<marker id="a-green" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2e7d32"/></marker>
+<marker id="a-ink" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1a1a1a"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="640.0" y="28" font-size="20" text-anchor="middle" font-weight="bold" fill="#1a1a1a">ESP32-S31 dual-module board: block diagram</text>
+<text x="640.0" y="50" font-size="13" text-anchor="middle" font-weight="normal" fill="#b71c1c" font-style="italic">design only, not built or measured</text>
+<text x="640.0" y="84" font-size="13" text-anchor="middle" font-weight="normal" fill="#1a1a1a">Two ESP32-S31-WROOM-3 modules, GMAC to GMAC in RGMII, no PHY.</text>
+<text x="640.0" y="104" font-size="13" text-anchor="middle" font-weight="normal" fill="#1a1a1a">Each direction has its own clock, driven by the sender; the receiver gets it delayed (source-synchronous).</text>
+<text x="640.0" y="124" font-size="13" text-anchor="middle" font-weight="normal" fill="#1a1a1a">1000 Mbit/s at 125 MHz (APLL, as the driver does today); the 62.5 MHz bring-up (500 Mbit/s) is planned and needs a driver change.</text>
+<!-- module A -->
+<rect x="140" y="150" width="320" height="430" rx="6" fill="#eef3ff" stroke="#2b4c9b" stroke-width="2.5"/>
+<text x="300" y="170" font-size="13" text-anchor="middle" font-weight="bold" fill="#1a1a1a">Module A: U101 ESP32-S31-WROOM-3</text>
+<rect x="155" y="185" width="120" height="64" rx="4" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.5"/>
+<text x="215.0" y="213.3" font-size="11" text-anchor="middle" font-weight="bold" fill="#1a1a1a">UART0</text>
+<text x="215.0" y="228.3" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">TX0, RX0</text>
+<rect x="155" y="263" width="120" height="64" rx="4" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.5"/>
+<text x="215.0" y="291.4" font-size="11" text-anchor="middle" font-weight="bold" fill="#1a1a1a">IO2, IO3</text>
+<text x="215.0" y="306.4" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">PPS out, spare</text>
+<rect x="155" y="341" width="120" height="64" rx="4" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.5"/>
+<text x="215.0" y="369.4" font-size="11" text-anchor="middle" font-weight="bold" fill="#1a1a1a">USB-Serial-JTAG</text>
+<text x="215.0" y="384.4" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">IO33 D-, IO34 D+</text>
+<rect x="155" y="419" width="120" height="64" rx="4" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.5"/>
+<text x="215.0" y="447.4" font-size="11" text-anchor="middle" font-weight="bold" fill="#1a1a1a">EN, IO61</text>
+<text x="215.0" y="462.4" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">Reset, Boot buttons</text>
+<rect x="155" y="497" width="120" height="64" rx="4" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.5"/>
+<text x="215.0" y="525.4" font-size="11" text-anchor="middle" font-weight="bold" fill="#1a1a1a">Power</text>
+<text x="215.0" y="540.4" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">3V3: 22u + 2x100n</text>
+<rect x="290" y="185" width="155" height="380" rx="4" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.5"/>
+<text x="367.5" y="273.9" font-size="11" text-anchor="middle" font-weight="bold" fill="#1a1a1a">GMAC, RGMII</text>
+<text x="367.5" y="288.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">pad set 0 (IO_MUX)</text>
+<text x="367.5" y="303.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a"></text>
+<text x="367.5" y="318.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">TXD0-3: IO8-IO11</text>
+<text x="367.5" y="333.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">TX_CTL: IO12</text>
+<text x="367.5" y="348.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">TXC out: IO13</text>
+<text x="367.5" y="363.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a"></text>
+<text x="367.5" y="378.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">RXC in: IO14</text>
+<text x="367.5" y="393.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">RX_CTL: IO15</text>
+<text x="367.5" y="408.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">RXD3-0: IO16-IO19</text>
+<text x="367.5" y="423.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a"></text>
+<text x="367.5" y="438.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">ref clock, planned:</text>
+<text x="367.5" y="453.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">MPLL 500 / 8 = 62.5 MHz</text>
+<text x="367.5" y="468.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">MPLL 500 / 4 = 125 MHz</text>
+<text x="367.5" y="483.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">needs a driver change</text>
+<rect x="20" y="191" width="100" height="48" rx="4" fill="#fffdf2" stroke="#8a6d00" stroke-width="1.5"/>
+<text x="70.0" y="211.5" font-size="10" text-anchor="middle" font-weight="bold" fill="#1a1a1a">J102  UART0</text>
+<text x="70.0" y="225.5" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">TX0 RX0 GND</text>
+<polyline points="120,215 155,215" fill="none" stroke="#1a1a1a" stroke-width="1.5"/>
+<rect x="20" y="269" width="100" height="48" rx="4" fill="#fffdf2" stroke="#8a6d00" stroke-width="1.5"/>
+<text x="70.0" y="289.5" font-size="10" text-anchor="middle" font-weight="bold" fill="#1a1a1a">J103  IO2, IO3</text>
+<text x="70.0" y="303.5" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">PPS IO3 GND</text>
+<polyline points="120,293 155,293" fill="none" stroke="#1a1a1a" stroke-width="1.5"/>
+<rect x="20" y="760" width="90" height="50" rx="4" fill="#eaf5ea" stroke="#2e7d32" stroke-width="1.5"/>
+<text x="65.0" y="781.2" font-size="12" text-anchor="middle" font-weight="bold" fill="#1a1a1a">J101</text>
+<text x="65.0" y="797.2" font-size="12" text-anchor="middle" font-weight="normal" fill="#1a1a1a">USB-C (A)</text>
+<polyline points="65,760 65,372 155,372" fill="none" stroke="#2e7d32" stroke-width="2.5" marker-end="url(#a-green)"/>
+<text x="71" y="470" font-size="11" text-anchor="start" font-weight="normal" fill="#2e7d32">USB D+/D-</text>
+<text x="71" y="486" font-size="11" text-anchor="start" font-weight="normal" fill="#2e7d32">IO34, IO33</text>
+<rect x="160" y="600" width="140" height="50" rx="4" fill="#fdecea" stroke="#b71c1c" stroke-width="1.5"/>
+<text x="230.0" y="621.4" font-size="11" text-anchor="middle" font-weight="bold" fill="#1a1a1a">U102 AMS1117-3.3</text>
+<text x="230.0" y="636.4" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">10u in, 22u out</text>
+<polyline points="230,600 230,582" fill="none" stroke="#b71c1c" stroke-width="2.5" marker-end="url(#a-red)"/>
+<text x="238" y="595" font-size="11" text-anchor="start" font-weight="normal" fill="#b71c1c">+3V3_A</text>
+<polyline points="230,720 230,652" fill="none" stroke="#b71c1c" stroke-width="2.5" marker-end="url(#a-red)"/>
+<text x="238" y="690" font-size="11" text-anchor="start" font-weight="normal" fill="#b71c1c">+5V</text>
+<rect x="330" y="760" width="100" height="50" rx="4" fill="#fdecea" stroke="#b71c1c" stroke-width="1.5"/>
+<text x="380.0" y="781.4" font-size="11" text-anchor="middle" font-weight="bold" fill="#1a1a1a">D101 SS34</text>
+<text x="380.0" y="796.4" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">VBUS to +5V</text>
+<polyline points="380,760 380,722" fill="none" stroke="#b71c1c" stroke-width="2.5" marker-end="url(#a-red)"/>
+<polyline points="110,785 330,785" fill="none" stroke="#b71c1c" stroke-width="2.5" marker-end="url(#a-red)"/>
+<text x="220" y="776" font-size="11" text-anchor="middle" font-weight="normal" fill="#b71c1c">A_VBUS</text>
+<!-- module B -->
+<rect x="820" y="150" width="320" height="430" rx="6" fill="#eef3ff" stroke="#2b4c9b" stroke-width="2.5"/>
+<text x="980" y="170" font-size="13" text-anchor="middle" font-weight="bold" fill="#1a1a1a">Module B: U201 ESP32-S31-WROOM-3</text>
+<rect x="1005" y="185" width="120" height="64" rx="4" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.5"/>
+<text x="1065.0" y="213.3" font-size="11" text-anchor="middle" font-weight="bold" fill="#1a1a1a">UART0</text>
+<text x="1065.0" y="228.3" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">TX0, RX0</text>
+<rect x="1005" y="263" width="120" height="64" rx="4" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.5"/>
+<text x="1065.0" y="291.4" font-size="11" text-anchor="middle" font-weight="bold" fill="#1a1a1a">IO2, IO3</text>
+<text x="1065.0" y="306.4" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">PPS out, spare</text>
+<rect x="1005" y="341" width="120" height="64" rx="4" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.5"/>
+<text x="1065.0" y="369.4" font-size="11" text-anchor="middle" font-weight="bold" fill="#1a1a1a">USB-Serial-JTAG</text>
+<text x="1065.0" y="384.4" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">IO33 D-, IO34 D+</text>
+<rect x="1005" y="419" width="120" height="64" rx="4" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.5"/>
+<text x="1065.0" y="447.4" font-size="11" text-anchor="middle" font-weight="bold" fill="#1a1a1a">EN, IO61</text>
+<text x="1065.0" y="462.4" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">Reset, Boot buttons</text>
+<rect x="1005" y="497" width="120" height="64" rx="4" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.5"/>
+<text x="1065.0" y="525.4" font-size="11" text-anchor="middle" font-weight="bold" fill="#1a1a1a">Power</text>
+<text x="1065.0" y="540.4" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">3V3: 22u + 2x100n</text>
+<rect x="835" y="185" width="155" height="380" rx="4" fill="#ffffff" stroke="#1a1a1a" stroke-width="1.5"/>
+<text x="912.5" y="273.9" font-size="11" text-anchor="middle" font-weight="bold" fill="#1a1a1a">GMAC, RGMII</text>
+<text x="912.5" y="288.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">pad set 0 (IO_MUX)</text>
+<text x="912.5" y="303.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a"></text>
+<text x="912.5" y="318.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">TXD0-3: IO8-IO11</text>
+<text x="912.5" y="333.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">TX_CTL: IO12</text>
+<text x="912.5" y="348.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">TXC out: IO13</text>
+<text x="912.5" y="363.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a"></text>
+<text x="912.5" y="378.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">RXC in: IO14</text>
+<text x="912.5" y="393.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">RX_CTL: IO15</text>
+<text x="912.5" y="408.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">RXD3-0: IO16-IO19</text>
+<text x="912.5" y="423.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a"></text>
+<text x="912.5" y="438.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">ref clock, planned:</text>
+<text x="912.5" y="453.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">MPLL 500 / 8 = 62.5 MHz</text>
+<text x="912.5" y="468.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">MPLL 500 / 4 = 125 MHz</text>
+<text x="912.5" y="483.9" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">needs a driver change</text>
+<rect x="1160" y="191" width="100" height="48" rx="4" fill="#fffdf2" stroke="#8a6d00" stroke-width="1.5"/>
+<text x="1210.0" y="211.5" font-size="10" text-anchor="middle" font-weight="bold" fill="#1a1a1a">J202  UART0</text>
+<text x="1210.0" y="225.5" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">TX0 RX0 GND</text>
+<polyline points="1160,215 1125,215" fill="none" stroke="#1a1a1a" stroke-width="1.5"/>
+<rect x="1160" y="269" width="100" height="48" rx="4" fill="#fffdf2" stroke="#8a6d00" stroke-width="1.5"/>
+<text x="1210.0" y="289.5" font-size="10" text-anchor="middle" font-weight="bold" fill="#1a1a1a">J203  IO2, IO3</text>
+<text x="1210.0" y="303.5" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">PPS IO3 GND</text>
+<polyline points="1160,293 1125,293" fill="none" stroke="#1a1a1a" stroke-width="1.5"/>
+<rect x="1170" y="760" width="90" height="50" rx="4" fill="#eaf5ea" stroke="#2e7d32" stroke-width="1.5"/>
+<text x="1215.0" y="781.2" font-size="12" text-anchor="middle" font-weight="bold" fill="#1a1a1a">J201</text>
+<text x="1215.0" y="797.2" font-size="12" text-anchor="middle" font-weight="normal" fill="#1a1a1a">USB-C (B)</text>
+<polyline points="1215,760 1215,372 1125,372" fill="none" stroke="#2e7d32" stroke-width="2.5" marker-end="url(#a-green)"/>
+<text x="1209" y="470" font-size="11" text-anchor="end" font-weight="normal" fill="#2e7d32">USB D+/D-</text>
+<text x="1209" y="486" font-size="11" text-anchor="end" font-weight="normal" fill="#2e7d32">IO34, IO33</text>
+<rect x="980" y="600" width="140" height="50" rx="4" fill="#fdecea" stroke="#b71c1c" stroke-width="1.5"/>
+<text x="1050.0" y="621.4" font-size="11" text-anchor="middle" font-weight="bold" fill="#1a1a1a">U202 AMS1117-3.3</text>
+<text x="1050.0" y="636.4" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">10u in, 22u out</text>
+<polyline points="1050,600 1050,582" fill="none" stroke="#b71c1c" stroke-width="2.5" marker-end="url(#a-red)"/>
+<text x="1042" y="595" font-size="11" text-anchor="end" font-weight="normal" fill="#b71c1c">+3V3_B</text>
+<polyline points="1050,720 1050,652" fill="none" stroke="#b71c1c" stroke-width="2.5" marker-end="url(#a-red)"/>
+<text x="1042" y="690" font-size="11" text-anchor="end" font-weight="normal" fill="#b71c1c">+5V</text>
+<rect x="850" y="760" width="100" height="50" rx="4" fill="#fdecea" stroke="#b71c1c" stroke-width="1.5"/>
+<text x="900.0" y="781.4" font-size="11" text-anchor="middle" font-weight="bold" fill="#1a1a1a">D201 SS34</text>
+<text x="900.0" y="796.4" font-size="11" text-anchor="middle" font-weight="normal" fill="#1a1a1a">VBUS to +5V</text>
+<polyline points="900,760 900,722" fill="none" stroke="#b71c1c" stroke-width="2.5" marker-end="url(#a-red)"/>
+<polyline points="1170,785 950,785" fill="none" stroke="#b71c1c" stroke-width="2.5" marker-end="url(#a-red)"/>
+<text x="1060" y="776" font-size="11" text-anchor="middle" font-weight="normal" fill="#b71c1c">B_VBUS</text>
+<!-- power rail -->
+<polyline points="230,720 1050,720" fill="none" stroke="#b71c1c" stroke-width="5"/>
+<text x="640" y="708" font-size="13" text-anchor="middle" font-weight="bold" fill="#b71c1c">+5V (common rail of both modules, fed through the two diodes)</text>
+<text x="640" y="762" font-size="12" text-anchor="middle" font-weight="normal" fill="#555555">Both modules running need both USB-C plugged,</text>
+<text x="640" y="778" font-size="12" text-anchor="middle" font-weight="normal" fill="#555555">or one source that advertises 1.5 A or more.</text>
+<text x="640" y="794" font-size="12" text-anchor="middle" font-weight="normal" fill="#555555">Each port is also the USB-Serial-JTAG console of its own module.</text>
+<!-- A to B -->
+<polyline points="445,205 831,205" fill="none" stroke="#1565c0" stroke-width="4" marker-end="url(#a-blue)"/>
+<text x="640" y="193" font-size="13" text-anchor="middle" font-weight="bold" fill="#1565c0">A to B data: TXD0-3, TX_CTL (5 lines)</text>
+<text x="640" y="227" font-size="12" text-anchor="middle" font-weight="normal" fill="#555555">22 ohm series at the driver: R301-R305</text>
+<text x="640" y="249" font-size="13" text-anchor="middle" font-weight="bold" fill="#d35400">A to B clock: TXC</text>
+<polyline points="445,305 470,305" fill="none" stroke="#d35400" stroke-width="3"/>
+<rect x="470" y="291" width="50" height="28" rx="4" fill="#fff4e8" stroke="#d35400" stroke-width="1.5"/>
+<text x="495.0" y="301.5" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">R306</text>
+<text x="495.0" y="315.5" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">22R</text>
+<polyline points="520,305 545,305" fill="none" stroke="#d35400" stroke-width="3"/>
+<polyline points="545,279 545,331" fill="none" stroke="#d35400" stroke-width="3"/>
+<polyline points="545,279 565,279" fill="none" stroke="#d35400" stroke-width="3"/>
+<rect x="565" y="263" width="110" height="32" rx="4" fill="#fff4e8" stroke="#d35400" stroke-width="1.5"/>
+<text x="620.0" y="275.5" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">U301 74LVC1G34</text>
+<text x="620.0" y="289.5" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">VCC from +3V3_B</text>
+<polyline points="675,279 690,279" fill="none" stroke="#d35400" stroke-width="3"/>
+<rect x="690" y="265" width="50" height="28" rx="4" fill="#fff4e8" stroke="#d35400" stroke-width="1.5"/>
+<text x="715.0" y="275.5" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">R308</text>
+<text x="715.0" y="289.5" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">22R</text>
+<polyline points="740,279 760,279" fill="none" stroke="#d35400" stroke-width="3"/>
+<polyline points="545,331 565,331" fill="none" stroke="#d35400" stroke-width="3" stroke-dasharray="6,4"/>
+<rect x="565" y="317" width="110" height="28" rx="4" fill="#ffffff" stroke="#d35400" stroke-width="1.5" stroke-dasharray="6,4"/>
+<text x="620.0" y="327.5" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">R307  0R</text>
+<text x="620.0" y="341.5" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">DNP by default</text>
+<polyline points="675,331 760,331" fill="none" stroke="#d35400" stroke-width="3" stroke-dasharray="6,4"/>
+<polyline points="760,279 760,331" fill="none" stroke="#d35400" stroke-width="3"/>
+<polyline points="760,305 831,305" fill="none" stroke="#d35400" stroke-width="3" marker-end="url(#a-orange)"/>
+<text x="640" y="363" font-size="11" text-anchor="middle" font-weight="normal" fill="#555555">delay buffer (default) or 0R bypass</text>
+<polyline points="455,385 825,385" fill="none" stroke="#bbbbbb" stroke-width="1" stroke-dasharray="3,4"/>
+<!-- B to A -->
+<polyline points="835,410 449,410" fill="none" stroke="#1565c0" stroke-width="4" marker-end="url(#a-blue)"/>
+<text x="640" y="398" font-size="13" text-anchor="middle" font-weight="bold" fill="#1565c0">B to A data: TXD0-3, TX_CTL (5 lines)</text>
+<text x="640" y="432" font-size="12" text-anchor="middle" font-weight="normal" fill="#555555">22 ohm series at the driver: R311-R315</text>
+<text x="640" y="454" font-size="13" text-anchor="middle" font-weight="bold" fill="#d35400">B to A clock: TXC</text>
+<polyline points="835,510 810,510" fill="none" stroke="#d35400" stroke-width="3"/>
+<rect x="760" y="496" width="50" height="28" rx="4" fill="#fff4e8" stroke="#d35400" stroke-width="1.5"/>
+<text x="785.0" y="506.5" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">R316</text>
+<text x="785.0" y="520.5" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">22R</text>
+<polyline points="760,510 735,510" fill="none" stroke="#d35400" stroke-width="3"/>
+<polyline points="735,484 735,536" fill="none" stroke="#d35400" stroke-width="3"/>
+<polyline points="735,484 715,484" fill="none" stroke="#d35400" stroke-width="3"/>
+<rect x="605" y="468" width="110" height="32" rx="4" fill="#fff4e8" stroke="#d35400" stroke-width="1.5"/>
+<text x="660.0" y="480.5" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">U311 74LVC1G34</text>
+<text x="660.0" y="494.5" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">VCC from +3V3_A</text>
+<polyline points="605,484 590,484" fill="none" stroke="#d35400" stroke-width="3"/>
+<rect x="540" y="470" width="50" height="28" rx="4" fill="#fff4e8" stroke="#d35400" stroke-width="1.5"/>
+<text x="565.0" y="480.5" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">R318</text>
+<text x="565.0" y="494.5" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">22R</text>
+<polyline points="540,484 520,484" fill="none" stroke="#d35400" stroke-width="3"/>
+<polyline points="735,536 715,536" fill="none" stroke="#d35400" stroke-width="3" stroke-dasharray="6,4"/>
+<rect x="605" y="522" width="110" height="28" rx="4" fill="#ffffff" stroke="#d35400" stroke-width="1.5" stroke-dasharray="6,4"/>
+<text x="660.0" y="532.5" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">R317  0R</text>
+<text x="660.0" y="546.5" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">DNP by default</text>
+<polyline points="605,536 520,536" fill="none" stroke="#d35400" stroke-width="3" stroke-dasharray="6,4"/>
+<polyline points="520,484 520,536" fill="none" stroke="#d35400" stroke-width="3"/>
+<polyline points="520,510 449,510" fill="none" stroke="#d35400" stroke-width="3" marker-end="url(#a-orange)"/>
+<text x="640" y="568" font-size="11" text-anchor="middle" font-weight="normal" fill="#555555">delay buffer (default) or 0R bypass</text>
+<text x="640" y="612" font-size="12" text-anchor="middle" font-weight="normal" fill="#1a1a1a">RGMII at 125 MHz wants the RX clock 1.0 to 2.6 ns after the data.</text>
+<text x="640" y="630" font-size="12" text-anchor="middle" font-weight="normal" fill="#1a1a1a">74LVC1G34 at 3.0 to 3.6 V: 0.5 / 2.0 / 4.1 ns (min / typ / max).</text>
+<text x="640" y="648" font-size="12" text-anchor="middle" font-weight="normal" fill="#1a1a1a">Bring-up at 62.5 MHz (500 Mbit/s, planned): about 4 ns +-2, one or two buffers.</text>
+<text x="640" y="666" font-size="12" text-anchor="middle" font-weight="normal" fill="#555555">Meander alternative: about 6.5 to 7 ps/mm on FR4, 250 to 300 mm for 1.5 to 2 ns.</text>
+<rect x="440" y="822" width="400" height="68" rx="4" fill="#ffffff" stroke="#999999" stroke-width="1"/>
+<polyline points="458,846 488,846" fill="none" stroke="#1565c0" stroke-width="4"/>
+<text x="496" y="850" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">RGMII data and control</text>
+<polyline points="648,846 678,846" fill="none" stroke="#d35400" stroke-width="4"/>
+<text x="686" y="850" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">RGMII clock</text>
+<polyline points="458,870 488,870" fill="none" stroke="#b71c1c" stroke-width="4"/>
+<text x="496" y="874" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">power</text>
+<polyline points="648,870 678,870" fill="none" stroke="#2e7d32" stroke-width="4"/>
+<text x="686" y="874" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">USB</text>
+</svg>

@@ -1,0 +1,186 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="852" viewBox="0 0 1400 852" font-family="DejaVu Sans, Verdana, Arial, sans-serif" role="img">
+<title>ESP32-S31 dual-module board, RGMII wiring</title>
+<desc>Pin by pin: six RGMII lines per direction (TXD0-3, TX_CTL, TXC), twelve in all, between module A (U101) and module B (U201), series resistors, and the clock path with delay buffer and bypass. Design only, not built or measured.</desc>
+<defs>
+<marker id="a-blue" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1565c0"/></marker>
+<marker id="a-orange" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#d35400"/></marker>
+<marker id="a-red" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b71c1c"/></marker>
+<marker id="a-green" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2e7d32"/></marker>
+<marker id="a-ink" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1a1a1a"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="700.0" y="28" font-size="20" text-anchor="middle" font-weight="bold" fill="#1a1a1a">RGMII wiring, pin by pin: module A (U101) and module B (U201)</text>
+<text x="700.0" y="50" font-size="13" text-anchor="middle" font-weight="normal" fill="#b71c1c" font-style="italic">design only, not built or measured</text>
+<text x="30" y="80" font-size="15" text-anchor="start" font-weight="bold" fill="#1a1a1a">Module A  U101</text>
+<text x="1370" y="80" font-size="15" text-anchor="end" font-weight="bold" fill="#1a1a1a">Module B  U201</text>
+<text x="700.0" y="80" font-size="12" text-anchor="middle" font-weight="normal" fill="#555555">pin = WROOM-3 module pin number, IO = GPIO</text>
+<!-- A drives B -->
+<text x="30" y="112" font-size="14" text-anchor="start" font-weight="bold" fill="#1565c0">A drives B: five data lines and the clock</text>
+<rect x="30" y="128" width="240" height="28" rx="4" fill="#eef3ff" stroke="#2b4c9b" stroke-width="1.5"/>
+<text x="38" y="146" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">U101 pin 14  IO8  TXD0 (out)</text>
+<rect x="1130" y="128" width="240" height="28" rx="4" fill="#eef3ff" stroke="#2b4c9b" stroke-width="1.5"/>
+<text x="1138" y="146" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">U201 pin 25  IO19  RXD0 (in)</text>
+<polyline points="270,142 330,142" fill="none" stroke="#1565c0" stroke-width="2.5"/>
+<rect x="330" y="131" width="56" height="22" rx="4" fill="#ffffff" stroke="#1565c0" stroke-width="1.5"/>
+<text x="358.0" y="146" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">R301 22R</text>
+<polyline points="386,142 1124,142" fill="none" stroke="#1565c0" stroke-width="2.5" marker-end="url(#a-blue)"/>
+<text x="274" y="137" font-size="10" text-anchor="start" font-weight="normal" fill="#555555">A_TXD0</text>
+<text x="760" y="136" font-size="12" text-anchor="middle" font-weight="normal" fill="#1565c0">AB_D0</text>
+<rect x="30" y="166" width="240" height="28" rx="4" fill="#eef3ff" stroke="#2b4c9b" stroke-width="1.5"/>
+<text x="38" y="184" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">U101 pin 15  IO9  TXD1 (out)</text>
+<rect x="1130" y="166" width="240" height="28" rx="4" fill="#eef3ff" stroke="#2b4c9b" stroke-width="1.5"/>
+<text x="1138" y="184" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">U201 pin 24  IO18  RXD1 (in)</text>
+<polyline points="270,180 330,180" fill="none" stroke="#1565c0" stroke-width="2.5"/>
+<rect x="330" y="169" width="56" height="22" rx="4" fill="#ffffff" stroke="#1565c0" stroke-width="1.5"/>
+<text x="358.0" y="184" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">R302 22R</text>
+<polyline points="386,180 1124,180" fill="none" stroke="#1565c0" stroke-width="2.5" marker-end="url(#a-blue)"/>
+<text x="274" y="175" font-size="10" text-anchor="start" font-weight="normal" fill="#555555">A_TXD1</text>
+<text x="760" y="174" font-size="12" text-anchor="middle" font-weight="normal" fill="#1565c0">AB_D1</text>
+<rect x="30" y="204" width="240" height="28" rx="4" fill="#eef3ff" stroke="#2b4c9b" stroke-width="1.5"/>
+<text x="38" y="222" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">U101 pin 16  IO10  TXD2 (out)</text>
+<rect x="1130" y="204" width="240" height="28" rx="4" fill="#eef3ff" stroke="#2b4c9b" stroke-width="1.5"/>
+<text x="1138" y="222" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">U201 pin 23  IO17  RXD2 (in)</text>
+<polyline points="270,218 330,218" fill="none" stroke="#1565c0" stroke-width="2.5"/>
+<rect x="330" y="207" width="56" height="22" rx="4" fill="#ffffff" stroke="#1565c0" stroke-width="1.5"/>
+<text x="358.0" y="222" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">R303 22R</text>
+<polyline points="386,218 1124,218" fill="none" stroke="#1565c0" stroke-width="2.5" marker-end="url(#a-blue)"/>
+<text x="274" y="213" font-size="10" text-anchor="start" font-weight="normal" fill="#555555">A_TXD2</text>
+<text x="760" y="212" font-size="12" text-anchor="middle" font-weight="normal" fill="#1565c0">AB_D2</text>
+<rect x="30" y="242" width="240" height="28" rx="4" fill="#eef3ff" stroke="#2b4c9b" stroke-width="1.5"/>
+<text x="38" y="260" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">U101 pin 17  IO11  TXD3 (out)</text>
+<rect x="1130" y="242" width="240" height="28" rx="4" fill="#eef3ff" stroke="#2b4c9b" stroke-width="1.5"/>
+<text x="1138" y="260" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">U201 pin 22  IO16  RXD3 (in)</text>
+<polyline points="270,256 330,256" fill="none" stroke="#1565c0" stroke-width="2.5"/>
+<rect x="330" y="245" width="56" height="22" rx="4" fill="#ffffff" stroke="#1565c0" stroke-width="1.5"/>
+<text x="358.0" y="260" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">R304 22R</text>
+<polyline points="386,256 1124,256" fill="none" stroke="#1565c0" stroke-width="2.5" marker-end="url(#a-blue)"/>
+<text x="274" y="251" font-size="10" text-anchor="start" font-weight="normal" fill="#555555">A_TXD3</text>
+<text x="760" y="250" font-size="12" text-anchor="middle" font-weight="normal" fill="#1565c0">AB_D3</text>
+<rect x="30" y="280" width="240" height="28" rx="4" fill="#eef3ff" stroke="#2b4c9b" stroke-width="1.5"/>
+<text x="38" y="298" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">U101 pin 18  IO12  TX_CTL (out)</text>
+<rect x="1130" y="280" width="240" height="28" rx="4" fill="#eef3ff" stroke="#2b4c9b" stroke-width="1.5"/>
+<text x="1138" y="298" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">U201 pin 21  IO15  RX_CTL (in)</text>
+<polyline points="270,294 330,294" fill="none" stroke="#1565c0" stroke-width="2.5"/>
+<rect x="330" y="283" width="56" height="22" rx="4" fill="#ffffff" stroke="#1565c0" stroke-width="1.5"/>
+<text x="358.0" y="298" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">R305 22R</text>
+<polyline points="386,294 1124,294" fill="none" stroke="#1565c0" stroke-width="2.5" marker-end="url(#a-blue)"/>
+<text x="274" y="289" font-size="10" text-anchor="start" font-weight="normal" fill="#555555">A_TXCTL</text>
+<text x="760" y="288" font-size="12" text-anchor="middle" font-weight="normal" fill="#1565c0">AB_CTL</text>
+<rect x="30" y="368" width="240" height="28" rx="4" fill="#eef3ff" stroke="#2b4c9b" stroke-width="1.5"/>
+<text x="38" y="386" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">U101 pin 19  IO13  TXC (out)</text>
+<rect x="1130" y="368" width="240" height="28" rx="4" fill="#eef3ff" stroke="#2b4c9b" stroke-width="1.5"/>
+<text x="1138" y="386" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">U201 pin 20  IO14  RXC (in)</text>
+<polyline points="270,382 330,382" fill="none" stroke="#d35400" stroke-width="2.5"/>
+<rect x="330" y="371" width="56" height="22" rx="4" fill="#ffffff" stroke="#d35400" stroke-width="1.5"/>
+<text x="358.0" y="386" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">R306 22R</text>
+<text x="274" y="377" font-size="10" text-anchor="start" font-weight="normal" fill="#555555">A_TXC</text>
+<polyline points="386,382 470,382" fill="none" stroke="#d35400" stroke-width="2.5"/>
+<text x="428" y="374" font-size="10" text-anchor="middle" font-weight="normal" fill="#d35400">AB_CLK_SRC</text>
+<polyline points="470,352 470,412" fill="none" stroke="#d35400" stroke-width="2.5"/>
+<polyline points="470,352 500,352" fill="none" stroke="#d35400" stroke-width="2.5"/>
+<rect x="500" y="324" width="170" height="56" rx="4" fill="#fff4e8" stroke="#d35400" stroke-width="1.5"/>
+<text x="585" y="340" font-size="12" text-anchor="middle" font-weight="bold" fill="#1a1a1a">U301 74LVC1G34</text>
+<text x="585" y="354" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">pin 2 A, pin 4 Y</text>
+<text x="585" y="367" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">pin 5 VCC: +3V3_B, C301 100n</text>
+<polyline points="670,352 710,352" fill="none" stroke="#d35400" stroke-width="2.5"/>
+<rect x="710" y="341" width="56" height="22" rx="4" fill="#ffffff" stroke="#d35400" stroke-width="1.5"/>
+<text x="738.0" y="356" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">R308 22R</text>
+<text x="738" y="336" font-size="10" text-anchor="middle" font-weight="normal" fill="#d35400">AB_CLK_BUF</text>
+<polyline points="766,352 830,352" fill="none" stroke="#d35400" stroke-width="2.5"/>
+<polyline points="470,412 500,412" fill="none" stroke="#d35400" stroke-width="2.5" stroke-dasharray="6,4"/>
+<rect x="500" y="401" width="70" height="22" rx="4" fill="#ffffff" stroke="#d35400" stroke-width="1.5" stroke-dasharray="5,3"/>
+<text x="535.0" y="416" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">R307 0R DNP</text>
+<polyline points="570,412 830,412" fill="none" stroke="#d35400" stroke-width="2.5" stroke-dasharray="6,4"/>
+<polyline points="830,352 830,412" fill="none" stroke="#d35400" stroke-width="2.5"/>
+<polyline points="830,382 860,382" fill="none" stroke="#d35400" stroke-width="2.5"/>
+<polyline points="860,382 868,371 884,393 892,382 900,371 916,393 924,382 932,371 948,393 956,382 964,371 980,393 988,382 996,371 1012,393 1020,382 1028,371 1044,393 1052,382" fill="none" stroke="#d35400" stroke-width="2.5"/>
+<polyline points="1052,382 1124,382" fill="none" stroke="#d35400" stroke-width="2.5" marker-end="url(#a-orange)"/>
+<text x="956" y="362" font-size="12" text-anchor="middle" font-weight="normal" fill="#d35400">AB_CLK_RX</text>
+<text x="960" y="410" font-size="10" text-anchor="middle" font-weight="normal" fill="#555555">optional meander for extra delay</text>
+<!-- B drives A -->
+<text x="30" y="444" font-size="14" text-anchor="start" font-weight="bold" fill="#1565c0">B drives A: five data lines and the clock</text>
+<rect x="1130" y="460" width="240" height="28" rx="4" fill="#eef3ff" stroke="#2b4c9b" stroke-width="1.5"/>
+<text x="1138" y="478" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">U201 pin 14  IO8  TXD0 (out)</text>
+<rect x="30" y="460" width="240" height="28" rx="4" fill="#eef3ff" stroke="#2b4c9b" stroke-width="1.5"/>
+<text x="38" y="478" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">U101 pin 25  IO19  RXD0 (in)</text>
+<polyline points="1130,474 1070,474" fill="none" stroke="#1565c0" stroke-width="2.5"/>
+<rect x="1014" y="463" width="56" height="22" rx="4" fill="#ffffff" stroke="#1565c0" stroke-width="1.5"/>
+<text x="1042.0" y="478" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">R311 22R</text>
+<polyline points="1014,474 276,474" fill="none" stroke="#1565c0" stroke-width="2.5" marker-end="url(#a-blue)"/>
+<text x="1126" y="469" font-size="10" text-anchor="end" font-weight="normal" fill="#555555">B_TXD0</text>
+<text x="640" y="468" font-size="12" text-anchor="middle" font-weight="normal" fill="#1565c0">BA_D0</text>
+<rect x="1130" y="498" width="240" height="28" rx="4" fill="#eef3ff" stroke="#2b4c9b" stroke-width="1.5"/>
+<text x="1138" y="516" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">U201 pin 15  IO9  TXD1 (out)</text>
+<rect x="30" y="498" width="240" height="28" rx="4" fill="#eef3ff" stroke="#2b4c9b" stroke-width="1.5"/>
+<text x="38" y="516" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">U101 pin 24  IO18  RXD1 (in)</text>
+<polyline points="1130,512 1070,512" fill="none" stroke="#1565c0" stroke-width="2.5"/>
+<rect x="1014" y="501" width="56" height="22" rx="4" fill="#ffffff" stroke="#1565c0" stroke-width="1.5"/>
+<text x="1042.0" y="516" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">R312 22R</text>
+<polyline points="1014,512 276,512" fill="none" stroke="#1565c0" stroke-width="2.5" marker-end="url(#a-blue)"/>
+<text x="1126" y="507" font-size="10" text-anchor="end" font-weight="normal" fill="#555555">B_TXD1</text>
+<text x="640" y="506" font-size="12" text-anchor="middle" font-weight="normal" fill="#1565c0">BA_D1</text>
+<rect x="1130" y="536" width="240" height="28" rx="4" fill="#eef3ff" stroke="#2b4c9b" stroke-width="1.5"/>
+<text x="1138" y="554" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">U201 pin 16  IO10  TXD2 (out)</text>
+<rect x="30" y="536" width="240" height="28" rx="4" fill="#eef3ff" stroke="#2b4c9b" stroke-width="1.5"/>
+<text x="38" y="554" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">U101 pin 23  IO17  RXD2 (in)</text>
+<polyline points="1130,550 1070,550" fill="none" stroke="#1565c0" stroke-width="2.5"/>
+<rect x="1014" y="539" width="56" height="22" rx="4" fill="#ffffff" stroke="#1565c0" stroke-width="1.5"/>
+<text x="1042.0" y="554" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">R313 22R</text>
+<polyline points="1014,550 276,550" fill="none" stroke="#1565c0" stroke-width="2.5" marker-end="url(#a-blue)"/>
+<text x="1126" y="545" font-size="10" text-anchor="end" font-weight="normal" fill="#555555">B_TXD2</text>
+<text x="640" y="544" font-size="12" text-anchor="middle" font-weight="normal" fill="#1565c0">BA_D2</text>
+<rect x="1130" y="574" width="240" height="28" rx="4" fill="#eef3ff" stroke="#2b4c9b" stroke-width="1.5"/>
+<text x="1138" y="592" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">U201 pin 17  IO11  TXD3 (out)</text>
+<rect x="30" y="574" width="240" height="28" rx="4" fill="#eef3ff" stroke="#2b4c9b" stroke-width="1.5"/>
+<text x="38" y="592" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">U101 pin 22  IO16  RXD3 (in)</text>
+<polyline points="1130,588 1070,588" fill="none" stroke="#1565c0" stroke-width="2.5"/>
+<rect x="1014" y="577" width="56" height="22" rx="4" fill="#ffffff" stroke="#1565c0" stroke-width="1.5"/>
+<text x="1042.0" y="592" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">R314 22R</text>
+<polyline points="1014,588 276,588" fill="none" stroke="#1565c0" stroke-width="2.5" marker-end="url(#a-blue)"/>
+<text x="1126" y="583" font-size="10" text-anchor="end" font-weight="normal" fill="#555555">B_TXD3</text>
+<text x="640" y="582" font-size="12" text-anchor="middle" font-weight="normal" fill="#1565c0">BA_D3</text>
+<rect x="1130" y="612" width="240" height="28" rx="4" fill="#eef3ff" stroke="#2b4c9b" stroke-width="1.5"/>
+<text x="1138" y="630" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">U201 pin 18  IO12  TX_CTL (out)</text>
+<rect x="30" y="612" width="240" height="28" rx="4" fill="#eef3ff" stroke="#2b4c9b" stroke-width="1.5"/>
+<text x="38" y="630" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">U101 pin 21  IO15  RX_CTL (in)</text>
+<polyline points="1130,626 1070,626" fill="none" stroke="#1565c0" stroke-width="2.5"/>
+<rect x="1014" y="615" width="56" height="22" rx="4" fill="#ffffff" stroke="#1565c0" stroke-width="1.5"/>
+<text x="1042.0" y="630" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">R315 22R</text>
+<polyline points="1014,626 276,626" fill="none" stroke="#1565c0" stroke-width="2.5" marker-end="url(#a-blue)"/>
+<text x="1126" y="621" font-size="10" text-anchor="end" font-weight="normal" fill="#555555">B_TXCTL</text>
+<text x="640" y="620" font-size="12" text-anchor="middle" font-weight="normal" fill="#1565c0">BA_CTL</text>
+<rect x="1130" y="700" width="240" height="28" rx="4" fill="#eef3ff" stroke="#2b4c9b" stroke-width="1.5"/>
+<text x="1138" y="718" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">U201 pin 19  IO13  TXC (out)</text>
+<rect x="30" y="700" width="240" height="28" rx="4" fill="#eef3ff" stroke="#2b4c9b" stroke-width="1.5"/>
+<text x="38" y="718" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">U101 pin 20  IO14  RXC (in)</text>
+<polyline points="1130,714 1070,714" fill="none" stroke="#d35400" stroke-width="2.5"/>
+<rect x="1014" y="703" width="56" height="22" rx="4" fill="#ffffff" stroke="#d35400" stroke-width="1.5"/>
+<text x="1042.0" y="718" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">R316 22R</text>
+<text x="1126" y="709" font-size="10" text-anchor="end" font-weight="normal" fill="#555555">B_TXC</text>
+<polyline points="1014,714 930,714" fill="none" stroke="#d35400" stroke-width="2.5"/>
+<text x="972" y="706" font-size="10" text-anchor="middle" font-weight="normal" fill="#d35400">BA_CLK_SRC</text>
+<polyline points="930,684 930,744" fill="none" stroke="#d35400" stroke-width="2.5"/>
+<polyline points="930,684 900,684" fill="none" stroke="#d35400" stroke-width="2.5"/>
+<rect x="730" y="656" width="170" height="56" rx="4" fill="#fff4e8" stroke="#d35400" stroke-width="1.5"/>
+<text x="815" y="672" font-size="12" text-anchor="middle" font-weight="bold" fill="#1a1a1a">U311 74LVC1G34</text>
+<text x="815" y="686" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">pin 2 A, pin 4 Y</text>
+<text x="815" y="699" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">pin 5 VCC: +3V3_A, C311 100n</text>
+<polyline points="730,684 690,684" fill="none" stroke="#d35400" stroke-width="2.5"/>
+<rect x="634" y="673" width="56" height="22" rx="4" fill="#ffffff" stroke="#d35400" stroke-width="1.5"/>
+<text x="662.0" y="688" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">R318 22R</text>
+<text x="662" y="668" font-size="10" text-anchor="middle" font-weight="normal" fill="#d35400">BA_CLK_BUF</text>
+<polyline points="634,684 570,684" fill="none" stroke="#d35400" stroke-width="2.5"/>
+<polyline points="930,744 900,744" fill="none" stroke="#d35400" stroke-width="2.5" stroke-dasharray="6,4"/>
+<rect x="830" y="733" width="70" height="22" rx="4" fill="#ffffff" stroke="#d35400" stroke-width="1.5" stroke-dasharray="5,3"/>
+<text x="865.0" y="748" font-size="10" text-anchor="middle" font-weight="normal" fill="#1a1a1a">R317 0R DNP</text>
+<polyline points="830,744 570,744" fill="none" stroke="#d35400" stroke-width="2.5" stroke-dasharray="6,4"/>
+<polyline points="570,684 570,744" fill="none" stroke="#d35400" stroke-width="2.5"/>
+<polyline points="570,714 540,714" fill="none" stroke="#d35400" stroke-width="2.5"/>
+<polyline points="540,714 532,703 516,725 508,714 500,703 484,725 476,714 468,703 452,725 444,714 436,703 420,725 412,714 404,703 388,725 380,714 372,703 356,725 348,714" fill="none" stroke="#d35400" stroke-width="2.5"/>
+<polyline points="348,714 276,714" fill="none" stroke="#d35400" stroke-width="2.5" marker-end="url(#a-orange)"/>
+<text x="444" y="694" font-size="12" text-anchor="middle" font-weight="normal" fill="#d35400">BA_CLK_RX</text>
+<text x="440" y="742" font-size="10" text-anchor="middle" font-weight="normal" fill="#555555">optional meander for extra delay</text>
+<text x="30" y="788" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">Default build: buffer and its 22R fitted, 0R bypass not fitted. Option 1: fit the 0R bypass, leave the buffer and its 22R off.</text>
+<text x="30" y="808" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">The series 22R sit next to the driver pin; the buffer sits next to the receiving module. All pins are on the first GMAC pad set (IO_MUX).</text>
+<text x="30" y="828" font-size="12" text-anchor="start" font-weight="normal" fill="#1a1a1a">Only these lines connect the two modules, and GND through the common plane. No 3V3 or 5V crosses.</text>
+</svg>

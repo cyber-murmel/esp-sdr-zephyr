@@ -27,8 +27,8 @@ the library at a glance. Five parts follow, each building on the one before:
 #. `Applications <apps/index.md>`__ puts the first three parts to work: the apps, their internals
    and the MCH2022 badge.
 #. `Reference <dev/index.md>`__ holds what the parts look up: chip notes, code placement, testing,
-   the ZigBit reference, three roadmap pages (DMA chains, hot loops, ideas from elsewhere) and the
-   register pages.
+   the ZigBit reference, three roadmap pages (DMA chains, hot loops, ideas from elsewhere), a design
+   page for PHY-less Ethernet links between S31 boards and the register pages.
 
 A guide page opens with what it covers and where it sits, then gives the concepts, the
 implementation, the differences between chips, the measurements and the limits. The API reference
@@ -153,6 +153,8 @@ Contents
    dev/dma-chains
    dev/hot-loops
    dev/ideas-from-elsewhere
+   dev/s31-link
+   dev/s31-fpga-bridge
    dev/registers-esp32s3
    dev/registers-esp32c6
 

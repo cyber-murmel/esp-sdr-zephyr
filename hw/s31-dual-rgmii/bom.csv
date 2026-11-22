@@ -1,0 +1,18 @@
+refs,qty,value,footprint,lcsc,note
+C101 C201,2,10u,Capacitor_SMD:C_0805_2012Metric,,+5V input of the regulator
+C102 C202,2,22u,Capacitor_Tantalum_SMD:CP_EIA-3528-21_Kemet-B,,3V3 bulk next to the module; tantalum or polymer for the AMS1117
+C103 C104 C203 C204 C301 C311,6,100n,Capacitor_SMD:C_0402_1005Metric,,"3V3 decoupling at a module 3V3 pin; supply of the delay buffer, from the receiving side's 3V3"
+C105 C205,2,1u,Capacitor_SMD:C_0402_1005Metric,,EN delay (10k and 1u)
+D101 D201,2,SS34,Diode_SMD:D_SMA,,3 A; VBUS to the common +5V: no back-powering through the RGMII pads
+J101 J201,2,USB-C receptacle 16P,Connector_USB:USB_C_Receptacle_GCT_USB4105-xx-A_16P_TopMnt_Horizontal,,power and USB-Serial-JTAG; pads as in the KiCad footprint
+J102 J202,2,UART0 TX RX GND,Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical,,
+J103 J203,2,IO2 (PPS) IO3 GND,Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical,,
+R101 R102 R201 R202,4,5.1k,Resistor_SMD:R_0402_1005Metric,,CC1 pull-down (USB sink); CC2 pull-down (USB sink)
+R103 R104 R203 R204,4,10k,Resistor_SMD:R_0402_1005Metric,,EN pull-up; IO61 (BOOT) pull-up
+R301 R302 R303 R304 R305 R306 R308 R311 R312 R313 R314 R315 R316 R318,14,22R,Resistor_SMD:R_0402_1005Metric,,series at the driver (RGMII data line); series at the driver (TXC); series at the delay buffer output (TXC)
+R307 R317,2,0R,Resistor_SMD:R_0402_1005Metric,,"DNP by default; option 1, clock bypass (no delay): fit it and leave the buffer and its 22R off"
+SW101 SW201,2,Reset,Button_Switch_SMD:SW_SPST_TL3342,,EN to GND
+SW102 SW202,2,Boot,Button_Switch_SMD:SW_SPST_TL3342,,IO61 to GND: download mode at reset
+U101 U201,2,ESP32-S31-WROOM-3,esp-sdr:ESP32-S31-WROOM-3,,custom footprint: draw it from the datasheet land pattern
+U102 U202,2,AMS1117-3.3,Package_TO_SOT_SMD:SOT-223-3_TabPin2,,1 A; dropout 1.1 to 1.3 V is tight from USB 5 V; needs an output capacitor with ESR (tantalum or polymer)
+U301 U311,2,74LVC1G34,Package_TO_SOT_SMD:SOT-353_SC-70-5,C52140426,"option 2 (default), delay buffer near the receiver; the LCSC part is an MDD clone with no timing data, prefer Nexperia or TI; 0.5/2.0/4.1 ns (min/typ/max)"

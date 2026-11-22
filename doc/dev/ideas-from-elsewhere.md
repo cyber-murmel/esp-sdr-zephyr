@@ -1,7 +1,7 @@
 # Ideas from elsewhere
 
 <!-- nav-start -->
-Previous: [Hot loops](hot-loops.md) · Up: [Reference](index.md) · Next: [ESP32-S3 registers](registers-esp32s3.md)
+Previous: [Hot loops](hot-loops.md) · Up: [Reference](index.md) · Next: [S31 PHY-less Ethernet links](s31-link.md)
 <!-- nav-end -->
 
 This page records what was taken or left from six outside projects, each reviewed against this
@@ -422,5 +422,5 @@ AES-128. The CH572 adds BLE 5.0 broadcaster and peripheral roles.
 **Status:** deferred: no CH570 board.
 
 <!-- nav-start -->
-Previous: [Hot loops](hot-loops.md) · Up: [Reference](index.md) · Next: [ESP32-S3 registers](registers-esp32s3.md)
+Previous: [Hot loops](hot-loops.md) · Up: [Reference](index.md) · Next: [S31 PHY-less Ethernet links](s31-link.md)
 <!-- nav-end -->
