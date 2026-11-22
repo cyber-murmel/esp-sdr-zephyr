@@ -306,7 +306,7 @@ Dependencies
      - The ESP32-S3 FFT kernels for ``apps/link`` OFDM, the MicroPython app's Scan
        (``apps/common/esp_dsp.cmake``) and ``apps/ubertooth``'s spectrum analyser
    * - `MicroPython zsdr <https://github.com/cyber-murmel/micropython/tree/zsdr>`__ (a Zephyr
-       module)
+       module; ``CONFIG_MICROPY_STDIO_HOOK`` gives the REPL to an SSH session on the ESP32-S31)
      - fork
      - ``apps/micropython``
    * - micropython-lib

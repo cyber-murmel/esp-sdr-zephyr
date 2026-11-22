@@ -4,7 +4,7 @@
  * The partial link (-r) of an extension on RISC-V, where llext loads relocatable objects. Each
  * output section groups one kind, as Zephyr's cmake/linker/llext_relocatable.ld does, so that each
  * llext region spans one stretch of the file; and:
- * - one .bss: llext takes a single NOBITS section (libphy alone has six);
+ * - one .bss (with the .noinit sections, which are NOBITS too): llext takes a single NOBITS section (libphy alone has six; exports.py fails the build on a second);
  * - .module_fast: IRAM_ATTR code, which a module built INTERNAL runs from internal RAM
  *   (llext_load_param.text_alt_section, src/apps.c); in other extensions it is code like the rest;
  * - the kernel objects defined statically (K_SEM_DEFINE() and the like) with the data;
@@ -35,8 +35,8 @@ SECTIONS
 		*(.data .data.* .sdata .sdata.* .dram1 .dram1.* ._k_*)
 	}
 	.bss : {
-		KEEP(EXCLUDE_FILE(*/components/*) *_ext_llext_lib.dir/*(.bss .bss.* .sbss .sbss.* COMMON))
-		*(.bss .bss.* .sbss .sbss.* COMMON)
+		KEEP(EXCLUDE_FILE(*/components/*) *_ext_llext_lib.dir/*(.bss .bss.* .sbss .sbss.* COMMON .noinit .noinit.*))
+		*(.bss .bss.* .sbss .sbss.* COMMON .noinit .noinit.*)
 	}
 	.preinit_array : { KEEP(*(.preinit_array .preinit_array.*)) }
 	.init_array    : { KEEP(*(.init_array .init_array.*)) }

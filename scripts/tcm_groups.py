@@ -13,6 +13,9 @@ in group 0. An ELF with no section in the TCM, or without those symbols, fails t
 the receive pool are: the stacks of the threads with slack in PSRAM, everything the stream's timing, CPU 1 and
 the MAC use in internal RAM (the section names carry a counter that changes with the configuration; this is
 where a stack that stayed behind shows). The PSRAM and LP RAM sections are listed and totalled too.
+--mp-ext <micropython.llext> [--arena-min N] checks the MicroPython extension of the multiapp host (apps/multiapp/micropython.cmake):
+it defines no thread stack in PSRAM (its bss is there) but the ones that never touch the flash, and the host's libc arena
+(_end up to _heap_sentry), from which its thread's stack comes, is at least N bytes.
 --multiapp checks the multiapp host's S31 placement (net_psram_s31.ld, multiapp_lpram_s31.ld): the net_buf data
 pools (the MAC's and the USB classes'; MCUmgr's two, CPU copies, are in LP RAM with its work queue's stack) and the MAC's descriptors and SCSI buffers internal, no k_heap or slab in
 PSRAM, no slab or interrupt/idle stack in LP RAM, no stack of a thread that touches the flash in PSRAM, the stream's
@@ -79,6 +82,32 @@ MA_EXPECT_INTERNAL = ("app_stack", "usbd_stack", "udc_dwc2_stack_0", "z_interrup
                       "net_buf_data_rx_bufs", "net_buf_data_tx_bufs", "dwmac_rx_descs", "dwmac_tx_descs",
                       "dwmac_instance", "_system_heap")
 MA_PSRAM_OK = ("net_buf_data_mdns_msg_pool", "net_buf_data_dns_msg_pool")
+
+
+# MicroPython's extension (--mp-ext): its data and bss are in PSRAM, so a thread of it with a stack there must never touch the
+# flash. Its own thread's stack is not a symbol: it comes from the libc arena (ext/mp/mp_repl_s31.c). Known stacks: esdr's
+# radio worker (bursts only) and MicroPython's own (mp_stack_mem: its flash accesses run on a worker
+# with an internal stack, and src/flashguard.c refuses a flash operation from a PSRAM stack at run time).
+MP_EXT_STACKS_OK = ("worker_stack", "mp_stack_mem")
+MP_STACK_NAME = re.compile(r"(^|_)stack($|_|\d)")
+
+
+def parse_objects(text):
+    """{name: [(value, size)]} of the data objects (not functions), from readelf -sW."""
+    syms = {}
+    for m in re.finditer(r"^\s*\d+:\s+([0-9a-f]+)\s+(\d+)\s+OBJECT\s+\S+\s+\S+\s+\S+\s+(\S+)$", text, re.M):
+        syms.setdefault(m.group(3), []).append((int(m.group(1), 16), int(m.group(2))))
+    return syms
+
+
+def check_mp_ext(allsyms):
+    """Problems of the MicroPython extension's stacks (data objects), as strings."""
+    bad = []
+    for name, lst in allsyms.items():
+        if MP_STACK_NAME.search(name) and name not in MP_EXT_STACKS_OK and any(sz >= 256 for _, sz in lst):
+            bad.append(f"{name}: a thread stack in the MicroPython extension (PSRAM): a thread that touches the flash "
+                       f"stalls there; take it from the libc arena like mp_repl_s31.c, or list it in MP_EXT_STACKS_OK")
+    return bad
 
 
 MODULE_HEAP_SLACK = 1536
@@ -299,6 +328,15 @@ def selftest():
     assert check_multiapp({**ma, **ssh, "sshd_work_stack": [(0x50000100, 6144)]}), "the work thread's stack in PSRAM"
     assert check_multiapp({**ma, **ssh, "_mbedtls_heap": [(0x2F060000, 131072)]}), "the mbedTLS heap internal"
     assert check_multiapp({**ma, **ssh, "ssh_server_instances": [(0x50000100, 25408)]}), "the server's object in PSRAM"
+    objs = parse_objects("    10: 00045170  2048 OBJECT  GLOBAL DEFAULT    16 worker_stack\n"
+                         "    11: 0001b190  32768 OBJECT  LOCAL  DEFAULT    16 mp_stack_mem\n"
+                         "    12: 000099a2    30 FUNC    LOCAL  DEFAULT     3 adjust_stack\n")
+    assert sorted(objs) == ["mp_stack_mem", "worker_stack"], objs
+    mp = objs
+    assert check_mp_ext(mp) == [], check_mp_ext(mp)
+    assert check_mp_ext({**mp, "mp_stack": [(0x2000, 16384)]}), "a flash thread's stack in the extension"
+    assert check_mp_ext({**mp, "scan_stack": [(0x2000, 3584)]}), "an unknown stack in the extension"
+    assert check_mp_ext({**mp, "stack": [(0x2000, 512)]}), "a plain stack"
     assert check_multiapp({**ma, "kheap_x": [(0x50000000, 64)]}), "k_heap in PSRAM"
     assert check_multiapp({**ma, "_k_mem_slab_buf_rx_pkts": [(0x2E000000, 64)]}), "slab in LP RAM"
     print("tcm_groups selftest: ok")
@@ -313,6 +351,10 @@ def main():
     ap.add_argument("--module-heap", metavar="SIZE:LLEXT[:LLEXT...]",
                     help="the module heap's size and the INTERNAL modules that load into it in a boot of "
                          "an app without BANK2 (rfprobe, capture): fails below 1536 bytes of slack")
+    ap.add_argument("--mp-ext", metavar="LLEXT", help="the MicroPython extension: no thread stack of it in PSRAM "
+                    "but the known ones")
+    ap.add_argument("--arena-min", type=int, metavar="BYTES", help="with --mp-ext: the libc arena must have at least this")
+    ap.add_argument("--arena-note", help="with --arena-min: what the minimum is made of (in the messages)")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
@@ -346,6 +388,20 @@ def main():
             return 1
         print("PASS: net_buf pools and MAC descriptors internal, no k_heap or slab in PSRAM, no flash thread "
               "stack in PSRAM, the stream's stacks internal, the snippets' patterns hit their objects")
+    if a.mp_ext:
+        bad = check_mp_ext(parse_objects(run("-sW", a.mp_ext)))
+        if a.arena_min is not None:
+            arena = syms.get("_heap_sentry", 0) - syms.get("_end", 0)
+            note = f" = {a.arena_note}" if a.arena_note else ""
+            print(f"MicroPython: libc arena {arena} B, needs {a.arena_min} B{note}")
+            if arena < a.arena_min:
+                bad.append(f"libc arena {arena} B < {a.arena_min} B{note}: the flash worker's stack (taken from the arena) would not fit "
+                           "(worker stack = its measured peak / 0.9 from esdr.stacks(): CONFIG_MULTIAPP_MICROPYTHON_WORKER_STACK; "
+                           "the rest: CONFIG_MULTIAPP_MICROPYTHON_ARENA_USE)")
+        if bad:
+            print("FAIL: " + "; ".join(bad))
+            return 1
+        print("PASS: no flash thread stack in the MicroPython extension, the arena holds its thread")
     if a.module_heap:
         size, *mods = a.module_heap.split(":")
         slack = module_heap_slack(int(size), mods)

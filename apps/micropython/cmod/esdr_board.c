@@ -373,7 +373,45 @@ static mp_obj_t esdr_shift(void)
 }
 MP_DEFINE_CONST_FUN_OBJ_0(esdr_shift_obj, esdr_shift);
 
-#if defined(CONFIG_SHELL_BACKEND_DUMMY)
+#if defined(ESDR_STACKS)
+/* stacks() -> (python stack, its peak, flash worker's stack, its peak, libc arena free, libc arena allocated) in bytes:
+ * the numbers the stack sizes and the arena's use come from */
+static mp_obj_t esdr_stacks(void)
+{
+	size_t v[6] = {0};
+	mp_obj_t items[6];
+
+	ESDR_STACKS(v);
+	for (int i = 0; i < 6; i++) {
+		items[i] = mp_obj_new_int_from_uint(v[i]);
+	}
+	return mp_obj_new_tuple(6, items);
+}
+MP_DEFINE_CONST_FUN_OBJ_0(esdr_stacks_obj, esdr_stacks);
+#endif
+
+#if defined(ESDR_SHELL_RUN)
+/* shell(cmd) -> str: a command of the host's Zephyr shell, run by the host (ESDR_SHELL_RUN: apps/multiapp, ESP32-S31, on a
+ * worker, since MicroPython's own thread must not touch the flash); what it printed. */
+#define ESDR_SHELL_OUT 2048
+static mp_obj_t esdr_shell(mp_obj_t cmd_in)
+{
+	const char *cmd = mp_obj_str_get_str(cmd_in);
+	char *buf = m_new(char, ESDR_SHELL_OUT);
+	size_t len = 0;
+	int ret;
+	mp_obj_t out;
+
+	ret = ESDR_SHELL_RUN(cmd, buf, ESDR_SHELL_OUT, &len);
+	if (ret < 0 && len == 0) {
+		m_del(char, buf, ESDR_SHELL_OUT);
+		mp_raise_OSError(-ret);
+	}
+	out = mp_obj_new_str(buf, len);
+	m_del(char, buf, ESDR_SHELL_OUT);
+	return out;
+}
+#elif defined(CONFIG_SHELL_BACKEND_DUMMY)
 /* shell(cmd) -> str: run a shell command on the dummy backend, return what it printed. The
  * port's zephyr.shell_exec() needs the serial backend, which the REPL's console cannot share. */
 static mp_obj_t esdr_shell(mp_obj_t cmd_in)
@@ -395,5 +433,7 @@ static mp_obj_t esdr_shell(mp_obj_t cmd_in)
 	}
 	return mp_obj_new_str(out, len);
 }
+#endif
+#if defined(ESDR_SHELL_RUN) || defined(CONFIG_SHELL_BACKEND_DUMMY)
 MP_DEFINE_CONST_FUN_OBJ_1(esdr_shell_obj, esdr_shell);
 #endif

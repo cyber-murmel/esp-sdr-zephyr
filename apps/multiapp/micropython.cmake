@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # apps/micropython as an app of this host (doc/apps/multiapp-internals.md): the port, its C modules
-# and frozen Python, built as one extension. The host stays CONFIG_MICROPYTHON=n, so the module's
+# and frozen Python, built as one extension. On the ESP32-S31 (doc/dev/network-services.md, "The
+# MicroPython REPL over SSH") the same, as a RISC-V relocatable object, without the S3's own USB disks,
+# its Xtensa assembly (esp-dsp's FFT, the Scan app's vector passes) and the display. The host stays CONFIG_MICROPYTHON=n, so the module's
 # own build does not run; this builds the same sources with the same flags
 # (ports/zephyr/CMakeLists.txt) and the rules of MicroPython's py/mkrules.cmake into the extension's
 # target. ext/mp/ has what differs.
@@ -18,6 +20,10 @@ include(${MICROPY_DIR}/extmod/extmod.cmake)
 
 set(USER_C_MODULES ${mp_app}/cmod)
 set(mp_kconfig ${mp_ext}/micropython.conf)
+if(CONFIG_SOC_SERIES_ESP32S31)
+  # The REPL's stream hook (ext/mp/mp_repl_s31.c) and what the chip's esdr module (cmod/esdr_local.c) needs.
+  list(APPEND mp_kconfig ${mp_ext}/micropython_s31.conf)
+endif()
 set(mp_options)
 set(mp_include_dirs)
 set(mp_definitions)
@@ -107,14 +113,48 @@ set(mp_defines
   ${mp_definitions}
 )
 
-# The Scan app's FFT kernel and frame passes (cmod/esdr_scan_pie.c): assembly, so beside the C
-# modules, whose sources MicroPython's qstr pass reads.
-include(${apps_dir}/common/esp_dsp.cmake)
-esp_dsp_s3_fft(mp_esp_dsp)
+# What differs by chip: the S3's own USB disks and boot thread (boot.c, usb_disks.c), Xtensa assembly and
+# its setjmp; the S31's thread, REPL stream and radio glue (ext/mp/mp_repl_s31.c, cmod/esdr_local.c).
+set(mp_chip_sources)
+set(mp_chip_options)
+if(CONFIG_SOC_SERIES_ESP32S3)
+  # The Scan app's FFT kernel and frame passes (cmod/esdr_scan_pie.c): assembly, so beside the C
+  # modules, whose sources MicroPython's qstr pass reads.
+  include(${apps_dir}/common/esp_dsp.cmake)
+  esp_dsp_s3_fft(mp_esp_dsp)
+  list(APPEND mp_chip_sources
+    ${mp_app}/src/boot.c
+    ${mp_app}/src/setjmp.S
+    ${mp_app}/src/usb_disks.c
+    ${mp_esp_dsp}
+    ${mp_app}/cmod/esdr_scan_vec.S
+    # esdr.shell() on a dummy backend of its own (the S31's goes to the host's shell: mp_repl_s31.c)
+    ${ZEPHYR_BASE}/subsys/shell/backends/shell_dummy.c)
+  list(APPEND mp_chip_options AREA CONSOLE USB 12 VERSION_SCRIPT ${mp_ext}/micropython.ver WRAP setjmp)
+elseif(CONFIG_SOC_SERIES_ESP32S31)
+  # Its own thread (the REPL needs more stack than the app's), the console mux's REPL, the local radio
+  # (bursts through the sdr module; the C modules' list is cmod/micropython.cmake's) and the crystal
+  # calibration requests it answers (the host has esdr_cal.c only inside osmosdr_hs: this is its own copy).
+  # No esp-dsp FFT: the Scan app's spectra use the portable code (cmod/esdr_scan.c) here.
+  list(APPEND mp_chip_sources
+    ${mp_ext}/mp_repl_s31.c
+    ${mp_app}/cmod/esdr_local.c
+    ${mp_app}/cmod/esdr_mon.c
+    ${apps_dir}/common/src/esdr_cal.c)
+  list(APPEND mp_includes ${apps_dir}/osmosdr/src)
+  # The host's USB device has the drive; this app brings no disks (profile 0x4, MSC): a console app.
+  # WRAP: what reaches the flash is refused or sent to the worker (mp_repl_s31.c)
+  list(APPEND mp_chip_options CONSOLE USB 0
+       WRAP flash_area_read flash_area_write flash_area_erase disk_access_read disk_access_write sys_reboot)
+else()
+  message(FATAL_ERROR "multiapp: MicroPython is built for the ESP32-S3 and the ESP32-S31 only")
+endif()
 
 # Its stack is one the area holds, as the flash needs (src/boot.c): main() only starts that thread.
-multiapp_extension(micropython APP ${mp_app} APP_CONF ${mp_ext}/app.conf STACK 1536 AREA FILE_ONLY
-  CONSOLE USB 12 REQUIRES sdr ${mp_options} # MULTIAPP_USB_MSC | MULTIAPP_USB_OWN_DISKS
+# The S3's main() only starts the thread (STACK 1536); the S31's, too (mp_repl_s31.c).
+# USB 12: MULTIAPP_USB_MSC | MULTIAPP_USB_OWN_DISKS.
+multiapp_extension(micropython APP ${mp_app} APP_CONF ${mp_ext}/app.conf STACK 1536 FILE_ONLY
+  REQUIRES sdr ${mp_options} ${mp_chip_options}
   KCONFIG ${mp_kconfig}
   KCONFIG_OWN "MICROPY.*" "SENSOR.*" "CONSOLE_HANDLER" "UART_CONSOLE_DEBUG_SERVER_HOOKS"
               "SHELL_BACKEND_DUMMY" "SHELL_PROMPT_DUMMY" "SHELL_BACKEND_DUMMY_.*" "SHELL_DUMMY_.*"
@@ -130,20 +170,38 @@ multiapp_extension(micropython APP ${mp_app} APP_CONF ${mp_ext}/app.conf STACK 1
   # log level are the host's, whatever the board's fragment sets for the standalone app.
   KCONFIG_DROP "ADE7978_.*" "HEAP_MEM_POOL_SIZE" "ESP_HAL_EARLY_LOG_LEVEL"
   PRELUDE ${mp_ext}/mp_prelude.h
-  WRAP setjmp
-  VERSION_SCRIPT ${mp_ext}/micropython.ver
   INCLUDES ${mp_includes}
   DEFINES ${mp_defines}
   SOURCES ${MICROPY_SOURCE_QSTR}
           ${MICROPY_PORT_DIR}/src/zephyr_getchar.c
-          ${mp_app}/src/boot.c
-          ${mp_app}/src/setjmp.S
-          ${mp_app}/src/usb_disks.c
-          ${ZEPHYR_BASE}/subsys/shell/backends/shell_dummy.c
           ${mp_ext}/mp_glue.c
-          ${mp_esp_dsp}
-          ${mp_app}/cmod/esdr_scan_vec.S)
+          ${mp_chip_sources})
 llext_compile_options(micropython_ext -std=gnu99 -fomit-frame-pointer)
+if(CONFIG_SOC_SERIES_ESP32S31)
+  # After the link: the extension's thread stacks are in PSRAM, so only ones that never touch the flash may be
+  # there (MicroPython's own: its flash accesses run on the worker, ext/mp/mp_repl_s31.c); the libc arena holds the
+  # worker's stack (taken at the first esdr.shell()) and what else takes the arena after MicroPython started
+  # (measured: CONFIG_MULTIAPP_MICROPYTHON_ARENA_USE).
+  set(mp_stack ${CONFIG_MULTIAPP_MICROPYTHON_WORKER_STACK})
+  set(mp_stack_note "the flash worker's, CONFIG_MULTIAPP_MICROPYTHON_WORKER_STACK")
+  if(CONFIG_MULTIAPP_MICROPYTHON_ARENA_USE GREATER 0)
+    set(mp_others ${CONFIG_MULTIAPP_MICROPYTHON_ARENA_USE})
+    set(mp_others_note "measured")
+  else()
+    set(mp_others 8192)
+    set(mp_others_note "assumed, not measured")
+  endif()
+  math(EXPR mp_arena_min "${mp_stack} + ${mp_others}")
+  add_custom_target(micropython_placement ALL
+    COMMAND ${CMAKE_COMMAND} -E env READELF=${CMAKE_READELF}
+            ${PYTHON_EXECUTABLE} ${apps_dir}/../scripts/tcm_groups.py
+            --mp-ext ${ext_dir}/micropython.llext --arena-min ${mp_arena_min}
+            --arena-note "worker stack ${mp_stack} B (${mp_stack_note}) + the rest of the arena ${mp_others} B (${mp_others_note})"
+            ${PROJECT_BINARY_DIR}/zephyr/${KERNEL_ELF_NAME}
+    COMMENT "MicroPython placement check"
+    VERBATIM)
+  add_dependencies(micropython_placement ${logical_target_for_zephyr_elf} micropython_ext)
+endif()
 if(CONFIG_MULTIAPP_MICROPYTHON_GUI)
   # As CONFIG_WARN_DEPRECATED=n gives the standalone build: the binding wraps LVGL's deprecated functions too.
   llext_compile_options(micropython_ext -Wno-deprecated-declarations)

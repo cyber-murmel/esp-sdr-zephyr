@@ -113,41 +113,78 @@ extern bool usb_sdr_enabled(void);
  * flash is free again for updates and key changes. Any other ring (an app without that USB class) is a stream as
  * long as it runs.
  */
+/* What the verdicts were, for `ssh status` (stream_diag()): the inputs of the last call and how often each branch said no */
+static struct {
+	atomic_t calls, no_ring, no_consumer;
+	atomic_t last_ring, last_in_age, ring_seen_age, max_in_age_live;
+} sd;
+
 static bool stream_busy(void)
 {
 	static struct k_spinlock lock;
 	static bool ring_seen;
 	static uint32_t ring_since;
 	k_spinlock_key_t key;
-	uint32_t now, last, since;
+	uint32_t now, last, since, ctl;
+	bool ring, live;
 
+	atomic_inc(&sd.calls);
 	if (atomic_get(&stream_holds) > 0) {
 		return true;
 	}
-	if (!multiapp_ring_running()) {
+	/* "last" first: a transfer that finishes between the reads is then not after "now" */
+	last = multiapp_osmosdr_last_in_ms();
+	ctl = multiapp_osmosdr_last_ctl_ms();
+	ring = multiapp_ring_running();
+	now = k_uptime_get_32();
+	atomic_set(&sd.last_ring, ring ? 1 : 0);
+	atomic_set(&sd.last_in_age, last != 0U ? (atomic_val_t)(now - last) : -1);
+	if (!ring) {
 		key = k_spin_lock(&lock);
 		ring_seen = false;
 		k_spin_unlock(&lock, key);
+		atomic_inc(&sd.no_ring);
 		return false;
 	}
 	if (!usb_sdr_enabled()) {
 		return true;
 	}
 	/*
-	 * Callers run on several threads: the first look and the reads of "last" and "now" are one step, so that
-	 * ring_since is never later than the "now" of another caller (an unsigned age would wrap). "last" is read
-	 * first: a transfer that finishes between the two reads is then not after "now".
+	 * Callers run on several threads: the first look is one step with the read of "now" and ring_since is
+	 * never later than the "now" of another caller (an unsigned age would wrap).
 	 */
 	key = k_spin_lock(&lock);
-	last = multiapp_osmosdr_last_in_ms();
-	now = k_uptime_get_32();
 	if (!ring_seen) {
 		ring_since = now;
 		ring_seen = true;
 	}
+	/* A control OUT of the PC since the ring was first seen is a start or restart: the ring may have gone off and on
+	 * between two looks, and a new stream gets its first window as well */
+	if (ctl != 0U && (int32_t)(ctl - ring_since) > 0 && (int32_t)(now - ctl) >= 0) {
+		ring_since = ctl;
+	}
 	since = ring_since;
 	k_spin_unlock(&lock, key);
-	return stream_consumer_live(now, last, since, CONSUMER_MS);
+	atomic_set(&sd.ring_seen_age, (atomic_val_t)(now - since));
+	live = stream_consumer_live(now, last, since, CONSUMER_MS);
+	if (live && last != 0U && (atomic_val_t)(now - last) > atomic_get(&sd.max_in_age_live)) {
+		atomic_set(&sd.max_in_age_live, (atomic_val_t)(now - last));
+	}
+	if (!live) {
+		atomic_inc(&sd.no_consumer);
+	}
+	return live;
+}
+
+/* `ssh status`: the inputs of the verdict and how often each branch said "not busy" since the boot */
+void multiapp_net_stream_diag(char *buf, size_t len)
+{
+	(void)snprintf(buf, len,
+		       "stream: last ring %s, last IN %d ms ago, ring seen %d ms; verdicts %d: no ring %d, no consumer %d; oldest IN of a live stream %d ms",
+		       atomic_get(&sd.last_ring) ? "running" : "stopped", (int)atomic_get(&sd.last_in_age),
+		       (int)atomic_get(&sd.ring_seen_age), (int)atomic_get(&sd.calls), (int)atomic_get(&sd.no_ring),
+		       (int)atomic_get(&sd.no_consumer),
+		       (int)atomic_get(&sd.max_in_age_live));
 }
 
 /* The same rule for the other network services (SSH, src/sshd.c): no flash access while a stream runs */

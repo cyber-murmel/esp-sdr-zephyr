@@ -187,7 +187,11 @@ MP_REGISTER_ROOT_POINTER(mp_obj_t esdr_scan_src);
  * On the other CPU from the interpreter, at or below its priority (the S3's and S31's at 0, the
  * P4's at 10): this CPU's radio and engine threads first.
  */
+#if defined(ESDR_SCAN_PRIO)
+#define SCAN_PRIO  ESDR_SCAN_PRIO
+#else
 #define SCAN_PRIO  K_PRIO_PREEMPT(10)
+#endif
 /* frame32()'s two int32 arrays (2 KB), the 16-bit kind's 1 KB frame. */
 #define SCAN_STACK 3584
 

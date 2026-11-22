@@ -18,6 +18,8 @@
 #include <zephyr/llext/buf_loader.h>
 #include <zephyr/llext/llext.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/logging/log_backend.h>
+#include <zephyr/logging/log_ctrl.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/shell/shell_uart.h>
 #include <zephyr/sys/crc.h>
@@ -1070,8 +1072,22 @@ static int console_take(void)
 {
 	const struct shell *sh = shell_backend_uart_get_ptr();
 
+	int ret;
+
 	shell_uninit(sh, NULL);
-	return k_thread_join(sh->thread, K_SECONDS(1));
+	ret = k_thread_join(sh->thread, K_SECONDS(1));
+#if defined(CONFIG_SOC_SERIES_ESP32S31) && defined(CONFIG_LOG_BACKEND_UART) && DT_HAS_CHOSEN(zephyr_console) && \
+	DT_HAS_CHOSEN(zephyr_shell_uart)
+	/* The shell was on the console's UART (the UART build): the log must not print into the app's console */
+	if (ret == 0 && DT_SAME_NODE(DT_CHOSEN(zephyr_shell_uart), DT_CHOSEN(zephyr_console))) {
+		STRUCT_SECTION_FOREACH(log_backend, backend) {
+			if (strcmp(backend->name, "log_backend_uart") == 0) {
+				log_backend_disable(backend);
+			}
+		}
+	}
+#endif
+	return ret;
 }
 
 int multiapp_start(const char *name)

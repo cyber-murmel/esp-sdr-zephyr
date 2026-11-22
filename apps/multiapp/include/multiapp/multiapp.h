@@ -164,6 +164,15 @@ bool multiapp_bank2_reserved(void);
 void *multiapp_psram_spare(size_t *size);
 
 /*
+ * Run a command of the host's Zephyr shell for a caller inside the host (an extension: MicroPython's esdr.shell()). The
+ * output, with the shell's line ends (CR LF), goes to @p out in pieces. The command runs on the calling thread, which
+ * must therefore be one that may touch the flash (an internal stack). 0 or the shell's negative errno; -EBUSY when
+ * an SSH session has the shell for longer than a few seconds. Not while a stream runs: the caller checks.
+ */
+typedef void (*multiapp_shell_out_fn)(const void *data, size_t len, void *ctx);
+int multiapp_shell_exec(const char *cmd, multiapp_shell_out_fn out, void *ctx);
+
+/*
  * Make @p root, a root command of the loaded app, reachable from the host's
  * shell. An extension's SHELL_CMD_REGISTER() calls this from a constructor.
  */

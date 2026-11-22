@@ -973,6 +973,9 @@ drive. The file is only stat-ed at each boot, not read.
 
 ### MicroPython as an app
 
+(On the ESP32-S31 the same sources build as a RISC-V extension with the REPL on an SSH session too:
+[MicroPython on the S31](#micropython-on-the-s31).)
+
 The app is built by `micropython.cmake` and `ext/mp/`. The host stays `CONFIG_MICROPYTHON=n`, so the
 module's own build does not run.
 
@@ -1303,6 +1306,21 @@ After an abrupt reset the access point still has the board associated:
   177 ms (`capture`) to 238 ms (`link`), 386 ms for `wifitest`.
 - `link bench`'s float loop and power sum are 1.4 and 1.9 times slower than standalone. This is the
   shell on CPU 0 ([Radio in the host, older design](#radio-in-the-host-older-design)).
+
+### MicroPython on the S31
+
+Built from `micropython.cmake` as on the S3 (`CONFIG_SOC_SERIES_ESP32S31` picks the parts); the console mux and the SSH REPL are in
+[Phase 4](../dev/network-services.md#phase-4-the-micropython-repl-over-ssh). The summary:
+
+- `micropython.llext`, a RISC-V relocatable object of 1.0 MB, file only, in the extension heap in PSRAM; the host exports what it imports
+  (0.9 KB of internal RAM), and `micropython_placement` (`scripts/tcm_groups.py --mp-ext`) checks after the link that it holds no thread
+  stack in PSRAM but the two that never touch the flash, and that the libc arena holds the REPL thread's stack.
+- A console app on a USB profile of its own (0x4): `multiapp run micropython` is a reboot from every app, osmosdr_hs included (its
+  `BANK2` flag, TCM group 3, would force one as well: MicroPython's boot keeps the group as the dump engine's capture bank).
+- The thread (`ext/mp/mp_repl_s31.c`) has priority 13 and its stack in PSRAM (32 KB, the extension's bss; its flash accesses run on a worker with an internal stack, `src/flashguard.c` refuses a flash operation from a PSRAM stack: [Phase 4](../dev/network-services.md#phase-4-the-micropython-repl-over-ssh)). The port's stack check starts at that stack (`multiapp_mp_cstack_init()`).
+- The port's `uart_core.c` has a hook (`CONFIG_MICROPY_STDIO_HOOK`, `ports/zephyr/stdio_hook.h`, in the fork); `mp_repl_s31.c` registers
+  the REPL with `multiapp_console_register()` and sets the hook while an SSH session is the REPL's.
+- The host shell's log backend on UART0 is switched off when MicroPython takes a console that is on that UART (the UART variant).
 
 ### MicroPython on the devkit
 

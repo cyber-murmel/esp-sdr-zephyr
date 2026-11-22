@@ -729,6 +729,13 @@ endif()
 
 # MicroPython: the port, its C modules and frozen Python as an app.
 if(CONFIG_MULTIAPP_MICROPYTHON)
+  if(CONFIG_SOC_SERIES_ESP32S31)
+    # Its thread's stack is in PSRAM: a flash operation from such a thread is refused (src/flashguard.c)
+    target_sources(app PRIVATE src/flashguard.c)
+    foreach(fn read write erase_region read_encrypted write_encrypted)
+      zephyr_link_libraries(-Wl,--wrap=esp_flash_${fn})
+    endforeach()
+  endif()
   include(${CMAKE_CURRENT_LIST_DIR}/micropython.cmake)
 endif()
 

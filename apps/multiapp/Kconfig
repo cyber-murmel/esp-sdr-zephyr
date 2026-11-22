@@ -132,7 +132,56 @@ config MULTIAPP_MICROPYTHON
 	  The port, its C modules and frozen Python are one extension,
 	  micropython.llext on the volume (micropython.cmake). The host keeps
 	  what they need from the kernel, /FLASH: and the USB device; "multiapp
-	  run micropython" reboots into its REPL on the CDC-ACM port.
+	  run micropython" reboots into its REPL on the CDC-ACM port. On the
+	  ESP32-S31 the REPL is also what a plain "ssh <host>" gets
+	  (doc/dev/network-services.md, "Phase 4").
+
+config MULTIAPP_MICROPYTHON_STACK
+	int "MicroPython thread stack on the ESP32-S31, bytes (PSRAM)"
+	depends on MULTIAPP_MICROPYTHON && SOC_SERIES_ESP32S31
+	default 32768
+	help
+	  In PSRAM, in the extension's bss: Python's recursion needs depth that internal RAM cannot
+	  spare (8 KB gave a recursion depth of 11). A thread with its stack in PSRAM must never touch
+	  the flash itself (the cache is off during a flash operation): what MicroPython calls that
+	  can, esdr.shell(), runs on a worker with an internal stack, and src/flashguard.c refuses a
+	  flash operation of such a thread. esdr.stacks() gives the peak.
+
+config MULTIAPP_MICROPYTHON_WORKER_STACK
+	int "Stack of the worker that runs MicroPython's flash accesses, bytes (internal)"
+	depends on MULTIAPP_MICROPYTHON && SOC_SERIES_ESP32S31
+	default 2144
+	help
+	  From the libc arena, when esdr.shell() or a calibration request first needs it; it has no guard,
+	  an overflow would corrupt the arena. Sized by the stack headroom rule (at most 90 % used) from
+	  the peak measured on an ESP32-S31-Function-CoreBoard (esdr.stacks(), 2026-11-27, with a 4096
+	  byte stack): 1916 bytes over the HIL set, which reads and writes the volume and the settings
+	  (multiapp list, info and crash, kernel thread stacks, net iface, ssh status, ssh key add, list
+	  and remove, ssh keys reload, mcumgr arm and disarm, fs ls and statvfs, settings list). The
+	  read-only commands alone peaked at 1112. 1916 / 0.9 rounded up to 16 bytes is 2144. A log
+	  line says when a job has used 90 % of it, and the HIL test asserts the rule.
+
+config MULTIAPP_MICROPYTHON_STACK_MARGIN
+	int "Stack left to C callouts below MicroPython's recursion limit, bytes"
+	depends on MULTIAPP_MICROPYTHON && SOC_SERIES_ESP32S31
+	default 1024
+	help
+	  MicroPython stops recursing when the stack has this much left (MICROPY_STACK_CHECK_MARGIN).
+	  What runs past that point (the compiler, imports, an esdr call; host commands run on the
+	  worker) needs the deepest C stack of them over 0.9: the peak of a recursion test past the
+	  limit, from esdr.stacks(). Measured on the board (2026-11-27): a recursion goes 280 bytes
+	  past the limit, esdr.shell() at the deepest level stays below it; 280 / 0.9 is 311, so 1024
+	  holds.
+
+config MULTIAPP_MICROPYTHON_ARENA_USE
+	int "Measured libc arena use of everything else after MicroPython starts, bytes (0: not measured)"
+	depends on MULTIAPP_MICROPYTHON && SOC_SERIES_ESP32S31
+	default 0
+	help
+	  The build fails when the arena is smaller than this plus the worker's stack
+	  (scripts/tcm_groups.py --mp-ext). Unmeasured, 8192 bytes are assumed. To measure: after the
+	  HIL run, esdr.stacks()[5] is the arena's allocated bytes now; less the worker's stack (it is
+	  in them) is what the rest of the host takes.
 
 config MULTIAPP_MICROPYTHON_GUI
 	bool "MicroPython with a display"

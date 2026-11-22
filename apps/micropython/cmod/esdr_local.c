@@ -117,7 +117,12 @@
  * and takes its bursts back to back:
  * each capture parks the other core meanwhile (0.82 ms of some 2.7 at 2 MS/s), the radio first.
  */
+#if defined(ESDR_WORKER_PRIO)
+/* A host that is not MicroPython's alone (apps/multiapp: the network, USB and an SSH session run beside it). */
+#define WORKER_PRIO  ESDR_WORKER_PRIO
+#else
 #define WORKER_PRIO  K_PRIO_COOP(4)
+#endif
 #if defined(CONFIG_SCHED_CPU_MASK) && CONFIG_MP_MAX_NUM_CPUS > 1
 #define WORKER_OWN_CPU 1
 #endif
@@ -410,6 +415,38 @@ static int request(uint8_t req, uint16_t value, const void *data, uint16_t len, 
  * A gapless run holds the radio's lock on the worker's CPU: requests that take it pause the run
  * for their length. GET_STATE and SET_TX_GAIN touch no radio.
  */
+/*
+ * The calibration is in the settings on the flash (esdr_cal.c, esp_sdr_cal_load()/_save()). Where MicroPython's thread has
+ * its stack in PSRAM (apps/multiapp, ESP32-S31: ESDR_FLASH_CALL, ext/mp/mp_repl_s31.c) the flash may only be touched
+ * from a worker: GET_CAL and SET_CAL run there.
+ */
+struct cal_call {
+	bool set;
+	uint16_t op;
+	const uint8_t *data;
+	size_t len;
+	uint8_t *reply;
+	size_t reply_max;
+};
+
+static int cal_call_fn(void *arg)
+{
+	struct cal_call *c = arg;
+
+	return c->set ? esdr_cal_set(c->op, c->data, c->len) : esdr_cal_get(c->reply, c->reply_max);
+}
+
+static int cal_run(bool set, uint16_t op, const uint8_t *data, size_t len, uint8_t *reply, size_t reply_max)
+{
+	struct cal_call c = {.set = set, .op = op, .data = data, .len = len, .reply = reply, .reply_max = reply_max};
+
+#if defined(ESDR_FLASH_CALL)
+	return ESDR_FLASH_CALL(cal_call_fn, &c);
+#else
+	return cal_call_fn(&c);
+#endif
+}
+
 int esdr_remote_request(uint8_t req, uint16_t value, const void *data, uint16_t len,
 			void *reply, uint16_t reply_max)
 {
@@ -481,9 +518,9 @@ static int request(uint8_t req, uint16_t value, const void *data, uint16_t len, 
 		return 2;
 	}
 	case ESDR_REQ_GET_CAL:
-		return esdr_cal_get(reply, reply_max);
+		return cal_run(false, 0, NULL, 0, reply, reply_max);
 	case ESDR_REQ_SET_CAL: {
-		int ret = esdr_cal_set(value, data, len);
+		int ret = cal_run(true, value, data, len, NULL, 0);
 
 		/* The correction retuned: where the LO is now. */
 		center_update();

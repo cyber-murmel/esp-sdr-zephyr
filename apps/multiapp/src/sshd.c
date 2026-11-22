@@ -961,6 +961,12 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "keys: %d loaded of %d slots, %d listed%s", slots_used, KEY_SLOTS, entry_count,
 		    keys_loaded ? "" : " (the file was not read yet)");
 	shell_print(sh, "key file changes: %s", multiapp_net_stream_busy() ? "refused (a stream runs)" : "allowed");
+	{
+		char line[256];
+
+		multiapp_net_stream_diag(line, sizeof(line));
+		shell_print(sh, "%s", line);
+	}
 	return 0;
 }
 

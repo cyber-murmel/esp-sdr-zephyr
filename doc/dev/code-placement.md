@@ -435,6 +435,11 @@ image ([Measuring](#measuring)).
 The categories reach an extension's sections through `multiapp/ext.h`. How the loader places
 them is in [multiapp internals](../apps/multiapp-internals.md#modules).
 
+An extension's data and bss are in PSRAM, so a thread of an extension whose stack is a static object there must never touch the
+flash. MicroPython on the S31 touches it (`/FLASH:`): its thread's stack is allocated from the libc arena (internal RAM) when it
+starts, and `scripts/tcm_groups.py --mp-ext` fails the build if the extension defines any other thread stack than the two that do
+not (the radio worker and the dummy shell's; [phase 4](network-services.md#phase-4-the-micropython-repl-over-ssh)).
+
 | Region | In an extension |
 |---|---|
 | `ESP_SDR_IRAM` | `.module_fast` |

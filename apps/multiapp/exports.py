@@ -19,6 +19,7 @@ import argparse
 import re
 import struct
 import sys
+from pathlib import Path
 
 from elftools.elf.elffile import ELFFile
 
@@ -43,6 +44,57 @@ def symbols(elf):
     else:
         section = elf.get_section_by_name(".dynsym")
     return section.iter_symbols() if section is not None else ()
+
+
+def nobits_sections(path):
+    """The names of the NOBITS sections of a relocatable object (RISC-V): llext loads one at most."""
+    with open(path, "rb") as f:
+        elf = ELFFile(f)
+        if elf["e_type"] != "ET_REL":
+            return []
+        return [s.name for s in elf.iter_sections() if s["sh_type"] == "SHT_NOBITS" and s["sh_size"]]
+
+
+# Kernel objects the host initializes at boot by walking its own iterable sections (init_static_heaps(), the slabs' free lists,
+# net_buf_pool_init(), z_init_static_threads()): inside an extension nothing walks them, so a k_heap is an uninitialized
+# heap (a load fault at its first allocation, a board run: the dummy shell's history heap) and a K_THREAD_DEFINE thread
+# never starts. The semaphores, mutexes, queues and work items are initialized at compile time and are fine.
+BOOT_INIT_SECTION = re.compile(r"^\._(k_heap|k_mem_slab|net_buf_pool|static_thread_data)\.")
+
+
+def boot_init_objects(lib):
+    """The sections of the extension's own objects (CMakeFiles/<app>_ext_llext_lib.dir, before the link merges
+    the kernel sections into .data) that hold kernel objects needing the host's boot-time initialization."""
+    lib = Path(lib)
+    m = LIB_NAME.search(lib.name)
+    if m is None:
+        return []
+    objdir = lib.parent.parent / "CMakeFiles" / f"{m.group(1)}_ext_llext_lib.dir"
+    found = []
+    if not objdir.is_dir():
+        return found
+    # Only the objects the link used: the directory also holds those of sources dropped since. The FILE symbols of the
+    # link's output name the sources (a path or a plain name, "mp_repl_s31.c"), the objects are "<source>.obj" or ".o".
+    linked = set()
+    try:
+        with open(lib, "rb") as f:
+            symtab = ELFFile(f).get_section_by_name(".symtab")
+            if symtab is not None:
+                linked = {Path(sym.name).name for sym in symtab.iter_symbols() if sym["st_info"]["type"] == "STT_FILE"}
+    except Exception:
+        linked = set()
+    for obj in sorted(objdir.rglob("*.obj")) + sorted(objdir.rglob("*.o")):
+        source = obj.name[:-4] if obj.name.endswith(".obj") else obj.name[:-2]
+        if linked and source not in linked and Path(source).stem not in {Path(n).stem for n in linked}:
+            continue
+        try:
+            with open(obj, "rb") as f:
+                for sec in ELFFile(f).iter_sections():
+                    if BOOT_INIT_SECTION.match(sec.name):
+                        found.append(f"{obj.name}: {sec.name}")
+        except Exception:  # not an ELF object
+            continue
+    return found
 
 
 def imports(path):
@@ -180,6 +232,15 @@ def main():
                      "llext does not relocate PLT/GOT slots of weak symbols, so the call would "
                      "jump to the linker's unmapped PLT stub. Use a strong function or a "
                      "function pointer set at run time (see wifitest_stop_hook in ext/wifitest.c)")
+        nobits = nobits_sections(lib)
+        if len(nobits) > 1:
+            sys.exit(f"exports.py: {lib} has {len(nobits)} NOBITS sections ({', '.join(nobits)}); llext "
+                     "loads one. Merge the others into .bss in ext/llext_riscv.ld")
+        static = boot_init_objects(lib)
+        if static:
+            sys.exit(f"exports.py: {lib} defines kernel objects that need the host's boot-time initialization and get "
+                     f"none in an extension: {'; '.join(static)}. Allocate them at run time (k_heap_init(), "
+                     "k_mem_slab_init()) or leave the code that defines them out of the extension")
         names |= imports(lib)
         app = LIB_NAME.search(lib).group(1)
         if app in args.module:

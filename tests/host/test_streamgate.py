@@ -47,6 +47,14 @@ def test_a_consumer_that_reads_keeps_it_a_stream(gate):
     assert gate(200_000, 195_001, 100_000)
 
 
+def test_a_transfer_stamped_just_after_now_is_live(gate):
+    # Board 2026-11-27: the IN completion was stamped 1 ms after the caller's "now" (it used to set bit 0 of the
+    # uptime); its unsigned age wrapped and a live 20 MS/s stream read as "no consumer" one poll in five.
+    assert gate(200_000, 200_001, 100_000)
+    assert gate(200_000, 200_000 + W - 1, 100_000)
+    assert gate(WRAP - 1, 0 + 1, WRAP - 50_000)    # across the wrap
+
+
 def test_a_consumer_that_stops_ends_it(gate):
     assert not gate(200_000, 194_999, 100_000)
     assert not gate(200_000 + 60_000, 194_999, 100_000)
@@ -78,3 +86,4 @@ def test_wrap_of_the_uptime(gate):
 
 def test_never_a_transfer_after_the_ring_started_long_ago(gate):
     assert not gate(10_000_000, 0, 1_000)
+

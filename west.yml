@@ -90,10 +90,11 @@ manifest:
     # MicroPython as a Zephyr module: CONFIG_MICROPYTHON builds its Zephyr port as the
     # micropython library, which provides main() (apps/micropython). The zsdr branch: the
     # mp-lvgl branch that cyber-murmel/mp-lvgl-example pins (1.30.0-preview), its port change
-    # split into single commits, and this project's own.
+    # split into single commits, and this project's own (the stdio hook that apps/multiapp's
+    # S31 REPL over SSH uses).
     - name: micropython
       remote: cyber-murmel
-      revision: daffaee29caf7cae7486c02bcd0f1ec42ea8e0ae # zsdr branch
+      revision: cb8289081e815e2c0e12812c45cf6abf0d5a6894 # zsdr branch
       path: modules/micropython
     # The frozen modules' library (argparse, upysh, ...), where the port expects it.
     - name: micropython-lib

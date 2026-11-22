@@ -29,9 +29,10 @@ def shell(dut: DeviceAdapter) -> Shell:
 def test_files(shell: Shell):
     out = shell.exec_command("multiapp list")
     apps = [line for line in out if re.match(r"\w+\s+(\d+ bytes|-)", line)]
-    # hello, capture, rfprobe, osmosdr_hs and the radio's module.
-    assert len(apps) == 5, out
+    # hello, capture, rfprobe, osmosdr_hs, micropython (no built-in copy: too big) and the radio's module.
+    assert len(apps) == 6, out
     assert sum(", module" in line for line in apps) == 1, out
+    assert any(re.match(r"micropython\s+-, file \d+ bytes", line) for line in apps), out
     for line in apps:
         # Every app has its file, the same as the built-in copy.
         assert re.search(r"file \d+ bytes", line) and "differs" not in line, line
@@ -524,3 +525,320 @@ def test_ssh_host_key_survives_a_reboot(dut: DeviceAdapter, host_fingerprint, te
         pytest.fail("the board did not answer on SSH 2 minutes after the reset")
     _reconnect(dut)
     assert fp == host_fingerprint
+
+
+# ---- MicroPython as an app with its REPL over SSH (doc/dev/network-services.md, "The MicroPython REPL over
+# SSH"). These switch the app, which is a reboot, and restore the default app at the end: conftest.py runs them
+# last. The CDC-ACM shell is the REPL while MicroPython runs, so the board is reached over SSH and, for the
+# local console check, through the same serial port the shell used.
+
+import queue
+import threading
+
+MP_PROMPT = r">>> "
+
+
+class Repl:
+    """`ssh -tt <host>` (an interactive login: the REPL), with the output collected by a thread."""
+
+    def __init__(self, host, key):
+        cmd = [SSH, *SSH_OPTS, "-o", "BatchMode=yes", "-tt", "-i", str(key), host]
+        self.p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        self.buf = ""
+        self.pos = 0
+        self.q = queue.Queue()
+        self.t = threading.Thread(target=self._read, daemon=True)
+        self.t.start()
+
+    def _read(self):
+        while True:
+            data = os.read(self.p.stdout.fileno(), 4096)
+            if not data:
+                self.q.put(None)
+                return
+            self.q.put(data.decode(errors="replace"))
+
+    def send(self, data):
+        self.p.stdin.write(data if isinstance(data, bytes) else data.encode())
+        self.p.stdin.flush()
+
+    def expect(self, regex, timeout=30):
+        """Wait for `regex` in what came after the last match; the text up to the end of the match."""
+        deadline = time.monotonic() + timeout
+        while True:
+            m = re.compile(regex).search(self.buf, self.pos)
+            if m:
+                text = self.buf[self.pos:m.end()]
+                self.pos = m.end()
+                return text
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise AssertionError(f"no {regex!r} in {timeout} s; got {self.buf[self.pos:]!r}")
+            try:
+                data = self.q.get(timeout=left)
+            except queue.Empty:
+                continue
+            if data is None:
+                raise AssertionError(f"the session ended; got {self.buf[self.pos:]!r}")
+            self.buf += data
+
+    def close(self):
+        try:
+            self.p.stdin.close()
+        except OSError:
+            pass
+        try:
+            self.p.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            self.p.kill()
+            self.p.wait()
+
+
+def _exec_line(src):
+    """One REPL line that runs the Python source `src` (its own lines, indented): the REPL's auto-indent would mangle pasted blocks"""
+    import json
+    return "exec(" + json.dumps(src) + ")"
+
+
+def _wait_ssh(host, key, timeout=150):
+    """Until a login works again (after a reset the board needs DHCP and its server): the output of `kernel version`."""
+    time.sleep(10)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        rc, out, err = _ssh(host, key, remote=["kernel version"], timeout=60)
+        if rc == 0 and "Zephyr version" in out:
+            return out
+        time.sleep(4)
+    pytest.fail("the board did not answer on SSH in time")
+
+
+@pytest.fixture(scope="module")
+def micropython(dut: DeviceAdapter, test_keys, board_ip):
+    """The board running MicroPython (`multiapp run micropython` over SSH); at the end the default app again."""
+    key = test_keys["ed25519"]
+    _ssh(board_ip, key, remote=["multiapp run micropython"], timeout=40)
+    _reconnect(dut)
+    _wait_ssh(board_ip, key)
+    # The CDC-ACM port enumerated again while the board came up: take the new one, after the boot has settled
+    _reconnect(dut)
+    yield key
+    # Back to the board's own app, whatever the tests did: a reset brings the autostart app too.
+    _ssh(board_ip, key, remote=["multiapp run osmosdr_hs"], timeout=40)
+    _reconnect(dut)
+    _wait_ssh(board_ip, key)
+    rc, out, err = _ssh(board_ip, key, remote=["multiapp info"], timeout=60)
+    if "boot: osmosdr_hs" not in out:
+        _ssh(board_ip, key, remote=["kernel reboot cold"], timeout=30)
+        _reconnect(dut)
+        _wait_ssh(board_ip, key)
+    _reconnect(dut)
+
+
+@pytest.mark.switches_app
+@needs_ssh
+def test_mp_runs_and_exec_is_the_zephyr_shell(micropython, board_ip):
+    # An exec request is the Zephyr shell, MicroPython or not: `multiapp info` says what runs.
+    rc, out, err = _ssh(board_ip, micropython, remote=["multiapp info"], timeout=60)
+    assert rc == 0 and "boot: micropython" in out, (rc, out, err)
+    assert re.search(r"micropython \(file\):", out), out
+
+
+@pytest.mark.switches_app
+@needs_ssh
+def test_mp_ssh_repl_prints_and_ctrl_c_interrupts(micropython, board_ip):
+    r = Repl(board_ip, micropython)
+    try:
+        r.expect(MP_PROMPT, 60)
+        r.send("print(1+1)\r")
+        r.expect(r"\r?\n2\r?\n")
+        r.expect(MP_PROMPT, 10)
+        # Ctrl-C reaches the interpreter in a loop that reads nothing, and not the Zephyr shell
+        r.send("while True: pass\r\r")
+        time.sleep(1.5)
+        r.send(b"\x03")
+        r.expect(r"KeyboardInterrupt", 15)
+        r.expect(MP_PROMPT, 10)
+        r.send("print(6*7)\r")
+        r.expect(r"\r?\n42\r?\n")
+        r.expect(MP_PROMPT, 10)
+    finally:
+        r.close()
+
+
+@pytest.mark.switches_app
+@needs_ssh
+def test_mp_ssh_ctrl_d_soft_resets(micropython, board_ip):
+    r = Repl(board_ip, micropython)
+    try:
+        r.expect(MP_PROMPT, 60)
+        r.send("x = 5\r")
+        r.expect(MP_PROMPT, 10)
+        r.send(b"\x04")
+        r.expect(r"soft reboot", 30)
+        r.expect(MP_PROMPT, 60)
+        # the session is still the REPL's after the reset, and the state is gone
+        r.send("print(2+2)\r")
+        r.expect(r"\r?\n4\r?\n")
+        r.expect(MP_PROMPT, 10)
+        r.send("print('x' in dir())\r")
+        r.expect(r"\r?\nFalse\r?\n")
+    finally:
+        r.close()
+
+
+@pytest.mark.switches_app
+@needs_ssh
+def test_mp_ssh_shell_is_still_the_zephyr_shell(micropython, board_ip):
+    # `ssh <host> shell` while MicroPython runs: the Zephyr shell, never the REPL
+    rc, out, err = _ssh(board_ip, micropython, remote=["shell"], lines=["kernel version"], wait=2)
+    assert "Zephyr version" in out and "esdr:~$" in out and ">>>" not in out, (rc, out, err)
+
+
+@pytest.mark.switches_app
+def test_mp_local_console_answers_after_the_session(dut: DeviceAdapter, micropython, board_ip):
+    # No SSH session is open: the REPL is on the CDC-ACM port the shell gave up
+    dut.write(b"\r\n")
+    dut.readlines_until(regex=re.escape(MP_PROMPT), timeout=30)
+    dut.write(b"print(3*11)\r\n")
+    lines = dut.readlines_until(regex=r"^33\s*$", timeout=20)
+    assert any(l.strip() == "33" for l in lines), lines
+
+
+@pytest.mark.switches_app
+@needs_ssh
+def test_mp_ssh_then_local_console_alternate(dut: DeviceAdapter, micropython, board_ip):
+    # An SSH session takes the REPL and gives it back when it ends
+    r = Repl(board_ip, micropython)
+    try:
+        r.expect(MP_PROMPT, 60)
+        r.send("print('over ssh')\r")
+        r.expect(r"over ssh")
+    finally:
+        r.close()
+    time.sleep(2)
+    dut.write(b"\r\n")
+    dut.readlines_until(regex=re.escape(MP_PROMPT), timeout=30)
+    dut.write(b"print('on the port')\r\n")
+    lines = dut.readlines_until(regex=r"^on the port\s*$", timeout=20)
+    assert any(l.strip() == "on the port" for l in lines), lines
+
+
+@pytest.mark.switches_app
+@needs_ssh
+def test_mp_esdr_shell_plain_and_at_the_recursion_limit(micropython, board_ip, tmp_path):
+    # esdr.shell() runs a host command on the flash worker (the REPL thread's stack is in PSRAM and may not touch the
+    # flash): once on the plain REPL, once from the deepest recursion Python allows. Then the stacks' peaks.
+    r = Repl(board_ip, micropython)
+    try:
+        r.expect(MP_PROMPT, 60)
+        r.send("import esdr\r")
+        r.expect(MP_PROMPT, 30)
+        r.send("print('V', 'Zephyr version' in esdr.shell('kernel version'))\r")
+        r.expect(r"V True", 30)
+        r.expect(MP_PROMPT, 30)
+        r.send("print('L', 'osmosdr_hs' in esdr.shell('multiapp list'))\r")
+        r.expect(r"L True", 30)
+        r.expect(MP_PROMPT, 30)
+        code = ("exec(\"def e(n): return esdr.shell('multiapp list') if n < 1 else e(n - 1)\\n"
+                "k = 0\\n"
+                "while True:\\n"
+                " try:\\n"
+                "  e(k)\\n"
+                "  k += 1\\n"
+                " except RuntimeError:\\n"
+                "  break\\n"
+                "print('D', k - 1, 'osmosdr_hs' in e(k - 1))\")")
+        r.send(code + "\r")
+        out = r.expect(r"D \d+ (True|False)", 120)
+        assert out.rstrip().endswith("True"), out
+        r.expect(MP_PROMPT, 30)
+        # a set of host commands through esdr.shell(): the worker's peak over all of them (the stack is sized from it).
+        # Read-only ones, and the ones that run the flash path on the worker's stack: key table writes (FAT, ZMS), a reload of the
+        # key file, the crash record, MCUmgr's gate, a file system listing.
+        key = str(tmp_path / "id_workerkey")
+        _keygen(key, "ed25519", "hil@mp-worker")
+        line = open(key + ".pub").read().strip()
+        cmds = ["multiapp list", "multiapp info", "kernel thread stacks", "net iface", "net ipv6", "ssh status",
+                "mcumgr status", "help", "kernel threads", "multiapp crash", f'ssh key add "{line}"',
+                "ssh key list", "ssh key remove hil@mp-worker", "ssh keys reload", "mcumgr arm 1", "mcumgr disarm",
+                "fs ls /FLASH:", "fs statvfs /FLASH:", "settings list"]
+        r.send(_exec_line("for c in %r:\n try:\n  esdr.shell(c)\n except OSError:\n  pass\nprint('C'+' done')" % cmds) + "\r")
+        r.expect(r"C done\r?\n", 180)
+        r.expect(MP_PROMPT, 30)
+        r.send("print('S', esdr.stacks())\r")
+        out = r.expect(r"S \((\d+), (\d+), (\d+), (\d+), (\d+), (\d+)\)", 30)
+        py_size, py_peak, w_size, w_peak, arena_free, arena_used = map(
+            int, re.search(r"\((\d+), (\d+), (\d+), (\d+), (\d+), (\d+)\)", out).groups())
+        # the stack headroom rule: at most 90 % of the worker's stack used at its peak over this set (CONFIG_MULTIAPP_MICROPYTHON_WORKER_STACK
+        # is sized from it: peak / 0.9); the Python stack ends by itself at its limit
+        assert w_size > 0 and w_peak <= 0.9 * w_size, (py_size, py_peak, w_size, w_peak, arena_free, arena_used)
+    finally:
+        r.close()
+
+
+@pytest.mark.switches_app
+@needs_ssh
+def test_mp_flash_access_from_python_is_an_error_not_a_hang(micropython, board_ip):
+    # The port's block devices of the volume's disk and of a flash area: the reads end in the OSError the extension's
+    # wrappers raise (the host owns the flash), through exec() strings: the REPL's auto-indent would mangle pasted blocks
+    r = Repl(board_ip, micropython)
+    try:
+        r.expect(MP_PROMPT, 60)
+        r.send("import zephyr\r")
+        r.expect(MP_PROMPT, 30)
+        r.send("exec(\"d = zephyr.DiskAccess('FLASH')\\nb = bytearray(512)\\n"
+               "try:\\n d.readblocks(0, b)\\n print('E'+'1: no error')\\n"
+               "except OSError as e:\\n print('E'+'1:', e)\")\r")
+        out = r.expect(r"E1: [^\r\n]*\r?\n", 30)
+        assert "host owns" in out, out
+        r.expect(MP_PROMPT, 10)
+        r.send("exec(\"fa = None\\nfor i in range(32):\\n try:\\n  fa = zephyr.FlashArea(i, 4096)\\n  break\\n"
+               " except ValueError:\\n  pass\\n"
+               "try:\\n fa.readblocks(0, bytearray(4))\\n print('E'+'2: no error')\\n"
+               "except OSError as e:\\n print('E'+'2:', e)\")\r")
+        out = r.expect(r"E2: [^\r\n]*\r?\n", 30)
+        assert "host owns" in out, out
+        r.expect(MP_PROMPT, 10)
+    finally:
+        r.close()
+
+
+@pytest.mark.switches_app
+@needs_ssh
+def test_mp_calibration_request_runs_on_the_worker(micropython, board_ip):
+    # esdr.request(GET_CAL) reads the settings on the flash: on the worker, not refused (the REPL thread's stack is in PSRAM)
+    r = Repl(board_ip, micropython)
+    try:
+        r.expect(MP_PROMPT, 60)
+        r.send("import esdr\r")
+        r.expect(MP_PROMPT, 30)
+        r.send(_exec_line("esdr.init()\nb = esdr.request(0x19, 0, None, 512)\nprint('G'+'ET', len(b))") + "\r")
+        r.expect(r"GET [1-9]\d*\r?\n", 60)
+        r.expect(MP_PROMPT, 10)
+    finally:
+        r.close()
+
+
+@pytest.mark.switches_app
+@needs_ssh
+def test_mp_piped_input_gets_its_output(micropython, board_ip):
+    # `echo 'print(6*7)' | ssh <host>`: the client's input ends at once; the REPL still answers before the session ends
+    cmd = [SSH, *SSH_OPTS, "-o", "BatchMode=yes", "-i", str(micropython), board_ip]
+    p = subprocess.run(cmd, input=b"print(6*7)\r\n", capture_output=True, timeout=90)
+    assert b"42" in p.stdout, (p.returncode, p.stdout, p.stderr)
+
+
+@pytest.mark.switches_app
+@needs_ssh
+def test_mp_a_long_paste_arrives_whole(micropython, board_ip):
+    # about 2 KB in one line, beyond the REPL's 512-byte input ring: SSH flow control holds the rest, nothing is dropped
+    text = "".join(chr(97 + (i * 7) % 26) for i in range(2000))
+    r = Repl(board_ip, micropython)
+    try:
+        r.expect(MP_PROMPT, 60)
+        r.send("print('SU'+'M', sum(ord(c) for c in '%s'))\r" % text)
+        out = r.expect(r"SUM \d+\r?\n", 60)
+        assert int(re.search(r"SUM (\d+)", out).group(1)) == sum(map(ord, text)), out
+        r.expect(MP_PROMPT, 10)
+    finally:
+        r.close()

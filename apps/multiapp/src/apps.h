@@ -248,8 +248,12 @@ bool multiapp_ring_running(void);
  * because the flash access turns the cache off.
  */
 bool multiapp_net_stream_busy(void);
+/* The inputs and branch counts of its verdicts, as one line (`ssh status`) */
+void multiapp_net_stream_diag(char *buf, size_t len);
 /* Uptime in ms (odd, so never 0) of the last IN transfer of the SDR's USB class that the PC read to its end; 0: none yet */
 uint32_t multiapp_osmosdr_last_in_ms(void);
+/* The uptime of the last control OUT of the PC (0: none): a stream's start or restart */
+uint32_t multiapp_osmosdr_last_ctl_ms(void);
 /*
  * Read the file @p file of the volume's root (a hot-swap kernel, src/stage.c): its size or -errno.
  * The volume is taken first, so what the PC copied there is what is read; -EBUSY if the PC's access

@@ -23,7 +23,13 @@ static inline bool stream_consumer_live(uint32_t now, uint32_t last_in, uint32_t
 {
 	uint32_t age_ring = now - ring_since;
 	uint32_t age_in = now - last_in;
-	uint32_t age = (last_in != 0U && age_in < age_ring) ? age_in : age_ring;
+	uint32_t age;
+
+	if ((int32_t)age_in < 0 && age_in > UINT32_MAX - window_ms) {
+		/* a transfer stamped after "now" (a later millisecond, read in between): it is the newest there is */
+		age_in = 0U;
+	}
+	age = (last_in != 0U && age_in < age_ring) ? age_in : age_ring;
 
 	return age < window_ms;
 }

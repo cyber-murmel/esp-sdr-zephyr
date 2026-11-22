@@ -395,3 +395,77 @@ def test_kernel_does_not_change_the_host_exports(tmp_path, run_main, two_libs):
     after = generate(tmp_path, run_main, *two_libs)["exports"]
     assert before == after
     assert "app_helper" not in after and "k_yield_host" not in after
+
+
+def test_a_second_nobits_section_is_counted(tmp_path):
+    # llext loads one NOBITS section of a RISC-V extension: .noinit next to .bss must be found (ext/llext_riscv.ld merges it)
+    cc = shutil.which("cc") or shutil.which("gcc")
+    if cc is None:
+        pytest.skip("no host C compiler")
+    src = tmp_path / "x.c"
+    src.write_text('char a[64]; __attribute__((section(".noinit.x"))) char b[16];\n')
+    obj = tmp_path / "x.o"
+    subprocess.run([cc, "-c", "-o", obj, src], check=True)
+    assert exports.nobits_sections(str(obj)) == [".bss", ".noinit.x"]
+    src.write_text("char a[64];\n")
+    subprocess.run([cc, "-c", "-o", obj, src], check=True)
+    assert exports.nobits_sections(str(obj)) == [".bss"]
+
+
+def _ext_with_objects(tmp_path, cc, sources):
+    """A fake build tree: CMakeFiles/demo_ext_llext_lib.dir/<name>.c.obj for each source, and llext/demo_ext_llext_lib.obj
+    that is the partial link of those named in the first element (so it has their FILE symbols, as a real -r link has)."""
+    objdir = tmp_path / "CMakeFiles" / "demo_ext_llext_lib.dir"
+    objdir.mkdir(parents=True)
+    (tmp_path / "llext").mkdir()
+    for name, text in sources.items():
+        src = tmp_path / name
+        src.write_text(text)
+        subprocess.run([cc, "-c", "-o", objdir / (name + ".obj"), src], check=True)
+    return objdir
+
+
+def _link(tmp_path, cc, objdir, names):
+    ld = shutil.which("ld")
+    if ld is None:
+        pytest.skip("no ld")
+    lib = tmp_path / "llext" / "demo_ext_llext_lib.obj"
+    subprocess.run([ld, "-r", "-o", lib] + [objdir / (n + ".obj") for n in names], check=True)
+    return lib
+
+
+HEAP = 'char h[16] __attribute__((section("._k_heap.static.my_heap"))); int f(void){return h[0];}\n'
+
+
+def test_a_static_k_heap_in_an_extension_is_found(tmp_path):
+    # llext does not run the host's boot-time init of k_heap and k_mem_slab objects (board: the dummy shell's history heap).
+    # The lib is a real partial link, whose FILE symbols name the sources (x.c): the object x.c.obj is the one that counts.
+    cc = shutil.which("cc") or shutil.which("gcc")
+    if cc is None:
+        pytest.skip("no host C compiler")
+    objdir = _ext_with_objects(tmp_path, cc, {"x.c": HEAP, "y.c": "int g(void){return 1;}\n"})
+    lib = _link(tmp_path, cc, objdir, ["x.c", "y.c"])
+    assert exports.boot_init_objects(str(lib)) == ["x.c.obj: ._k_heap.static.my_heap"]
+
+
+def test_the_check_ignores_the_objects_of_dropped_sources(tmp_path):
+    cc = shutil.which("cc") or shutil.which("gcc")
+    if cc is None:
+        pytest.skip("no host C compiler")
+    objdir = _ext_with_objects(tmp_path, cc, {"x.c": HEAP, "y.c": "int g(void){return 1;}\n"})
+    lib = _link(tmp_path, cc, objdir, ["y.c"])    # x.c is no longer part of the extension: its stale object stays in the directory
+    assert exports.boot_init_objects(str(lib)) == []
+
+
+def test_a_k_heap_in_an_extension_fails_the_build(tmp_path, monkeypatch):
+    # what exports.py does in the build: it ends with a message naming the object and the section
+    cc = shutil.which("cc") or shutil.which("gcc")
+    if cc is None:
+        pytest.skip("no host C compiler")
+    objdir = _ext_with_objects(tmp_path, cc, {"x.c": HEAP})
+    lib = _link(tmp_path, cc, objdir, ["x.c"])
+    monkeypatch.setattr("sys.argv", ["exports.py", "--exports", str(tmp_path / "e.c"), "--logs", str(tmp_path / "l.c"),
+                                     "--objects", str(tmp_path / "o.c"), "--area-size", "16", str(lib)])
+    with pytest.raises(SystemExit) as e:
+        exports.main()
+    assert "x.c.obj: ._k_heap.static.my_heap" in str(e.value), e.value

@@ -15,7 +15,13 @@
 
 #include <multiapp/multiapp.h>
 
-static const struct device *const repl_uart = DEVICE_DT_GET(DT_CHOSEN(zephyr_console));
+/* The port that carries the REPL: the shell's, which the app took over (the CDC-ACM port on the ESP32-S31, where the console is UART0). */
+#if defined(CONFIG_SOC_SERIES_ESP32S31)
+#define REPL_UART_NODE DT_CHOSEN(zephyr_shell_uart)
+#else
+#define REPL_UART_NODE DT_CHOSEN(zephyr_console)
+#endif
+static const struct device *const repl_uart = DEVICE_DT_GET(REPL_UART_NODE);
 static uart_console_in_debug_hook_t input_hook;
 
 static void repl_uart_cb(const struct device *dev, void *user_data)

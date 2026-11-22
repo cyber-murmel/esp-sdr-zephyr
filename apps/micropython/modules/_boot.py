@@ -22,9 +22,12 @@ def _mount(path):
     return True
 
 
-if _mount("/FLASH:"):
-    os.chdir("/FLASH:")
-_mount("/SD:")
+# On the multiapp host of the ESP32-S31 CoreBoard the volume is the host's: it mounts /FLASH: for each access, shared with the
+# PC (USB drive), SSH and MCUmgr, so a mount held here would make every claim of theirs fail. No volumes here (no SD card either).
+if "esp32s31_function_coreboard" not in sys.implementation._machine:
+    if _mount("/FLASH:"):
+        os.chdir("/FLASH:")
+    _mount("/SD:")
 
 # The bench's RF switch, on the boards that drive it (the ESP32-C5 image): its path at the
 # board's first start; soft resets keep it.

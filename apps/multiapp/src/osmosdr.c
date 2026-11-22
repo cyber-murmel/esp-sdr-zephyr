@@ -82,7 +82,12 @@ void usb_sdr_in_done(uint8_t *data, size_t len, int err)
 	__typeof__(app.in_done) fn;
 
 	if (err == 0) {
-		atomic_set(&last_in_ms, (atomic_val_t)(k_uptime_get_32() | 1U));
+		/* The exact uptime (0 is "no transfer yet", so the first millisecond counts as 1): never in the future
+		 * of a caller's "now", whose age would wrap (streamgate.h)
+		 */
+		uint32_t t = k_uptime_get_32();
+
+		atomic_set(&last_in_ms, (atomic_val_t)(t != 0U ? t : 1U));
 	}
 	atomic_inc(&calls);
 	fn = HANDLER(in_done, "usb_sdr_in_done");
@@ -116,10 +121,25 @@ void usb_sdr_link(bool up)
 	atomic_dec(&calls);
 }
 
+/*
+ * The uptime (ms, never 0) of the last control OUT of the PC: a SET_MODE that starts or restarts a stream, a retune.
+ * The library exposes no run counter, so this is what tells the stream predicate that a ring that went off and on
+ * between two of its looks is a new stream (src/netsvc.c).
+ */
+static atomic_t last_ctl_ms;
+
+uint32_t multiapp_osmosdr_last_ctl_ms(void)
+{
+	return (uint32_t)atomic_get(&last_ctl_ms);
+}
+
 int usb_sdr_control_out(uint8_t req, uint16_t value, const uint8_t *data, size_t len)
 {
 	__typeof__(app.control_out) fn;
 	int ret = -ENOTSUP;
+	uint32_t t = k_uptime_get_32();
+
+	atomic_set(&last_ctl_ms, (atomic_val_t)(t != 0U ? t : 1U));
 
 	atomic_inc(&calls);
 	fn = HANDLER(control_out, "usb_sdr_control_out");

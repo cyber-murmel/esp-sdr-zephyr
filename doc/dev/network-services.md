@@ -580,12 +580,12 @@ instance (`ssh_sh`: transport over `ssh_channel_read`/`_write`, prompt `esdr:~$ 
 | `pty-req`, `env`, `window-change` | | accepted and ignored (the client's terminal does the editing) |
 | `ssh -s <host> sftp` | subsystem | refused, the channel is closed (phase 5) |
 
-`multiapp_console_register(const struct multiapp_console *)` is the hook for phase 4: the MicroPython REPL registers
+`multiapp_console_register(const struct multiapp_console *)` is the hook phase 4 uses ([Phase 4](#phase-4-the-micropython-repl-over-ssh)): the MicroPython REPL registers
 `open()` (a new session: the console takes over `io->read` and `io->write`, and does its work in a thread of its own),
 `rx_ready()`, `tx_ready()` and `closed()`; `multiapp_console_unregister()` closes its sessions (their `closed()` runs
 first) and new ones get the Zephyr shell again; only one console at a time (`-EBUSY`); `open()` may decline with an error and
-the session gets the Zephyr shell. Nothing registers one yet: the registry and the choice (`console_mux_core.c`, no Zephyr
-in it) are tested on the PC (`tests/host/test_sshkeys.py`), the SSH glue is not (no REPL to test it with).
+the session gets the Zephyr shell. The registry and the choice (`console_mux_core.c`, no Zephyr
+in it) are tested on the PC (`tests/host/test_sshkeys.py`); the MicroPython app registers one while it runs.
 
 **Back-to-back sessions.** Board run: 18 of 20 fast cycles failed, either with `Connection closed` within 10 ms or with `Connection refused`.
 The server (`ssh_server.c`) had a listen backlog of 1 and, when no client slot was free (one slot here, still held by the session that
@@ -696,6 +696,17 @@ The shell commands a logged-in user runs are the board's shell commands: `multia
 shell if it is built in and the kernel ones; none of them checks the stream rule today except the loader's own claims. The session
 is as trusted as the CDC-ACM shell.
 
+**The stream predicate (`stream_busy()`, `src/netsvc.c`, `src/streamgate.h`).** Busy while a ring runs and the PC finished an IN
+transfer less than 5 s ago (the first 5 s of a ring count as busy, a killed client is free after 5 s). Board run, 2026-11-27: `ssh status`
+said "allowed" at moments of a live stream and a key file was read. Cause: `osmosdr.c` stamped a transfer with `k_uptime_get_32() | 1U`,
+which rounds an even millisecond up by one: a caller whose "now" was in that millisecond saw the transfer 1 ms in the future, its unsigned
+age wrapped and the consumer read as gone. Now the exact uptime is stored, and `stream_consumer_live()` takes a stamp slightly after "now" as
+age 0 (`test_streamgate.py`). A ring that is off between two runs of one stream had been guarded by a 3 s grace in a first version; the
+counters showed the ring-off branch never fired during live streams, so it was dropped. A ring that goes off and on between two looks of the predicate is a new stream: the library exposes no run counter (only `esp_sdr_diag16_active()`, a flag), so
+the host stamps every control OUT of the PC (`multiapp_osmosdr_last_ctl_ms()`: the SET_MODE that starts or restarts a stream, a retune) and treats one newer
+than the ring's first sighting as a new first sighting. A run counter in `lib/esp_sdr` would make this exact. `ssh status` prints the inputs of the last verdict
+(ring running, last IN age, ring seen age) and how often each branch said no (no ring, no consumer), and the oldest IN age of a live stream.
+
 ### Costs and placement
 
 | what | where | size |
@@ -738,7 +749,7 @@ echo after it; the interactive shell by `ssh <host> shell` and by a plain `ssh -
 exec sessions with key add and remove in which every command must succeed, followed by `multiapp crash`; three concurrent clients that must all be served;
 password login not offered; a subsystem refused; `ssh status` and an option line refused by `ssh key add`; the host key's
 fingerprint the same after `kernel reboot cold` over SSH (last). The keys are removed at the end (`ssh key remove <comment>`). Not
-tested: the stream rule over SSH (no stream in the suite), the REPL path.
+tested: the stream rule over SSH (no stream in the suite); the REPL path has its own tests ([Phase 4](#phase-4-the-micropython-repl-over-ssh)).
 
 ### Setup
 
@@ -757,6 +768,183 @@ Not checked on a board: the generation time of the ECDSA key (a moment, not meas
 thread, `sshd_work` and the session shell, a login from a current OpenSSH client against this server with each key type, an
 exec command's output and status through OpenSSH, a stream running during a login, the mbedTLS heap's peak, a warm reboot that keeps
 the host key.
+
+## Phase 4: the MicroPython REPL over SSH
+
+MicroPython is an app of the S31 multiapp host (`apps/multiapp/micropython.cmake`, the same sources as the S3's), and a plain
+`ssh <host>` reaches its REPL while it runs. State: it builds (product and UART variant); nothing of it has run on a board
+yet ([Not checked on a board](#not-checked-on-a-board-phase-4)).
+
+### What runs
+
+`multiapp run micropython` reboots (a console app, always: the USB profile and the bank 2 flag are the smaller reasons) into a boot
+with the radio module `sdr` and `micropython.llext`, a file only (1.0 MB: no built-in copy). The host's shell gives up the CDC-ACM
+port as for the S3's MicroPython (`console_take()`), so the REPL is on the port; in the UART build (the scratch variant with the
+shell on UART0) the UART log backend is switched off at the same moment, so that the host's log lines do not print into the REPL.
+The Zephyr shell stays reachable over SSH only: `ssh <host> shell` (exec "shell") and `ssh <host> '<command>'` are the Zephyr shell, and
+`multiapp run osmosdr_hs` there (or any reset) goes back to the default app. `esdr.shell("...")` in the REPL runs a host command too.
+
+What differs from the S3's build (`micropython.cmake`, `ext/mp/`):
+
+| part | S3 | S31 |
+|---|---|---|
+| thread | `src/boot.c`: a thread with a stack in the high region, USB started there | `ext/mp/mp_repl_s31.c`: a thread of priority 13 whose stack is 32 KB in PSRAM (`CONFIG_MULTIAPP_MICROPYTHON_STACK`, the extension's bss), its flash accesses on a worker with an internal stack |
+| USB | the app's own disks (`usb_disks.c`, profile 0xc) | the host's drive (profile 0x4); no disks of the app |
+| setjmp | wrapped by `src/setjmp.S` (windowed ABI) | the C library's |
+| esp-dsp FFT, `esdr_scan_vec.S`, `esdr_scan_pie.c` | Xtensa assembly (PIE vector unit) | not built: `esdr_scan.c`, `esdr_gui.c` and `esdr_wf.c` use their portable code |
+| `esdr` module | `modesdr.c` with the ring, TX DAC, Pcap engine | the chip's list in `cmod/micropython.cmake`: `esdr_radio.c` and `esdr_local.c` (bursts from the radio on the chip), `esdr_board.c`, `esdr_chan.c`, `esdr_fsk.c`, `esdr_link.c`, `esdr_lte.c`, `esdr_gui.c`, `esdr_scan.c`, `esdr_wf.c`, `esdr_pcap.c` and its decoders (no engine: the ring stage is not in the host), `esdr_cal.c` for the crystal requests |
+| exported symbols | `micropython.ver` | none (a RISC-V relocatable object: `-r`, the partial link of the other S31 extensions) |
+| display, LVGL, SD | on the XIAO and the Communicator | none: the headless manifest (`manifest_headless.py`, eggs: `datalink`) |
+
+`import esdr` exists: all of it compiles, links into the extension and every symbol it needs is in the host or the `sdr` module (the
+host's link would fail otherwise: `exports.py`). What the S31 loses against the S3's `esdr`: the buffered, gapless receive (the S31's
+local path needs `CONFIG_ESP_SDR_DUMPRING` and two CPUs, `esdr_local.c`: this host has neither; osmosdr_hs has the diagnostic-bus ring
+in the same `sdr` module, but MicroPython's `esdr` does not use it), the Pcap engine (needs the ring stage), the PIE FFT and frame
+passes (the portable code runs instead and is slower; the S31's PIE could do them, `lib/esp_sdr` has no such kernel for them yet), and
+the display apps. What is there: bursts through the library, transmit bursts (`CONFIG_ESP_SDR_REPLAY` is on in the host), the packet
+modem, `esdr.shell()`. None of it has run on this host: `esdr_local.c` ran standalone on the VIEWE board only.
+
+### Memory
+
+- **GC heap in PSRAM**: `multiapp_psram_spare()`, the PSRAM above what the linker placed and the file buffer, as on the S3 (`mp_glue.c`
+  adds it with `gc_add()`; the 16 KiB token heap of `esdr_radio.c` is the extension's bss). 13,207,488 bytes of the 16 MiB in this
+  build (16 MiB less the image's 3,569,728 B: the host's llext heaps, the network stacks and its own bss). No `k_heap` or `k_mem_slab` is
+  in PSRAM (`tcm_groups.py --multiapp`, unchanged); the PSRAM is `gc_add()` memory only.
+- **The thread's stack is in PSRAM** (32 KB, `CONFIG_MULTIAPP_MICROPYTHON_STACK`, the extension's bss). An 8 KB internal stack from the arena
+  gave a Python recursion depth of 11 on the board (`micropython.mem_info()`: "stack: 1044 out of 7168"), and the arena (23936 B with
+  `FPU_SHARING`, from 28544 B) cannot spare more. The price: a thread whose stack is in PSRAM must never touch the flash itself (the
+  flash driver turns the cache off, and its own stack goes with it). So:
+  - everything MicroPython calls that can reach the flash runs on a worker, `mp_flash` (`ext/mp/mp_repl_s31.c`: a work queue, priority 13
+    like MicroPython, an internal stack from the libc arena allocated at the first call, `CONFIG_MULTIAPP_MICROPYTHON_WORKER_STACK`, 2144 B);
+    MicroPython waits for it. Today that is `esdr.shell()`, which also answers `EBUSY` while a stream runs (the SSH rule,
+    `multiapp_shell_exec()` below) and `machine.reset()` (`sys_reboot()` is wrapped in the extension's link and runs on the worker). The
+    VFS is not mounted on this host (`_boot.py`). `zephyr.FlashArea` and `zephyr.DiskAccess` of the port (`flash_area_read/write/erase`,
+    `disk_access_read/write`) are wrapped too and raise `OSError: the host owns the flash and the volume (use esdr.shell())`: the PC, SSH and
+    MCUmgr share the volume by claims, so Python gets no direct access (`test_mp_flash_access_from_python_is_an_error_not_a_hang`). The crystal
+    calibration requests of `esdr.request()` (`GET_CAL`, `SET_CAL` with `CAL_*`: `esdr_cal.c`, which loads and saves the settings on the flash) run
+    on the worker too (`ESDR_FLASH_CALL`, `esdr_local.c`; `test_mp_calibration_request_runs_on_the_worker`), so `ltecal.py` works;
+  - **esdr.shell() through the host.** The first version ran the commands on a Zephyr dummy shell compiled into the extension and crashed the
+    board (`multiapp crash`: a load fault at 0x8 in `z_heap_alloc_helper` on thread `mp_flash`): the dummy shell's history is a `k_heap`, which the
+    kernel initializes at boot for the host's own objects only (`init_static_heaps()` walks the host's iterable sections), so in an extension it
+    is an uninitialized heap. Now `esdr.shell()` calls the host's `multiapp_shell_exec(cmd, out, ctx)` (`include/multiapp/multiapp.h`,
+    `src/console_mux.c`), which runs the command on the SSH exec path's shell instance (`ssh_sh`, no echo, no colours) on the worker and passes its
+    output to a callback; an SSH session that has the shell makes it wait (up to 5 s, then `EBUSY`). The extension has no `shell_dummy.c` any more;
+  - **a build check** (`exports.py`, next to the NOBITS check) fails when the extension's own objects hold kernel objects that need the host's
+    boot-time initialization: `._k_heap`, `._k_mem_slab`, `._net_buf_pool` and `._static_thread_data` (a `K_THREAD_DEFINE` thread never starts) sections,
+    naming the object and section. Semaphores, mutexes, queues and work items are initialized at compile time and are fine;
+  - the host refuses a flash operation from any thread whose stack is in PSRAM: `src/flashguard.c` wraps `esp_flash_read`, `_write`,
+    `_erase_region` and the encrypted variants (`--wrap`; the wrappers are what the flash driver calls, checked in the image), returns
+    `ESP_ERR_NOT_SUPPORTED` and logs `flash read from thread micropython, whose stack is in PSRAM: refused`. A slip is an error and a log
+    line, not a hang;
+  - `tcm_groups.py --mp-ext` allows `mp_stack_mem` (and the radio worker's stack) among the extension's stacks and
+    fails on any other.
+  The arena is back to the rest of the host: the check is the worker's stack plus the measured use of everything else.
+  **Sizing rule (user, 2026-11-27):** a stack may be at most 90 % used at its measured peak. It applies to the worker's stack (peak over 0.9)
+  and to the C callout margin below Python's recursion limit: `MICROPY_STACK_CHECK_MARGIN` = `CONFIG_MULTIAPP_MICROPYTHON_STACK_MARGIN` = the
+  deepest C use past the limit over 0.9. `esdr.stacks()` returns (Python stack, its peak, worker stack, its peak, libc arena free, libc arena allocated); `kernel thread stacks`
+  on the Zephyr shell (`ssh <host> 'kernel thread stacks'`, `CONFIG_KERNEL_THREAD_SHELL_STACKS=y`) lists every thread's stack use,
+  `micropython` and `mp_flash` among them. **Measured on cb1 (2026-11-27):** with 32768 B for Python, `esdr.stacks()` after boot gave a Python peak of 5476 B; the pure
+  recursion reaches depth 61 (about 520 B per level) with a peak of 32024 B, 280 B past the limit (31744); `esdr.shell("multiapp info")` at depth 60
+  gave 31224 B, below the limit, so the 1024 B margin (280 / 0.9 = 311 B) holds and stays. The worker's peak was 936 B after `multiapp list` and
+  1016 B after `multiapp info` at depth 60; `sshd_work`, which runs the same kind of commands, peaked at 1720 B (`ssh status`). The worker's size
+  follows the peak over a set of commands. The read-only set (`multiapp list` and `info`, `kernel thread stacks` and `list`, `net iface`, `ipv6` and
+  `mem`, `ssh status`, `mcumgr status`, `help`, `kernel heap`) peaked at 1112 B on the board, which was 1248 B by the rule. But `esdr.shell()` exists for
+  commands that read the volume or write settings, whose FAT, ZMS and flash driver frames that set did not include, and the worker's stack comes
+  from the arena with no guard. The test (`test_mp_esdr_shell_plain_and_at_the_recursion_limit`) runs the read-only set plus `multiapp crash`, `ssh key add`, `key list`, `key remove` and `keys reload` of a throwaway key, `mcumgr arm` and `disarm`, `fs ls` and `fs statvfs` of `/FLASH:` and `settings list`, and asserts the 90 % rule over them. Measured on the board with a 4096 B stack, that set peaked at 1916 B (with the 1920 B size tried before, 4 bytes were left): 1916 / 0.9 = **2144 B**. The failure message prints the peaks. A job that takes the worker past 90 % logs `the flash worker's stack peaked at ...`
+  once. **Measuring the rest of the arena:** after the HIL run, `esdr.stacks()[5]` is the arena's allocated bytes; less the worker's stack
+  (2144 B, once started) is what the rest of the host takes after MicroPython started: set `CONFIG_MULTIAPP_MICROPYTHON_ARENA_USE` from it
+  (the build assumes 8192 B, "assumed, not measured" in its message, until then; one board reading after the HIL set gave 4 B besides the worker's stack, so 8192 B is a reserve). `tcm_groups.py --mp-ext` fails the build when the arena is
+  smaller than the worker's stack plus `CONFIG_MULTIAPP_MICROPYTHON_ARENA_USE`.
+- **FPU:** `CONFIG_FPU_SHARING=y` in `socs/esp32s31_hpcore.conf` (measured on cb1, 300 s at 20 MS/s: 0 gaps both ways, 40153.2 kB/s with, 40150.5
+  without). On RISC-V Zephyr saves the FP state lazily at the first FP instruction of a thread (`arch/riscv/core/fpu.c` sets `K_FP_REGS`
+  itself): no thread has to be created with `K_FP_REGS`; the flag the MicroPython thread passes is harmless. The cost is internal RAM:
+  the arena 28544 B to 23936 B (the save area in every thread).
+- **Extension**: `.text` 307 KB, `.rodata` 185 KB, `.bss` 317 KB (the esdr buffers, the FFT and burst arrays), all in the
+  extension heap in PSRAM; 1.0 MB file; `.module_fast` is 1.4 KB (the burst decoders), which a non-INTERNAL extension runs from PSRAM.
+- **The host grew by 0.9 KB of internal RAM** (the symbols the extension imports: 256 B of IRAM, 640 B of bss, 40 B of data):
+  libc arena 29440 B to 28544 B (UART variant 32000 to 30720), LP RAM unchanged (30116 of 32768 B, about 830 B left: nothing of
+  MicroPython is there), module heap 6592 B free after `sdr` (the radio module is the only one MicroPython needs; MicroPython has no
+  INTERNAL parts).
+- **Threads**: MicroPython's own at 13, esdr's radio worker and Scan worker at 12 (`mp_prelude.h`: `ESDR_WORKER_PRIO`,
+  `ESDR_SCAN_PRIO`; standalone the worker is cooperative 4), below the SSH server (10), the network threads and USB (8), and nothing of
+  it near the stream: osmosdr_hs is never loaded in the same boot. The radio worker's 2 KB stack is in the
+  extension's bss (PSRAM): neither touches the flash (`MP_EXT_STACKS_OK` in `tcm_groups.py`; a new stack in the extension fails the check).
+
+- **Measuring the stacks.** `esdr.stacks()` after the REPL tests gives the normal peak of the Python thread and of the worker (run
+  `esdr.shell("multiapp info")` and a few more commands first). Python's own recursion stops by itself at stack minus the margin, so a
+  recursion test says nothing about the size: it shows the depth Python reaches (a function that calls itself with a counter, inside
+  `exec()`, counted up to the error; the stack over the depth is the cost per level), and the peak past the limit is the C callout margin:
+  `esdr.stacks()[1] - (32768 - margin)` after a deep recursion, over 0.9.
+- **The exec stall** (`multiapp info` over SSH stopped mid-output in the first minute of a MicroPython boot, intermittent, CPU idle):
+  gone after MicroPython's input wait stopped waking every millisecond (`uart_core.c`: 1000 ms timeout and an event from every input byte);
+  35 early execs and 4 switch cycles ran at about 540 ms on the board. The cause is **not proven**: the 1 ms wake-ups are the likely one. The exec
+  path logs `tx: N of M bytes taken` and `tx_ready` with the log's timestamps, to show where an output waits if it comes back.
+
+- **Piped and pasted input.** `echo 'print(6*7)' | ssh <host>` ends its input at once: for a registered console the mux no longer closes the
+  channel at the client's EOF but, as for the shell, waits until the console has read all its input (`input_empty()` in `console.h`: the ring is empty
+  and the last pull found nothing) and the output has been quiet for 400 ms (5 s at most), then ends the session with status 0
+  (`test_mp_piped_input_gets_its_output`). The input ring (512 B) is no longer overrun by a long paste: the feed reads only while the ring has room
+  for a chunk, so what is left stays in the channel and SSH's flow control holds the client's rest back; the REPL's thread pulls it as it
+  empties the ring (`test_mp_a_long_paste_arrives_whole`, 2 KB in one line; `test_mp_repl.py`). A Ctrl-C behind more than a ring's worth of
+  unread input is seen only when the REPL has read up to it.
+- **Standalone MicroPython on the CoreBoard.** `_boot.py` mounts neither `/FLASH:` nor `/SD:` when the board's name is
+  `esp32s31_function_coreboard`, whichever build it is in: a standalone `apps/micropython` build for that board (none exists today) would have no
+  volume either.
+
+### Switching from and to osmosdr_hs
+
+osmosdr_hs has the `BANK2` flag: its code and data are in TCM group 3 (the host's `bank2_heap`), the capture bank of the dump
+engine. MicroPython has not: group 3 is the capture bank in its boot, which `esdr_local.c` uses for bursts. A switch that changes the
+flag is a reboot (`switch_ok()`), and so is every switch to or from a console app, so `multiapp run micropython` from osmosdr_hs
+(over SSH exec or the CDC-ACM shell) stops the ring through the warm reset path (`reboot_s31.c`: the PARLIO/GDMA of the diagnostic bus
+are stopped before the reset), and the new boot starts without bank 2. Going back is the same.
+
+### The REPL stream
+
+Parts: the port's stdio hook (modules/micropython fork, `ports/zephyr/stdio_hook.h`, `CONFIG_MICROPY_STDIO_HOOK`, three functions
+`rx`, `poll`, `tx` that return "inactive" when the application has no stream), `ext/mp/mp_repl_s31.c` (the registered console, the
+hook, the thread) and `ext/mp/repl_core.h` (the input ring, tested on the PC).
+
+- While no SSH session is the REPL's, `mp_hal_stdin_rx_chr`, `mp_hal_stdout_tx_strn` and `mp_hal_stdio_poll` do what the port always did: the
+  console UART (here the shell's CDC-ACM port or UART0) through `zephyr_getchar.c` and `uart_poll_out()`.
+- `ssh <host>` (a shell request) makes the mux call the console's `open()`. It takes the channel's `io`, empties the ring, puts a
+  carriage return in it (the REPL answers with a fresh prompt, which is what a client waits for) and switches the hook on. From then
+  on input and output go through the channel only; the local port is not read or written. A second session while one is open is declined
+  (`-EBUSY`): it gets the Zephyr shell, as for any declined console.
+- Input arrives on the server's thread (`rx_ready()`), which reads the channel into the ring and looks at every byte for
+  `mp_interrupt_char` (Ctrl-C, 0x03): that byte is not stored, and `mp_sched_keyboard_interrupt()` runs from the server's thread, so a
+  `while True: pass` that reads nothing is interrupted all the same, as the console hook does for the UART. The REPL's thread also
+  pulls from the channel when the ring is empty. The mux passes every byte of a REPL session to the console; the Zephyr shell never
+  sees them, so a 0x03 does not reach it. Ctrl-D is data for the REPL's reader: the soft reset runs inside the port's main loop,
+  which keeps the hook and the session (the console stays registered over the reset).
+- Output is written under `io_lock` in slices the channel takes; a short write waits for `tx_ready()` (20 ms timeouts cover a missed
+  one). A write that fails because the session went ends: the rest of the text goes to the local port.
+- `closed()` (the client left, or the extension unregisters) runs under the mux's registry lock: it clears the hook's flag, takes
+  `io_lock` (the REPL's thread holds it only inside one non-blocking channel call, never while it waits) and clears the pointer to `io`
+  before the mux reuses the session slot. It waits for nobody else, as `console.h` requires. The REPL is on the local port again.
+- When MicroPython's `main()` returns (the port's `real_main()`; `machine.reset()` does not return) the console is unregistered and
+  the hook cleared.
+- The same stack serves MicroPython's raw REPL (`mpremote`, `pyboard.py`) over `ssh -tt`.
+
+### Tests
+
+Host: `tests/host/test_mp_repl.py` (the ring: order, Ctrl-C found anywhere in a long stream and not stored, an interrupt character of -1,
+a full ring, wrap-around, an error from the channel). Placement: `scripts/tcm_groups.py --selftest` has the `--mp-ext` cases.
+
+Board (`apps/multiapp/pytest/test_multiapp_s31.py`, marker `switches_app`, which `pytest/conftest.py` runs after all others since an
+app switch reboots the board): `multiapp run micropython` over an SSH exec; `multiapp info` over exec says MicroPython runs;
+`ssh -tt` reaches `>>>` and `print(1+1)` gives 2; Ctrl-C ends `while True: pass` with `KeyboardInterrupt`; Ctrl-D prints `soft reboot`
+and the session goes on with fresh state; `ssh <host> shell` is the Zephyr shell; the CDC-ACM port answers `print(3*11)` when no
+session is open and again after a session ended; then `multiapp run osmosdr_hs` (a reset if that does not bring it back).
+
+### Not checked on a board (phase 4)
+
+Everything that needs the board: the boot of `micropython.llext` (its size and the 307 KB of code in the extension heap, the
+constructors, `_boot.py` and `launcher` in the headless manifest on this host), whether the arena has 12 KB left after the network and
+the server (`ssh status`, the log line `MicroPython stack: ...`), the REPL on CDC-ACM and over SSH, Ctrl-C and Ctrl-D, the PSRAM heap's
+actual size (`gc.mem_free()`), `import esdr` and what of it works with the `sdr` module's radio, the stack's headroom
+(`micropython.stack_use()`), output throughput over the channel, the soft reset with a session open, two clients in a row, the UART
+variant's log switch-off, a stream-less boot's CPU use of the REPL's polling (`mp_event_wait_ms(1)`).
 
 ## Design: attaching the DWMAC fast receive hook at run time
 
@@ -820,6 +1008,23 @@ void mnet_rx_detach(struct mnet_rx_client *c);   /* thread context; returns when
 
 Not changed in the driver: its single hook slot stays the interface to the multiplexer, so
 `txstream_eth` and `rxbench` (standalone, no host) keep working as they are.
+
+## Phases 5 and 6: decided against (2026-11-27)
+
+- **SFTP (phase 5): not built.** MCUmgr's `fs` commands (`west mcumgr`) already move files to and from the
+  volume. SFTP would have added encryption and standard tools (`sftp`, `scp`, `sshfs`), but an `sshfs` mount holds
+  the server's only client slot, and a second slot costs about 10.5 KB of internal RAM that the host does not have.
+- **`stream_eth` and `txstream_eth` as extensions (phase 6): they stay standalone images**, updated as a whole with
+  `west mcumgr upload`. Read-only studies against this host found:
+  - Both need driver options that are compile-time (`ETH_DWMAC_TX_FAST`, and for TX `RX_FAST` and `TX_RAMFUNC`) and
+    far larger pools: `stream_eth` 64 TX descriptors against the host's 4, and 12/8 RX/TX buffers against 7/3. Only
+    `dwmac_rx_hook_set()` is switchable at run time.
+  - Both rely on two cores. `stream_eth` pins its sender on CPU1 and was a factor 20 better with SMP than on one
+    core; `txstream_eth` pins `tx_flip` on CPU1. The host on SMP cost osmosdr_hs gaps (69 against 4 per 300 s,
+    "SMP experiment" above), and a single-core 40 MS/s Ethernet stream was never shown.
+  - Memory: `stream_eth`'s 54 KB of cells and headers would have to go to the group 3 heap, leaving the arena at
+    6 to 14 KB for SSH and MicroPython. `txstream_eth` with the host is 40 to 50 KB over groups 0 and 3.
+  - The gain over a standalone image is switching apps without a reflash. A switch is a reboot anyway.
 
 <!-- nav-start -->
 Previous: [Transmit stream library (lib/esp_sdr/src/txs)](txs.md) · Up: [Reference](index.md) · Next: [ESP32-S3 registers](registers-esp32s3.md)

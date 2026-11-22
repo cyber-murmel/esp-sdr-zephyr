@@ -34,5 +34,8 @@ extern const mp_obj_fun_builtin_var_t esdr_panel_quiet_obj;
 extern const mp_obj_fun_builtin_fixed_t esdr_crash_obj;
 /* shell(cmd): with the shell's dummy backend (CONFIG_SHELL_BACKEND_DUMMY). */
 extern const mp_obj_fun_builtin_fixed_t esdr_shell_obj;
+#if defined(ESDR_STACKS)
+extern const mp_obj_fun_builtin_fixed_t esdr_stacks_obj;
+#endif
 
 #endif /* ESDR_BOARD_H */

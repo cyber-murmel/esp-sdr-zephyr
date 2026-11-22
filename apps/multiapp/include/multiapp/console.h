@@ -6,13 +6,15 @@
  * phase 4): new sessions that ask for a shell then get that one. A session that asks for a command
  * (`ssh <host> shell`: an exec request) always gets the Zephyr shell.
  *
- * Not used by any app yet: this is the hook phase 4 builds on, and src/console_mux_core.c is tested
- * on the PC (tests/host/test_sshkeys.py).
+ * The user is the MicroPython app of the ESP32-S31 (ext/mp/mp_repl_s31.c, doc/dev/network-services.md, "Phase 4");
+ * src/console_mux_core.c is tested on the PC (tests/host/test_sshkeys.py), the app's input ring in
+ * tests/host/test_mp_repl.py.
  */
 
 #ifndef MULTIAPP_CONSOLE_H_
 #define MULTIAPP_CONSOLE_H_
 
+#include <stdbool.h>
 #include <stddef.h>
 
 /*
@@ -48,6 +50,13 @@ struct multiapp_console {
 	 * lock or for the console's own tx_ready().
 	 */
 	void (*closed)(void *session);
+	/*
+	 * Optional: whether the console has taken all the input of the session (nothing left in its buffers, nothing it has
+	 * not read from the channel). The client's input ended (`echo 'print(6*7)' | ssh <host>`): the mux ends the session
+	 * once this is true and the output has been quiet for a moment, so that the answer is not cut off. Called with the
+	 * registry's lock held, after rx_ready(): return at once.
+	 */
+	bool (*input_empty)(void *session);
 };
 
 /*

@@ -1146,6 +1146,9 @@ static const mp_rom_map_elem_t esdr_globals_table[] = {
 #endif
 #if defined(CONFIG_SHELL_BACKEND_DUMMY)
 	{MP_ROM_QSTR(MP_QSTR_shell), MP_ROM_PTR(&esdr_shell_obj)},
+#if defined(ESDR_STACKS)
+	{MP_ROM_QSTR(MP_QSTR_stacks), MP_ROM_PTR(&esdr_stacks_obj)},
+#endif
 #endif
 #if RADIO_LINKED && ESDR_USB_TO_C6
 	{MP_ROM_QSTR(MP_QSTR_usb_to_c6), MP_ROM_PTR(&esdr_usb_to_c6_obj)},

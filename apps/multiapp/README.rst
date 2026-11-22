@@ -60,7 +60,7 @@ ESP32-S31
 
 - On the ESP32-S31-Function-CoreBoard-1 the host boots into ``osmosdr_hs``, the SDR on the
   board's USB 2.0 HS port J4 (``CONFIG_MULTIAPP_AUTOSTART`` in the board's configuration file).
-- ``hello``, ``capture`` and ``rfprobe`` are the other apps, and the radio is one module, ``sdr``
+- ``hello``, ``capture``, ``rfprobe`` and ``micropython`` are the other apps, and the radio is one module, ``sdr``
   (`Modules`_). ``multiapp run`` switches among them in place; to and from ``osmosdr_hs``, whose
   USB profile differs, it reboots.
   Built, not yet run on a board.
@@ -79,6 +79,9 @@ ESP32-S31
 - It also runs an SSH server (port 22, public key login with ed25519 or ECDSA keys, the Zephyr shell on the session, ``ssh <host> '<command>'``): ``ssh hostkey`` prints
   the host key's fingerprint, ``ssh key add "<authorized_keys line>"`` lets a key in, and ``mcumgr arm`` works from the session
   (`phase 3 <../../doc/dev/network-services.md>`__).
+- ``multiapp run micropython`` reboots into MicroPython (a file of the volume, 1 MB; the REPL on the CDC-ACM port, and a plain
+  ``ssh <host>`` lands in the REPL while ``ssh <host> shell`` stays the Zephyr shell): see `MicroPython on the S31`_ and
+  `phase 4 <../../doc/dev/network-services.md>`__. Built, not yet run on a board.
 - Host tools and the SoapySDR module find its stream as they find the standalone app's
   (``esdr_usb -s <serial> info``).
 
@@ -282,6 +285,17 @@ commands go through ``esdr.shell()``:
 - ``/FLASH:`` is the FAT volume, so a script there sits next to the apps' files, and ``west dfu
   --storage`` replaces the whole volume, scripts included.
 - The Python heap is the PSRAM the boot leaves free, about 4.7 MB.
+
+MicroPython on the S31
+----------------------
+
+- On the ESP32-S31-Function-CoreBoard-1 the same sources build as a RISC-V extension (no display, no USB disks of its
+  own, no Xtensa assembly), with the host's drive and the radio module ``sdr``. Its thread has a 32 KB stack in PSRAM (its flash accesses run on a worker), the Python heap is the 13 MB of PSRAM the boot leaves free.
+- ``multiapp run micropython`` gives the REPL to the CDC-ACM port. With an SSH key added (``ssh key add``), a plain
+  ``ssh <host>`` is the REPL (Ctrl-C and Ctrl-D work), ``ssh <host> shell`` is the Zephyr shell, and when the session ends the REPL is
+  on the port again.
+- ``import esdr`` is built (bursts through the radio module; no ring stream, no Pcap engine, no PIE FFT). Neither it nor
+  the REPL has run on a board yet.
 
 Boards
 ------

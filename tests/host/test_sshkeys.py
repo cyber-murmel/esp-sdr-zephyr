@@ -29,7 +29,8 @@ class AkKey(ctypes.Structure):
 
 class Console(ctypes.Structure):
     _fields_ = [("name", ctypes.c_char_p), ("open", ctypes.c_void_p), ("rx_ready", ctypes.c_void_p),
-                ("tx_ready", ctypes.c_void_p), ("closed", ctypes.c_void_p)]
+                ("tx_ready", ctypes.c_void_p), ("closed", ctypes.c_void_p),
+                ("input_empty", ctypes.c_void_p)]
 
 
 STUBS = """

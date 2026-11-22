@@ -30,6 +30,7 @@
 #include <zephyr/sys/atomic.h>
 
 #include <multiapp/console.h>
+#include <multiapp/multiapp.h>
 
 #include "console_mux.h"
 #include "console_mux_core.h"
@@ -238,11 +239,24 @@ static int tp_enable(const struct shell_transport *t, bool blocking)
 static const struct shell ssh_sh;
 static struct k_thread ssh_sh_thread;
 
+/* A short write leaves the shell waiting for TX_RDY: logged with the time (the log line carries it) and the event's arrival, to see where an output waits */
+static bool tx_waiting;
+
+/* A command run for the host's own caller (multiapp_shell_exec()): the shell's output goes to this function, not a channel */
+static multiapp_shell_out_fn local_out;
+static void *local_ctx;
+
 static int tp_write(const struct shell_transport *t, const void *data, size_t length, size_t *cnt)
 {
 	int ret;
 
 	ARG_UNUSED(t);
+	if (local_out != NULL) {
+		local_out(data, length, local_ctx);
+		shell_out_bytes += (uint32_t)length;
+		*cnt = length;
+		return 0;
+	}
 	ret = shell_chan_write(data, length);
 	if (ret == -ECONNRESET) {
 		/* The session is gone: the output goes nowhere, and the shell must not wait for room in a channel */
@@ -258,6 +272,10 @@ static int tp_write(const struct shell_transport *t, const void *data, size_t le
 	}
 	last_write_ms = k_uptime_get();
 	*cnt = (size_t)ret;
+	if ((size_t)ret < length) {
+		tx_waiting = true;
+		LOG_INF("tx: %d of %zu bytes taken, the writer waits for tx_ready", ret, length);
+	}
 	return 0;
 }
 
@@ -343,7 +361,7 @@ static int ssh_sh_start(struct session *s, bool exec)
 	}
 	shell_exec = exec;
 	shell_sess = s;
-	ret = shell_init(&ssh_sh, s->ch, exec ? exec_flags : flags, false, LOG_LEVEL_NONE);
+	ret = shell_init(&ssh_sh, s != NULL ? s->ch : NULL, exec ? exec_flags : flags, false, LOG_LEVEL_NONE);
 	if (ret != 0) {
 		LOG_ERR("shell_init: %d", ret);
 		shell_sess = NULL;
@@ -355,7 +373,9 @@ static int ssh_sh_start(struct session *s, bool exec)
 	}
 	shell_thread_made = true;
 	shell_taken = true;
-	s->shell = true;
+	if (s != NULL) {
+		s->shell = true;
+	}
 	return 0;
 }
 
@@ -410,6 +430,7 @@ static int io_write(void *ctx, const void *data, size_t len)
 {
 	struct session *s = ctx;
 
+	last_write_ms = k_uptime_get();
 	return sess_write(s, data, len);
 }
 
@@ -577,6 +598,42 @@ static void exec_run(void *arg)
 	k_sem_give(&exec_done);
 }
 
+/*
+ * A command of the Zephyr shell for a caller inside the host (the MicroPython extension's esdr.shell()), on this
+ * instance as an exec request is: its output goes to @p out. One at a time, and not while an SSH session has the shell
+ * (-EBUSY after a wait). The caller's thread runs the command, so it must be one that may touch the flash.
+ */
+static K_MUTEX_DEFINE(local_exec_lock);
+
+int multiapp_shell_exec(const char *cmd, multiapp_shell_out_fn out, void *ctx)
+{
+	int ret = -EBUSY;
+
+	if (k_mutex_lock(&local_exec_lock, K_SECONDS(5)) != 0) {
+		return -EBUSY;
+	}
+	for (int tries = 0; tries < 50 && ret == -EBUSY; tries++) {
+		ret = ssh_sh_start(NULL, true);
+		if (ret == -EBUSY) {
+			k_sleep(K_MSEC(100));
+		}
+	}
+	if (ret != 0) {
+		k_mutex_unlock(&local_exec_lock);
+		return ret;
+	}
+	exec_cancel = false;
+	(void)exec_shell_idle();
+	local_ctx = ctx;
+	local_out = out;
+	shell_out_bytes = 0;
+	ret = shell_execute_cmd(&ssh_sh, cmd);
+	local_out = NULL;
+	ssh_sh_kill();
+	k_mutex_unlock(&local_exec_lock);
+	return ret;
+}
+
 /* The command of an exec request, trimmed; "shell" asks for the interactive Zephyr shell. */
 static int start_exec(struct session *s, const uint8_t *data, uint32_t len)
 {
@@ -638,7 +695,17 @@ static void eof_check(struct k_work *work)
 		(void)sess_exit(s, 0);
 		return;
 	}
-	if (!eof_drained && shell_tp.handler != NULL) {
+	if (s->repl != NULL) {
+		/* a registered console (the REPL): let it read what the channel still has, and say when it has it all */
+		cmux_lock();
+		if (s->repl != NULL) {
+			if (s->repl->rx_ready != NULL) {
+				s->repl->rx_ready(s->repl_handle);
+			}
+			eof_drained = s->repl->input_empty == NULL || s->repl->input_empty(s->repl_handle);
+		}
+		cmux_unlock();
+	} else if (!eof_drained && shell_tp.handler != NULL) {
 		/* wake the shell to read what is left (it stops at the end of the input) */
 		shell_tp.handler(SHELL_TRANSPORT_EVT_RX_RDY, shell_tp.context);
 	}
@@ -720,6 +787,10 @@ static int channel_event(struct ssh_channel *ch, const struct ssh_channel_event 
 		return 0;
 	case SSH_CHANNEL_EVENT_TX_DATA_READY:
 		if (s->shell && shell_tp.handler != NULL) {
+			if (tx_waiting) {
+				tx_waiting = false;
+				LOG_INF("tx_ready");
+			}
 			shell_tp.handler(SHELL_TRANSPORT_EVT_TX_RDY, shell_tp.context);
 		} else {
 			cmux_lock();
@@ -738,8 +809,11 @@ static int channel_event(struct ssh_channel *ch, const struct ssh_channel_event 
 		return 0;
 	}
 	case SSH_CHANNEL_EVENT_EOF:
-		if (!s->exec && s->shell) {
-			/* The client's input ended (echo ... | ssh <host> shell): the shell finishes what it was sent */
+		if (!s->exec && (s->shell || s->repl != NULL)) {
+			/*
+			 * The client's input ended (echo ... | ssh <host> shell, or `| ssh <host>` into the REPL): the shell or
+			 * the console finishes what it was sent, and the channel ends once its output is quiet (eof_check())
+			 */
 			LOG_INF("session: end of input");
 			eof_session = s;
 			eof_t0 = k_uptime_get();

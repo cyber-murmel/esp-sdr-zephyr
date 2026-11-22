@@ -897,9 +897,14 @@ def declared_masks(block):
 CMAKE = (MULTIAPP / "CMakeLists.txt").read_text()
 S3_APPS = declared_masks(CMAKE[CMAKE.index("if(CONFIG_SOC_SERIES_ESP32S3)"):
                                CMAKE.index("elseif(CONFIG_SOC_SERIES_ESP32S31)")])
-S3_APPS.update(declared_masks((MULTIAPP / "micropython.cmake").read_text()))
 S31_APPS = declared_masks(CMAKE[CMAKE.index("elseif(CONFIG_SOC_SERIES_ESP32S31)"):
                                 CMAKE.index("# Hot-swap kernels")])
+# MicroPython's USB mask is per chip in micropython.cmake (mp_chip_options)
+MP_CMAKE = (MULTIAPP / "micropython.cmake").read_text()
+MP_S3 = MP_CMAKE[MP_CMAKE.index("if(CONFIG_SOC_SERIES_ESP32S3)"):MP_CMAKE.index("elseif(CONFIG_SOC_SERIES_ESP32S31)")]
+MP_S31 = MP_CMAKE[MP_CMAKE.index("elseif(CONFIG_SOC_SERIES_ESP32S31)"):MP_CMAKE.index("else()\n  message(FATAL_ERROR")]
+S3_APPS["micropython"] = int(re.search(r"\bUSB (\d+)", MP_S3).group(1))
+S31_APPS["micropython"] = int(re.search(r"\bUSB (\d+)", MP_S31).group(1))
 
 
 def effective(harness, declared, built=True):
@@ -980,6 +985,15 @@ def test_micropython_keeps_the_profile_it_declares(harness):
     declared = S3_APPS["micropython"]
     assert declared == MSC | OWN_DISKS
     assert effective(harness, declared) == declared
+
+
+def test_s31_micropython_has_the_hosts_drive_and_no_disks_of_its_own(harness):
+    # A console app on the S31: the drive is the host's (profile 0x4), the controller has the endpoint for it
+    declared = S31_APPS["micropython"]
+    assert declared == 0
+    profile = effective(harness, declared)
+    assert profile == MSC
+    assert s31().assign(profile)[("msc_0", 0)] == (3, 288)
 
 
 def test_the_profile_needs_the_class_built(harness):
