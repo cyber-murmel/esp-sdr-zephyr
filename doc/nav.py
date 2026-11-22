@@ -9,6 +9,9 @@ markers (<!-- nav-start --> / <!-- nav-end --> in Markdown, .. nav-start / .. na
 - Previous and Next: the neighbours in the reading order, across parts.
 - Up: the part's index page; for an index page and the overview, the landing page doc/index.rst.
 
+README.rst, the overview, carries no links in the file: it is the repository's front page on
+GitHub. doc/conf.py adds them to the overview page of the docs (overview()).
+
 Links are relative paths, so they work on GitHub; doc/conf.py turns them into page links. The link
 text is the target's title. App pages are their READMEs (apps/<app>/README.rst), the overview is
 README.rst.
@@ -101,10 +104,13 @@ def nav_line(page, prev, up, nxt):
     return " · ".join(parts)
 
 
-def rewrite(page, line):
-    text = page.read_text()
+def with_block(text, page, line):
+    """text without its nav blocks, then with line under the title and at the end (line None:
+    without)."""
     md = page.suffix == ".md"
     text = (MD_BLOCK if md else RST_BLOCK).sub("\n\n", text).rstrip("\n") + "\n"
+    if line is None:
+        return text
     block = (f"<!-- nav-start -->\n{line}\n<!-- nav-end -->" if md else
              f".. nav-start\n\n{line}\n\n.. nav-end")
     lines = text.split("\n")
@@ -113,15 +119,29 @@ def rewrite(page, line):
     return f"{head}\n\n{block}\n\n{rest.rstrip()}\n\n{block}\n"
 
 
-def main():
-    check = "--check" in sys.argv[1:]
+def lines():
+    """(docname, page, nav line) for every page in the reading order."""
     names = order()
     pages = [source(n) for n in names]
-    stale = []
     for k, (name, page) in enumerate(zip(names, pages)):
         prev = pages[k - 1] if k > 0 else None
         nxt = pages[k + 1] if k + 1 < len(pages) else None
-        new = rewrite(page, nav_line(page, prev, up_of(name, names), nxt))
+        yield name, page, nav_line(page, prev, up_of(name, names), nxt)
+
+
+def overview(text):
+    """README.rst's text with its nav block, as the docs show it (doc/conf.py)."""
+    line = next(l for n, _, l in lines() if n == "overview")
+    return with_block(text, REPO / "README.rst", line)
+
+
+def main():
+    check = "--check" in sys.argv[1:]
+    stale = []
+    for name, page, line in lines():
+        # README.rst is also the repository's front page on GitHub, which shows the docs link
+        # already: it carries no nav block; doc/conf.py adds it to the overview page.
+        new = with_block(page.read_text(), page, None if name == "overview" else line)
         if new != page.read_text():
             stale.append(str(page.relative_to(REPO)))
             if not check:

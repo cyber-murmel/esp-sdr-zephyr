@@ -8,6 +8,7 @@
 import os
 import re
 import shutil
+import sys
 from pathlib import Path
 
 project = "esp-sdr-zephyr"
@@ -36,6 +37,8 @@ mermaid_version = "11.4.1"
 
 DOC = Path(__file__).resolve().parent
 REPO = DOC.parent
+sys.path.insert(0, str(DOC))
+import nav  # noqa: E402  (doc/nav.py: the Previous/Up/Next links)
 DOXYGEN_HTML = DOC / "_build_doxygen" / "html"
 
 VERSION = dict(re.findall(r"^(\w+) = (\d+)$", (REPO / "VERSION").read_text(), re.M))
@@ -131,6 +134,9 @@ def rewrite_source(app, docname, source):
         app.env.note_dependency(str(shown))
         source[0] = shown.read_text()
         file = shown
+        if docname == "overview":
+            # README.rst has no nav block (GitHub's front page); the overview page gets it here
+            source[0] = nav.overview(source[0])
     else:
         file = Path(app.env.doc2path(docname))
     base = os.path.relpath(file.parent, REPO)
