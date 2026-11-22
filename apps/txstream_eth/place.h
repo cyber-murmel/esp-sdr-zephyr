@@ -35,6 +35,8 @@
 #define ESP_SDR_PIN_DATA_ctl_q_buf ESP_SDR_NOINIT
 #define ESP_SDR_PIN_DATA_ctl_thread ESP_SDR_NOINIT
 #define ESP_SDR_PIN_DATA_st_thread ESP_SDR_NOINIT
+/* The injector's thread object (injector.conf): tx_inject_start() zeroes it before each k_thread_create() */
+#define ESP_SDR_PIN_DATA_inj_thread ESP_SDR_NOINIT
 
 /*
  * PSRAM and LP RAM (CONFIG_ESP_SPIRAM, the S31's 16 MB octal PSRAM at 250 MHz, and its LP RAM). Only what no

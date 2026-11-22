@@ -36,7 +36,10 @@ static struct tx_inj_cfg cfg;
 static struct tx_inj_stats stats;
 static atomic_t run;
 static K_THREAD_STACK_DEFINE(inj_stack, 2048);
-static struct k_thread inj_thread;
+/* In group 3 with the stack (place.h, uninitialized as all of group 3): group 0 has no room for its 464 B
+ * beside the network side. tx_inject_start() zeroes it before each k_thread_create(), as .bss would.
+ */
+static struct k_thread inj_thread ESP_SDR_DATA_F(STATE, inj_thread, NOINIT);
 static atomic_t alive;
 static struct net_buf *ring[TX_BUFFERS];
 static struct txs_wire_cfg wc;
@@ -253,6 +256,8 @@ int tx_inject_start(void)
 	}
 	atomic_set(&run, 1);
 	atomic_set(&alive, 1);
+	/* no injector thread lives here (alive was 0): the object is free to clear */
+	memset(&inj_thread, 0, sizeof(inj_thread));
 	t = k_thread_create(&inj_thread, inj_stack, K_THREAD_STACK_SIZEOF(inj_stack), inj_entry, NULL, NULL,
 			    NULL, K_LOWEST_APPLICATION_THREAD_PRIO, 0, K_FOREVER);
 	k_thread_name_set(t, "tx_inject");
