@@ -22,3 +22,10 @@ if(CONFIG_USB_DEVICE_STACK_NEXT)
 endif()
 
 target_sources(app PRIVATE ${RFPROBE_DIR}/src/main.c)
+# As apps/rfprobe/CMakeLists.txt: multiapp's stage macros, and the S3's "probe i2s" and
+# "probe dma" benches that main.c calls.
+target_include_directories(app PRIVATE ${RFPROBE_DIR}/../multiapp/include)
+if(CONFIG_SOC_SERIES_ESP32S3)
+  target_sources(app PRIVATE ${RFPROBE_DIR}/src/i2sbench.c)
+  target_sources_ifdef(CONFIG_ESP_SDR_DMA app PRIVATE ${RFPROBE_DIR}/src/dmabench.c)
+endif()
