@@ -89,6 +89,7 @@ Contents
    radio/filters
    radio/impairments
    radio/crystal-calibration
+   radio/coexistence
 
 .. toctree::
    :maxdepth: 1

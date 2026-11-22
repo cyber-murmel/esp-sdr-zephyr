@@ -1,0 +1,15 @@
+sample:
+  name: ESP-SDR Wi-Fi, ESP-NOW and SDR coexistence bench
+  description: >-
+    Station Wi-Fi with the net shell, ESP-NOW, passive and forced SDR bursts and a log of the
+    blob's PHY power and channel calls
+common:
+  tags: esp-sdr
+  build_only: true
+tests:
+  sample.esp_sdr.coexbench.s3:
+    sysbuild: true
+    platform_allow:
+      - xiao_esp32s3/esp32s3/procpu
+    integration_platforms:
+      - xiao_esp32s3/esp32s3/procpu

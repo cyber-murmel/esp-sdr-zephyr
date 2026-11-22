@@ -105,8 +105,17 @@ ESP_SDR_CODE(PACED_CHUNK, esp_sdr_rx_gain_refresh) bool esp_sdr_rx_gain_refresh(
 	return esp_sdr_rx_gain_refresh_after(GAIN_REFRESH_MS);
 }
 
+/* Passive: the MAC and AGC own the front end, a capture only samples (esp_sdr_rx_set_passive()). */
+static bool rx_passive;
+
+/* The radio may be touched now: initialized and, with the arbiter, claimed or Wi-Fi's own. */
+#define SDR_LIVE() (esp_sdr_ready && esp_sdr_arb_gate(rx_passive) == 0)
+
 static void rx_front_end(bool retune, uint32_t settle_us)
 {
+	if (rx_passive) {
+		return;
+	}
 	if (retune) {
 		esp_sdr_tune();
 	}
@@ -203,9 +212,48 @@ uint32_t esp_sdr_rx_gain_force_locked(int index)
 }
 #endif
 
+int esp_sdr_rx_set_passive(bool on)
+{
+#if defined(CONFIG_ESP_SDR_RFTEST) || defined(CONFIG_SOC_SERIES_ESP32)
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+	if (on && !rx_passive) {
+		/* The AGC owns the gain, the PHY's filter codes come back. */
+		gain_index = ESP_SDR_RX_GAIN_AUTO;
+		lpf_code = ESP_SDR_RX_LPF_AUTO;
+		if (SDR_LIVE()) {
+			gain_apply();
+			lpf_apply();
+		}
+	}
+	rx_passive = on;
+	k_mutex_unlock(&esp_sdr_lock);
+	return 0;
+#else
+	return on ? -ENOTSUP : 0;
+#endif
+}
+
+bool esp_sdr_rx_is_passive(void)
+{
+	return rx_passive;
+}
+
+int esp_sdr_rx_agc_index(void)
+{
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
+	return (int)FIELD_GET(AGC_FORCE_INDEX, REG_READ(AGC_FORCE_REG));
+#else
+	return -ENOTSUP;
+#endif
+}
+
 int esp_sdr_rx_set_gain(int index)
 {
 	int ret;
+
+	if (rx_passive && index != ESP_SDR_RX_GAIN_AUTO) {
+		return -EBUSY;
+	}
 
 	if (index < ESP_SDR_RX_GAIN_AUTO) {
 		return -EINVAL;
@@ -260,12 +308,15 @@ void esp_sdr_rx_bandwidth_range(uint32_t *min, uint32_t *max)
 
 int esp_sdr_rx_set_lpf(int code)
 {
+	if (rx_passive && code != ESP_SDR_RX_LPF_AUTO) {
+		return -EBUSY;
+	}
 	if (code < ESP_SDR_RX_LPF_AUTO || code > ESP_SDR_RX_LPF_MAX) {
 		return -EINVAL;
 	}
 	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
 	lpf_code = code;
-	if (esp_sdr_ready) {
+	if (SDR_LIVE()) {
 		lpf_apply();
 	}
 	k_mutex_unlock(&esp_sdr_lock);
@@ -456,6 +507,22 @@ static int capture_locked(enum esp_sdr_rate rate, size_t count, volatile uint32_
 }
 #endif /* CONFIG_SOC_SERIES_ESP32S31 */
 
+/* A capture if the radio is initialized and, with the arbiter, ours (or Wi-Fi's, if passive). */
+static int capture_gated(enum esp_sdr_rate rate, size_t count, volatile uint32_t *words,
+			 uint32_t usage, uint32_t *elapsed_us, uint64_t *t0)
+{
+	int ret;
+
+	if (!esp_sdr_ready) {
+		return -EAGAIN;
+	}
+	ret = esp_sdr_arb_gate(rx_passive);
+	if (ret != 0) {
+		return ret;
+	}
+	return capture_locked(rate, count, words, usage, elapsed_us, t0);
+}
+
 int esp_sdr_rx_capture(enum esp_sdr_rate rate, size_t count, struct esp_sdr_rx_burst *burst)
 {
 	uint32_t usage, elapsed;
@@ -468,8 +535,7 @@ int esp_sdr_rx_capture(enum esp_sdr_rate rate, size_t count, struct esp_sdr_rx_b
 	}
 
 	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
-	ret = esp_sdr_ready ? capture_locked(rate, count, __esp_sdr_bank_start, usage, &elapsed, &t0)
-			: -EAGAIN;
+	ret = capture_gated(rate, count, __esp_sdr_bank_start, usage, &elapsed, &t0);
 	if (ret == 0) {
 		burst->words = BURST_WORDS;
 		burst->count = count;
@@ -543,8 +609,7 @@ int esp_sdr_rx_capture_with(enum esp_sdr_rate rate, size_t count, esp_sdr_rx_wor
 		return -EINVAL;
 	}
 	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
-	ret = esp_sdr_ready ? capture_locked(rate, count, __esp_sdr_bank_start, usage, &elapsed, &t0)
-			: -EAGAIN;
+	ret = capture_gated(rate, count, __esp_sdr_bank_start, usage, &elapsed, &t0);
 	if (ret == 0) {
 		/* Still under the lock: another thread's capture or transmit reuses the bank. */
 		fn(user, BURST_WORDS, count);
@@ -593,7 +658,7 @@ int esp_sdr_rx_capture_bank(enum esp_sdr_rate rate, size_t count, int bank,
 	usage = BIT(1) << DUMP_USAGE_S;
 
 	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
-	ret = esp_sdr_ready ? capture_locked(rate, count, words, usage, &elapsed, &t0) : -EAGAIN;
+	ret = capture_gated(rate, count, words, usage, &elapsed, &t0);
 	if (ret == 0) {
 		burst->words = words;
 		burst->count = count;
@@ -682,8 +747,7 @@ int esp_sdr_rx_capture_decimated(enum esp_sdr_rate rate, size_t count, unsigned 
 	}
 
 	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
-	ret = esp_sdr_ready ? capture_locked(rate, count, __esp_sdr_bank_start, usage, &elapsed, &t0)
-			: -EAGAIN;
+	ret = capture_gated(rate, count, __esp_sdr_bank_start, usage, &elapsed, &t0);
 	if (ret == 0) {
 		/* Still under the lock: a transmit session would overwrite the bank. */
 		*n_out = cic(BURST_WORDS, count, m, out, max_out);
@@ -740,8 +804,7 @@ int esp_sdr_rx_capture_folded(enum esp_sdr_rate rate, size_t count, unsigned int
 	}
 
 	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
-	ret = esp_sdr_ready ? capture_locked(rate, count, __esp_sdr_bank_start, usage, &elapsed, &t0)
-			: -EAGAIN;
+	ret = capture_gated(rate, count, __esp_sdr_bank_start, usage, &elapsed, &t0);
 	if (ret == 0) {
 		/* Still under the lock: a transmit session would overwrite the bank. */
 		*n_out = fold(BURST_WORDS, count, n, out, max_out);
@@ -806,7 +869,7 @@ int esp_sdr_tx_set_lpf(int code_a, int code_b)
 	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
 	tx_lpf[0] = code_a;
 	tx_lpf[1] = code_b;
-	if (esp_sdr_ready) {
+	if (SDR_LIVE()) {
 		tx_lpf_apply();
 	}
 	k_mutex_unlock(&esp_sdr_lock);
@@ -843,3 +906,44 @@ void esp_sdr_bbtop_write(unsigned int reg, unsigned int val)
 	k_mutex_unlock(&esp_sdr_lock);
 }
 
+
+#if defined(CONFIG_ESP_SDR_ARB)
+/*
+ * What the SDR changed that Wi-Fi's MAC does not set itself on the next frame. The PHY's
+ * low-pass codes are read again at the next claim (the PHY may have been powered down since).
+ */
+void esp_sdr_rx_arb_restore(uint32_t wifi_mhz, unsigned int wifi_cbw)
+{
+#if defined(CONFIG_ESP_SDR_RFTEST)
+	/* The same call gain_apply() makes to release a forced gain. */
+	force_rx_gain(0, MIN(AGC_DEFAULT_INDEX, gain_max()), 0);
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
+	force_txon_mode(0, 0, 0);
+#endif
+#endif
+	regi2c_enter_critical();
+	if (lpf_forced) {
+		for (unsigned int j = 0; j < ARRAY_SIZE(lpf_saved); j++) {
+			rom_chip_i2c_writeReg(BBTOP_BLOCK, BBTOP_HOST, BBTOP_LPF_REG + j,
+					      lpf_saved[j]);
+		}
+		lpf_forced = false;
+	}
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
+	/* The 5/6 divider is for tunings below 2210 MHz only. */
+	if (esp_sdr_lo_divided()) {
+		rx_lo_select(false);
+	}
+#endif
+	regi2c_exit_critical();
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
+	if (wifi_mhz != 0U && !rx_passive) {
+		/* Not passive, so tuned: a full channel setup clears the kHz offset too. */
+		set_chanfreq(wifi_mhz, wifi_cbw);
+	}
+#else
+	ARG_UNUSED(wifi_mhz);
+	ARG_UNUSED(wifi_cbw);
+#endif
+}
+#endif /* CONFIG_ESP_SDR_ARB */

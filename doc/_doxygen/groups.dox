@@ -4,7 +4,7 @@
 
 /*
  * Doxygen lists the topics in the order this file defines them: keep it the reading order of
- * the guides (doc/index.rst). Part 1, the radio: radio, rx, gain_guard, tx, cal, lte. Part 2,
+ * the guides (doc/index.rst). Part 1, the radio: radio, rx, gain_guard, tx, cal, lte, arb. Part 2,
  * samples in and out: trig, ring, gapless, diag, diag16, dumpring, replay, paced. Part 3,
  * modulation and coding: chancap, dsp. Support: place, prof. Then the IEEE 802.15.4 groups, a
  * top-level group of their own, so they cannot sit among the library's groups.
@@ -70,6 +70,14 @@
  * libm without Zephyr (esp_sdr_lte.h).
  *
  * Guide: [Crystal calibration](../radio/crystal-calibration.html).
+ */
+
+/**
+ * @defgroup esp_sdr_arb Radio arbiter
+ * @ingroup esp_sdr
+ * @brief The SDR and Wi-Fi time-share the PHY, ESP32-S3 (esp_sdr_arb.h, CONFIG_ESP_SDR_ARB).
+ *
+ * Guide: [Coexistence](../radio/coexistence.html).
  */
 
 /**

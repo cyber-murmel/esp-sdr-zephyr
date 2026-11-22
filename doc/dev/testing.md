@@ -41,6 +41,7 @@ Each table lists the ztest suites of one area and what they check.
 | `lte` | the LTE crystal calibration's estimator and temperature model (below) |
 | `chancap_dsp` | the channelized burst capture's filter bank, decimator bank and detector, against a direct floating point model: tones per channel, rejection, the decimator, the detector |
 | `gapless_sort` | the C6 gapless receiver's width sorting on synthetic 80 MS/s dump words: Wi-Fi-wide noise wide; Bluetooth LE, 802.15.4 and two tones at any spacing narrow; the DC taken out; the mean frequency |
+| `arb_pred` | the radio arbiter's wake predictor on synthetic Wi-Fi enable times: the period as a median (robust to an odd long awake phase), the phase, MAX modem and ESP-NOW patterns, a change of power save, staleness |
 | `esdr_seg` | the gapless block's segment codec against a model of the format, also under ASan |
 
 `lte` checks:

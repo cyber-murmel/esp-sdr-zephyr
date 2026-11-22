@@ -44,6 +44,11 @@ if(CONFIG_ESP_SDR_PHY_ONLY)
   endif()
 endif()
 
+if(CONFIG_ESP_SDR_ARB)
+  # esp_sdr_arb.c: the arbiter sits between the Wi-Fi blob's adapter and the PHY's power calls.
+  zephyr_link_libraries(-Wl,--wrap=esp_phy_enable -Wl,--wrap=esp_phy_disable)
+endif()
+
 if(CONFIG_SOC_SERIES_ESP32S31)
   # esp_sdr_s31.c: the PHY library's calls into the ROM.
   zephyr_link_libraries(-Wl,--wrap=phy_set_channel_rfpll_freq -Wl,--wrap=phy_write_gain_mem)

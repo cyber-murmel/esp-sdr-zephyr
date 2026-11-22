@@ -31,6 +31,7 @@
 #include <esp_attr.h>
 
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esp_sdr_arb.h>
 #include <esp_sdr/esp_sdr_dsp.h>
 #include <esp_sdr/esp_sdr_place.h>
 #include <esp_sdr/esp_sdr_ring.h>
@@ -1407,6 +1408,9 @@ static void ring_loop(void)
 	uint64_t index = 0, t_start;
 	unsigned int b = 0;
 	bool prepared = false, fresh = true, armed = false;
+#if defined(CONFIG_ESP_SDR_ARB)
+	bool win_end = false;
+#endif
 
 	t_start = k_cycle_get_64();
 	engine_start(ctrl, saved, &epoch, &w0);
@@ -1450,6 +1454,13 @@ static void ring_loop(void)
 				/* Decided mid-unit: only the index read sits before the switch. */
 				stop_checked = true;
 				stop = atomic_get(&stop_req) != 0;
+#if defined(CONFIG_ESP_SDR_ARB)
+				/* The window's deadline or Wi-Fi's wake ends the run like a stop. */
+				if (!stop && esp_sdr_arb_window_over()) {
+					stop = true;
+					win_end = true;
+				}
+#endif
 				continue;
 			}
 			if (!prepared &&
@@ -1605,6 +1616,11 @@ static void ring_loop(void)
 	}
 	st->elapsed_us = k_cyc_to_us_floor64(k_cycle_get_64() - t_start);
 	st->pairs = index;
+#if defined(CONFIG_ESP_SDR_ARB)
+	if (win_end && st->status == ESP_SDR_RING_OK) {
+		st->status = ESP_SDR_RING_WINDOW;
+	}
+#endif
 	while (fir_slice(4096U)) {
 	}
 }
@@ -1631,6 +1647,12 @@ int esp_sdr_ring_run(const struct esp_sdr_ring_cfg *cfg, struct esp_sdr_ring_sta
 	if (!esp_sdr_ready) {
 		k_mutex_unlock(&esp_sdr_lock);
 		return -EAGAIN;
+	}
+	/* The arbiter's claim, whatever the passive setting: the run masks the Wi-Fi interrupt. */
+	ret = esp_sdr_arb_gate(false);
+	if (ret != 0) {
+		k_mutex_unlock(&esp_sdr_lock);
+		return ret;
 	}
 	memset(stats, 0, sizeof(*stats));
 	memset(&rs, 0, sizeof(rs));
@@ -1668,7 +1690,7 @@ int esp_sdr_ring_run(const struct esp_sdr_ring_cfg *cfg, struct esp_sdr_ring_sta
 		rs.fir_pairs != 0U ? (uint32_t)(rs.fir_cycles * 100U / rs.fir_pairs) : 0U;
 	atomic_set(&active, 0);
 	k_mutex_unlock(&esp_sdr_lock);
-	if (stats->status != ESP_SDR_RING_OK) {
+	if (stats->status != ESP_SDR_RING_OK && stats->status != ESP_SDR_RING_WINDOW) {
 		ret = -EIO;
 	}
 	return ret;

@@ -1,7 +1,7 @@
 # Samples in and out
 
 <!-- nav-start -->
-Previous: [Crystal calibration](../radio/crystal-calibration.md) · Up: [esp-sdr-zephyr](../index.rst) · Next: [Burst capture](bursts.md)
+Previous: [Coexistence](../radio/coexistence.md) · Up: [esp-sdr-zephyr](../index.rst) · Next: [Burst capture](bursts.md)
 <!-- nav-end -->
 
 Part 2 takes the samples from the ADC and the DAC of [The radio](../radio/index.md) to the host
@@ -367,5 +367,5 @@ and then to the links that carry samples to a host.
 - [Host transports](transports.md): the links to a host and what each carries.
 
 <!-- nav-start -->
-Previous: [Crystal calibration](../radio/crystal-calibration.md) · Up: [esp-sdr-zephyr](../index.rst) · Next: [Burst capture](bursts.md)
+Previous: [Coexistence](../radio/coexistence.md) · Up: [esp-sdr-zephyr](../index.rst) · Next: [Burst capture](bursts.md)
 <!-- nav-end -->

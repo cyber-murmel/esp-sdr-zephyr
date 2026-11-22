@@ -66,6 +66,7 @@
 
 /* Wi-Fi AGC: forced index 31:24, force 23, largest calibrated index 14:8. */
 #define AGC_FORCE_REG      0x6001c02cU
+#define AGC_FORCE_INDEX    GENMASK(31, 24)
 #define AGC_GAIN_MAX       GENMASK(14, 8)
 /* Larger maxima on the S3 point at uncalibrated table slots. */
 #define AGC_GAIN_MAX_VALID 82U
@@ -658,6 +659,27 @@ extern bool esp_sdr_turn_retune;
  * transmission, or to TX, at the current gains; lock held.
  */
 void esp_sdr_rx_prepare(void);
+
+#if defined(CONFIG_ESP_SDR_ARB)
+/*
+ * The radio arbiter (esp_sdr_arb.c): 0 if the radio may be used now, else -EBUSY (the SDR holds
+ * no claim) or, for a passive caller, -EAGAIN (Wi-Fi has the PHY powered down). Passive callers
+ * need Wi-Fi's PHY on, the others the SDR's claim.
+ */
+int esp_sdr_arb_gate(bool passive);
+/*
+ * Hand the PHY's state back to Wi-Fi at the end of a claim, lock held: TX forcing off, the AGC
+ * in charge, the PHY's filter codes, the 5/6 divider off, then Wi-Fi's channel (MHz 0: unknown,
+ * left as is; cbw nonzero for HT40).
+ */
+void esp_sdr_rx_arb_restore(uint32_t wifi_mhz, unsigned int wifi_cbw);
+#else
+static inline int esp_sdr_arb_gate(bool passive)
+{
+	ARG_UNUSED(passive);
+	return 0;
+}
+#endif
 /* Re-force a fixed receive gain last applied more than 20 ms ago; lock held. Returns whether it did. */
 bool esp_sdr_rx_gain_refresh(void);
 /* The same with another age, for a ring run that never transmits (the loss follows transmissions). */

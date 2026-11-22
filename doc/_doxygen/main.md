@@ -23,6 +23,7 @@ The library's groups are subgroups of @ref esp_sdr; the IEEE 802.15.4 groups are
 | @ref esp_sdr_tx, with @ref esp_sdr_tx_loop | `esp_sdr_tx.h` | [Transmit](../samples/transmit.html) |
 | @ref esp_sdr_cal | `esp_sdr_cal.h` | [Crystal calibration](../radio/crystal-calibration.html) |
 | @ref esp_sdr_lte | `esp_sdr_lte.h` | [Crystal calibration](../radio/crystal-calibration.html) |
+| @ref esp_sdr_arb | `esp_sdr_arb.h` | [Coexistence](../radio/coexistence.html) |
 
 ### Samples in and out
 

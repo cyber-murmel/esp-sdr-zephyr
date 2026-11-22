@@ -41,6 +41,76 @@ config ESP_SDR
 
 if ESP_SDR
 
+config ESP_SDR_WIFI_SHARED
+	bool "Leave the Wi-Fi driver alone at init (Wi-Fi associates and sleeps normally)"
+	depends on WIFI_ESP32
+	help
+	  esp_sdr_init() then neither disables power save, nor enters promiscuous mode, nor sets
+	  channel 1. Captures sample what the MAC and AGC have set up: pair it with
+	  esp_sdr_rx_set_passive().
+
+config ESP_SDR_ARB
+	bool "Radio arbiter: the SDR takes the radio in Wi-Fi's sleep windows"
+	depends on ESP_SDR_WIFI_SHARED && SOC_SERIES_ESP32S3 && !ESP_SDR_AS_EXTENSION
+	help
+	  Wraps the Wi-Fi blob's esp_phy_enable() and esp_phy_disable() (linker --wrap) and owns
+	  the real calls: the PHY is powered while Wi-Fi or the SDR needs it. The SDR takes the
+	  radio with esp_sdr_arb_claim() while Wi-Fi sleeps (station modem sleep, ESP-NOW wake
+	  windows), runs until the predicted next Wi-Fi wake less a margin, and gives it back with
+	  esp_sdr_arb_release(), which restores Wi-Fi's gain, filter codes and channel. Wi-Fi's
+	  wake preempts a late SDR. Captures and ring runs need a claim (-EBUSY), except passive
+	  captures, which need Wi-Fi's PHY on (-EAGAIN). Without this option nothing changes.
+
+config ESP_SDR_ARB_MARGIN_US
+	int "Window margin before the predicted Wi-Fi wake (us)"
+	default 3000
+	depends on ESP_SDR_ARB
+	help
+	  A window ends this long before the next predicted enable: the ring ends within one to
+	  one and a half units (about 1.2 ms at the default unit), a restore takes about a
+	  millisecond, and the beacon jitters.
+
+config ESP_SDR_ARB_MIN_WINDOW_US
+	int "Shortest window a claim accepts (us)"
+	default 8000
+	depends on ESP_SDR_ARB
+	help
+	  A claim waits for the next Wi-Fi sleep when less than this is left before the deadline:
+	  the PHY power-up and the retune (about 3.5 ms) come out of it.
+
+config ESP_SDR_ARB_PREEMPT_WAIT_US
+	int "Longest wait of Wi-Fi's wake for the SDR to let go (us)"
+	default 5000
+	depends on ESP_SDR_ARB
+	help
+	  Wi-Fi's esp_phy_enable() calls the SDR's stop hook and waits this long for its release;
+	  it then goes on, the SDR's state unrestored, and counts a timeout.
+
+config ESP_SDR_ARB_MIN_WAKE_US
+	int "Shortest Wi-Fi wake the predictor learns from (us)"
+	default 1000
+	depends on ESP_SDR_ARB
+	help
+	  An enable counts as a beacon wake only when its disable follows at least this late; the
+	  blob's short enable and disable pair after the SDR's release is not one.
+
+config ESP_SDR_ARB_WIFI_FLAG
+	bool "The SDR's PHY power-up and power-down also set the PHY's Wi-Fi flag"
+	default y
+	depends on ESP_SDR_ARB
+	help
+	  Calls phy_wifi_enable_set(1) and (0) around the SDR's real esp_phy_enable() and
+	  esp_phy_disable(), as Wi-Fi's adapter does. An A/B switch for the blob's spurious enable
+	  after a release.
+
+config ESP_SDR_ARB_PHY_CYCLE
+	bool "Power-cycle the PHY when a preempted SDR lets go"
+	depends on ESP_SDR_ARB
+	help
+	  After the restore, when Wi-Fi is awake, the arbiter powers the PHY down and up once, so
+	  it resets everything it owns, at the cost of its power-up time in Wi-Fi's wake. An
+	  experiment: the explicit restore is the default.
+
 config ESP_SDR_RFTEST
 	bool "Espressif RF test library (fixed RX gain, TX power steps)"
 	default y

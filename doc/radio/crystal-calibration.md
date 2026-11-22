@@ -1,7 +1,7 @@
 # Crystal calibration
 
 <!-- nav-start -->
-Previous: [Impairments](impairments.md) · Up: [The radio](index.md) · Next: [Samples in and out](../samples/index.md)
+Previous: [Impairments](impairments.md) · Up: [The radio](index.md) · Next: [Coexistence](coexistence.md)
 <!-- nav-end -->
 
 This page shows how the library measures a board's crystal error against an LTE base station,
@@ -328,5 +328,5 @@ the band was flat (every MHz within 2 dB of the median). Check reception first (
 waterfall, `ltecal.survey()`, or a capture) when a run finds no cell.
 
 <!-- nav-start -->
-Previous: [Impairments](impairments.md) · Up: [The radio](index.md) · Next: [Samples in and out](../samples/index.md)
+Previous: [Impairments](impairments.md) · Up: [The radio](index.md) · Next: [Coexistence](coexistence.md)
 <!-- nav-end -->

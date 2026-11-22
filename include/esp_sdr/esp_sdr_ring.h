@@ -136,6 +136,12 @@ enum esp_sdr_ring_status {
 	ESP_SDR_RING_END,
 	/** A unit of implausible length (detail: pairs). */
 	ESP_SDR_RING_LENGTH,
+	/**
+	 * Not a failure: the run ended at the end of its radio window (CONFIG_ESP_SDR_ARB: the
+	 * deadline of esp_sdr_arb_claim() passed, or Wi-Fi woke). esp_sdr_ring_run() returns 0. The
+	 * next run restarts the output index at 0; the time between windows is the gap.
+	 */
+	ESP_SDR_RING_WINDOW,
 };
 
 struct esp_sdr_ring_stats {
@@ -177,6 +183,8 @@ struct esp_sdr_ring_stats {
  * @retval 0 after esp_sdr_ring_stop().
  * @retval -EINVAL for a bad configuration.
  * @retval -EAGAIN if esp_sdr_init() has not run.
+ * @retval -EBUSY with CONFIG_ESP_SDR_ARB if the SDR holds no radio claim (esp_sdr_arb_claim()). A
+ *         run then ends at the window's deadline (stats status ESP_SDR_RING_WINDOW, return 0).
  * @retval -EIO if the ring failed (@p stats says why).
  */
 int esp_sdr_ring_run(const struct esp_sdr_ring_cfg *cfg, struct esp_sdr_ring_stats *stats);

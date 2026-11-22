@@ -116,6 +116,8 @@ the Function CoreBoard, while the carrier, paced and replay entries name the VIE
    the clock offset between boards and phase noise.
 6. [Crystal calibration](crystal-calibration.md): the crystal's error measured against LTE, its
    temperature model and storage.
+7. [Coexistence](coexistence.md): what the SDR, Wi-Fi and ESP-NOW share, the time-sharing modes, the
+   S3's PHY power-down windows and runtime loading per chip.
 
 <!-- nav-start -->
 Previous: [ESP-SDR on Zephyr](../../README.rst) · Up: [esp-sdr-zephyr](../index.rst) · Next: [Transceiver](transceiver.md)

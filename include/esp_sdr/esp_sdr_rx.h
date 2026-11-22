@@ -13,6 +13,7 @@
 #ifndef ESP_SDR_ESP_SDR_RX_H_
 #define ESP_SDR_ESP_SDR_RX_H_
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -77,6 +78,32 @@ int esp_sdr_rx_get_gain(void);
 
 /** @return Largest calibrated gain index, 0 if the PHY reports none. */
 int esp_sdr_rx_gain_max(void);
+
+/**
+ * @brief Passive receive: sample what the MAC and AGC have set up, force nothing.
+ *
+ * While on, retunes, front end forcing, gain forcing and low-pass writes are skipped, so a
+ * Wi-Fi link on the same radio keeps running (the frequency is then whatever Wi-Fi tuned).
+ * Switching on gives the gain back to the AGC and restores the PHY's low-pass codes; fixed
+ * gain and low-pass codes are refused (-EBUSY) until it is off again. May be called before
+ * esp_sdr_init().
+ *
+ * @param on true for passive.
+ * @retval 0 on success.
+ * @retval -ENOTSUP without CONFIG_ESP_SDR_RFTEST.
+ */
+int esp_sdr_rx_set_passive(bool on);
+
+/** @return true while esp_sdr_rx_set_passive() is on. */
+bool esp_sdr_rx_is_passive(void);
+
+/**
+ * @brief Gain index field of the Wi-Fi AGC register (AGC_FORCE_REG [31:24]).
+ *
+ * Under the AGC this is the index the AGC last wrote only if the PHY mirrors it there: not
+ * verified, treat as a probe. @retval -ENOTSUP except on the ESP32-S3.
+ */
+int esp_sdr_rx_agc_index(void);
 
 /**
  * @brief Select the analog low-pass filter by approximate bandwidth.

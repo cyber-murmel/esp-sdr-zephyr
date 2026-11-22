@@ -219,6 +219,8 @@ int esp_sdr_tx_play_for(enum esp_sdr_rate rate, const uint32_t *words, size_t co
 
 int esp_sdr_dac_begin(enum esp_sdr_rate rate)
 {
+	int ret;
+
 	if (esp_sdr_tx_rate_hz(rate) == 0U || esp_sdr_bank_usage(&dac_usage) != 0) {
 		return -EINVAL;
 	}
@@ -226,6 +228,11 @@ int esp_sdr_dac_begin(enum esp_sdr_rate rate)
 	if (!esp_sdr_ready) {
 		k_mutex_unlock(&esp_sdr_lock);
 		return -EAGAIN;
+	}
+	ret = esp_sdr_arb_gate(false);
+	if (ret != 0) {
+		k_mutex_unlock(&esp_sdr_lock);
+		return ret;
 	}
 	dac_rate = rate;
 	esp_sdr_tx_prepare();

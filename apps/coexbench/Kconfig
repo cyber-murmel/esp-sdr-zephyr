@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+mainmenu "coexbench: Wi-Fi, ESP-NOW and SDR coexistence bench"
+
+rsource "../common/Kconfig"
+source "samples/subsys/usb/common/Kconfig.sample_usbd"
+
+config COEX_LOG_ENTRIES
+	int "PHY event log entries"
+	default 512
+
+source "Kconfig.zephyr"

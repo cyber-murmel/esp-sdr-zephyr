@@ -122,6 +122,10 @@ bool esp_sdr_freq_window_checked(void)
 
 static bool pll_in_window(void)
 {
+	/* Nothing was tuned while the SDR holds no claim (arbiter): its setting waits. */
+	if (esp_sdr_arb_gate(esp_sdr_rx_is_passive()) != 0) {
+		return true;
+	}
 #if defined(CONFIG_SOC_SERIES_ESP32C5) || defined(CONFIG_SOC_SERIES_ESP32)
 	/* The PLL status bits of the C5 and the ESP32 are not mapped yet. */
 	return true;
@@ -377,6 +381,10 @@ SYS_INIT(esp_sdr_timer_boot, POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT);
 #else
 static int radio_up(void)
 {
+#if defined(CONFIG_ESP_SDR_WIFI_SHARED)
+	/* Wi-Fi keeps its power save, mode and channel. */
+	return 0;
+#else
 	/* The driver already applies its Kconfig power-save mode at boot. */
 	if (esp_wifi_set_ps(WIFI_PS_NONE) != ESP_OK) {
 		LOG_WRN("power save still enabled");
@@ -390,6 +398,7 @@ static int radio_up(void)
 		return -EIO;
 	}
 	return 0;
+#endif
 }
 #endif
 
@@ -419,7 +428,10 @@ int esp_sdr_init(void)
 #if defined(CONFIG_ESP_SDR_CALSTORE)
 	esp_sdr_cal_apply_stored();
 #endif
-	esp_sdr_rx_prepare();
+	/* With the arbiter the front end is set up at each claim. */
+	if (esp_sdr_arb_gate(esp_sdr_rx_is_passive()) == 0) {
+		esp_sdr_rx_prepare();
+	}
 	esp_sdr_ready = true;
 	LOG_INF("receiver ready, bank %p", (void *)__esp_sdr_bank_start);
 out:
@@ -432,7 +444,10 @@ int esp_sdr_retune(void)
 	if (!esp_sdr_ready) {
 		return -EAGAIN;
 	}
-	esp_sdr_rx_prepare();
+	/* Without the radio (arbiter): the setting is kept and applied at the next claim. */
+	if (esp_sdr_arb_gate(esp_sdr_rx_is_passive()) == 0) {
+		esp_sdr_rx_prepare();
+	}
 	return 0;
 }
 
