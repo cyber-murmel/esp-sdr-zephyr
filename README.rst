@@ -142,7 +142,7 @@ lists them under "Radio without the Wi-Fi driver". Chip details are in
 Documentation
 *************
 
-Published at https://cyber-murmel.github.io/esp-sdr-zephyr. The guides come in five parts, each
+Published at https://software.defined.rodeo. The guides come in five parts, each
 building on the one before:
 
 - `The radio <doc/radio/index.md>`__: the analog receive and transmit paths, tuning, gain,
@@ -155,7 +155,7 @@ building on the one before:
 - `Reference <doc/dev/index.md>`__: chip notes, code placement, testing, the ZigBit reference and
   the register pages.
 
-The `API reference <https://cyber-murmel.github.io/esp-sdr-zephyr/doxygen/index.html>`__ documents
+The `API reference <https://software.defined.rodeo/doxygen/index.html>`__ documents
 the headers.
 
 Building the site
@@ -216,7 +216,7 @@ API headers
 ===========
 
 - ``include/esp_sdr/``: the API. The
-  `API reference <https://cyber-murmel.github.io/esp-sdr-zephyr/doxygen/index.html>`__ lists its
+  `API reference <https://software.defined.rodeo/doxygen/index.html>`__ lists its
   headers by group.
 - ``include/zigbee/``: the Zigbee stack's headers.
 

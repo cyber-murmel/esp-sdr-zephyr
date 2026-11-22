@@ -6,15 +6,15 @@ For the Seeed XIAO ESP32S3 (8 MB flash) and an x86_64 Linux PC:
   `apps/osmosdr/soapy`.
 - `esp32s3-esp-sdr-@TAG@.svd`, `esp32c6-esp-sdr-@TAG@.svd`: Espressif's SVDs with the radio
   registers this project documents
-  ([ESP32-S3 registers](https://cyber-murmel.github.io/esp-sdr-zephyr/dev/registers-esp32s3.html),
-  [ESP32-C6 registers](https://cyber-murmel.github.io/esp-sdr-zephyr/dev/registers-esp32c6.html)),
+  ([ESP32-S3 registers](https://software.defined.rodeo/dev/registers-esp32s3.html),
+  [ESP32-C6 registers](https://software.defined.rodeo/dev/registers-esp32c6.html)),
   for debuggers.
 
 ## Host setup
 
 - On Ubuntu, `apt install gqrx-sdr soapysdr-tools` brings gqrx and SoapySDR.
 - Without root, the PC needs udev rules for the board (USB vendor 2fe3):
-  [USB IDs and host access](https://cyber-murmel.github.io/esp-sdr-zephyr/apps/index.html#usb-ids-and-host-access)
+  [USB IDs and host access](https://software.defined.rodeo/apps/index.html#usb-ids-and-host-access)
   has them.
 
 ## gqrx
@@ -40,4 +40,4 @@ For the Seeed XIAO ESP32S3 (8 MB flash) and an x86_64 Linux PC:
 ## Other apps
 
 The other apps: `multiapp list` and `multiapp run <name>` on the board's USB shell
-([multiapp](https://cyber-murmel.github.io/esp-sdr-zephyr/apps/multiapp.html)).
+([multiapp](https://software.defined.rodeo/apps/multiapp.html)).
