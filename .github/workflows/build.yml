@@ -55,10 +55,12 @@ jobs:
             platforms: -p esp32s31_function_coreboard/esp32s31/hpcore
             toolchains: riscv64-zephyr-elf
             twister-args: --build-only
+            esp-as: true
           - name: Build ues31s043h800v480c_u
             platforms: -p ues31s043h800v480c_u/esp32s31/hpcore
             toolchains: riscv64-zephyr-elf
             twister-args: --build-only
+            esp-as: true
           - name: Build mch2022
             platforms: -p mch2022/esp32/procpu
             toolchains: xtensa-espressif_esp32_zephyr-elf
@@ -101,6 +103,42 @@ jobs:
       # relink it under each other ("Text file busy"). Built once here, it is up to date for them.
       - name: Build mpy-cross
         run: make -C modules/micropython/mpy-cross USER_C_MODULES= FROZEN_MANIFEST=
+
+      # Espressif's assembler for the PIE kernels (txstream_eth's CONFIG_ESP_SDR_TXS_PIE on the
+      # ESP32-S31): the release default.nix pins (riscv32-esp-binutils), checked against its hash.
+      # Only as and the per-PIE-version assemblers it runs (hard links into the inner bin/).
+      - name: Espressif assembler (cache)
+        if: ${{ matrix.esp-as }}
+        id: esp-as
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/esp-as
+          key: esp-as-16.2.0_20261109
+
+      - name: Espressif assembler
+        if: ${{ matrix.esp-as }}
+        env:
+          ESP_TC: 16.2.0_20261109
+          ESP_TC_SHA256: 3d2c4207421b46e0b442ec294b4fed6ab8019f82e6d0c61d7e02b962c75cbcc0
+          CACHE_HIT: ${{ steps.esp-as.outputs.cache-hit }}
+        run: |
+          if [ "$CACHE_HIT" != true ]; then
+            f="riscv32-esp-elf-${ESP_TC}-x86_64-linux-gnu.tar.xz"
+            wget --no-verbose "https://github.com/espressif/crosstool-NG/releases/download/esp-${ESP_TC}/$f"
+            echo "${ESP_TC_SHA256}  $f" | sha256sum -c
+            mkdir -p ~/esp-as
+            tar -xJf "$f" -C ~/esp-as --wildcards 'riscv32-esp-elf/bin/riscv32-esp-elf-as*' \
+              'riscv32-esp-elf/riscv32-esp-elf/bin/as-xespv*'
+            rm "$f"
+          fi
+          echo ~/esp-as/riscv32-esp-elf/bin >> "$GITHUB_PATH"
+
+      - name: Save the Espressif assembler
+        if: ${{ matrix.esp-as && steps.esp-as.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/esp-as
+          key: esp-as-16.2.0_20261109
 
       # NSI_OPT=-O2 as in scripts/run-unit-tests.sh; only native_sim reads it. ESDR_DEV_KEY=1: the
       # ESP32-S31 CoreBoard's sysbuild signs with the project's own key (apps/common/sysbuild), which a
