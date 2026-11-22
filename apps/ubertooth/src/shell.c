@@ -588,6 +588,32 @@ static int cmd_pollhold(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+/*
+ * ubt tx bench: cycles per output sample of the GFSK modulator on an ADV_IND (best of 32 blocks of
+ * 40 symbols at 40 MS/s): the computed path, the replay with scalar copies and the replay with
+ * 128-bit copies under the DAC filler's conditions (interrupts off). 267 MHz would be 1.0.
+ */
+ESP_SDR_CODE(COLD, cmd_tx_bench)
+static int cmd_tx_bench(const struct shell *sh, size_t argc, char **argv)
+{
+	uint32_t t[3];
+	int ret = ubt_tx_bench(t);
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+	if (ret != 0) {
+		shell_error(sh, "bench: %d", ret);
+		return ret;
+	}
+	shell_print(sh, "computed %u.%u, replay scalar %u.%u, replay vector %u.%u cycles per sample",
+		    t[0] / 10U, t[0] % 10U, t[1] / 10U, t[1] % 10U, t[2] / 10U, t[2] % 10U);
+	return 0;
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(tx_cmds,
+	SHELL_CMD(bench, NULL, "Modulator cycles per sample, computed and replayed", cmd_tx_bench),
+	SHELL_SUBCMD_SET_END);
+
 SHELL_STATIC_SUBCMD_SET_CREATE(rx_cmds,
 	SHELL_CMD_ARG(start, NULL, "<channel mhz> [gain index]", cmd_rx_start, 2, 1),
 	SHELL_CMD(stop, NULL, "Stop the stream", cmd_rx_stop),
@@ -616,6 +642,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(ubt_cmds,
 	SHELL_CMD(crash, NULL, "What ended the previous boot", cmd_crash),
 	SHELL_CMD_ARG(tune, NULL, "<mhz a> <mhz b> [n]: time retunes", cmd_tune, 3, 1),
 	SHELL_CMD(rx, &rx_cmds, "Receive stream", NULL),
+	SHELL_CMD(tx, &tx_cmds, "Transmit", NULL),
 	SHELL_CMD_ARG(specanfs, NULL, "<dbm of a full scale tone>: spectrum analyser calibration",
 		      cmd_specan_fs, 2, 0),
 	SHELL_CMD_ARG(pollhold, NULL, "[ms]: an empty POLL waits for a packet (BLE modes, 0: off)",

@@ -35,6 +35,9 @@
  * gen() calls (the DAC filler asks for overlapping ranges, possibly from
  * both CPUs), give identical words. Only the tables are shared, read only.
  *
+ * Replay (h = 0.5): struct gfsk_rows, whole symbols copied from a table (see there), the 128-bit
+ * copy in the DAC filler; the cycles per sample are in doc/modem/gfsk.md.
+ *
  * Memory: struct gfsk_tab 680 bytes per deviation and IF, struct gfsk_lut 4 << GFSK_LUT_BITS + 4
  * bytes (2 KB at the default 9 bits: error vector -49 dB against the ideal GFSK, below the DAC and
  * the analog chain; 8 bits: 1 KB, -44 dB; 10 bits: 4 KB, -53 dB), const Gaussian and quarter wave
@@ -157,6 +160,23 @@ struct gfsk_burst {
 	uint16_t ramp;
 };
 
+/*
+ * Whole symbols for h = 0.5 (bit_step a quarter turn): a symbol's start phase is one of 4 values
+ * (a quarter turn per earlier bit), so its 40 words are a function of the 3 bit history and the
+ * start phase, w[history][sum of earlier bits mod 4]. 5 KB, 16 byte aligned (128-bit copies).
+ * The IF drift of gfsk_tab (its 40 samples are not exactly 4 turns) is not in the rows: after
+ * about 8192 symbols (8 ms) a word may differ from the computed path by one table step (4 LSB).
+ */
+struct gfsk_rows {
+	uint32_t w[8][4][GFSK_MOD_SPS];
+} __attribute__((aligned(16)));
+
+/*
+ * Build the rows from @p tab and @p lut with the computed path's own symbol loop. False (rows
+ * unusable) unless @p tab has a quarter turn per bit.
+ */
+bool gfsk_rows_init(struct gfsk_rows *r, const struct gfsk_tab *tab, const struct gfsk_lut *lut);
+
 struct gfsk_mod {
 	const struct gfsk_tab *tab;
 	const struct gfsk_lut *lut;
@@ -167,6 +187,8 @@ struct gfsk_mod {
 	uint32_t pos;
 	/* Grid steps of the ramp's cosine per ramp sample (Q16), see ramp_gain(). */
 	uint32_t ramp_step;
+	/* Replayed symbol rows for the steady run, or NULL for the computed path. */
+	const struct gfsk_rows *rows;
 };
 
 /*
@@ -176,6 +198,16 @@ struct gfsk_mod {
  */
 uint32_t gfsk_mod_start(struct gfsk_mod *m, const struct gfsk_tab *tab, const struct gfsk_lut *lut,
 			const struct gfsk_burst *b);
+
+/*
+ * Replay @p rows (from gfsk_rows_init() with this modulator's tables, valid as long as it plays)
+ * for the steady run of symbols, or the computed path again for NULL. Call after
+ * gfsk_mod_start().
+ */
+static inline void gfsk_mod_use_rows(struct gfsk_mod *m, const struct gfsk_rows *rows)
+{
+	m->rows = rows;
+}
 
 /* @return The first sample of the first bit (lead symbols, in samples). */
 static inline uint32_t gfsk_mod_data_start(const struct gfsk_mod *m)

@@ -40,6 +40,16 @@ config APP_UBERTOOTH_GFSK_REF
 	  ubt rx bench runs it next to gfsk_demod on the same capture and compares every symbol
 	  (the faster demodulator must match it bit for bit).
 
+config APP_UBERTOOTH_GFSK_REPLAY
+	bool "Replay precomputed symbols in the BLE transmit modes"
+	default y
+	help
+	  At h = 0.5 (BLE advertising, TX_TEST with the LE modulation) the DAC filler copies a
+	  symbol's 40 words from a table of 32 rows (8 bit histories, 4 start phases, 5 KB in the
+	  sample ring's scratch, built at the start of each transmit mode) instead of computing
+	  them: the words match the computed path (doc/modem/gfsk.md). Other deviations use the
+	  computed path. "ubt tx bench" measures both.
+
 config APP_UBERTOOTH_GFSK_PROF
 	bool "Profile the demodulator's parts"
 	help

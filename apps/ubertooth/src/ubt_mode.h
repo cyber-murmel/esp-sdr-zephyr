@@ -34,6 +34,8 @@ void ubt_btle_run(struct ubt_dev *d);
 void ubt_promisc_run(struct ubt_dev *d);
 void ubt_tx_test_run(struct ubt_dev *d);
 void ubt_tx_generic_run(struct ubt_dev *d);
+/* Cycles per sample (tenths) of a BLE packet's samples: computed, replayed scalar, replayed with the vector unit. */
+int ubt_tx_bench(uint32_t tenths[3]);
 /* dBm of a full scale tone at the spectrum analyser's gain, times 256 (calibration). */
 void ubt_specan_set_fs_dbm(int dbm_q8);
 

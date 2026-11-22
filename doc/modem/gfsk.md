@@ -504,6 +504,43 @@ that halved the loss (the slicer's assembly before acquisition among them), are 
 - Not done: the demodulator's timing and estimation.
 - The status of the app as a whole is in [ubertooth internals](../apps/ubertooth-internals.md).
 
+## Ubertooth modulator: replayed symbols
+
+The transmit modes (`apps/ubertooth/src/gfsk_mod.c`) compute every DAC sample at 40 MS/s (40
+samples a symbol): an accumulator plus a phase step row, a sine table lookup, a store, 6.7
+cycles a sample as a static count, so 267 MHz for real time on one core.
+
+At h = 0.5 (BLE advertising, TX_TEST with the LE modulation) a symbol's start phase is a quarter
+turn for each earlier bit plus whole IF periods, so it is one of 4 values. The words of a symbol
+then depend only on the 3 bit history and that start phase: 8 x 4 rows of 40 words, **5 KB**
+(`struct gfsk_rows`). `gfsk_rows_init()` builds them with the computed path's own symbol loop at
+the start of each transmit mode (`CONFIG_APP_UBERTOOTH_GFSK_REPLAY`, default on); the DAC filler
+then copies a row per symbol and the next start phase follows from the bit. Other deviations
+(BR 160 kHz, TX_GENERIC) and the ramps and edges of a burst keep the computed path.
+
+- **Words.** Identical to the computed path for the first 8192 symbols of a burst (a BLE packet
+  is at most 400). The computed path's IF accumulator advances 16 of 2^32 a symbol more than 4
+  turns (40 x 4 MHz / 40 MS/s is rounded), which after 8192 symbols can move a sample to the
+  next table entry: at most 4 LSB (`test_replay_equals_the_computed_path`, 12000 symbols).
+- **Placement.** Rows in the sample ring's 16 KB scratch (internal DRAM, shared with the other
+  transmit state; the ring is stopped while transmitting), so no static RAM is added. The copy
+  loop `gen_replay()` is in IRAM (596 bytes). The 128-bit copies (ten loads and stores a symbol)
+  run only where `lib/ieee802154/ieee154_dsp.h` allows them since commit 7f60090: vector unit
+  enabled, interrupts masked, 16 byte aligned; otherwise word stores.
+- **Measure.** `ubt tx bench` on the board.
+
+| Path | Cycles a sample | Real time at 40 MS/s needs |
+|---|---|---|
+| Computed (static count) | 6.7 | 267 MHz |
+| Computed, measured (XIAO S3, best of 32 blocks) | 7.9 | 316 MHz |
+| Replay, scalar copy | 3.1 | 124 MHz |
+| Replay, 128-bit copy (interrupts off) | 1.5 | 60 MHz |
+
+Over the air (2026-11-24): the XIAO's BTLE_SLAVE advertising (an ADV_IND every 100 ms on
+2402 MHz) is seen by a PC's Bluetooth adapter (`bluetoothctl scan on`) with the replay path and
+with the computed path (`CONFIG_APP_UBERTOOTH_GFSK_REPLAY=n`). One 20 s replay scan missed it and
+a 30 s one found it, so treat that as reception, not as a delivery rate.
+
 ## Bluetooth LE from channelizer captures
 
 `tools/ble_pcap.py` of [chancap](../../apps/chancap/README.rst) decodes the captures of the BLE

@@ -29,6 +29,18 @@
 static struct gfsk_lut lut;
 static struct gfsk_tab tab_ble, tab_br, tab_gen;
 static struct gfsk_mod mod;
+static struct gfsk_rows rows;
+
+/* Replay path on (rows from tab) or off for the modulator just started. */
+static void set_replay(const struct gfsk_tab *tab, bool on)
+{
+	if (on) {
+		zassert_true(gfsk_rows_init(&rows, tab, &lut), "rows");
+		gfsk_mod_use_rows(&mod, &rows);
+	} else {
+		gfsk_mod_use_rows(&mod, NULL);
+	}
+}
 
 #define MAXW (1U << 17)
 static uint32_t wbuf[MAXW], wbuf2[MAXW];
@@ -249,12 +261,16 @@ ZTEST(ubertooth_tx, test_deviation_within_three_percent)
 	const struct {
 		const struct gfsk_tab *tab;
 		double dev;
-	} cases[] = {{&tab_ble, 250000.0}, {&tab_br, 160156.0}, {&tab_gen, 339844.0}};
+	} cases[3] = {{&tab_ble, 250000.0}, {&tab_br, 160156.0}, {&tab_gen, 339844.0}};
 
-	for (unsigned int c = 0; c < 3; c++) {
+	for (unsigned int c = 0; c < 4; c++) {
+		/* Cases 0 to 2 computed, 3 the replay of BLE. */
 		struct gfsk_burst b = burst_of(bits, 24, false);
 
-		gfsk_mod_start(&mod, cases[c].tab, &lut, &b);
+		gfsk_mod_start(&mod, cases[c % 3U].tab, &lut, &b);
+		if (c == 3U) {
+			set_replay(&tab_ble, true);
+		}
 		gfsk_mod_gen(&mod, wbuf, 0, mod.total);
 		txref_freq(wbuf, mod.total, fbuf);
 		for (unsigned int run = 0; run < 3; run++) {
@@ -266,8 +282,8 @@ ZTEST(ubertooth_tx, test_deviation_within_three_percent)
 				acc += fbuf[n];
 			}
 			acc = acc / 70.0 - IF_HZ;
-			zassert_within(acc, (run == 1 ? -1.0 : 1.0) * cases[c].dev,
-				       0.03 * cases[c].dev, "case %u run %u: %.0f Hz", c, run, acc);
+			zassert_within(acc, (run == 1 ? -1.0 : 1.0) * cases[c % 3U].dev,
+				       0.03 * cases[c % 3U].dev, "case %u run %u: %.0f Hz", c, run, acc);
 		}
 	}
 }
@@ -306,12 +322,15 @@ ZTEST(ubertooth_tx, test_error_vector_against_the_ideal_model)
 	static double ph[MAXW];
 	struct gfsk_burst b;
 	struct txref_burst rb;
-	double e2 = 0, sig = 0;
 
 	random_bits(bits, sizeof(bits));
 	b = burst_of(bits, 400, false);
 	rb = ref_of(&b);
+	for (unsigned int rp = 0; rp < 2; rp++) {
+	double e2 = 0, sig = 0;
+
 	gfsk_mod_start(&mod, &tab_ble, &lut, &b);
+	set_replay(&tab_ble, rp != 0U);
 	gfsk_mod_gen(&mod, wbuf, 0, mod.total);
 	txref_phase(&rb, 250000.0, IF_HZ, 0.5, mod.total, ph);
 	for (unsigned int n = b.ramp; n < mod.total - b.ramp; n++) {
@@ -322,10 +341,11 @@ ZTEST(ubertooth_tx, test_error_vector_against_the_ideal_model)
 		e2 += di * di + dq * dq;
 		sig += (double)GFSK_MOD_AMP * GFSK_MOD_AMP;
 	}
-	TC_PRINT("EVM %.1f dB (LUT %u bits)\n", 10.0 * log10(e2 / sig), GFSK_LUT_BITS);
+	TC_PRINT("EVM %.1f dB (LUT %u bits, replay %u)\n", 10.0 * log10(e2 / sig), GFSK_LUT_BITS, rp);
 	zassert_true(10.0 * log10(e2 / sig) <
 			     -43.0 + 6.0 * (GFSK_LUT_BITS - 8U) - 2.0 * (GFSK_LUT_BITS < 8U),
 		     "EVM");
+	}
 }
 
 ZTEST(ubertooth_tx, test_constant_envelope)
@@ -498,12 +518,15 @@ ZTEST(ubertooth_tx, test_chunked_fill_equals_one_shot)
 {
 	static uint8_t bits[64];
 	struct gfsk_burst b;
-	size_t at = 0;
 
 	random_bits(bits, sizeof(bits));
 	b = burst_of(bits, 400, false);
 	b.end = GFSK_END_HOLD;
+	for (unsigned int rp = 0; rp < 2; rp++) {
+	size_t at = 0;
+
 	gfsk_mod_start(&mod, &tab_ble, &lut, &b);
+	set_replay(&tab_ble, rp != 0U);
 	gfsk_mod_gen(&mod, wbuf, 0, mod.total);
 	while (at < mod.total) {
 		size_t n = 1U + rnd() % 317U;
@@ -532,6 +555,84 @@ ZTEST(ubertooth_tx, test_chunked_fill_equals_one_shot)
 	}
 	gfsk_mod_rewind(&mod);
 	zassert_false(gfsk_mod_done(&mod));
+	}
+}
+
+/* Largest difference of an I or Q value between two word arrays. */
+static int max_word_diff(const uint32_t *a, const uint32_t *b, size_t n, size_t *first)
+{
+	int worst = 0;
+
+	*first = n;
+	for (size_t k = 0; k < n; k++) {
+		int di = abs((int)txref_i(a[k]) - (int)txref_i(b[k]));
+		int dq = abs((int)txref_q(a[k]) - (int)txref_q(b[k]));
+		int d = MAX(di, dq);
+
+		if (d != 0 && *first == n) {
+			*first = k;
+		}
+		worst = MAX(worst, d);
+	}
+	return worst;
+}
+
+ZTEST(ubertooth_tx, test_replay_equals_the_computed_path)
+{
+	static uint8_t bits[64];
+	struct gfsk_burst b;
+	size_t first = 0;
+	int worst;
+
+	/* A BLE packet length: every word identical. */
+	random_bits(bits, sizeof(bits));
+	b = burst_of(bits, 400, false);
+	b.end = GFSK_END_HOLD;
+	gfsk_mod_start(&mod, &tab_ble, &lut, &b);
+	gfsk_mod_gen(&mod, wbuf, 0, mod.total);
+	set_replay(&tab_ble, true);
+	gfsk_mod_gen(&mod, wbuf2, 0, mod.total);
+	zassert_mem_equal(wbuf, wbuf2, mod.total * 4U, "400 bits");
+	/* Long, every word compared: the computed path's IF accumulator drifts by 16 of 2^32 a
+	 * symbol (40 IF samples are not exactly 4 turns), so past symbol 8192 a word may take the
+	 * next table entry. */
+	{
+		static uint8_t big[1500];
+		uint32_t total;
+
+		for (unsigned int i = 0; i < sizeof(big); i++) {
+			big[i] = (uint8_t)(rnd() >> 11);
+		}
+		b = burst_of(big, 12000, false);
+		gfsk_mod_start(&mod, &tab_ble, &lut, &b);
+		total = mod.total;
+		worst = 0;
+		for (uint32_t at = 0; at + MAXW <= total; at += MAXW) {
+			size_t f;
+			int w;
+
+			gfsk_mod_use_rows(&mod, NULL);
+			gfsk_mod_gen(&mod, wbuf, at, MAXW);
+			set_replay(&tab_ble, true);
+			gfsk_mod_gen(&mod, wbuf2, at, MAXW);
+			w = max_word_diff(wbuf, wbuf2, MAXW, &f);
+			if (w != 0 && worst == 0) {
+				first = at + f;
+			}
+			worst = MAX(worst, w);
+			if (at == 0U) {
+				zassert_equal(w, 0, "first 3277 symbols differ by %d", w);
+			}
+		}
+		TC_PRINT("12000 symbols: max difference %d LSB, first at symbol %u\n", worst,
+			 worst != 0 ? (unsigned int)(first / 40U) : 0U);
+		zassert_true(worst <= 4, "max word difference %d", worst);
+		zassert_true(worst == 0 || first >= 8192U * 40U, "first difference at %u",
+			     (unsigned int)first);
+	}
+	/* Other deviations take the computed path. */
+	zassert_false(gfsk_rows_init(&rows, &tab_br, &lut));
+	zassert_false(gfsk_rows_init(&rows, &tab_gen, &lut));
 }
 
 ZTEST(ubertooth_tx, test_gen_matches_the_dac_callback_type)

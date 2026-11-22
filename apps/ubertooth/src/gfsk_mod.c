@@ -167,6 +167,7 @@ uint32_t gfsk_mod_start(struct gfsk_mod *m, const struct gfsk_tab *tab, const st
 	m->pos = 0;
 	m->total = 0;
 	m->ramp_step = 0;
+	m->rows = NULL;
 	if (b->kind != GFSK_BURST && b->kind != GFSK_LOOP && b->kind != GFSK_CARRIER) {
 		return 0;
 	}
@@ -335,6 +336,117 @@ static inline __attribute__((always_inline)) void emit_symbol(const uint32_t *lu
 	}
 }
 
+bool gfsk_rows_init(struct gfsk_rows *r, const struct gfsk_tab *tab, const struct gfsk_lut *lut)
+{
+	if (tab->bit_step != (1 << 30)) {
+		return false;
+	}
+	for (uint32_t h = 0; h < 8U; h++) {
+		for (uint32_t q = 0; q < 4U; q++) {
+			/* gen_steady()'s start phase without the IF part, which is whole turns. */
+			uint32_t acc =
+				((((q << 30) + (uint32_t)tab->phi0[h]) >> 16) + ACC_BIAS);
+
+			emit_symbol(lut->w, acc, tab->inc[h], r->w[h][q]);
+		}
+	}
+	return true;
+}
+
+#if defined(__ZEPHYR__) && defined(CONFIG_SOC_SERIES_ESP32S3)
+/*
+ * As lib/ieee802154/ieee154_dsp.h (commit 7f60090): the vector unit may be used where the caller
+ * (the DAC filler) enabled it on this CPU and holds interrupts off, as nothing saves its
+ * registers.
+ */
+static inline bool vec_ok(void)
+{
+	uint32_t cp, ps;
+
+	__asm__ volatile("rsr.cpenable %0" : "=r"(cp));
+	__asm__ volatile("rsr.ps %0" : "=r"(ps));
+	return (cp & (1U << 3)) != 0U && (ps & 0xfU) != 0U;
+}
+
+/* One symbol, 160 bytes, both pointers 16 byte aligned: ten 128-bit loads and stores. */
+static inline __attribute__((always_inline)) void copy_sym_vec(uint32_t *dst, const uint32_t *src)
+{
+	__asm__ volatile("ee.vld.128.ip q0, %[s], 16\n\t"
+			 "ee.vld.128.ip q1, %[s], 16\n\t"
+			 "ee.vld.128.ip q2, %[s], 16\n\t"
+			 "ee.vst.128.ip q0, %[d], 16\n\t"
+			 "ee.vld.128.ip q3, %[s], 16\n\t"
+			 "ee.vst.128.ip q1, %[d], 16\n\t"
+			 "ee.vld.128.ip q0, %[s], 16\n\t"
+			 "ee.vst.128.ip q2, %[d], 16\n\t"
+			 "ee.vld.128.ip q1, %[s], 16\n\t"
+			 "ee.vst.128.ip q3, %[d], 16\n\t"
+			 "ee.vld.128.ip q2, %[s], 16\n\t"
+			 "ee.vst.128.ip q0, %[d], 16\n\t"
+			 "ee.vld.128.ip q3, %[s], 16\n\t"
+			 "ee.vst.128.ip q1, %[d], 16\n\t"
+			 "ee.vld.128.ip q0, %[s], 16\n\t"
+			 "ee.vst.128.ip q2, %[d], 16\n\t"
+			 "ee.vst.128.ip q3, %[d], 16\n\t"
+			 "ee.vst.128.ip q0, %[d], 16\n\t"
+			 : [s] "+r"(src), [d] "+r"(dst)
+			 :
+			 : "memory");
+}
+#else
+static inline bool vec_ok(void)
+{
+	return false;
+}
+
+static inline void copy_sym_vec(uint32_t *dst, const uint32_t *src)
+{
+	(void)dst;
+	(void)src;
+}
+#endif
+
+/* One symbol as groups of 4 plain word stores (a memcpy call costs more than the copy). */
+static inline __attribute__((always_inline)) void copy_sym(uint32_t *dst, const uint32_t *src)
+{
+	for (uint32_t k = 0; k < GFSK_MOD_SPS; k += 4U) {
+		uint32_t w0 = src[k], w1 = src[k + 1U], w2 = src[k + 2U], w3 = src[k + 3U];
+
+		dst[k] = w0;
+		dst[k + 1U] = w1;
+		dst[k + 2U] = w2;
+		dst[k + 3U] = w3;
+	}
+}
+
+/* gen_steady() from the rows: pick by history and the quarter turn of the start phase, copy. */
+UBT_HOT(PACED_SAMPLE, gen_replay)
+static void gen_replay(const struct gfsk_mod *m, uint32_t *dst, uint32_t s, uint32_t nsym,
+		       int32_t sum)
+{
+	const struct gfsk_burst *b = &m->b;
+	const bool vec = vec_ok() && ((uintptr_t)dst & 15U) == 0U;
+	uint32_t d = s - b->lead, q = (uint32_t)sum & 3U;
+	unsigned int h = (bit_at(b, d - 1U) << 2) | (bit_at(b, d) << 1) | bit_at(b, d + 1U);
+
+	while (nsym-- > 0U) {
+		const uint32_t *src = m->rows->w[h][q];
+
+		if (vec) {
+			copy_sym_vec(dst, src);
+		} else {
+			copy_sym(dst, src);
+		}
+		dst += GFSK_MOD_SPS;
+		/* The symbol before this one's neighbours joins the sum. */
+		q = (q + ((h & 4U) != 0U ? 1U : 3U)) & 3U;
+		d++;
+		if (nsym > 0U) {
+			h = ((h << 1) & 6U) | bit_at(b, d + 1U);
+		}
+	}
+}
+
 /*
  * @p nsym whole symbols from symbol @p s of a burst, every one with its neighbours inside the bits
  * and clear of the ramps: the loop that matters, with the state in registers. @p sum is the sum
@@ -447,7 +559,11 @@ static void gen_range(const struct gfsk_mod *m, uint32_t *dst, uint32_t pos, uin
 		if (t == 0U && n >= GFSK_MOD_SPS && s >= s_a && s < s_b) {
 			uint32_t nsym = n / GFSK_MOD_SPS < s_b - s ? n / GFSK_MOD_SPS : s_b - s;
 
-			gen_steady(m, dst, s, nsym, sum);
+			if (m->rows != NULL) {
+				gen_replay(m, dst, s, nsym, sum);
+			} else {
+				gen_steady(m, dst, s, nsym, sum);
+			}
 			dst += nsym * GFSK_MOD_SPS;
 			pos += nsym * GFSK_MOD_SPS;
 			n -= nsym * GFSK_MOD_SPS;

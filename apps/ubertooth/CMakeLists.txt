@@ -44,6 +44,8 @@ target_sources(app PRIVATE
 # Per-sample loops of the DSP.
 set_source_files_properties(src/ubt_specan.c src/gfsk_mod.c src/ubt_le.c src/ubt_br.c
   PROPERTIES COMPILE_OPTIONS "-O3")
+# The modulator's replay copy must stay a loop of word stores too.
+set_property(SOURCE src/gfsk_mod.c APPEND PROPERTY COMPILE_OPTIONS "-fno-tree-loop-distribute-patterns")
 # The demodulator's copy loops must stay loops: memcpy() here is the ROM's, a byte at a time.
 set_source_files_properties(src/gfsk_demod.c
   PROPERTIES COMPILE_OPTIONS "-O3;-fno-tree-loop-distribute-patterns")
