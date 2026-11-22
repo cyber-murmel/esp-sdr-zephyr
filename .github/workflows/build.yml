@@ -111,6 +111,16 @@ jobs:
             ${{ matrix.platforms }} ${{ matrix.twister-args }} \
             -v --inline-logs
 
+      # The unit tests again under UBSan, fatal on a finding (as UBSAN=1 in scripts/run-unit-tests.sh).
+      - name: Unit tests under UBSan
+        if: ${{ matrix.coverage }}
+        env:
+          NSI_OPT: -O2
+        run: |
+          west twister -T esp-sdr-zephyr/tests/unit -p native_sim/native/64 \
+            -x=CONFIG_UBSAN=y -x=EXTRA_CFLAGS=-fno-sanitize-recover=undefined \
+            --outdir twister-out-ubsan -v --inline-logs
+
       # From main only, as the workspace's caches; a failed build's objects are still valid.
       - name: Save ccache
         if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}

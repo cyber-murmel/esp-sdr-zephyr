@@ -20,7 +20,7 @@ there is.
 | Source | Item | Chip | Status |
 | --- | --- | --- | --- |
 | cnlohr_tricks | 1: renormalize the sweep oscillator | S3 (all chips with the sweep) | planned next (S3) |
-| cnlohr_tricks | 2: UBSan on the unit tests | native_sim | planned next |
+| cnlohr_tricks | 2: UBSan on the unit tests | native_sim | done |
 | cnlohr_tricks | 3: burst centre from three bins | pcap survey | deferred: low value, no consumer yet |
 | cnlohr_tricks | 4: Goertzel | any | deferred: no feature needs it |
 | fix32_fft | in-repo Q31 FFT for LTE calibration | C6, C5 | deferred: needs the C6 |
@@ -91,7 +91,11 @@ suites (`gapless_sort`, `pcap_generic`, `ieee154_dsp`, `chancap_dsp`, `esdr_pfbq
 `ubertooth_*`), run by `scripts/run-unit-tests.sh`. The cost is CI time. The repo's
 `(int32_t)(a - b)` wrap compares use unsigned operands, so they should not fire.
 
-**Status:** planned next. Host only; no board.
+**Status:** done. Not a per-suite variant: `UBSAN=1 scripts/run-unit-tests.sh` (and a CI step)
+reruns all unit suites with `CONFIG_UBSAN=y` and `-fno-sanitize-recover=undefined`, so a finding
+fails the test ([testing](testing.md#ubsan)). It found only two cases, both in tests, not in the
+fixed-point code: `memcpy(dst, NULL, 0)` in `tests/unit/zigbee_znp` and `zigbee_stack` helpers
+(fixed with a length guard). All 37 suites are clean.
 
 ### 3 and 4. Burst centre, Goertzel
 

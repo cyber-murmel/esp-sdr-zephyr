@@ -158,7 +158,9 @@ static void areq(uint8_t sub, uint8_t cmd, const void *data, uint8_t len)
 	struct mt_frame f = {.type = MT_AREQ, .sub = sub, .cmd = cmd, .len = len};
 	uint8_t wire[MT_MAX_WIRE];
 
-	memcpy(f.data, data, len);
+	if (len != 0) {
+		memcpy(f.data, data, len);
+	}
 	znp_rx(&z, wire, mt_encode(&f, wire));
 }
 

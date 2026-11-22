@@ -56,7 +56,9 @@ static struct mt_frame sreq(uint8_t sub, uint8_t cmd, const void *data, uint8_t 
 	uint8_t wire[MT_MAX_WIRE];
 	size_t n;
 
-	memcpy(f.data, data, len);
+	if (len != 0) {
+		memcpy(f.data, data, len);
+	}
 	n = mt_encode(&f, wire);
 	txlen = 0;
 	znp_rx(&z, wire, n);

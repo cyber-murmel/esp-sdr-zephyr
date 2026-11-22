@@ -137,6 +137,18 @@ esp-sdr-zephyr/scripts/run-unit-tests.sh -s unit.esp_sdr.link    # one test
 - The suites draw their random input from `tests/common/include/test_rng.h` (xorshift64 and
   normal deviates), seeded before each case.
 
+### UBSan
+
+```
+UBSAN=1 esp-sdr-zephyr/scripts/run-unit-tests.sh
+```
+
+- A second pass over every suite with `CONFIG_UBSAN=y` and `-fno-sanitize-recover=undefined`, so
+  the first finding aborts the test and fails it. One switch, no per-suite scenarios.
+- It writes to `twister-out-ubsan`. CI runs it after the unit tests; pre-commit runs only the
+  normal pass, to keep its run time.
+- Findings print `file:line: runtime error: ...` in the test's `handler_stderr.log`.
+
 ### Coverage
 
 ```
