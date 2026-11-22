@@ -69,10 +69,21 @@ int multiapp_osmosdr_drop(void)
 	return 0;
 }
 
+/* The uptime (ms, 32 bit, never 0) of the last IN transfer the PC finished reading: a live consumer of the stream */
+static atomic_t last_in_ms;
+
+uint32_t multiapp_osmosdr_last_in_ms(void)
+{
+	return (uint32_t)atomic_get(&last_in_ms);
+}
+
 void usb_sdr_in_done(uint8_t *data, size_t len, int err)
 {
 	__typeof__(app.in_done) fn;
 
+	if (err == 0) {
+		atomic_set(&last_in_ms, (atomic_val_t)(k_uptime_get_32() | 1U));
+	}
 	atomic_inc(&calls);
 	fn = HANDLER(in_done, "usb_sdr_in_done");
 	if (fn != NULL) {

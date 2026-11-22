@@ -318,8 +318,8 @@ static bool kernel_in_internal_ram(const struct multiapp_kernel *k)
 	       fn - lo < k->fast_size;
 }
 
-int multiapp_stage_install(const char *stage, const uint8_t *file, size_t len, const char *source,
-			   uint32_t timeout_ms, struct multiapp_stage_result *res)
+int multiapp_stage_install(const char *stage, const char *name, const uint8_t *file, size_t len,
+			   const char *source, uint32_t timeout_ms, struct multiapp_stage_result *res)
 {
 	struct multiapp_kernel *k = &newk;
 	struct slot *s;
@@ -338,7 +338,7 @@ int multiapp_stage_install(const char *stage, const uint8_t *file, size_t len, c
 		ret = -EBUSY;
 		goto out;
 	}
-	ret = multiapp_kernel_load(file, len, source, k);
+	ret = multiapp_kernel_load(name, file, len, source, k);
 	if (ret != 0) {
 		goto out;
 	}

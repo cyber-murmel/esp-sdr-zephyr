@@ -57,7 +57,9 @@ config ESP_SDR_S31_TXMEM_PSRAM
 	help
 	  The stacks Zephyr defines for the threads that run network management, the shell, the log,
 	  the work queue and the main thread (esp_sdr_txmem_s31.ld names them by their input sections:
-	  .noinit.<file>.<n>) go to PSRAM, and so do the network management event queue's ring, which
+	  .noinit.<file>.<n>) go to PSRAM (only for images whose threads never touch the flash after boot:
+	  with a flash operation the cache is off and such a stack stalls, doc/dev/code-placement.md;
+	  apps/txstream_eth has none), and so do the network management event queue's ring, which
 	  frees group 3 for receive buffers. Nothing that a kernel init hook sets up before PRE_KERNEL_1
 	  priority 40 (PSRAM becomes accessible there) may go: k_heap and k_mem_slab backing stores, so
 	  the shell's history heap stays internal. Never moved: the interrupt and idle stacks, the
@@ -68,14 +70,15 @@ config ESP_SDR_S31_TXMEM_PSRAM
 	  counter in the section name changes with the configuration).
 
 config ESP_SDR_S31_TXMEM_NETTX_PSRAM
-	bool "Transmit layout: the network stack's transmit buffers in PSRAM (not verified on the board)"
+	bool "Transmit layout: the network stack's transmit buffers in PSRAM (does not work on the board)"
 	depends on ESP_SDR_S31_TXMEM_PSRAM
 	help
 	  The 4 transmit data buffers (and their net_buf records) of the network stack. The net_pkt slab stays
 	  internal: slab free lists are built before PSRAM is accessible. The
 	  DWC MAC's driver writes them back before it hands them to the DMA (sys_cache_data_flush_range()
-	  in eth_dwc_ether_1000_core.c), but that the EMAC's DMA reaches PSRAM on the S31 is not
-	  checked: leave it off until a board shows it (ping, DHCP and ND must still work).
+	  in eth_dwc_ether_1000_core.c), but the EMAC's DMA does not reach PSRAM on the S31: shown not to work
+	  on the board 2026-11-26 (every send fails, and receive buffers in PSRAM lose frames of 500
+	  bytes and more). Keep off.
 
 config ESP_SDR
 	bool "ESP-SDR raw I/Q receiver"

@@ -181,7 +181,7 @@ MULTIAPP_STAGE_DEFINE_INTERNAL(fastx, demo_fn_t, fn0);
 static struct multiapp_kernel_desc descs[NFN];
 static int tokens[NFN], loaded_count, unloads, unload_with_call_inside, load_calls;
 
-int multiapp_kernel_load(const uint8_t *file, size_t len, const char *source, struct multiapp_kernel *k)
+int multiapp_kernel_load(const char *name, const uint8_t *file, size_t len, const char *source, struct multiapp_kernel *k)
 {
 	int i = file[0];
 
@@ -249,7 +249,7 @@ static uint8_t buf[2];
 
 static int install_to(const char *stage, const uint8_t *f, uint32_t timeout_ms)
 {
-	return multiapp_stage_install(stage, f, 2, "test", timeout_ms, &res);
+	return multiapp_stage_install(stage, "k", f, 2, "test", timeout_ms, &res);
 }
 static int install(const uint8_t *f, uint32_t timeout_ms)
 {
@@ -387,7 +387,7 @@ static int scenario_timeout(void)
 
 static int scenario_refusals(void)
 {
-	CHECK(multiapp_stage_install("nostage", file1, 2, "test", 100, &res) == -ENOENT);
+	CHECK(multiapp_stage_install("nostage", "k", file1, 2, "test", 100, &res) == -ENOENT);
 	CHECK(multiapp_stage_revert("nostage", 100, &res) == -ENOENT);
 	/* A kernel for another stage, one built for another function type: refused, unloaded. */
 	CHECK(install(file_other_stage, 100) == -ENOEXEC);
@@ -396,7 +396,7 @@ static int scenario_refusals(void)
 	CHECK(install(file_other_abi, 100) == -ENOEXEC);
 	CHECK(loaded_count == 0 && unloads == 3 && CUR() == (void *)fn0);
 	/* A file the loader refuses. */
-	CHECK(multiapp_stage_install("demo", buf, 1, "test", 100, &res) == -ENOEXEC);
+	CHECK(multiapp_stage_install("demo", "k", buf, 1, "test", 100, &res) == -ENOEXEC);
 	return 0;
 }
 
@@ -481,7 +481,7 @@ static int scenario_handover(void)
 	CHECK(install(file1, 100) == -ETIMEDOUT);
 	CHECK(CUR() == (void *)fn0 && freed[1]);
 	/* Still busy after that. */
-	CHECK(multiapp_stage_install("demo", file2, 2, "test", 100, &res) == -ETIMEDOUT);
+	CHECK(multiapp_stage_install("demo", "k", file2, 2, "test", 100, &res) == -ETIMEDOUT);
 	return 0;
 }
 
@@ -508,7 +508,7 @@ static int scenario_unregister(void)
 	CHECK(st->cur == (void *)fn0 && multiapp_stage_count() == 0);
 	/* The kernel it still had is unloaded, not forgotten. */
 	CHECK(freed[1] && loaded_count == 0);
-	CHECK(multiapp_stage_install("demo", file2, 2, "test", 100, &res) == -ENOENT);
+	CHECK(multiapp_stage_install("demo", "k", file2, 2, "test", 100, &res) == -ENOENT);
 	/* A stage that registered again, and a failed start's sweep that forgets it. */
 	multiapp_stage_register(st);
 	CHECK(multiapp_stage_count() == 1);

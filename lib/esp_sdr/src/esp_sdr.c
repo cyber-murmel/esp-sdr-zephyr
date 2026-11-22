@@ -328,8 +328,19 @@ void esp_sdr_tune(void)
 #endif
 
 #if defined(CONFIG_SOC_SERIES_ESP32S31)
+bool esp_sdr_bank2_reserved;
+
+void esp_sdr_bank2_reserve(void)
+{
+	esp_sdr_bank2_reserved = true;
+}
+
 int esp_sdr_bank_usage(uint32_t *usage)
 {
+	if (esp_sdr_bank2_reserved) {
+		/* The host lent group 3 out as a heap: no capture, replay, ring or transmit through it. */
+		return -EBUSY;
+	}
 	if (IS_ENABLED(CONFIG_ESP_SDR_S31_TXMEM)) {
 		/* No capture bank: group 3 is the image's. */
 		return -ENOTSUP;

@@ -38,6 +38,7 @@ static ESP_SDR_DATA_F(BULK, kernel_buf, NOINIT) uint8_t kernel_buf[KERNEL_BUF_SI
 static struct {
 	bool active;
 	char stage[24];
+	char name[24]; /* the kernel's name its signature is under (extsig.c), "" if not given */
 	size_t size, off;
 	uint32_t crc_want, crc;
 	uint32_t timeout_ms;
@@ -112,7 +113,10 @@ static void print_swap(const struct shell *sh)
 
 static uint32_t timeout_arg(size_t argc, char **argv, size_t i)
 {
-	return argc > i ? (uint32_t)strtoul(argv[i], NULL, 0) : CONFIG_MULTIAPP_STAGE_TIMEOUT_MS;
+	uint32_t ms = argc > i ? (uint32_t)strtoul(argv[i], NULL, 0) : 0U;
+
+	/* Absent or 0: the default (a 0 lets a caller name a kernel without a timeout) */
+	return ms != 0U ? ms : CONFIG_MULTIAPP_STAGE_TIMEOUT_MS;
 }
 
 /* Take the command lock, or say the shell is busy: nothing of the upload changes then. */
@@ -193,6 +197,8 @@ static int cmd_put(const struct shell *sh, size_t argc, char **argv)
 	up.crc_want = (uint32_t)strtoul(argv[3], NULL, 0);
 	up.crc = 0;
 	up.timeout_ms = timeout_arg(argc, argv, 4);
+	(void)strncpy(up.name, argc > 5 ? argv[5] : "", sizeof(up.name) - 1);
+	up.name[sizeof(up.name) - 1] = '\0';
 	up.active = true;
 	shell_print(sh, "put %s: %zu bytes expected", up.stage, up.size);
 	k_mutex_unlock(&cmd_lock);
@@ -266,7 +272,8 @@ static int cmd_end(const struct shell *sh, size_t argc, char **argv)
 		k_mutex_unlock(&cmd_lock);
 		return fail(sh, -EBADMSG);
 	}
-	ret = multiapp_stage_install(up.stage, kernel_buf, up.size, "upload", up.timeout_ms, &res);
+	ret = multiapp_stage_install(up.stage, up.name, kernel_buf, up.size, "upload",
+				     up.timeout_ms, &res);
 	if (ret != 0) {
 		k_mutex_unlock(&cmd_lock);
 		return fail(sh, ret);
@@ -279,7 +286,8 @@ static int cmd_end(const struct shell *sh, size_t argc, char **argv)
 /* load <stage> <file> [timeout_ms]: a kernel file of the volume (".llext" is added to a bare name). */
 static int cmd_load(const struct shell *sh, size_t argc, char **argv)
 {
-	char file[48];
+	char file[48], name[48];
+	char *dot;
 	ssize_t n;
 	int ret;
 
@@ -288,6 +296,12 @@ static int cmd_load(const struct shell *sh, size_t argc, char **argv)
 	}
 	(void)snprintf(file, sizeof(file), "%s%s", argv[2],
 		       strchr(argv[2], '.') == NULL ? ".llext" : "");
+	/* The kernel's name, which its signature is under: the file's without ".llext" */
+	(void)snprintf(name, sizeof(name), "%s", file);
+	dot = strrchr(name, '.');
+	if (dot != NULL) {
+		*dot = '\0';
+	}
 	up.active = false;
 	/*
 	 * The PC may still be copying the file: the volume is read afresh each time, and a file that
@@ -299,7 +313,7 @@ static int cmd_load(const struct shell *sh, size_t argc, char **argv)
 		if (n < 0) {
 			ret = (int)n;
 		} else {
-			ret = multiapp_stage_install(argv[1], kernel_buf, (size_t)n, "file",
+			ret = multiapp_stage_install(argv[1], name, kernel_buf, (size_t)n, "file",
 						     timeout_arg(argc, argv, 3), &res);
 		}
 		if (attempt > 0 || !multiapp_drive_on_bus() ||
@@ -340,8 +354,10 @@ static int cmd_revert(const struct shell *sh, size_t argc, char **argv)
 
 static const struct shell_static_entry stage_subs[] = {
 	SHELL_CMD(list, NULL, "The stages of the running app and their kernels", cmd_list),
-	SHELL_CMD_ARG(put, NULL, "<stage> <size> <crc32> [timeout ms]: start uploading a kernel file",
-		      cmd_put, 4, 1),
+	SHELL_CMD_ARG(put, NULL,
+		      "<stage> <size> <crc32> [timeout ms (0: default)] [name]: start uploading a kernel "
+		      "file; name is what a signed one was signed for",
+		      cmd_put, 4, 2),
 	SHELL_CMD_ARG(data, NULL, "<base64>: the next bytes of the upload", cmd_data, 2, 0),
 	SHELL_CMD(end, NULL, "Load the uploaded kernel and swap it in", cmd_end),
 	SHELL_CMD(abort, NULL, "Drop the upload", cmd_abort),

@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# The project's own MCUboot signing key (doc/dev/network-services.md, phase 2). An app opts in by
+# sourcing this file in its Kconfig.sysbuild BEFORE share/sysbuild/Kconfig and by including
+# apps/common/sysbuild/signing.cmake from its sysbuild.cmake. The defaults here come ahead of the
+# ones in share/sysbuild/images/bootloader/Kconfig, so they win; a value in sysbuild.conf or
+# -DSB_CONFIG_...= wins over both.
+
+config ESDR_SIGNING
+	bool "Sign with the project's own ED25519 key"
+	default y if BOARD = "esp32s31_function_coreboard"
+	help
+	  MCUboot verifies the image with an ED25519 key that is not in the repository: the file named
+	  by the environment variable ESDR_SIGNING_KEY, by default
+	  ~/.config/esp-sdr/keys/esdr-mcuboot-ed25519.pem. A missing file stops the configure step.
+	  ESDR_DEV_KEY=1 in the environment asks for MCUboot's public development key instead (any
+	  image signed with it is then accepted by that bootloader: never for a product).
+
+choice BOOT_SIGNATURE_TYPE
+	default BOOT_SIGNATURE_TYPE_ED25519 if ESDR_SIGNING
+endchoice
+
+config BOOT_SIGNATURE_KEY_FILE
+	default "$(ESDR_SIGNING_KEY)" if ESDR_SIGNING && "$(ESDR_DEV_KEY)" != "1" && "$(ESDR_SIGNING_KEY)" != ""
+	default "$(HOME)/.config/esp-sdr/keys/esdr-mcuboot-ed25519.pem" if ESDR_SIGNING && "$(ESDR_DEV_KEY)" != "1"

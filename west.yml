@@ -39,10 +39,12 @@ manifest:
     # late, the MCH2022 FPGA as a lattice,ice40-fpga device, its lines on
     # the RP2040, and the ESP32-S31 CoreBoard's RGMII Ethernet (YT8531) with
     # prepared-frame transmit and receive paths and PTP timestamps
-    # (apps/txstream_eth, apps/ptp_chain) (branch zsdr).
+    # (apps/txstream_eth, apps/ptp_chain), and the SSH server's ECDSA and
+    # Ed25519 keys, exec requests, login grace and connection queue
+    # (apps/multiapp on the S31) (branch zsdr).
     - name: zephyr
       remote: cyber-murmel
-      revision: 083f30697b047a07d132ffab5b80fe9141cbd4a8 # zsdr
+      revision: f62f7fa1deef525a6566300af6fa719b80989ec7 # zsdr
       path: modules/zephyr
       import:
         name-allowlist:
@@ -56,6 +58,8 @@ manifest:
           - mbedtls
           - nanopb
           - tf-psa-crypto
+          # MCUmgr (apps/common/net/mcumgr.conf), a Kconfig dependency of CONFIG_MCUMGR
+          - zcbor
     # The HAL companion of the SMP ports, with the ESP32-P4 flash erase fix
     # (the line levels kept when SPI1's control register is cleared), the
     # P4 rev v0.0 clock (from the ROM's CPLL) and the ESP32-S31 (its Zephyr

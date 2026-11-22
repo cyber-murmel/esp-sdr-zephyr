@@ -155,6 +155,8 @@ Contents
    dev/ideas-from-elsewhere
    dev/s31-link
    dev/s31-fpga-bridge
+   dev/txs
+   dev/network-services
    dev/registers-esp32s3
    dev/registers-esp32c6
 

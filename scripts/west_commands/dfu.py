@@ -247,7 +247,7 @@ class Dfu(WestCommand):
         sh = Shell(shell_tty(sn))
         out = sh.app_list() if args.storage is not None else sh.cmd("kernel version")
         # The image written this way boots unconfirmed: without a confirm the trial watchdog
-        # resets it every half minute (there is no older image to revert to).
+        # resets it every minute (APP_TRIAL_TIMEOUT_S) (there is no older image to revert to).
         if not args.no_confirm:
             state = sh.cmd("mcuboot confirm", 0.5) + sh.cmd("mcuboot")
             if not re.search(r"^confirmed: *1", state, re.M):

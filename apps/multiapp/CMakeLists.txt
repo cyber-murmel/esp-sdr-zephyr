@@ -58,10 +58,11 @@ macro(multiapp_kernel_file name file)
             --app $<TARGET_FILE:${EXT_KERNEL_APP}_ext_llext_lib> --names ${host_names}
             --kernel-name "kernel ${name}" --app-name "app ${EXT_KERNEL_APP}"
     COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/apptrail.py
-            --kernel ${kernel_place} --build-id ${build_id_bin} ${ext_dir}/${name}.llext ${file}
+            ${sign_args} --kernel ${kernel_place} --build-id ${build_id_bin}
+            ${ext_dir}/${name}.llext ${file}
     DEPENDS ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/apptrail.py
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/exports.py ${ext_dir}/${name}.llext
-            ${ext_dir}/${EXT_KERNEL_APP}.llext ${host_names} ${build_id_bin}
+            ${ext_dir}/${EXT_KERNEL_APP}.llext ${host_names} ${build_id_bin} ${sign_key}
     VERBATIM
   )
   add_custom_target(${name}_kernel ALL DEPENDS ${file})
@@ -148,7 +149,9 @@ endfunction()
 # the area (ESP_SDR_HIGH_BUF_DEFINE()). CONSOLE: it takes the CDC-ACM port from the shell for
 # the boot, and its main() starts with USB up. BANK2: the boot gets SRAM dump bank 2 as a
 # second internal heap, which a module that does not fit in module_heap loads into; the SDR then
-# never uses that bank (rings on banks 0 and 1, no bursts or transmit). REQUIRES: the modules the
+# never uses that bank (rings on banks 0 and 1, no bursts or transmit). On the ESP32-S31 the bank is
+# TCM group 3 and the BANK2 app itself (not a module) loads into it, so that module_heap can be small
+# (src/bank2.h). REQUIRES: the modules the
 # host loads before it.
 #
 # multiapp_module(<name> SOURCES <files> [INTERNAL [HIGH_BSS]] [DEVICES]
@@ -369,7 +372,14 @@ function(multiapp_extension name)
     ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/include
     ${apps_dir}/common/include
   )
-  # The file the host loads: the extension and its trailer (apptrail.py).
+  # The file the host loads: the extension and its trailer (apptrail.py), signed where the
+  # image is (src/extsig.c).
+  set(sign_args)
+  set(sign_key)
+  if(MULTIAPP_EXT_SIGN_KEY)
+    set(sign_args --key ${MULTIAPP_EXT_SIGN_KEY} --name ${name})
+    set(sign_key ${MULTIAPP_EXT_SIGN_KEY})
+  endif()
   set(file ${ext_dir}/files/${name}.llext)
   if(EXT_KERNEL)
     multiapp_kernel_file(${name} ${file})
@@ -378,10 +388,10 @@ function(multiapp_extension name)
   add_custom_command(
     OUTPUT ${file}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${ext_dir}/files
-    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/apptrail.py
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/apptrail.py ${sign_args}
             --stack ${EXT_STACK} --build-id ${build_id_bin} ${ext_dir}/${name}.llext ${file}
     DEPENDS ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/apptrail.py ${ext_dir}/${name}.llext
-            ${build_id_bin}
+            ${build_id_bin} ${sign_key}
   )
   if(EXT_FILE_ONLY)
     set(ext_file_only_${name} true PARENT_SCOPE)
@@ -478,6 +488,53 @@ multiapp_stage_abi(hello_op HEADERS ${CMAKE_CURRENT_LIST_DIR}/ext/hello_stage.h)
 multiapp_stage_abi(ring_sink HEADERS ${apps_dir}/rfprobe/src/ring_stage.h
                    ${apps_dir}/../include/esp_sdr/esp_sdr_diag16.h INTERNAL)
 
+# Signed extensions (src/extsig.c): the MCUboot signing key signs each file, the host holds its public
+# half (generated here) and checks every file it did not build in. Only with that key (sysbuild, ED25519).
+set(MULTIAPP_EXT_SIGN_KEY)
+if(CONFIG_MCUBOOT_SIGNATURE_KEY_FILE AND CONFIG_SOC_SERIES_ESP32S31)
+  set(MULTIAPP_EXT_SIGN_KEY ${CONFIG_MCUBOOT_SIGNATURE_KEY_FILE})
+  set(pubkey_h ${ZEPHYR_BINARY_DIR}/include/generated/multiapp_pubkey.h)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${MULTIAPP_EXT_SIGN_KEY})
+  execute_process(COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/pubkey.py
+                  ${MULTIAPP_EXT_SIGN_KEY} ${pubkey_h} RESULT_VARIABLE pubkey_rc
+                  OUTPUT_QUIET ERROR_QUIET)
+  if(NOT pubkey_rc EQUAL 0)
+    if(CONFIG_MULTIAPP_SIGNED_EXTENSIONS)
+      # The image is signed with the own key (SB_CONFIG_ESDR_SIGNING=y): no unsigned extensions then
+      message(FATAL_ERROR "multiapp: ${MULTIAPP_EXT_SIGN_KEY} is not a readable ED25519 key, so the extension "
+                          "files cannot be signed: use the project's key (ESDR_SIGNING_KEY) or ESDR_DEV_KEY=1")
+    endif()
+    # Signing is off (SB_CONFIG_ESDR_SIGNING=n: an RSA or ECDSA key)
+    message(WARNING "multiapp: ${MULTIAPP_EXT_SIGN_KEY} is not an ED25519 key: extension files are NOT "
+                    "signed and the host does not verify them; fs_mgmt refuses *.llext writes")
+    set(MULTIAPP_EXT_SIGN_KEY)
+  endif()
+endif()
+if(MULTIAPP_EXT_SIGN_KEY)
+  set(mcuboot_dir ${ZEPHYR_MCUBOOT_MODULE_DIR})
+  target_sources(app PRIVATE
+    ${mcuboot_dir}/ext/fiat/src/curve25519.c
+    ${mcuboot_dir}/ext/tinycrypt-sha512/lib/source/sha512.c
+    ${mcuboot_dir}/ext/tinycrypt/lib/source/utils.c
+    ${mcuboot_dir}/ext/tinycrypt/lib/source/sha256.c)
+  # No assert() in the verifier: its limb bound checks cost time and an abort would hang the boot
+  set_source_files_properties(${mcuboot_dir}/ext/fiat/src/curve25519.c PROPERTIES COMPILE_DEFINITIONS NDEBUG)
+  target_include_directories(app PRIVATE
+    ${mcuboot_dir}/ext/fiat/src
+    ${mcuboot_dir}/ext/tinycrypt/lib/include
+    ${mcuboot_dir}/ext/tinycrypt-sha512/lib/include
+    ${mcuboot_dir}/boot/zephyr/include
+    ${mcuboot_dir}/boot/bootutil/include)
+  target_compile_definitions(app PRIVATE MULTIAPP_EXT_VERIFY=1)
+endif()
+if(CONFIG_SSH_USER_KEY_ED25519 AND NOT MULTIAPP_EXT_SIGN_KEY)
+  # src/sshd.c checks the logins of Ed25519 keys with this verifier, built only with the signing key: without it every
+  # such login would fail
+  message(FATAL_ERROR "multiapp: SSH_USER_KEY_ED25519 needs the ED25519 verifier of the signed extensions, which "
+                      "is built with an ED25519 signing key (ESDR_SIGNING_KEY, or ESDR_DEV_KEY=1)")
+endif()
+target_sources(app PRIVATE src/extsig.c src/extsig_core.c)
+
 if(CONFIG_SOC_SERIES_ESP32S3)
 # The radio, as modules every app that uses it needs: the PHY's blobs and what the HAL builds
 # around them (the ROM calls some of it with the cache off), the library, and the 802.15.4 driver
@@ -566,6 +623,24 @@ llext_compile_definitions(link_ext QAM_SPS=CONFIG_APP_SPS)
 # Buffers of the apps that never run the receive ring, in its bank 0.
 zephyr_linker_sources(DATA_SECTIONS multiapp_bank0.ld)
 elseif(CONFIG_SOC_SERIES_ESP32S31)
+# The network threads' stacks (and two DNS data pools) in PSRAM, ahead of the SoC's .noinit.
+zephyr_linker_sources(RAM_SECTIONS net_psram_s31.ld)
+# The ring's DMA stops before every reset (src/reboot_s31.c).
+target_sources(app PRIVATE src/reboot_s31.c)
+set(parlio_hal ${WEST_TOPDIR}/modules/hal/espressif/components/esp_hal_parlio)
+set_source_files_properties(src/reboot_s31.c PROPERTIES INCLUDE_DIRECTORIES
+  "${parlio_hal}/include;${parlio_hal}/${CONFIG_SOC_SERIES}/include")
+zephyr_link_libraries(-Wl,--wrap=sys_arch_reboot)
+# Stacks and plain buffers in the LP RAM (not behind the cache, so safe in flash operations).
+zephyr_linker_sources(RAM_SECTIONS multiapp_lpram_s31.ld)
+# After the link: the DMA buffers internal, no k_heap or slab in PSRAM, no stack of a flash thread in PSRAM.
+add_custom_target(multiapp_placement ALL
+  COMMAND ${CMAKE_COMMAND} -E env READELF=${CMAKE_READELF}
+          ${PYTHON_EXECUTABLE} ${apps_dir}/../scripts/tcm_groups.py --multiapp
+          --module-heap ${CONFIG_MULTIAPP_MODULE_HEAP_SIZE}:${ext_dir}/sdr.llext
+          ${PROJECT_BINARY_DIR}/zephyr/${KERNEL_ELF_NAME}
+  COMMENT "multiapp placement check")
+add_dependencies(multiapp_placement ${logical_target_for_zephyr_elf})
 # The radio as one module: the PHY's blobs and what the HAL builds around them, and the library.
 # On this chip the PHY library's calls into two ROM functions go to wrappers in the library
 # (esp_sdr_s31.c), which only the module holding both can link. The ROM's PHY functions it calls
@@ -599,11 +674,23 @@ set(osmosdr ${apps_dir}/osmosdr/src)
 target_sources(app PRIVATE src/osmosdr.c ${osmosdr}/usb_sdr.c)
 set_source_files_properties(src/osmosdr.c ${osmosdr}/usb_sdr.c PROPERTIES
   INCLUDE_DIRECTORIES ${osmosdr})
+# MCUmgr's arm gate (src/netsvc.c, apps/common/net/mcumgr.conf).
+if(CONFIG_MCUMGR)
+  target_sources(app PRIVATE src/netsvc.c)
+endif()
+# The SSH server (src/sshd.c, apps/common/net/ssh.conf): its keys, its console choice, its host key. Its file
+# rule (nothing on the flash while a stream runs) is netsvc.c's.
+if(CONFIG_SSH_SERVER)
+  if(NOT CONFIG_MCUMGR)
+    message(FATAL_ERROR "multiapp: ssh.conf needs mcumgr.conf (src/netsvc.c holds the stream rule)")
+  endif()
+  target_sources(app PRIVATE src/sshd.c src/authkeys.c src/console_mux.c src/console_mux_core.c)
+endif()
 set(hs_conf)
 if(CONFIG_MULTIAPP_OSMOSDR_HS_LOAD_LOG)
   set(hs_conf APP_CONF ${apps_dir}/osmosdr_hs/loadlog.conf)
 endif()
-multiapp_extension(osmosdr_hs APP ${apps_dir}/osmosdr_hs ${hs_conf} STACK 4096 USB 2 INTERNAL REQUIRES sdr # MULTIAPP_USB_VENDOR
+multiapp_extension(osmosdr_hs APP ${apps_dir}/osmosdr_hs ${hs_conf} STACK 4096 USB 2 INTERNAL BANK2 REQUIRES sdr # MULTIAPP_USB_VENDOR
   PRELUDE ${CMAKE_CURRENT_LIST_DIR}/ext/usbd_prelude.h
   INCLUDES ${osmosdr} ${apps_dir}/common/include ${ZEPHYR_BASE}/samples/subsys/usb/common
   SOURCES ${apps_dir}/osmosdr_hs/src/main.c ${apps_dir}/common/src/esdr_cal.c)

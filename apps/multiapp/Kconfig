@@ -49,6 +49,14 @@ config MULTIAPP_STACK_SIZE
 config ESP_SDR_PHY_ONLY
 	default y
 
+config MULTIAPP_SIGNED_EXTENSIONS
+	bool "The sysbuild signs with the project's own key (SB_CONFIG_ESDR_SIGNING): extension files must be signed"
+	depends on SOC_SERIES_ESP32S31
+	help
+	  Set by apps/common/sysbuild/signing.cmake. Then a key the build cannot use for the extension
+	  signatures (not ED25519, unreadable) stops the build: accepting unsigned extensions in a build whose
+	  image is signed would make the signature check a decoration.
+
 config MULTIAPP_UNLOAD
 	bool "Switch apps in place, unloading the running one"
 	default y if SOC_SERIES_ESP32S3 || SOC_SERIES_ESP32S31

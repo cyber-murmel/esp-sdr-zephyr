@@ -1,5 +1,9 @@
 # Transmit stream library (lib/esp_sdr/src/txs)
 
+<!-- nav-start -->
+Previous: [S31 to host at 80 MS/s through a Colorlight 5A-75B](s31-fpga-bridge.md) · Up: [Reference](index.md) · Next: [Network services on the S31 multiapp host](network-services.md)
+<!-- nav-end -->
+
 Stage 1 of the continuous I/Q transmit stream (design: the S31 transmit stream plan): the parts that
 need no hardware. Plain C, no Zephyr kernel calls, tested on native_sim (`tests/unit/txs`). Stage 3
 (`esp_sdr_dacstream`, a CPU1 thread and the ownership writes) calls into it.
@@ -457,10 +461,10 @@ machine, no Zephyr), `src/tx_filter.h` (the hook's filter, no Zephyr; both are t
     the system heap (`k_malloc`: the interrupt allocator's vector descriptors, `shared_intr_isr()` walks them in
     interrupts, and the PHY's calibration data); the network stack's transmit buffers (see below).
   - *Net transmit buffers*: the MAC driver writes them back before the DMA (`sys_cache_data_flush_range()` in
-    `eth_dwc_ether_1000_core.c` for the stack's frames and for the prepared frames), the pool is aligned to 64 B,
-    so PSRAM would be handled by the driver; what is not verified is that the EMAC's DMA reaches PSRAM on the S31.
-    They stay internal (4 x 1536 B and their records, 6.9 KB, four buffers of the hold);
-    `CONFIG_ESP_SDR_S31_TXMEM_NETTX_PSRAM=y` moves them for a board test (ping, DHCP, ND must still work).
+    `eth_dwc_ether_1000_core.c`), the pool is aligned to 64 B. On the board (2026-11-26, multiapp, same MAC) the
+    EMAC's DMA does not reach PSRAM: every send from a PSRAM buffer failed, and receive buffers in PSRAM lost
+    frames of 500 bytes and more. They stay internal (4 x 1536 B and their records, 6.9 KB);
+    `CONFIG_ESP_SDR_S31_TXMEM_NETTX_PSRAM` is broken, keep it off.
   - *CPU 1 and PSRAM*: nothing CPU 1 runs touches PSRAM. The flip thread's code is in IRAM and its data in groups
     0 and 3 (`st`, `pub_stats`, the tables, the receive buffers it fills from), `txs_*` and the PIE kernels work on
     those and the banks, `tx_stream_put()` (the receive interrupt, CPU 0) touches `st` and the receive buffers.
@@ -484,3 +488,7 @@ machine, no Zephyr), `src/tx_filter.h` (the hook's filter, no Zephyr; both are t
     separately.
 - **Shell**: `tx net` (subscriber, run, the hook's counters, control counters, statuses and pings, the
   status cost, stack use), `tx arm <minutes>`, `tx disarm`.
+
+<!-- nav-start -->
+Previous: [S31 to host at 80 MS/s through a Colorlight 5A-75B](s31-fpga-bridge.md) · Up: [Reference](index.md) · Next: [Network services on the S31 multiapp host](network-services.md)
+<!-- nav-end -->

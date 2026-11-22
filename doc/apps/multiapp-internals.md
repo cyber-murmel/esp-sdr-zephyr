@@ -1706,8 +1706,11 @@ The libc uses thread-local storage, and llext relocates no TLS access:
 
 #### osmosdr_hs
 
-- It is built from its own sources as `INTERNAL`, so its 104 KB of USB batches, which carry
-  40 MB/s, are internal RAM.
+- It is built from its own sources as `INTERNAL BANK2`, so its 104 KB of USB batches, which carry
+  40 MB/s, are internal RAM, and in TCM group 3 (the capture bank, 0x2F060000 up to the ROM boot stack
+  at 0x2F07AFB0) as the host's `bank2_heap` (`src/bank2.h`): the boot of an app that does not capture
+  lends the group out, and `esp_sdr_bank2_reserve()` keeps the capture, replay, ring and transmit paths off it
+  (-EBUSY). The radio module stays in the module heap.
 - `ext/usbd_prelude.h` gives it the host's USB device where it brings up its own, and
   `CONFIG_APP_USB_MSG_HOOK` passes it the device's messages (a suspend stops the stream).
 - Its crystal calibration lives in Zephyr settings on ZMS in a partition of its own,
@@ -1720,10 +1723,14 @@ The libc uses thread-local storage, and llext relocates no TLS access:
 
 #### Memory
 
-The image ends 12.9 KB below the receive ring at 0x2F040000, with a module heap of 120 KB of which
-the radio and osmosdr_hs take 116 KB. With the stage hot-swap, the drive's proxy and the calibration
-on ZMS (2026-11-26) `_end` is 0x2f03d180, 11904 bytes below the ring (12032 before ZMS: its settings
-state is 96 bytes and the proxy's 88).
+The module heap is 16 KB (`CONFIG_MULTIAPP_MODULE_HEAP_SIZE`): the radio module's 9.2 KB of internal RAM
+and about 7 KB for an app's fast kernels; osmosdr_hs's 107 KB are in group 3 instead (above). With the
+network host (Ethernet, MCUmgr over UDP, `apps/common/net`), the image ends at 0x2F02EE80 (UART variant
+0x2F02E500), which leaves 70 KB of the libc arena below the receive ring at 0x2F040000; the network threads'
+stacks are in PSRAM, cold stacks and the system heap in LP RAM, nothing the USB drive touches while a stream runs
+(`doc/dev/network-services.md`, "Fit with the LP RAM"). Without the network, with the module heap of 120 KB that held
+osmosdr_hs, `_end` was 0x2f03d180, 11904 bytes below the ring (the stage hot-swap, the drive's proxy and the
+calibration on ZMS: 2026-11-26).
 
 #### Measurements on the CoreBoard
 

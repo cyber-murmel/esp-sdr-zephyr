@@ -50,7 +50,7 @@ void drive_proxy_set_busy(struct drive_proxy *p, bool (*busy)(void))
 }
 
 /* A call of the radio module's, counted in before the pointer is read. */
-static bool ring_busy(struct drive_proxy *p)
+bool drive_proxy_ring_busy(struct drive_proxy *p)
 {
 	bool (*busy)(void);
 	bool ret = false;
@@ -76,7 +76,7 @@ static bool hold_over(struct drive_proxy *p)
 	if (atomic_get(&p->hold) == 0) {
 		return true;
 	}
-	busy = ring_busy(p);
+	busy = drive_proxy_ring_busy(p);
 	key = k_spin_lock(&p->lock);
 	if (k_uptime_get() >= p->hold_until && !busy) {
 		atomic_set(&p->hold, 0);

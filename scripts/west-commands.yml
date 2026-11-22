@@ -6,6 +6,11 @@ west-commands:
       - name: dfu
         class: Dfu
         help: update a running esp-sdr board over USB DFU and confirm the image
+  - file: scripts/west_commands/mcumgr.py
+    commands:
+      - name: mcumgr
+        class: Mcumgr
+        help: "MCUmgr (Simple Management Protocol) over UDP to an esp-sdr S31 board: upload, test, confirm, reset, files"
   - file: scripts/west_commands/rp2040.py
     commands:
       - name: rp2040

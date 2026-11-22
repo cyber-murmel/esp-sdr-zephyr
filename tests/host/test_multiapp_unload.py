@@ -496,6 +496,11 @@ def test_a_kernel_loads_only_with_the_kernel_trailer_and_only_from_the_app():
     body = apps[apps.index("int multiapp_kernel_load"):]
     body = body[:body.index("\n}\n")]
     assert "MULTIAPP_KTRAILER_MAGIC" in body and "kernel_check_deps" in body
+    # The signature (extsig.c) is checked inside check_trailer(), under the kernel's own name
+    # (the file's, not the ksw<n> it loads as), and a refusal returns before llext_load().
+    assert "check_trailer(name != NULL ? name : \"\"" in body
+    assert body.index("check_trailer(") < body.index("llext_load(")
+    assert "multiapp_sig_check(name, source, data, &len)" in function_body(apps, "static int check_trailer")
     # An app's file and a kernel's differ in the magic, so neither loads as the other.
     assert apps.count("MULTIAPP_TRAILER_MAGIC") == 2
     deps = apps[apps.index("static int kernel_check_deps"):]

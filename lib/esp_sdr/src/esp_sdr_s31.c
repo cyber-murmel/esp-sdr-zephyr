@@ -656,6 +656,9 @@ static __noinline int dump_run(size_t words, unsigned int rate_field,
 int esp_sdr_s31_capture(enum esp_sdr_rate rate, size_t count, void (*hook)(void *user),
 			void *user, uint32_t *elapsed_us, uint32_t *past)
 {
+	if (esp_sdr_bank2_reserved) {
+		return -EBUSY;
+	}
 	/* Measured by upstream from capture lengths: 80, 40, 20, 10, 8, 4 MS/s. */
 	static const uint8_t rate_field[] = {0, 1, 3, 5, 7, 9};
 	volatile uint32_t *bank = ESP_SDR_S31_BURST_BANK;
@@ -727,6 +730,9 @@ bool esp_sdr_s31_dump_ready(void)
 
 int esp_sdr_s31_dac_start(unsigned int rate_code, uint32_t ctrl, uint32_t *t0)
 {
+	if (esp_sdr_bank2_reserved) {
+		return -EBUSY;
+	}
 	unsigned int key;
 
 	if (!dump_ready) {
@@ -761,6 +767,9 @@ bool esp_sdr_s31_ring_busy(void)
  */
 int esp_sdr_s31_ring_start(unsigned int rate_code, uint32_t words)
 {
+	if (esp_sdr_bank2_reserved) {
+		return -EBUSY;
+	}
 	unsigned int key;
 	uint32_t ctrl;
 

@@ -44,6 +44,9 @@
 #include "app_crash.h"
 #include "app_usb.h"
 #include "apps.h"
+#include "bank2.h"
+#include "extsig.h"
+#include "gitver.h"
 #include "profile.h"
 #include "runguard.h"
 
@@ -100,13 +103,12 @@ static struct k_heap module_heap;
 static uint8_t module_high_mem[CONFIG_MULTIAPP_MODULE_HIGH_HEAP_SIZE] __aligned(16)
 	ESP_SDR_DATA_F(STATE, module_high_mem, NOINIT);
 static struct k_heap module_high_heap;
-#if defined(CONFIG_SOC_SERIES_ESP32S3)
+#if defined(MULTIAPP_BANK2)
 /*
  * Dump bank 2 (the capture bank, esp_sdr_bank_s3.ld) as a second internal heap, for a boot whose
  * app asks (BANK2): a module that does not fit module_heap goes whole into it. Nothing else of
  * the image is there, and the SDR is told to stay off it (ext/sdr_up.c).
  */
-extern uint8_t __esp_sdr_bank_start[], __esp_sdr_bank_end[];
 static struct k_heap bank2_heap;
 #endif
 
@@ -123,7 +125,7 @@ static const struct llext_region_heap region_heaps[][LLEXT_MEM_COUNT] = {
 	},
 };
 
-#if defined(CONFIG_SOC_SERIES_ESP32S3)
+#if defined(MULTIAPP_BANK2)
 /* The same placements with the bank-2 heap in module_heap's place. */
 static const struct llext_region_heap region_heaps_bank2[][LLEXT_MEM_COUNT] = {
 	[MULTIAPP_PLACE_INTERNAL] = {
@@ -149,7 +151,8 @@ static struct {
 } modules[MODULES_MAX];
 static size_t module_count;
 
-/* PSRAM like the app's data: internal RAM is kept for the dump banks. */
+/* PSRAM like the app's data on the S3 (place.h): internal RAM is kept for the dump banks. On the S31
+ * the attribute places nothing in PSRAM, so the stack is internal, as the stream needs. */
 static Z_KERNEL_STACK_DEFINE_IN(app_stack, CONFIG_MULTIAPP_STACK_SIZE,
 				ESP_SDR_DATA_F(STACK, app_stack, NOINIT));
 static struct k_thread app_thread;
@@ -324,10 +327,10 @@ static int heaps_init(void)
 {
 	k_heap_init(&module_heap, module_heap_mem, sizeof(module_heap_mem));
 	k_heap_init(&module_high_heap, module_high_mem, sizeof(module_high_mem));
-#if defined(CONFIG_SOC_SERIES_ESP32S3)
+#if defined(MULTIAPP_BANK2)
 	if (bank2_app != NULL) {
-		k_heap_init(&bank2_heap, __esp_sdr_bank_start,
-			    __esp_sdr_bank_end - __esp_sdr_bank_start);
+		k_heap_init(&bank2_heap, BANK2_START,
+			    BANK2_SIZE);
 	}
 #endif
 #if defined(CONFIG_HARVARD)
@@ -493,7 +496,11 @@ static int check_trailer(const char *name, const char *source, const uint8_t *da
 			 uint32_t magic, size_t *elf_size, uint32_t *stack_need)
 {
 	struct multiapp_trailer t;
+	int sig = multiapp_sig_check(name, source, data, &len);
 
+	if (sig != 0) {
+		return sig;
+	}
 	if (len < sizeof(t)) {
 		LOG_ERR("%s (%s): %zu bytes, no trailer", name, source, len);
 		return -ENOEXEC;
@@ -569,6 +576,12 @@ static int load_extension(const struct multiapp_embedded *app, struct llext **ex
 	if (app->place != MULTIAPP_PLACE_PSRAM) {
 		param.region_heaps = region_heaps[app->place];
 		param.text_alt_section = ".module_fast";
+#if defined(CONFIG_SOC_SERIES_ESP32S31)
+		/* The app that does not capture lives in group 3; the radio module stays in group 0 */
+		if (bank2_app == app && !app->module) {
+			param.region_heaps = region_heaps_bank2[app->place];
+		}
+#endif
 	}
 	/*
 	 * Temporary, so llext copies every region: in place, it would not relocate
@@ -840,7 +853,7 @@ static void kernel_fill(struct multiapp_kernel *k)
 	k->alloc_size = ext->alloc_size;
 }
 
-int multiapp_kernel_load(const uint8_t *file, size_t len, const char *source,
+int multiapp_kernel_load(const char *name, const uint8_t *file, size_t len, const char *source,
 			 struct multiapp_kernel *k)
 {
 	struct llext_load_param param = LLEXT_LOAD_PARAM_DEFAULT;
@@ -855,7 +868,10 @@ int multiapp_kernel_load(const uint8_t *file, size_t len, const char *source,
 		return -ENODEV;
 	}
 	(void)snprintf(k->name, sizeof(k->name), "ksw%u", ++kernel_seq);
-	ret = check_trailer(k->name, source, file, len, MULTIAPP_KTRAILER_MAGIC, &elf_size, &place);
+	/* The signature (extsig.c) is checked under the kernel's own name, not the ksw<n> it loads as:
+	 * a bad one fails the load and the stage keeps its function. */
+	ret = check_trailer(name != NULL ? name : "", source, file, len, MULTIAPP_KTRAILER_MAGIC,
+			    &elf_size, &place);
 	if (ret != 0) {
 		return ret;
 	}
@@ -1374,7 +1390,7 @@ static int multiapp_switch(const struct multiapp_embedded *app)
 	if (ret != 0) {
 		return ret;
 	}
-#if defined(CONFIG_SOC_SERIES_ESP32S3)
+#if defined(MULTIAPP_BANK2)
 	if (bank2_flip) {
 		struct sys_memory_stats st;
 
@@ -1386,8 +1402,8 @@ static int multiapp_switch(const struct multiapp_embedded *app)
 		}
 		bank2_app = app->bank2 ? app : NULL;
 		if (bank2_app != NULL) {
-			k_heap_init(&bank2_heap, __esp_sdr_bank_start,
-				    __esp_sdr_bank_end - __esp_sdr_bank_start);
+			k_heap_init(&bank2_heap, BANK2_START,
+				    BANK2_SIZE);
 		}
 	}
 #endif
@@ -1413,6 +1429,18 @@ static bool switch_ok(const struct multiapp_embedded *app)
 	if (app->console || profile_of(app) != usb_profile) {
 		return false;
 	}
+#if defined(CONFIG_SOC_SERIES_ESP32S31)
+	/*
+	 * TCM group 3 is the capture bank (the dump engine's) in one boot and the host's bank2_heap in
+	 * another (src/bank2.h): changing hands takes a reboot, which stops the diagnostic bus and its
+	 * DMA (reboot_s31.c) and starts the radio module, heap and engine from scratch. Today only
+	 * osmosdr_hs has BANK2 and it has USB classes the others lack, so the profile test above
+	 * decides the same; this keeps it so if an app with the same classes gets the flag.
+	 */
+	if ((bank2_app != NULL) != app->bank2) {
+		return false;
+	}
+#endif
 	if (loaded != NULL && (loaded_def == NULL || loaded_def->console ||
 			       (usb_profile & MULTIAPP_USB_OWN_DISKS) != 0U)) {
 		/* No def: an app that failed to unload, which only a reboot replaces. */
@@ -1754,7 +1782,10 @@ static int cmd_info(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
-	shell_print(sh, "host %s, build %02x%02x%02x%02x", APP_VERSION_STRING, build_id[0],
+	char ver[48];
+
+	gitver_text(ver, sizeof(ver));
+	shell_print(sh, "host %s, build %02x%02x%02x%02x", ver, build_id[0],
 		    build_id[1], build_id[2], build_id[3]);
 	if (main_size != 0U) {
 		shell_print(sh, "host main: %zu of %zu bytes of stack used, USB started on CPU %d",
@@ -1779,7 +1810,7 @@ static int cmd_info(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "uptime %lld ms", k_uptime_get());
 	heap_line(sh, "module_heap", &module_heap);
 	heap_line(sh, "module_high_heap", &module_high_heap);
-#if defined(CONFIG_SOC_SERIES_ESP32S3)
+#if defined(MULTIAPP_BANK2)
 	if (bank2_app != NULL) {
 		heap_line(sh, "bank2_heap", &bank2_heap);
 	}

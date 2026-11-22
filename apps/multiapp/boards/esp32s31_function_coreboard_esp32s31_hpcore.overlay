@@ -7,6 +7,9 @@
  * console stays on UART0.
  */
 
+/* Ethernet (the same for every network host: apps/common/net) */
+#include "../../common/net/s31_eth.overlay"
+
 / {
 	chosen {
 		zephyr,shell-uart = &cdc_acm_uart0;

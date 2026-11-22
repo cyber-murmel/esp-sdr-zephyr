@@ -66,9 +66,10 @@ config APP_TRIAL_TIMEOUT_S
 	default 60
 	depends on APP_TRIAL_WATCHDOG
 	help
-	  Passed to the watchdog as its timeout. The ESP32 driver currently
-	  counts milliseconds as 0.5 ms ticks, so the reset comes after about
-	  half of this.
+	  The time the host has to confirm, in seconds: the board resets at about
+	  this uptime. (Passed to the watchdog as its timeout where the liveness
+	  watchdog is off; the Zephyr ESP32 driver's tick is 0.5 ms on the S3 and 1 ms
+	  on the C6, P4 and S31, which app_usb.c allows for.)
 
 endif # APP_USB_DFU
 
@@ -78,16 +79,17 @@ config APP_LIVENESS_WATCHDOG
 	help
 	  Keeps the hardware watchdog armed, fed every 500 ms from the system
 	  work queue: a wedged system resets instead of needing a replug. An
-	  unconfirmed DFU image is fed for about half of
-	  APP_TRIAL_TIMEOUT_S (the driver's tick scale), then reverts as before.
+	  unconfirmed DFU image is fed until
+	  APP_TRIAL_TIMEOUT_S (less the liveness timeout), then reverts as before.
 
 config APP_LIVENESS_TIMEOUT_MS
 	int "Liveness watchdog timeout in ms"
 	default 4000
 	depends on APP_LIVENESS_WATCHDOG
 	help
-	  The ESP32 driver counts milliseconds as 0.5 ms ticks: 4000 resets
-	  after about 2 s without feeding.
+	  The driver's millisecond is 0.5 ms on the S3 and 1 ms on the C6, P4 and S31
+	  (see APP_TRIAL_TIMEOUT_S): 4000 resets after about 2 s without feeding
+	  on the S3, 4 s on the others.
 
 config APP_USB_MSG_HOOK
 	bool "Pass the USB device's messages to app_usb_msg()"

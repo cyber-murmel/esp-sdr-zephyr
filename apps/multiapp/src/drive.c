@@ -48,6 +48,12 @@ LOG_MODULE_DECLARE(multiapp, LOG_LEVEL_INF);
 #define CLAIM_MS    2000
 
 static FATFS multiapp_fat_fs;
+static struct fs_mount_t fat_mount_wr = {
+	.type = FS_FATFS,
+	.mnt_point = MOUNT_POINT,
+	.fs_data = &multiapp_fat_fs,
+	.flags = FS_MOUNT_FLAG_NO_FORMAT,
+};
 static struct fs_mount_t fat_mount = {
 	.type = FS_FATFS,
 	.mnt_point = MOUNT_POINT,
@@ -155,6 +161,11 @@ void multiapp_drive_read_end(void)
 void multiapp_drive_busy_hook(bool (*busy)(void))
 {
 	drive_proxy_set_busy(&px, busy);
+}
+
+bool multiapp_ring_running(void)
+{
+	return drive_proxy_ring_busy(&px);
 }
 
 int multiapp_drive_scan(void)
@@ -340,7 +351,14 @@ static ssize_t read_path(const char *path, uint8_t *buf, size_t max)
 	struct fs_file_t f;
 	ssize_t ret;
 
-	ret = claim(false, K_MSEC(CLAIM_MS));
+	/* -EAGAIN: another device user has the lock (MCUmgr's fs commands, 4 s at most after a transfer):
+	 * a few tries, so that `multiapp run` right after a `west mcumgr fs put` finds the file */
+	for (int tries = 0; tries < 3; tries++) {
+		ret = claim(false, K_MSEC(CLAIM_MS));
+		if (ret != -EAGAIN) {
+			break;
+		}
+	}
 	if (ret != 0) {
 		return ret == -EAGAIN ? -EBUSY : ret;
 	}
@@ -364,6 +382,33 @@ ssize_t multiapp_drive_read(const char *name, uint8_t *buf, size_t max)
 
 	file_path(path, sizeof(path), name);
 	return read_path(path, buf, max);
+}
+
+int multiapp_drive_fs_begin(bool write, bool hide, uint32_t timeout_ms)
+{
+	k_timeout_t timeout = K_MSEC(timeout_ms);
+	int ret = hide ? multiapp_drive_write_begin(timeout) : multiapp_drive_read_begin(timeout);
+
+	if (ret != 0) {
+		return ret;
+	}
+	/* A writer mounts read-write (the others are read-only: the PC may have the volume) */
+	ret = fs_mount(write ? &fat_mount_wr : &fat_mount);
+	if (ret != 0) {
+		LOG_ERR("volume claimed but fs_mount(%s) failed (%d)", write ? "rw" : "ro", ret);
+		hide ? multiapp_drive_write_end() : multiapp_drive_read_end();
+	}
+	return ret;
+}
+
+void multiapp_drive_fs_end(bool write, bool hide)
+{
+	int ret = fs_unmount(write ? &fat_mount_wr : &fat_mount);
+
+	if (ret != 0) {
+		LOG_ERR("fs_unmount(%s) failed (%d)", write ? "rw" : "ro", ret);
+	}
+	hide ? multiapp_drive_write_end() : multiapp_drive_read_end();
 }
 
 ssize_t multiapp_drive_read_file(const char *file, uint8_t *buf, size_t max)

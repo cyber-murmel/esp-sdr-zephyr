@@ -49,14 +49,18 @@ def data_lines(data, chunk=DEFAULT_CHUNK):
         yield base64.b64encode(data[off:off + chunk]).decode()
 
 
-def put_command(stage, data, timeout_ms=None):
+def put_command(stage, data, timeout_ms=None, name=None):
+    """name: what a signed kernel was signed for (apptrail.py --name); a timeout of 0 is the default."""
     cmd = f"multiapp stage put {stage} {len(data)} 0x{crc32(data):08x}"
-    return cmd if timeout_ms is None else f"{cmd} {timeout_ms}"
+    if name:
+        timeout_ms = timeout_ms or 0
+    cmd = cmd if timeout_ms is None else f"{cmd} {timeout_ms}"
+    return f"{cmd} {name}" if name else cmd
 
 
-def commands(stage, data, chunk=DEFAULT_CHUNK, timeout_ms=None):
+def commands(stage, data, chunk=DEFAULT_CHUNK, timeout_ms=None, name=None):
     """Every shell line of one push: put, the data lines, end."""
-    yield put_command(stage, data, timeout_ms)
+    yield put_command(stage, data, timeout_ms, name)
     for line in data_lines(data, chunk):
         yield f"multiapp stage data {line}"
     yield "multiapp stage end"
@@ -133,9 +137,9 @@ def finish(sh, cmd, timeout):
     return result_of(lines), lines
 
 
-def push(sh, stage, data, chunk=DEFAULT_CHUNK, timeout_ms=None, timeout=10.0, progress=None):
+def push(sh, stage, data, chunk=DEFAULT_CHUNK, timeout_ms=None, timeout=10.0, progress=None, name=None):
     """Upload a kernel file and swap it in; (ok, message). Raises SwapError when a line is lost."""
-    cmds = list(commands(stage, data, chunk, timeout_ms))
+    cmds = list(commands(stage, data, chunk, timeout_ms, name))
     start = sh.run(cmds[0], lambda t: t.startswith("put ") or RESULT.search(t), timeout)
     if any(RESULT.search(t or "") for t in start):
         return result_of(start)
@@ -204,9 +208,11 @@ def main(argv=None):
     if not (a.list or a.stage):
         p.error("--stage is needed")
 
-    data = None
+    data = name = None
     if not (a.list or a.revert or a.file):
-        data = kernel_file(a).read_bytes()
+        path = kernel_file(a)
+        data = path.read_bytes()
+        name = path.stem  # a signed kernel is signed under its file's name (the device checks it)
     port = open_port(a.port, a.baud)
     sh = Shell(port, a.char_delay, echo=lambda line: print(f"device: {line}"))
     # A bare line makes the shell show its prompt, and drops anything half typed.
@@ -224,7 +230,7 @@ def main(argv=None):
             ok, msg = finish(sh, f"multiapp stage load {a.stage} {a.file}" +
                              (f" {a.timeout_ms}" if a.timeout_ms else ""), 10.0)[0]
         else:
-            ok, msg = push(sh, a.stage, data, a.chunk, a.timeout_ms)
+            ok, msg = push(sh, a.stage, data, a.chunk, a.timeout_ms, name=name)
     except SwapError as err:
         sh.run("multiapp stage abort", lambda t: t.startswith("upload"), 2.0)
         print(f"kswap: {err}", file=sys.stderr)

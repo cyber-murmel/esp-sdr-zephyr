@@ -42,6 +42,26 @@ static struct k_work_delayable wdt_work;
 static bool trial;
 
 #define FEED_PERIOD K_MSEC(500)
+#if defined(CONFIG_APP_LIVENESS_WATCHDOG)
+#define LIVENESS_MS CONFIG_APP_LIVENESS_TIMEOUT_MS
+#else
+#define LIVENESS_MS 0
+#endif
+
+/*
+ * What a timeout of N driver milliseconds is in real ones. The Zephyr driver (modules/zephyr/drivers/
+ * watchdog/wdt_esp32.c:41) programs the MWDT prescaler 40000, which is 0.5 ms a tick on the S3 (APB, 80 MHz)
+ * but 1 ms on the chips whose MWDT runs from the 40 MHz XTAL (the HAL's own default there is 20000 for 0.5 ms):
+ * C6, P4, S31. So only on the S3 does a timeout last half as long as it says (measured on the S31, 2026-11-26:
+ * an unconfirmed trial of 300 s reverted at 162 s, as TRIAL_S / 2 plus the swap and boot).
+ */
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
+#define WDT_REAL_MS(ms) ((ms) / 2)
+#define WDT_DRIVER_MS(real_ms) ((real_ms) * 2)
+#else
+#define WDT_REAL_MS(ms) (ms)
+#define WDT_DRIVER_MS(real_ms) (real_ms)
+#endif
 #if defined(CONFIG_APP_TRIAL_TIMEOUT_S)
 #define TRIAL_S CONFIG_APP_TRIAL_TIMEOUT_S
 #else
@@ -66,8 +86,8 @@ static void wdt_handler(struct k_work *work)
 		}
 	}
 	if (IS_ENABLED(CONFIG_APP_LIVENESS_WATCHDOG)) {
-		/* The driver's tick scale halves the trial timeout; keep that. */
-		if (!trial || k_uptime_get() < (int64_t)TRIAL_S * 1000 / 2) {
+		/* Revert at TRIAL_S: stop feeding that long minus the time the watchdog takes to bite */
+		if (!trial || k_uptime_get() < (int64_t)TRIAL_S * 1000 - WDT_REAL_MS(LIVENESS_MS)) {
 			(void)wdt_feed(app_wdt, 0);
 		}
 		k_work_schedule(&wdt_work, FEED_PERIOD);
@@ -112,7 +132,7 @@ static void app_watchdog_arm(void)
 #if defined(CONFIG_APP_LIVENESS_WATCHDOG)
 	cfg.window.max = CONFIG_APP_LIVENESS_TIMEOUT_MS;
 #else
-	cfg.window.max = TRIAL_S * MSEC_PER_SEC;
+	cfg.window.max = WDT_DRIVER_MS(TRIAL_S * MSEC_PER_SEC);
 #endif
 	if (!device_is_ready(app_wdt) || wdt_install_timeout(app_wdt, &cfg) < 0 ||
 	    wdt_setup(app_wdt, 0) < 0) {
@@ -120,8 +140,8 @@ static void app_watchdog_arm(void)
 		return;
 	}
 	if (trial) {
-		LOG_WRN("trial boot: reverting in %d s unless confirmed (mcuboot confirm)",
-			TRIAL_S);
+		LOG_WRN("trial boot: reverts at uptime %d s (now %d s) unless confirmed (mcuboot confirm)",
+			TRIAL_S, (int)(k_uptime_get() / 1000));
 	}
 	k_work_init_delayable(&wdt_work, wdt_handler);
 	k_work_schedule(&wdt_work, K_NO_WAIT);

@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+# The own signing key defaults (the ESP32-S31 CoreBoard), ahead of sysbuild's.
+rsource "../common/sysbuild/Kconfig.signing"
+
+source "share/sysbuild/Kconfig"

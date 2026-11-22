@@ -28,11 +28,13 @@ SHIM = {
 #include <string.h>
 #include <zephyr/sys/atomic.h>
 void k_msleep(int ms);
+uint32_t k_uptime_get_32(void);
 """,
     "zephyr/device.h": "#pragma once\nstruct device;\n",
     "zephyr/sys/atomic.h": """
 #pragma once
 typedef long atomic_t;
+typedef long atomic_val_t;
 extern void (*test_after_get)(void);
 static inline long atomic_get(const atomic_t *t)
 {
@@ -46,6 +48,7 @@ static inline long atomic_get(const atomic_t *t)
 	}
 	return v;
 }
+static inline long atomic_set(atomic_t *t, long v) { return __atomic_exchange_n(t, v, __ATOMIC_SEQ_CST); }
 static inline long atomic_inc(atomic_t *t) { return __atomic_fetch_add(t, 1, __ATOMIC_SEQ_CST); }
 static inline long atomic_dec(atomic_t *t) { return __atomic_fetch_sub(t, 1, __ATOMIC_SEQ_CST); }
 """,
@@ -61,6 +64,7 @@ void (*test_after_get)(void);
 #include "osmosdr.c"
 
 void k_msleep(int ms) { usleep((useconds_t)ms * 1000); }
+uint32_t k_uptime_get_32(void) { return 12345U; }
 
 enum { IN_DONE, OUT_DONE, LINK, CONTROL_OUT, CONTROL_IN, HANDLERS };
 static const char *const names[HANDLERS] = {"usb_sdr_in_done", "usb_sdr_out_done", "usb_sdr_link",

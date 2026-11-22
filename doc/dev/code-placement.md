@@ -31,6 +31,17 @@ share:
   aligned to the cache's way, cut the stream lost while following a connection from 0.062 % to
   0.0007 to 0.0025 % ([ubertooth internals](../apps/ubertooth-internals.md#the-hot-block)).
 
+## Stacks and the flash cache
+
+On the ESP chips the flash driver turns the instruction and data cache off during a flash operation
+(and stops other threads while it works, in a critical section). The thread that does the flash
+operation runs on its own stack: if that stack is in PSRAM (behind the cache) the thread stalls or
+hangs. Therefore: the stack of a thread that touches the flash itself (mounts or scans a file system,
+settings, MCUboot's image calls, USB mass storage, the shell when its commands do) must be in
+internal RAM or, on the S31, in LP RAM, which is not behind the cache. PSRAM stacks are for threads that never do (network, log, esp_timer).
+Seen on the S31 CoreBoard: the multiapp host with main, shell and work queue stacks in PSRAM hung
+after the banner. DMA buffers never go to PSRAM on the S31 either (the EMAC's DMA does not reach it).
+
 ## Regions
 
 Each region expands to the attribute such code or data carried before. So the default rules keep
@@ -50,7 +61,7 @@ loader's sections.
 | `ESP_SDR_PSRAM` | `EXT_RAM_BSS_ATTR` | S3 and ESP32 PSRAM; nothing on the others, whose HAL leaves it empty |
 | `ESP_SDR_PSRAM_FILE` | `.ext_ram.bss`, one per file | PSRAM on the P4 and the S31 |
 | `ESP_SDR_NOINIT`, `ESP_SDR_PSRAM_NOINIT` | `__noinit`, `.ext_ram_noinit.<n>` on the S31 (its `EXT_RAM_NOINIT_ATTR` is internal RAM; `ESP_SDR_PSRAM_NOINIT_ATTR`, also for `ESP_SDR_BUF_DEFINE()` and `ESP_SDR_STACK_DEFINE()`) | Not zeroed at boot |
-| `ESP_SDR_LPRAM` | `.rtc_noinit.<n>` (`ESP_SDR_LPRAM_ATTR`) | The S31's LP RAM, 0x2E000000, about 30 KB the image does not use: small cold data. Not zeroed, no DMA, no atomics (the flags `DMA` and `ATOMIC` stop the build), slower than TCM from the HP core (not measured). `apps/txstream_eth` keeps its control thread's state there |
+| `ESP_SDR_LPRAM` | `.rtc_noinit.<n>` (`ESP_SDR_LPRAM_ATTR`) | The S31's LP RAM, 0x2E000000, about 30 KB the image does not use: small cold data (nothing the USB drive touches while a stream runs: the mass storage thread's stack, the flash disk's cache and the FATFS object in it cost 567 gaps in 60 s at 20 MS/s). Not zeroed, no DMA, no atomics (the flags `DMA` and `ATOMIC` stop the build), slower than TCM from the HP core (not measured). `apps/txstream_eth` keeps its control thread's state there |
 
 `IRAM_ATTR` has no `noinline`: a tagged function the compiler inlines runs where its caller does.
 [The report](#the-report) lists the tags that left no symbol.

@@ -38,8 +38,8 @@ int multiapp_module_up(void)
 {
 	int ret;
 
-#if defined(CONFIG_SOC_SERIES_ESP32S3)
-	/* Before the first claim: this boot's app keeps module code and data in dump bank 2. */
+#if defined(CONFIG_SOC_SERIES_ESP32S3) || defined(CONFIG_SOC_SERIES_ESP32S31)
+	/* Before the first claim: this boot's app keeps module code and data in the capture bank (S31: group 3). */
 	if (multiapp_bank2_reserved()) {
 		esp_sdr_bank2_reserve();
 	}

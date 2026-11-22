@@ -17,6 +17,10 @@
  * external RAM, ahead of the SoC script's .ext_ram.data (heap, bss and the app's
  * ESP_SDR_PSRAM_NOINIT data). Each is a section of its own, named by the file that defines it and
  * a counter, so the counter is part of the pattern: scripts/tcm_groups.py --tx checks the result.
+ * Only for an image in which none of those threads (main, the shell, the work queue) touches the flash
+ * after boot: the flash driver turns the cache off during a flash operation and a thread with its
+ * stack in PSRAM stalls (doc/dev/code-placement.md). apps/txstream_eth uses no file system, settings
+ * storage or flash call; an app that does must leave those stacks internal or in LP RAM.
  */
 
 #if defined(CONFIG_ESP_SDR_S31_TXMEM_PSRAM)
@@ -33,7 +37,9 @@
 	*(.noinit.*subsys/net/ip/net_mgmt.c.*)
 	*(.noinit.*subsys/net/ip/net_tc.c.*)
 #if defined(CONFIG_ESP_SDR_S31_TXMEM_NETTX_PSRAM)
-	/* the transmit data buffers and their net_buf records (net_pkt.c.7, .6). Not the net_pkt slab: the free
+	/* NOT TESTED OK: shown not to work on the board 2026-11-26 (the EMAC's DMA does not reach PSRAM:
+	 * every send fails): keep CONFIG_ESP_SDR_S31_TXMEM_NETTX_PSRAM off.
+	 * the transmit data buffers and their net_buf records (net_pkt.c.7, .6). Not the net_pkt slab: the free
 	 * lists of slabs are built by a kernel init hook before PRE_KERNEL_1, when PSRAM is not accessible yet */
 	*(.noinit.*subsys/net/ip/net_pkt.c.7)
 	*(.noinit.*subsys/net/ip/net_pkt.c.6)

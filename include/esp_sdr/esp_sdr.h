@@ -305,12 +305,14 @@ int esp_sdr_set_turnaround(uint32_t settle_us, bool retune);
 #include <esp_sdr/esp_sdr_rx.h>
 #include <esp_sdr/esp_sdr_tx.h>
 
-#if defined(CONFIG_SOC_SERIES_ESP32S3) || defined(__DOXYGEN__)
+#if defined(CONFIG_SOC_SERIES_ESP32S3) || defined(CONFIG_SOC_SERIES_ESP32S31) || defined(__DOXYGEN__)
 /**
  * @brief Keep the SDR off SRAM bank 2 (the capture bank) for the rest of the boot.
  *
  * For an app that uses the bank for something else (apps/multiapp: module code and data). Call
- * before esp_sdr_init(). Then:
+ * before esp_sdr_init(). On the ESP32-S31 the bank is TCM group 3, which the host lends as a heap;
+ * the diagnostic-bus ring (esp_sdr_diag16.c) keeps working, every capture, replay, dump ring and
+ * transmit through the bank gives -EBUSY. Then:
  * - esp_sdr_rx_capture() and the other captures into the bank, transmit through it and the
  *   triggered and replay paths fail (esp_sdr_bank_usage() refuses them);
  * - esp_sdr_ring_run() runs on banks 0 and 1 only, as with esp_sdr_ring_cfg::spare_bank_app

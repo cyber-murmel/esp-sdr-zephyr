@@ -1,0 +1,25 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * The gigabit Ethernet of the ESP32-S31-Function-CoreBoard-1: YT8531 on RGMII (GPIO4-19, MDC 5,
+ * MDIO 6, PHY reset 7). TWAI shares GPIO13/14 with TX_CLK and RX_CLK. The diag16 pads (20-25,
+ * 36-40, 42-44, 47, 48) are none of those. Same content as apps/stream_eth's board overlay.
+ */
+
+&eth {
+	status = "okay";
+};
+
+&mdio {
+	status = "okay";
+};
+
+&phy {
+	status = "okay";
+	/* Gigabit: the 125 MHz reference clock, so let the PHY offer 1000BASE-T. */
+	/delete-property/ default-speeds;
+};
+
+&twai0 {
+	status = "disabled";
+};

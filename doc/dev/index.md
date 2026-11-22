@@ -39,9 +39,13 @@ explained in [ESP32-S3 registers](registers-esp32s3.md#how-to-read-this-page);
    links between S31 boards: two jumper setups in MII and a dual-module RGMII board.
 9. [S31 to host at 80 MS/s](s31-fpga-bridge.md): a plan (not built) for a Colorlight 5A-75B
    bridge that taps the S31's diag bus at 80 MS/s and sends it over gigabit Ethernet.
-10. [ESP32-S3 registers](registers-esp32s3.md): the undocumented S3 radio registers the library
+10. [Transmit stream](txs.md): the S31 streaming DAC transmit (txs): position model, flips,
+   credits and the network feed.
+11. [Network services](network-services.md): the S31 multiapp host on Ethernet: buffers and
+   memory placement, the board findings, MCUmgr over UDP, the SSH server, later SFTP.
+12. [ESP32-S3 registers](registers-esp32s3.md): the undocumented S3 radio registers the library
    relies on, with fields and evidence.
-11. [ESP32-C6 registers](registers-esp32c6.md): the same for the ESP32-C6.
+13. [ESP32-C6 registers](registers-esp32c6.md): the same for the ESP32-C6.
 
 <!-- nav-start -->
 Previous: [MCH2022 badge](../apps/mch2022.md) · Up: [esp-sdr-zephyr](../index.rst) · Next: [Chip notes](chips.md)

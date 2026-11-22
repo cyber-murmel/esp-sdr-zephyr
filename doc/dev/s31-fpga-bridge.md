@@ -1,7 +1,7 @@
 # S31 to host at 80 MS/s through a Colorlight 5A-75B
 
 <!-- nav-start -->
-Previous: [S31 PHY-less Ethernet links](s31-link.md) · Up: [Reference](index.md) · Next: [ESP32-S3 registers](registers-esp32s3.md)
+Previous: [S31 PHY-less Ethernet links](s31-link.md) · Up: [Reference](index.md) · Next: [Transmit stream library (lib/esp_sdr/src/txs)](txs.md)
 <!-- nav-end -->
 
 This page plans a bridge between an ESP32-S31 and a host PC through a Colorlight 5A-75B (Lattice
@@ -175,5 +175,5 @@ hat's Pmod 3.3 V comes from its AMS1117: do not power the S31 from it.
 - TX: the decompression cost on the S31.
 
 <!-- nav-start -->
-Previous: [S31 PHY-less Ethernet links](s31-link.md) · Up: [Reference](index.md) · Next: [ESP32-S3 registers](registers-esp32s3.md)
+Previous: [S31 PHY-less Ethernet links](s31-link.md) · Up: [Reference](index.md) · Next: [Transmit stream library (lib/esp_sdr/src/txs)](txs.md)
 <!-- nav-end -->

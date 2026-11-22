@@ -73,6 +73,12 @@ ESP32-S31
 - The extensions are RISC-V relocatable objects and their code runs where llext writes it, in
   PSRAM; ``osmosdr_hs`` keeps its USB batches in internal RAM
   (`multiapp internals <../../doc/apps/multiapp-internals.md>`__).
+- The CoreBoard is a network host (Ethernet, mDNS) and answers MCUmgr (Simple Management Protocol) over UDP on port 4996 after
+  ``mcumgr arm <minutes>`` on its shell: ``west mcumgr`` uploads signed images and files. The images are signed
+  with the project's own key, not MCUboot's: `doc/dev/network-services.md <../../doc/dev/network-services.md>`__.
+- It also runs an SSH server (port 22, public key login with ed25519 or ECDSA keys, the Zephyr shell on the session, ``ssh <host> '<command>'``): ``ssh hostkey`` prints
+  the host key's fingerprint, ``ssh key add "<authorized_keys line>"`` lets a key in, and ``mcumgr arm`` works from the session
+  (`phase 3 <../../doc/dev/network-services.md>`__).
 - Host tools and the SoapySDR module find its stream as they find the standalone app's
   (``esdr_usb -s <serial> info``).
 
@@ -107,6 +113,11 @@ ESP32-S31-Function-CoreBoard-1
    west dfu --storage -d build/multiapp-s31    # the apps' files, over J4
 
 Later updates go over J4 with ``west dfu``, as on the S3 (``west dfu --esptool`` is the S3's).
+
+The S31 image is signed with the project's own ED25519 key, ``~/.config/esp-sdr/keys/esdr-mcuboot-ed25519.pem``
+(or the file in ``ESDR_SIGNING_KEY``): without it the configure step stops and says how to make one. For a build
+that is not flashed (CI), ``ESDR_DEV_KEY=1`` in the environment uses MCUboot's public development key instead and
+warns (`doc/dev/network-services.md <../../doc/dev/network-services.md>`__, "The signing key").
 
 Usage
 *****

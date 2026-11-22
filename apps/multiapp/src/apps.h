@@ -98,9 +98,11 @@ struct multiapp_kernel {
 
 /*
  * Load a kernel file (the ELF and its trailer) into the running app, check its trailer, build id
- * and dependencies and find its descriptor. 0 or -errno; the shell's thread only.
+ * and dependencies and find its descriptor. 0 or -errno; the shell's thread only. @p name is the
+ * kernel's name its signature was made under (apptrail.py --name; NULL: none known, so a build that
+ * verifies refuses the file); @p source is "file" or "upload", never "built-in" (that skips the check).
  */
-int multiapp_kernel_load(const uint8_t *file, size_t len, const char *source,
+int multiapp_kernel_load(const char *name, const uint8_t *file, size_t len, const char *source,
 			 struct multiapp_kernel *k);
 /* Unload it: -EBUSY if something imports from it. */
 int multiapp_kernel_unload(struct multiapp_kernel *k);
@@ -155,8 +157,8 @@ bool multiapp_stage_view(size_t i, struct multiapp_stage_view *v);
  * and unload the kernel it replaces. -ENOENT (no such stage), -ENOEXEC (not for this stage), -ETIMEDOUT
  * (the app never reached its sync point: nothing changed), or what the loader says.
  */
-int multiapp_stage_install(const char *stage, const uint8_t *file, size_t len, const char *source,
-			   uint32_t timeout_ms, struct multiapp_stage_result *res);
+int multiapp_stage_install(const char *stage, const char *name, const uint8_t *file, size_t len,
+			   const char *source, uint32_t timeout_ms, struct multiapp_stage_result *res);
 /* Swap back to the app's own function and unload the kernel. */
 int multiapp_stage_revert(const char *stage, uint32_t timeout_ms, struct multiapp_stage_result *res);
 #else
@@ -228,6 +230,26 @@ bool multiapp_drive_on_bus(void);
 void multiapp_drive_app_disks(void);
 /* Read @p name's file into @p buf: its size, or -errno (-EBUSY if the PC's access did not end in 2 s). */
 ssize_t multiapp_drive_read(const char *name, uint8_t *buf, size_t max);
+/*
+ * The volume for file commands that span calls (MCUmgr's fs group, src/netsvc.c): the claim of
+ * multiapp_drive_write_begin() (@p hide: the drive is hidden from the PC) or _read_begin() (the PC's
+ * accesses wait, 10 s at most), then mounted read-write (@p write) or read-only; nothing stays
+ * mounted between claims. 0, or what the claim says (-EAGAIN another user, -EBUSY the PC's access
+ * did not end, -EDEADLK) or the mount (-errno). The end unmounts and releases; the same thread takes
+ * and gives it (the lock is a mutex), on an internal stack.
+ */
+int multiapp_drive_fs_begin(bool write, bool hide, uint32_t timeout_ms);
+void multiapp_drive_fs_end(bool write, bool hide);
+/* Whether a ring (the radio module's diagnostic bus or sample ring) is running: a stream. */
+bool multiapp_ring_running(void);
+/*
+ * Whether a stream runs or an app holds multiapp_stream_hold() (src/netsvc.c): anything of the network
+ * services that touches the flash (MCUmgr's image and file groups, SSH's key file) is refused then,
+ * because the flash access turns the cache off.
+ */
+bool multiapp_net_stream_busy(void);
+/* Uptime in ms (odd, so never 0) of the last IN transfer of the SDR's USB class that the PC read to its end; 0: none yet */
+uint32_t multiapp_osmosdr_last_in_ms(void);
 /*
  * Read the file @p file of the volume's root (a hot-swap kernel, src/stage.c): its size or -errno.
  * The volume is taken first, so what the PC copied there is what is read; -EBUSY if the PC's access

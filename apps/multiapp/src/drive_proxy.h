@@ -116,5 +116,7 @@ bool drive_proxy_is_on_bus(struct drive_proxy *p);
  * it returns true. NULL takes it back, after which no call of it is running.
  */
 void drive_proxy_set_busy(struct drive_proxy *p, bool (*busy)(void));
+/* Whether the radio module says a ring runs now (false when none is loaded). */
+bool drive_proxy_ring_busy(struct drive_proxy *p);
 
 #endif /* MULTIAPP_DRIVE_PROXY_H_ */

@@ -24,7 +24,9 @@
 /* As before: the standalone modules' heap in the DRAM image. */
 #define ESP_SDR_PIN_DATA_multiapp_module_heap_mem ESP_SDR_NOINIT
 
-/* As before: the app's stack in PSRAM like its data, internal RAM kept for the dump banks. */
+/* The app's stack in PSRAM like its data on the S3, internal RAM kept for the dump banks. On the
+ * S31 this attribute places nothing in PSRAM (EXT_RAM_BSS_ATTR is empty there): the stack stays in
+ * internal bss, where the stream runs on it; multiapp_lpram_s31.ld asserts it. */
 #define ESP_SDR_PIN_DATA_multiapp_app_stack ESP_SDR_PSRAM
 
 /* coex's ring sink runs on the ring's CPU from PSRAM, as osmosdr's. */

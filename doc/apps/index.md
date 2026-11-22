@@ -168,7 +168,8 @@ west dfu -d <build dir> [-s <usb serial>]
 
 ### Test boot and revert
 
-- An image that is never confirmed is reset by a watchdog after about 30 s and MCUboot reverts to
+- An image that is never confirmed is reset by a watchdog after `APP_TRIAL_TIMEOUT_S` (60 s by default, 120 s
+  on the S31 multiapp; the same real time on every chip) and MCUboot reverts to
   the previous one, so a broken update never needs a replug.
 - An S3 image put on by DFU must start USB OTG (`app_usb_init()` in `apps/common`, which also arms
   the trial watchdog) or clear `RTC_CNTL_SW_HW_USB_PHY_SEL` and `RTC_CNTL_SW_USB_PHY_SEL` early in

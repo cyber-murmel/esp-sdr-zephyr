@@ -144,6 +144,14 @@ void multiapp_drive_write_end(void);
  */
 void multiapp_drive_busy_hook(bool (*busy)(void));
 
+/*
+ * An app that streams (stream_eth, a network transmit) calls hold when it starts and release when
+ * it ends: while any hold is open, MCUmgr refuses image uploads (src/netsvc.c; the flash write
+ * stops the cache). osmosdr needs none: the host sees its ring run (multiapp_ring_running()).
+ */
+void multiapp_stream_hold(void);
+void multiapp_stream_release(void);
+
 /* Whether the boot's app has dump bank 2 as a module heap (BANK2): the SDR must stay off it. */
 bool multiapp_bank2_reserved(void);
 

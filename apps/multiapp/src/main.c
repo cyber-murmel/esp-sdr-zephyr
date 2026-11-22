@@ -11,10 +11,14 @@
 #include "app_cpu.h"
 #include "app_usb.h"
 #include "apps.h"
+#include "gitver.h"
 
 int main(void)
 {
-	printk("multiapp %s\n", APP_VERSION_STRING);
+	char ver[48];
+
+	gitver_text(ver, sizeof(ver));
+	printk("multiapp %s\n", ver);
 	/*
 	 * Before USB and the watchdog, whose interrupts land on the CPU that allocates them: CPU 1 is
 	 * the radio's, whose ring masks interrupts. This thread could otherwise come back on it from

@@ -102,10 +102,14 @@ jobs:
       - name: Build mpy-cross
         run: make -C modules/micropython/mpy-cross USER_C_MODULES= FROZEN_MANIFEST=
 
-      # NSI_OPT=-O2 as in scripts/run-unit-tests.sh; only native_sim reads it.
+      # NSI_OPT=-O2 as in scripts/run-unit-tests.sh; only native_sim reads it. ESDR_DEV_KEY=1: the
+      # ESP32-S31 CoreBoard's sysbuild signs with the project's own key (apps/common/sysbuild), which a
+      # runner does not have; MCUboot's public development key does for a build that is not flashed
+      # (the configure step warns about it, doc/dev/network-services.md, "The signing key").
       - name: Twister
         env:
           NSI_OPT: -O2
+          ESDR_DEV_KEY: "1"
         run: |
           west twister -T esp-sdr-zephyr/apps -T esp-sdr-zephyr/tests \
             ${{ matrix.platforms }} ${{ matrix.twister-args }} \
