@@ -8,7 +8,31 @@
 #include <zephyr/sys/printk.h>
 
 #include <esp_sdr/esp_sdr.h>
+#if defined(CONFIG_ESP_SDR_DIAG16)
+#include <esp_sdr/esp_sdr_diag16.h>
+#endif
+#if defined(CONFIG_ESP_SDR_RING)
+#include <esp_sdr/esp_sdr_ring.h>
+#endif
 #include <multiapp/multiapp.h>
+
+/*
+ * Whether a ring runs: the host keeps the PC's drive away after a device write until it stops, so
+ * that the PC's rescan does not land in a stream (src/drive_proxy.h). Called from the USB drive's
+ * thread; a read of two flags.
+ */
+static bool ring_runs(void)
+{
+	bool busy = false;
+
+#if defined(CONFIG_ESP_SDR_DIAG16)
+	busy = busy || esp_sdr_diag16_active();
+#endif
+#if defined(CONFIG_ESP_SDR_RING)
+	busy = busy || esp_sdr_ring_active();
+#endif
+	return busy;
+}
 
 int multiapp_module_up(void)
 {
@@ -25,6 +49,7 @@ int multiapp_module_up(void)
 	if (ret != 0) {
 		printk("multiapp: radio init failed (%d)\n", ret);
 	}
+	multiapp_drive_busy_hook(ring_runs);
 	return ret;
 }
 
@@ -35,5 +60,14 @@ int multiapp_module_up(void)
  */
 int multiapp_module_down(void)
 {
-	return esp_sdr_release_radio();
+	/* Before the module's code goes: no call of it is left when this returns. */
+	int ret;
+
+	multiapp_drive_busy_hook(NULL);
+	ret = esp_sdr_release_radio();
+	if (ret != 0) {
+		/* The module stays loaded. */
+		multiapp_drive_busy_hook(ring_runs);
+	}
+	return ret;
 }

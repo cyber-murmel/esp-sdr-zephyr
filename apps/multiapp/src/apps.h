@@ -109,6 +109,12 @@ int multiapp_kernel_unload(struct multiapp_kernel *k);
 int multiapp_stage_drop_kernels(void);
 /* Whether any stage has a kernel loaded. */
 bool multiapp_stage_has_kernels(void);
+/*
+ * Whether stage @p name is defined in extension @p ext (an app or a module), by the loader's
+ * @p holds: whether an address is in one of @p ext's regions. For a kernel's dependency check.
+ */
+bool multiapp_stage_owned_by(const char *name, const struct llext *ext,
+			     bool (*holds)(const struct llext *ext, uintptr_t addr));
 /* Forget the stages whose object @p in says is inside the extension that unloads. */
 void multiapp_stage_forget(bool (*in)(const void *obj, void *ctx), void *ctx);
 
@@ -197,8 +203,9 @@ const struct device *multiapp_device_get_binding(const char *name);
 void multiapp_note_main_stack(void);
 
 /*
- * The apps as files on the FAT volume (drive.c). Only at boot, before USB
- * starts and before an app runs (its buffers are in bank 0).
+ * The apps as files on the FAT volume (drive.c). The scan is the boot's, before USB starts; after
+ * that the PC may use the volume as a USB drive, and every read of the device's own takes the
+ * volume first (multiapp_drive_read_begin() in multiapp.h, which the reads here use too).
  */
 /* Mount, look up and check every built-in app's file, unmount; 0 or -errno (no volume). */
 int multiapp_drive_scan(void);
@@ -206,26 +213,26 @@ int multiapp_drive_scan(void);
 int multiapp_drive_status(void);
 /* What the scan found for @p name: its size (or -errno) and whether it equals the built-in one. */
 int multiapp_drive_file(const char *name, ssize_t *size, bool *same);
-/* Hand the volume to the PC over USB (a boot without an app): ready the disk. */
-int multiapp_drive_export(void);
 /*
- * Whether the PC holds the volume as a USB drive: multiapp_drive_write_begin() refuses then.
- * multiapp_drive_export() sets it; the boots that run an app while MSC is registered will set and
- * clear it as the PC takes the medium and gives it back.
+ * The drive's class is on the USB bus in this boot (or no longer): from then on a device user of the
+ * volume takes it from the PC for the time (src/drive_proxy.h). Readies the disk if the boot's scan
+ * did not.
  */
-void multiapp_drive_msc_set(bool exported);
-/* Mount the volume read-write for the boot's app, its files read through it: 0 or -errno. */
-int multiapp_drive_mount_rw(void);
+void multiapp_drive_msc_set(bool on_bus);
+/* Whether the PC may be writing the volume: the drive is on the bus. */
+bool multiapp_drive_on_bus(void);
+/* A file that reads badly (a CRC error, a FAT error) is read once more after this: a copy may be on. */
+#define DRIVE_RETRY_MS 200
 
-/* The USB drives go through the disks the boot's app registers (src/drive.c). */
+/* A boot whose app registers the drive's disks itself (MULTIAPP_USB_OWN_DISKS): point the LUN at them. */
 void multiapp_drive_app_disks(void);
-/* Read @p name's file into @p buf: its size, or -errno. */
+/* Read @p name's file into @p buf: its size, or -errno (-EBUSY if the PC's access did not end in 2 s). */
 ssize_t multiapp_drive_read(const char *name, uint8_t *buf, size_t max);
 /*
- * Read the file @p file of the volume's root (a hot-swap kernel, src/stage.c): its size or -errno;
- * -ENOTSUP on the ESP32-S3, whose FATFS object is in ring bank 0, which an app's ring overwrites,
- * and -EBUSY while the PC holds the volume as a USB drive (multiapp_drive_write_begin()'s rule).
- * The caller's thread must have its stack in internal RAM: the flash driver turns the cache off.
+ * Read the file @p file of the volume's root (a hot-swap kernel, src/stage.c): its size or -errno.
+ * The volume is taken first, so what the PC copied there is what is read; -EBUSY if the PC's access
+ * did not end in 2 s. The caller's thread must have its stack in internal RAM: the flash driver turns
+ * the cache off.
  */
 ssize_t multiapp_drive_read_file(const char *file, uint8_t *buf, size_t max);
 

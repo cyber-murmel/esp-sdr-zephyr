@@ -206,16 +206,43 @@ sections, so:
 - The S3's OTG controller has 4 IN endpoints for classes (`GHWCFG4.INEps`), and the union of the
   apps' classes needs 6.
 - So the host registers a subset per boot: `app_usb_classes()`, a weak hook in `apps/common`
-  between registering the classes and `usbd_init()`, unregisters what the boot's app does not name
-  in its `USB` mask.
+  between registering the classes and `usbd_init()`, unregisters what the boot's profile does not
+  name.
+- The profile is `multiapp_usb_profile()` (`src/profile.h`): the app's `USB` mask in
+  `multiapp_extension()` plus the drive, `MULTIAPP_USB_MSC`, for every app that leaves an IN
+  endpoint free. A boot without an app has the drive alone.
 
-| Class | Used by | IN endpoints |
+| Class | In the profile of | IN endpoints |
 | --- | --- | --- |
 | CDC-ACM (shell) | every boot | 2 |
 | CDC-NCM | stream | 2 |
-| vendor bulk (`usb_sdr.c`) | osmosdr | 1 |
-| MSC (the volume as a drive) | boots without an app | 1 |
+| vendor bulk (`usb_sdr.c`) | osmosdr, osmosdr_hs | 1 |
+| MSC (the volume as a drive) | every boot but stream's, and the boots without an app | 1 |
 | DFU | every boot | 0 |
+
+The classes take IN endpoints first fit, in registration order (the classes sort by name:
+`cdc_acm_0`, `cdc_ncm_0`, `dfu_dfu`, `esp_sdr_usb`, `msc_0`), and an endpoint is bulk only if its
+FIFO holds a packet (`dwc2_driver_preinit()`: 64 bytes at full speed, 512 on the S31, whose
+controller is high-speed capable). The endpoints each profile ends up with:
+
+| SoC, profile | EP1 | EP2 | EP3 | EP4 |
+| --- | --- | --- | --- | --- |
+| S3, 0x4 (hello, capture, rfprobe, wpan, link, ...) | CDC notification | CDC data | MSC | free |
+| S3, 0x1 (stream) | CDC notification | CDC data | NCM notification | NCM data: no MSC, no endpoint left |
+| S3, 0x6 (osmosdr) | CDC notification | CDC data | vendor stream | MSC |
+| S3, 0xc (micropython) | CDC notification | CDC data | MSC (its own disks) | free |
+| S31, 0x4 (hello, capture, rfprobe) | CDC notification | CDC data | MSC | |
+| S31, 0x6 (osmosdr_hs) | CDC notification | CDC data | vendor stream | MSC |
+
+- S3 (OTG FS): FIFOs `<32 32 32 24>` words for EP1 to EP4, so every one takes a 64-byte bulk
+  packet, and the fourth takes MSC next to osmosdr's three.
+- S31 (OTG HS): `g-tx-fifo-size = <16 128 288 128 16 16 16>`. RX (256) and EP0 (32) and these 608
+  words are the 896 the controller has, and no FIFO is deeper than its power-on 512. EP1's 16
+  words make it interrupt-only (CDC's notification); EP3's 288 keep osmosdr_hs's stream above the
+  256 words it needs; EP4's 128 are one 512-byte packet, the least a bulk IN endpoint has. The
+  table was `<16 128 400 16 16 16 16>`, which left MSC no bulk endpoint next to the stream.
+- `tests/host/test_multiapp_drive.py` does this arithmetic from the devicetree's FIFO tables
+  and the apps' masks, and also shows that `stream` has no room for the drive.
 
 osmosdr's vendor class is built in the host. Its calls into the app go through forwarders in
 `src/osmosdr.c` that look the app's functions up by name, so the boot's app is loaded before USB
@@ -263,7 +290,10 @@ no board has run it yet ([The ESP32-S31, in place](#the-esp32-s31-in-place)).
 
 - the next app has the same USB profile as the boot (the classes the host registered at boot stay);
 - neither the running app nor the next one is a `console` app (the shell gave up the port for good);
-- with an app loaded, the profile is not the MSC drive (the PC may hold it);
+- the loaded app has not brought disks of its own for the drive (`MULTIAPP_USB_OWN_DISKS`,
+  MicroPython; it is a console app too). The host's drive stays up through a switch, and the PC may
+  hold it: the device's own reads of the next app's file take the volume from it first
+  ([The drive](#the-drive));
 - the app stops (below) and every step of the unload succeeds. An error after the app ended leaves
   what was loaded and reboots into the next app; the boot then has no state to clean.
 
@@ -373,10 +403,10 @@ source` for core 0, `0x600C2800` for core 1) and the FROM_CPU rows, which must n
 
 The same code, with these differences (nothing of it has run on a board yet):
 
-- **USB profiles.** `hello`, `capture` and `rfprobe` have no class of their own (profile 0) and
-  switch among themselves in place; `capture` ends through its `multiapp_app_stop()` (a flag looked
+- **USB profiles.** `hello`, `capture` and `rfprobe` have no class of their own besides the drive
+  (profile 0x4) and switch among themselves in place; `capture` ends through its `multiapp_app_stop()` (a flag looked
   at between two survey steps and a semaphore for the pause), as its `main()` never returns.
-  `osmosdr_hs` has the vendor class (profile 2): to and from it, a reboot.
+  `osmosdr_hs` has the vendor class (profile 0x6): to and from it, a reboot.
 - **`osmosdr_hs`** (`apps/osmosdr_hs/src/main.c`, in the multiapp build only, under
   `#if defined(MULTIAPP_NAME)`): `multiapp_app_stop()` sets a quit flag, ends a ring run
   (`stream_replan()`) and wakes `main()`, which leaves its loop. The library's ring interrupt is
@@ -514,16 +544,25 @@ MULTIAPP_KERNEL_DEFINE(ring_sink, esp_sdr_diag16_sink_t, sink_scan16);
   **changing a kernel changes no build id and invalidates no file**.
 - What a kernel may import is checked when it is built (`exports.py check-kernel`, against the list
   `exports.py --names` writes): a symbol the host already exports (what the apps import) or a global
-  symbol the target app defines. Anything else (a module's symbol, a static of the app, a libc
-  function no app uses) stops the build with a message that names the symbols. Weak relocations,
-  host objects (`ESP_SDR_HIGH_BUF_DEFINE()` and the like) and a missing descriptor stop it too. The
-  loader repeats the dependency half at run time: an extension other than the app in the kernel's
-  `dependency[]` is refused (llext resolves an import against every loaded extension, bumps its use
-  count, and keeps only `LLEXT_MAX_DEPENDENCIES` of them, silently).
+  symbol the extension `APP` names defines (the app, or the module that holds the stage). Anything
+  else (another module's symbol, a static of the app, a libc function no app uses) stops the build
+  with a message that names the symbols. Weak relocations, host objects (`ESP_SDR_HIGH_BUF_DEFINE()`
+  and the like) and a missing descriptor stop it too. The loader repeats the dependency half at run
+  time (`kernel_check_deps()`): an extension in the kernel's `dependency[]` that is neither the
+  running app nor the extension that holds the kernel's stage (found by where the stage's object
+  lies, `multiapp_stage_owned_by()`) is refused (llext resolves an import against every loaded
+  extension, bumps its use count, and keeps only `LLEXT_MAX_DEPENDENCIES` of them, silently). The
+  descriptor is read before the constructors run, as it names the stage.
 - `INTERNAL`: its `ESP_SDR_CODE()`-placed code (IRAM) and its data and bss go to `module_heap`, the
   region heap of the INTERNAL modules (S3: IRAM through the exec alias; S31: internal SRAM), the rest
   to PSRAM. Without it everything is in PSRAM. `sink_scan16` is INTERNAL (its sink runs at ring rate);
-  of the two `hello_op` kernels one is of each kind.
+  of the two `hello_op` kernels one is of each kind. A stage whose function runs with interrupts off or
+  at a ring's rate (rfprobe's `ring_sink`, the driver's `tx_gen`: with a PC reading the flash over USB
+  the cache is off at times) is declared with `MULTIAPP_STAGE_DEFINE_INTERNAL()` and
+  `multiapp_stage_abi(<stage> HEADERS ... INTERNAL)`: `multiapp_kernel()` stops the build for such a
+  stage without `INTERNAL`, and the host refuses a kernel whose function is not in the kernel's
+  `.module_fast` region (in `module_heap`, internal RAM): a trailer that says PSRAM, or code that
+  `ESP_SDR_CODE()` did not place, is in PSRAM whatever else the file says. `hello_op` takes either.
 - A kernel that needs something of the app makes it global there (`ring_dump` in rfprobe is global in
   the multiapp build only, `static` standalone). Its own functions stay `static`: llext exports every
   global of an extension to the ones loaded after it.
@@ -555,17 +594,82 @@ commands), `src/apps.c` (`multiapp_kernel_load()` and `_unload()`).
 - **Revert** swaps to the default the same way and unloads the kernel; with no kernel it is an
   error that changes nothing.
 - **The app's unload** (`app_unload()`): after the app's `main()` has ended and before it is cut off,
-  every kernel is dropped (the default is back without a handshake, the kernel unloaded): a kernel
-  imports from the app, so the app's use count would block `ext_unload()`. Before that, a thread of
-  the app that its stop hook left running (it may be inside a kernel's function) is aborted, as the
-  unload of the app itself would do after; the app's `multiapp_app_stop()` should end its threads
-  and return `-EBUSY` when it cannot (hello's does), which makes the switch fall back to a reboot.
-  A thread of another extension that calls a kernel (the radio's ring thread running a sink) is not
-  found: the app's stop must stop the ring. A kernel that does not
-  unload fails the app's unload, and the caller reboots as for any failed unload. `ext_unload()` also
+  every kernel is dropped: a kernel imports from the app, so the app's use count would block
+  `ext_unload()`. Before that, a thread of the app that its stop hook left running (it may be inside
+  a kernel's function) is aborted, as the unload of the app itself would do after; the app's
+  `multiapp_app_stop()` should end its threads and return `-EBUSY` when it cannot (hello's does),
+  which makes the switch fall back to a reboot. A thread of another extension that calls a kernel
+  (the radio's ring thread running a sink) is not found by that sweep, so the drop does not trust the
+  app: it **closes the stage** (`sync` answers the built-in function and makes nobody the owner, so no
+  new caller enters the kernel, whatever thread it is: the driver's transmit path syncs from the
+  network stack's thread), then waits up to `CONFIG_MULTIAPP_STAGE_TIMEOUT_MS` for the owner to leave
+  (an owner that ended inside, aborted by the sweep, counts as left), and only then unloads. If a
+  thread is still inside, or two were inside at once (nobody can follow the second), the kernel
+  stays loaded, unused, and the drop returns `-EBUSY`: the app's unload fails and the caller reboots,
+  as for any failed unload. The stage opens again with the built-in function. `ext_unload()` also
   forgets the registry entries inside the extension it unloads, as for shell roots, so that a start
   that failed half way leaves no stage behind.
 - One shell command at a time (a lock; a second shell gets "busy"); the shell's thread does all of it.
+
+#### A stage of a module: the 802.15.4 driver's `tx_gen`
+
+The ESP32-S3's second stage (`lib/ieee802154/ieee154_esp_sdr.c`, kernels in `apps/wpan/kernels`) is
+the driver's waveform generator, the function the ring's ACK burst and the DAC filler call to fill
+DAC words. It is defined in the `ieee154` module, not in the `wpan` app: the stage lives where the
+function pointer is used, whichever app drives the radio.
+
+- **Nothing in the mechanism is app-specific.** The macro's constructor registers the stage as the
+  module loads and its destructor unregisters it as the module unloads (`stages_drop()` forgets one
+  that is left); the registry, the type spelling and the ABI hash do not care what extension holds
+  the object. `multiapp_stage_abi(tx_gen HEADERS ...)` and `llext_compile_definitions(ieee154_ext
+  MULTIAPP_STAGE_ABI_tx_gen=...)` give the module the hash (a module has no `DEFINES` line of its
+  own for it; the call sits beside the module's), `multiapp_kernel(... APP ieee154 ...)` takes the
+  module's library as "the app" for the import check (`exports.py check-kernel` reads its globals the
+  same way). The ABI headers are `ieee154_dsp.h` (the state struct `ieee154_dsp_tx`, the slot templates,
+  `ieee154_dsp_tx_gen()` the kernels include) and `ieee154_phy.h` (`IEEE154_PHY_PSDU_MAX`, which sizes
+  the state).
+- **The state goes through `user`.** The stage's type is `ieee154_dsp_tx_gen_fn_t` (the shape of
+  `esp_sdr_ring_gen_t` and `esp_sdr_tx_dac_gen_t`); the driver passes `&high->tx` as `user` in a
+  multiapp build (`NULL` standalone, where the built-in function reads `high->tx` itself), so a kernel
+  imports nothing in practice (the driver's own state is static). Were it to import a global of
+  `ieee154`, the build check allows it (`APP ieee154`) and so does the loader: the module is the
+  extension that holds the stage, which `kernel_check_deps()` takes besides the running app.
+- **The owner is whoever holds the radio.** Every thread that calls the generator holds `radio_lock`,
+  so the stage has one owner at a time, handed on through that mutex: the ring thread syncs in
+  `ack_prefix()` (each run's start) and idles when `esp_sdr_ring_run()` returns, before it unlocks; the
+  transmitting thread syncs after `radio_take()` and idles when the DAC has played the frame; the
+  bench the same. The ring's burst is armed (by the PHY thread, or `wpan bench acktx` on the shell) with
+  a trampoline of the module (`tx_gen_burst()`), which calls what the radio holder synced: the ring
+  CPU calls it inside the run, a swap cannot land during a run, and a burst armed as a run ends can
+  only reach the built-in function (`tx_gen_give()` puts it back before the idle call), never a
+  kernel that a swap just unloaded.
+- **A swap needs the radio idle.** With the ring running (`wpan on`) the ring thread is inside the
+  stage for the whole run and the swap times out; `wpan off` first, or have a transmit job running
+  (`wpan tx`: each frame takes the radio, the ring stops for it and its thread idles, which applies a
+  pending swap).
+- **The app's unload** drops the kernels before it unloads the app (`app_unload()`) while the module,
+  which outlives it, may still run: `wpan`'s `multiapp_app_stop()` stops the radio and the transmit
+  job first (what the DFU download does), which usually leaves the ring thread out of the stage. It
+  cannot stop a frame that the network stack sends meanwhile (`sdr154_stop()` waits 50 ms and stops
+  nothing new), so the drop closes the stage and waits for the owner (above): that frame runs the
+  built-in generator, and if a thread does not leave the kernel, the unload fails and the board reboots.
+- **Internal only.** `tx_gen` is declared `MULTIAPP_STAGE_DEFINE_INTERNAL()`: the generator runs with
+  interrupts off, and a PSRAM kernel would stall whenever the flash is accessed.
+- **The oracle.** `wpan bench dma ack` ("%u words differ") is not in a multiapp build (`ESP_SDR_DMA`
+  depends on `!ESP_SDR_AS_EXTENSION`), so `wpan bench ack` prints "ack from the tx_gen stage: N words
+  differ from the built-in generator" there: the stage's function builds the whole ACK into the
+  bench's bank (the whole frame, then the ring's slice with the vector unit on, interrupts off) and the
+  built-in one builds it into bank 1. `tx_gen_ref` (the same algorithm: `ieee154_dsp_tx_gen()`)
+  gives 0; `tx_gen_alt` inverts chip 500 (the PSDU's second byte, in the slots 500 and 501) and gives
+  a number between 1 and 40.
+- **The unit test** (`tests/unit/ieee154_dsp`) links both kernels' sources and calls them through the
+  descriptors they export: the kernel against the verbatim old generator (the golden walks of the
+  library) and against `ieee154_dsp_tx_gen()` directly; `tx_gen_alt` against the library on a frame with
+  that one chip inverted, whole and in chunks.
+- **Sizes** (2026-11-26 build, `esp32s3_devkitc`): `tx_gen_ref` 667 bytes of IRAM-placed code in
+  `module_heap` (file with trailer 2028 B), `tx_gen_alt` 1047 B (file 2400 B); no data or bss of their
+  own. The module grew by 32 B of IRAM (the trampoline) and 28 B of data (the stage object and the
+  synced pointer).
 
 #### Shell and tool
 
@@ -587,9 +691,12 @@ one line sent when the one before is answered (the shells' input rings are 64 by
 CDC-ACM), the CRC-32 of the file announced in `put` and checked in `end`, the byte count the device
 answers checked against what was sent.
 
-- ESP32-S3: `load` from a file answers `-ENOTSUP` (the FATFS object is in ring bank 0, which a
-  running app's ring overwrites; a later phase moves it). The upload works. On both, `load` answers
-  `-EBUSY` while the PC has the volume as a USB drive.
+- `load` reads the file under the device's read claim on the volume ([The drive](#the-drive)), on both
+  chips: the S3's FATFS object is no longer in ring bank 0. The PC's drive stays, its accesses
+  wait for the read, and the volume is mounted afresh, so what the PC copied is what loads. A file the
+  PC is still copying fails the trailer's size or CRC check (`-ENOEXEC`, `-EBADMSG`) or the FAT reads
+  badly, and the command tries once more after 200 ms. It answers `-EBUSY` when the PC's access does
+  not end within 2 s (a copy that does not pause): wait, `sync`, unmount on the PC and ask again.
 - `module_heap` has to hold an INTERNAL kernel, and two while one replaces the other. On the S31 it
   has about 6 KB free under `osmosdr_hs`, about 113 KB under `rfprobe`; `multiapp info` shows it.
 - A function that never returns is not detected as such: the old function is never unloaded under a
@@ -615,11 +722,15 @@ answers checked against what was sent.
 - A FAT volume in the upper 4 MB of the flash holds `<name>.llext` (`src/drive.c`). The board's
   4 MB partition table leaves that part out (partition `fat` at 0x400000, flash disk `FLASH`).
 - The host mounts it read-only at boot, before USB starts and before an app runs, and compares
-  every file with the built-in copy (`multiapp list`).
+  every file with the built-in copy (`multiapp list`: the boot's scan, not what the PC copied
+  since).
 - It reads the boot's app whole into a PSRAM buffer (`CONFIG_MULTIAPP_FILE_MAX_KB`); llext then
-  loads it from there.
-- That mount's FATFS object and the drive's SCSI buffer are in bank 0, which the ring overwrites
-  once an app runs: nothing of the host touches the volume after that.
+  loads it from there. An in-place switch reads the next app's file the same way, under a read
+  claim ([Writers and readers of the volume](#writers-and-readers-of-the-volume)).
+- The FATFS object (564 bytes), the flash disk's cache and the drive's SCSI buffer are in internal
+  RAM but not in bank 0, so the volume can be read while an app's ring runs. The object was in
+  bank 0 until 2026-11-26: moving it and the proxy's state took the S3's gap between the image and
+  bank 0 from 4360 to 3672 bytes.
 - Reads go in 256-byte chunks through the FATFS window, so the flash driver never gets a PSRAM
   buffer.
 
@@ -652,35 +763,93 @@ answers checked against what was sent.
 
 #### The drive
 
-- A boot without an app (no request, no autostart, or an app that failed to start) registers USB
-  mass storage on the volume next to the shell and DFU, for copying app files from the PC.
-- Boots with an app unregister it, and `multiapp run` from a drive boot reboots into the app.
-- The PC must eject the drive first: the host cannot see what the PC still caches.
-- `west dfu --storage` writes the build's volume image to the DFU target `fat`. `mkfat.py` builds
-  that image: deterministic FAT12, 4 KiB clusters on the erase page, long names.
+- Every boot whose profile has MSC registers it on the volume next to the shell and DFU
+  ([USB profiles](#usb-profiles): every boot but `stream`'s), so the PC can copy files, kernels
+  and apps, while an app runs, and a boot without an app has it too.
+- `multiapp run` from a boot without an app starts the app in place when the profiles match (the
+  drive is in both), so it no longer reboots for the sake of the drive; a reboot (another profile,
+  a console app) asks the user to unmount the drive first.
+- `west dfu --storage` writes the whole volume to the DFU target `fat`. `mkfat.py` builds that
+  image: deterministic FAT12, 4 KiB clusters on the erase page, long names. The target is not
+  routed through the claim below: unmount the drive first, and expect the device to reboot after.
 - `west dfu --esptool` and the shell command `usj` are in the
   [multiapp](../../apps/multiapp/README.rst) README.
 
+#### The calibration partition
+
+- On the ESP32-S31 the crystal calibration (`esp_sdr/cal`, `lib/esp_sdr/src/esp_sdr_calstore.c`) is a
+  Zephyr settings record on ZMS in `cal_partition`, so that nothing of the device writes the FAT
+  volume. The table's 124 KiB of free flash between Espressif's `storage` (to 0x7e0000) and the
+  coredump (0x7ff000) hold it: 16 KiB at 0x7e0000. MCUboot's slots and the FAT start (0x800000) did
+  not move; MCUboot's overlay includes the same table. `tests/host/test_multiapp_drive.py` checks
+  that nothing overlaps.
+- ZMS, not NVS: both sit on the ESP32 flash driver (4096-byte erase pages, the page layout, a
+  4-byte write block), and ZMS is the newer. A blank partition is formatted at the first mount,
+  in whichever thread first uses settings (the module's constructor, at load, before USB); no old
+  record is migrated.
+- The records written to the FAT file `/FLASH:/settings` before this are not read any more;
+  re-run the calibration.
+- Standalone apps and the other boards keep their backends (a settings file in `/FLASH:` or on the
+  storage partition, `apps/common/calstore.conf`); only this host changed, and the library code is the
+  same in every build.
+- SET_CAL runs on the USB thread (stack 4096 bytes) and writes the partition there: a flash
+  program of a few dozen bytes, and an erase when ZMS starts a new sector. GET_CAL reads it.
+
 #### Writers and readers of the volume
 
-Who may touch the volume while an app runs (src/drive.c, `include/multiapp/multiapp.h`):
+The PC may have the volume as a USB drive, and two writers on one FAT corrupt it, so the device does
+not write it: the calibration has its partition, and the host only reads (apps and kernels). A
+writer for something else (the network stack's file transfers, say) has `multiapp_drive_write_begin()`.
+The two sides take turns (`src/drive_proxy.c`, `src/drive.c`); MicroPython's `src/usb_disks.c` is the
+precedent for the hiding.
 
-- **Writers take the lock.** The device's own writes (the crystal calibration today, files later)
-  are bracketed by `multiapp_drive_write_begin(timeout)` and `multiapp_drive_write_end()`, called by
-  the same thread. The lock is one `k_mutex`: `-EAGAIN` when another writer kept it for the
-  timeout, `-EBUSY` while the PC has the volume as a USB drive (`multiapp_drive_msc_set()`, set by
-  `multiapp_drive_export()` in a boot without an app; the hook the boots that run an app beside MSC
-  will drive). `esp_sdr_cal_save()` and `esp_sdr_cal_clear()` (`lib/esp_sdr/src/esp_sdr_calstore.c`,
-  the settings file `/FLASH:/settings`, osmosdr_hs's SET_CAL) take it in the multiapp build only
-  (`CONFIG_ESP_SDR_AS_EXTENSION`); standalone apps name no multiapp symbol. The DFU target `fat`
-  rewrites the whole volume at the PC's request and is not routed through it.
-- **Readers remount.** The PC may have written the volume since the device mounted it, so a reader
-  mounts it afresh (`f_mount(..., 1)`, which reads the boot sector and FAT again), checks the
-  trailer CRC of what it read and retries on a mismatch (a write may be half done).
-- **Threads that touch flash need an internal stack.** The flash driver turns the cache off while
-  it erases or writes, and a stack in PSRAM is behind that cache: the thread that writes (the USB
-  thread for SET_CAL, 4096 bytes) and any thread of an extension that calls a writer must have one
-  in internal RAM.
+- **The LUN is a proxy disk.** `HFLASH` (a MicroPython boot points the LUN at its own `UFLASH`
+  instead, `MULTIAPP_USB_OWN_DISKS`) forwards to `FLASH`. The proxy asks one state object, with a spin
+  lock and no thread or timer of its own, before every status and every disk access: visible;
+  *draining* (a claim waits for the command in flight, accesses go on); *claimed* (a read makes the
+  PC's accesses wait, a write refuses them); *hold* (a write is over and the medium stays away).
+- **A read claim** (`multiapp_drive_read_begin(timeout)`, `_read_end()`; an app's file at each start,
+  a kernel file for `multiapp stage load`) does not hide the medium. It waits until no PC disk
+  access runs and 100 ms have passed since the last, then holds the PC's next accesses off (the MSC
+  thread waits inside the access, up to 10 s) and mounts the volume afresh (`fs_mount()`: the boot
+  sector and the FAT are read again, nothing stays mounted between reads). After the read the PC's
+  command goes on where it was. So a copy is delayed, never cut, even if the PC stalls in the middle
+  of a command for more than 100 ms. What the device may then read is a half-written FAT or file: the
+  trailer's size and CRC check catches the file, FatFs a bad FAT, and the reader tries once more
+  after 200 ms (`DRIVE_RETRY_MS`; `multiapp stage load` and the app loader, only with the drive on the
+  bus). A PC that copies without a pause longer than 100 ms starves the read, which gives up with
+  `-EBUSY` after 2 s, the PC unharmed.
+- **A write claim** (`multiapp_drive_write_begin(timeout)`, `_write_end()`) hides the medium from the
+  start of its wait (NOT READY, medium not present: Zephyr's MSC has no unit attention, and that is
+  what makes the PC drop what it cached and read again). A PC command that stalls past the 100 ms is
+  cut: its next accesses fail. At its end the volume is synced and the medium stays away at least 3 s
+  from when it first went (udisks polls every 2 s), a burst of writes counting as one gap, and, while
+  a ring runs, until it stops: the radio module tells the host (`multiapp_drive_busy_hook()`, set in
+  `multiapp_module_up()`, taken back in `multiapp_module_down()`, which waits for a call of it to
+  end), so that the PC's rescan, which a stream paid ten gaps for, does not land in a stream.
+- **Threads.** One `k_mutex` orders the device's users and nests in one thread; a write inside a read
+  is refused (`-EDEADLK`). The USB thread never claims (`-EDEADLK` and a log line, whatever the
+  build): its callbacks carry the PC's data, so a claim that sleeps there waits for a command that
+  cannot go on, and it would hold up control transfers for the wait. The callers have internal
+  stacks, as the flash driver turns the cache off while it reads or writes: the shell's (static) for
+  `multiapp stage load`, the host's `main()` and the thread that loads an in-place switch (the shell's)
+  for the app's file. On the S31 the app's own thread has an internal stack too (`app_stack` is
+  below 0x2f040000); the proxy's accesses run in the MSC thread's (static, 1152 bytes). No thread
+  waits in PSRAM on flash.
+- **The PC's flow:** copy the files, `sync`, `udisksctl unmount -b /dev/sdX`, then on the shell
+  `multiapp stage load ...` or `multiapp run ...`. Not `eject`: Zephyr's MSC handles START STOP UNIT
+  with eject by reporting no medium until the next enumeration, whatever the device does. A device
+  read does not need the unmount (the PC's accesses wait), but a PC that has the drive mounted
+  caches what it read: the unmount makes what the device reads match what the PC wrote.
+- **Flash and the cache.** A PC access is a flash read or write, and the flash driver turns the
+  cache off on both chips: 0.7 ms per 4 KiB read on the S3 (the ring's late restarts show it), an
+  erase of a 4 KiB page tens of ms. A copy while a stream runs is maintenance, not free: on the
+  S31 CoreBoard a 100 KB copy plus `sync` during a 20 MS/s osmosdr_hs stream cost 4 gaps, 7.6 M
+  samples (0.38 s), all within one second. The drive stays visible while streaming on purpose:
+  copy between streams. With the drive enumerated and idle, 300 s at 20 MS/s had 0 gaps, and a
+  device read of a kernel file while the PC had the drive mounted left it mounted and visible.
+- **The scan is not live.** `multiapp list` prints what the boot's scan found; `multiapp info` says
+  where the loaded app's file came from.
 
 ### The stock Wi-Fi driver as a module
 
@@ -880,7 +1049,8 @@ The stack stays in internal RAM, in the area, because Python writes the flash: `
 #### Two USB drives
 
 - The host defines two LUNs, because their list is a host section (`src/drive.c`).
-- In a drive boot the first is the volume, and the second, on a board with `sd_fs`, has no medium.
+- In a boot with the host's drive the first is the volume (through the proxy `HFLASH`, above), and the
+  second, on a board with `sd_fs`, has no medium.
 - A MicroPython boot points the first at `UFLASH` and the second at `USD`, the proxies
   `src/usb_disks.c` registers from the extension, unchanged from the standalone app.
 - They report no medium while the board writes a volume.
@@ -908,7 +1078,9 @@ The stack stays in internal RAM, in the area, because Python writes the flash: `
 
 #### Internal RAM
 
-- The host's image (`_end`) ends 5248 bytes below bank 0 (0x3fcb0000) on the devkit.
+- The host's image (`_end`) ends 5248 bytes below bank 0 (0x3fcb0000) on the devkit. With the
+  stage hot-swap it was 4360 bytes (2026-11-26), and 3672 with the FATFS object (564 bytes) out of bank 0
+  and the drive's proxy (96 bytes and a disk record).
 - On the XIAO it ends 3800 bytes below: its host also carries a second LUN, exFAT and a larger
   drive thread.
 - Before the shared `phy` (`module_heap` 31744) the gaps were 12120 and 10096 bytes (2026-10);
@@ -1538,15 +1710,20 @@ The libc uses thread-local storage, and llext relocates no TLS access:
   40 MB/s, are internal RAM.
 - `ext/usbd_prelude.h` gives it the host's USB device where it brings up its own, and
   `CONFIG_APP_USB_MSG_HOOK` passes it the device's messages (a suspend stops the stream).
-- Its crystal calibration lives in settings, a file on the volume. An app's boot mounts the volume
-  read-write before its modules load (a boot with an app never hands it to the PC), and `ext.h`
-  registers settings handlers as the extension loads.
-- `west dfu --storage` writes the volume anew, calibration included.
+- Its crystal calibration lives in Zephyr settings on ZMS in a partition of its own,
+  `calibration` (`cal_partition`, 16 KiB, four erase sectors, at 0x7e0000 in
+  `boards/partitions_s31.dtsi`; chosen as `zephyr,settings-partition` in `socs/esp32s31_hpcore.overlay`).
+  The FAT volume is not involved: the device never writes it, GET_CAL never reads it, and SET_CAL on
+  the USB thread writes the partition, which the PC cannot see ([The calibration partition](#the-calibration-partition)).
+  `ext.h` registers the settings handlers as the extension loads.
+- `west dfu --storage` writes the volume anew; the calibration stays.
 
 #### Memory
 
 The image ends 12.9 KB below the receive ring at 0x2F040000, with a module heap of 120 KB of which
-the radio and osmosdr_hs take 116 KB.
+the radio and osmosdr_hs take 116 KB. With the stage hot-swap, the drive's proxy and the calibration
+on ZMS (2026-11-26) `_end` is 0x2f03d180, 11904 bytes below the ring (12032 before ZMS: its settings
+state is 96 bytes and the proxy's 88).
 
 #### Measurements on the CoreBoard
 

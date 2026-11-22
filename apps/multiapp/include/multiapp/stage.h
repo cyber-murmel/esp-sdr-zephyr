@@ -28,6 +28,19 @@
  * declare it into MULTIAPP_STAGE_ABI_<stage>, for the app's build and the kernel's, and the host
  * refuses a kernel whose hash is not the app's.
  *
+ * A stage is defined where its function pointer is used, which may be a module (the 802.15.4
+ * driver's tx_gen in the ieee154 module): the constructor registers it as that extension loads. Its
+ * threads are then the module's, which outlive the app: whoever runs the stage must be out of it
+ * (idle) when the app's stop hook returns, as the host drops the kernels before it unloads the app.
+ * The host closes the stage first: a sync then returns the built-in function and takes no ownership,
+ * so no new caller enters a kernel that is about to go, and it waits (bounded) for the owner to
+ * leave; one that does not leaves the kernel loaded and the unload fails (the caller reboots).
+ *
+ * A stage that runs with interrupts off or at a ring's rate (the ring's sink, the DAC waveform
+ * generator) is declared with MULTIAPP_STAGE_DEFINE_INTERNAL(): the host refuses a kernel whose function
+ * is not in internal RAM (a PSRAM-placed kernel would stall on the cache when the PC reads the flash),
+ * and multiapp_kernel() wants INTERNAL for it.
+ *
  * Standalone (no MULTIAPP_NAME, or CONFIG_MULTIAPP_STAGES off) the macros are a function call of
  * the default: no object, no registration, the same code as before the stage was declared.
  *
@@ -39,6 +52,7 @@
 #ifndef MULTIAPP_STAGE_H_
 #define MULTIAPP_STAGE_H_
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #if defined(CONFIG_MULTIAPP_STAGES)
@@ -52,6 +66,8 @@ struct multiapp_stage {
 	uint32_t abi;
 	/* What the app was built with: where "revert" goes. */
 	void *dflt;
+	/* A kernel of this stage must run from internal RAM (MULTIAPP_STAGE_DEFINE_INTERNAL()). */
+	bool internal;
 	/* What runs now; written by the host under its lock only, read by anyone. */
 	void *volatile cur;
 	/* The host's slot, set when the stage registers. */
@@ -75,13 +91,20 @@ void multiapp_stage_idle(struct multiapp_stage *st);
  * that a kernel spells the same), @p _default the function the app is built with. Defines
  * <_name>_stage_sync() and <_name>_stage_idle(); MULTIAPP_STAGE_ABI_<_name> must be defined by the
  * build (multiapp_stage_abi()). It ends in a declaration that wants the semicolon after it.
+ * MULTIAPP_STAGE_DEFINE_INTERNAL(): its kernels must run from internal RAM.
  */
 #define MULTIAPP_STAGE_DEFINE(_name, _fn_type, _default)                                           \
+	Z_MULTIAPP_STAGE_DEFINE(_name, _fn_type, _default, false)
+#define MULTIAPP_STAGE_DEFINE_INTERNAL(_name, _fn_type, _default)                                  \
+	Z_MULTIAPP_STAGE_DEFINE(_name, _fn_type, _default, true)
+
+#define Z_MULTIAPP_STAGE_DEFINE(_name, _fn_type, _default, _internal)                              \
 	static struct multiapp_stage _name##_stage_obj = {                                         \
 		.name = #_name,                                                                    \
 		.sig_text = #_fn_type,                                                             \
 		.abi = MULTIAPP_STAGE_ABI_##_name,                                                 \
 		.dflt = (void *)(_default),                                                        \
+		.internal = (_internal),                                                           \
 		.cur = (void *)(_default),                                                         \
 	};                                                                                         \
 	static inline _fn_type _name##_stage_sync(void)                                            \
@@ -105,6 +128,8 @@ void multiapp_stage_idle(struct multiapp_stage *st);
 
 #else /* standalone */
 
+#define MULTIAPP_STAGE_DEFINE_INTERNAL(_name, _fn_type, _default)                                  \
+	MULTIAPP_STAGE_DEFINE(_name, _fn_type, _default)
 #define MULTIAPP_STAGE_DEFINE(_name, _fn_type, _default)                                           \
 	static inline _fn_type _name##_stage_sync(void)                                            \
 	{                                                                                          \

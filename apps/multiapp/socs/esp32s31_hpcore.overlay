@@ -6,6 +6,11 @@
  */
 
 / {
+	chosen {
+		/* The crystal calibration (esp_sdr/cal): settings on ZMS in a partition of its own. */
+		zephyr,settings-partition = &cal_partition;
+	};
+
 	/* The apps as files: the FAT volume, block device "FLASH". */
 	fat_disk: fat_disk {
 		compatible = "zephyr,flash-disk";
@@ -14,7 +19,6 @@
 		cache-size = <4096>;
 	};
 
-	/* osmosdr_hs's settings file (apps/common/calstore.conf). */
 	fstab {
 		compatible = "zephyr,fstab";
 

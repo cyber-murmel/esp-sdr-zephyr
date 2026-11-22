@@ -46,6 +46,14 @@ struct ieee154_dsp_tx {
 	const ieee154_dsp_tmpl_t *tmpl;
 };
 
+/*
+ * A waveform generator: DAC words [index, index + n) of the frame in @p user (a struct
+ * ieee154_dsp_tx) into dst, the shape of esp_sdr_ring_gen_t and esp_sdr_tx_dac_gen_t. The type of
+ * the driver's hot-swap stage tx_gen (lib/ieee802154/ieee154_esp_sdr.c; its kernels are in
+ * apps/wpan/kernels, which share this header: it is the stage's ABI).
+ */
+typedef void (*ieee154_dsp_tx_gen_fn_t)(void *user, uint32_t *dst, uint64_t index, uint32_t n);
+
 /* DAC words of every slot kind at amplitude amp (of 511); conj mirrors the spectrum. */
 static inline void ieee154_dsp_tmpl_init(ieee154_dsp_tmpl_t *tmpl, float amp, bool conj)
 {

@@ -60,9 +60,6 @@ static const char *why(int err)
 		       "(the log has why)";
 	case EBADMSG:
 		return "CRC mismatch";
-	case ENOTSUP:
-		return "files are not read while an app runs on the ESP32-S3 yet (its FATFS object is "
-		       "in ring bank 0): upload with put";
 	case ENODEV:
 		return "no app is running";
 	case EALREADY:
@@ -72,7 +69,8 @@ static const char *why(int err)
 	case EFBIG:
 		return "the file is larger than CONFIG_MULTIAPP_KERNEL_MAX_KB";
 	case EBUSY:
-		return "busy: another command, the PC holds the volume, or two threads use the stage";
+		return "busy: another command, the PC's access to the volume did not end (a copy "
+		       "still running), or two threads use the stage";
 	case EINVAL:
 		return "bad argument";
 	default:
@@ -291,14 +289,28 @@ static int cmd_load(const struct shell *sh, size_t argc, char **argv)
 	(void)snprintf(file, sizeof(file), "%s%s", argv[2],
 		       strchr(argv[2], '.') == NULL ? ".llext" : "");
 	up.active = false;
-	n = multiapp_drive_read_file(file, kernel_buf, KERNEL_BUF_SIZE);
+	/*
+	 * The PC may still be copying the file: the volume is read afresh each time, and a file that
+	 * is half there fails the trailer's size or CRC check, or the FAT reads badly. Once more
+	 * after a pause then.
+	 */
+	for (int attempt = 0;; attempt++) {
+		n = multiapp_drive_read_file(file, kernel_buf, KERNEL_BUF_SIZE);
+		if (n < 0) {
+			ret = (int)n;
+		} else {
+			ret = multiapp_stage_install(argv[1], kernel_buf, (size_t)n, "file",
+						     timeout_arg(argc, argv, 3), &res);
+		}
+		if (attempt > 0 || !multiapp_drive_on_bus() ||
+		    (ret != -EBADMSG && ret != -ENOEXEC && ret != -EIO && ret != -EINVAL)) {
+			break;
+		}
+		k_msleep(DRIVE_RETRY_MS);
+	}
 	if (n < 0) {
 		shell_error(sh, "stage: %s: %d", file, (int)n);
-		k_mutex_unlock(&cmd_lock);
-		return fail(sh, (int)n);
 	}
-	ret = multiapp_stage_install(argv[1], kernel_buf, (size_t)n, "file", timeout_arg(argc, argv, 3),
-				     &res);
 	if (ret != 0) {
 		k_mutex_unlock(&cmd_lock);
 		return fail(sh, ret);

@@ -11,7 +11,7 @@ project(esp_sdr_multiapp)
 include(${CMAKE_CURRENT_LIST_DIR}/../common/common.cmake)
 
 target_include_directories(app PRIVATE include src)
-target_sources(app PRIVATE src/main.c src/apps.c src/drive.c src/runguard.c)
+target_sources(app PRIVATE src/main.c src/apps.c src/drive.c src/drive_proxy.c src/runguard.c)
 target_sources_ifdef(CONFIG_MULTIAPP_STAGES app PRIVATE src/stage.c src/stage_shell.c)
 # The host's placement rules and its apps' (place.h, esp_sdr_place.h); each extension's scope is
 # its name.
@@ -98,6 +98,11 @@ function(multiapp_kernel name)
     message(FATAL_ERROR "multiapp_kernel(${name}): multiapp_stage_abi(${KERN_STAGE} HEADERS ...) "
                         "comes first, and the app is built with its hash too")
   endif()
+  if(stage_internal_${KERN_STAGE} AND NOT KERN_INTERNAL)
+    message(FATAL_ERROR "multiapp_kernel(${name}): stage ${KERN_STAGE} runs from internal RAM "
+                        "(MULTIAPP_STAGE_DEFINE_INTERNAL): the kernel needs INTERNAL, the host refuses "
+                        "one in PSRAM")
+  endif()
   set(internal)
   if(KERN_INTERNAL)
     set(internal INTERNAL)
@@ -110,15 +115,18 @@ function(multiapp_kernel name)
   set(ext_files ${ext_files} PARENT_SCOPE)
 endfunction()
 
-# multiapp_stage_abi(<stage> HEADERS <files>)
+# multiapp_stage_abi(<stage> HEADERS <files> [INTERNAL])
 #
 # The ABI hash of a stage (include/multiapp/stage.h): what the app and its kernels share besides the
 # function's type, the headers that declare it (a state struct, a global). Defines
 # stage_abi_<stage>, the hash of the headers' contents, which goes into the app's build and the
 # kernels' as MULTIAPP_STAGE_ABI_<stage>, into the stage's object and the kernel's descriptor: the host
-# refuses a kernel whose hash is not the app's. The headers are configure dependencies.
+# refuses a kernel whose hash is not the app's. The headers are configure dependencies. INTERNAL: the
+# stage runs with interrupts off or at a ring's rate and is declared with MULTIAPP_STAGE_DEFINE_INTERNAL():
+# the host takes only a kernel in internal RAM for it, so multiapp_kernel() wants INTERNAL.
 function(multiapp_stage_abi stage)
-  cmake_parse_arguments(ABI "" "" "HEADERS" ${ARGN})
+  cmake_parse_arguments(ABI "INTERNAL" "" "HEADERS" ${ARGN})
+  set(stage_internal_${stage} ${ABI_INTERNAL} PARENT_SCOPE)
   set(text "${stage}")
   foreach(header ${ABI_HEADERS})
     file(SHA256 ${header} hash)
@@ -135,11 +143,13 @@ endfunction()
 #
 # The extension <name>, include/multiapp/ext.h in front of each source. APP:
 # the app's directory, for its CONFIG_APP_* values (appconfig.py), APP_CONF on
-# top of its own. AREA: it has buffers in the area (ESP_SDR_HIGH_BUF_DEFINE()).
-# CONSOLE: it takes the CDC-ACM port from the shell for the boot, and its main()
-# starts with USB up. BANK2: the boot gets SRAM dump bank 2 as a second internal heap, which a
-# module that does not fit in module_heap loads into; the SDR then never uses that bank (rings
-# on banks 0 and 1, no bursts or transmit). REQUIRES: the modules the host loads before it.
+# top of its own. USB: the classes it needs besides the shell and DFU; the host adds its drive,
+# MULTIAPP_USB_MSC (src/profile.h), to every profile but an NCM app's. AREA: it has buffers in
+# the area (ESP_SDR_HIGH_BUF_DEFINE()). CONSOLE: it takes the CDC-ACM port from the shell for
+# the boot, and its main() starts with USB up. BANK2: the boot gets SRAM dump bank 2 as a
+# second internal heap, which a module that does not fit in module_heap loads into; the SDR then
+# never uses that bank (rings on banks 0 and 1, no bursts or transmit). REQUIRES: the modules the
+# host loads before it.
 #
 # multiapp_module(<name> SOURCES <files> [INTERNAL [HIGH_BSS]] [DEVICES]
 #                 [REQUIRES <modules>] [LIBS <archives> [BLOBS_LD <script>]] [VERSION_SCRIPT <file>]
@@ -466,7 +476,7 @@ endfunction()
 # The stages' ABI hashes: the headers an app shares with its kernels (include/multiapp/stage.h).
 multiapp_stage_abi(hello_op HEADERS ${CMAKE_CURRENT_LIST_DIR}/ext/hello_stage.h)
 multiapp_stage_abi(ring_sink HEADERS ${apps_dir}/rfprobe/src/ring_stage.h
-                   ${apps_dir}/../include/esp_sdr/esp_sdr_diag16.h)
+                   ${apps_dir}/../include/esp_sdr/esp_sdr_diag16.h INTERNAL)
 
 if(CONFIG_SOC_SERIES_ESP32S3)
 # The radio, as modules every app that uses it needs: the PHY's blobs and what the HAL builds
@@ -498,6 +508,20 @@ multiapp_module(sdr INTERNAL HIGH_BSS REQUIRES phy
   INCLUDES ${ESP_SDR_INCLUDES}
   SOURCES ${ESP_SDR_SOURCES} ${CMAKE_CURRENT_LIST_DIR}/ext/sdr_up.c)
 multiapp_module(ieee154 INTERNAL DEVICES REQUIRES sdr SOURCES ${IEEE154_SOURCES})
+# The driver's waveform generator is a hot-swap stage of this module (lib/ieee802154/ieee154_esp_sdr.c,
+# tx_gen), not of the wpan app: the stage lives where the function pointer is used. Its kernels are
+# INTERNAL (the generator runs in the ring with interrupts off) and import nothing (the state comes
+# through the user argument), and share ieee154_dsp.h (the state struct, the slot templates) and
+# ieee154_phy.h (the frame's size) with the module: that is the stage's ABI.
+multiapp_stage_abi(tx_gen HEADERS ${apps_dir}/../lib/ieee802154/ieee154_dsp.h
+                   ${apps_dir}/../include/esp_sdr/ieee154_phy.h INTERNAL)
+llext_compile_definitions(ieee154_ext MULTIAPP_STAGE_ABI_tx_gen=${stage_abi_tx_gen})
+multiapp_kernel(tx_gen_ref STAGE tx_gen APP ieee154 INTERNAL
+  INCLUDES ${apps_dir}/../lib/ieee802154
+  SOURCES ${apps_dir}/wpan/kernels/tx_gen_ref.c)
+multiapp_kernel(tx_gen_alt STAGE tx_gen APP ieee154 INTERNAL
+  INCLUDES ${apps_dir}/../lib/ieee802154
+  SOURCES ${apps_dir}/wpan/kernels/tx_gen_alt.c)
 
 set(hello_requires REQUIRES sdr)
 if(CONFIG_MULTIAPP_MODULE_TESTS)

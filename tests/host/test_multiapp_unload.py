@@ -212,18 +212,21 @@ def extensions(block):
 
 
 def test_s31_apps_that_switch_in_place_share_a_usb_profile():
-    # hello, capture and rfprobe have no USB class of their own (profile 0): they switch among
-    # themselves in place. osmosdr_hs has the vendor class (USB 2): a change of profile reboots.
+    # hello, capture and rfprobe declare no USB class of their own (the host adds the drive to
+    # all of them, profile 4): they switch among themselves in place. osmosdr_hs has the vendor
+    # class (USB 2, with the drive 6): a change of profile reboots.
     apps = extensions(s31_block())
     for name in ("hello", "capture", "rfprobe"):
         assert not re.search(r"\bUSB\b", apps[name]), name
         assert not re.search(r"\b(CONSOLE|AREA)\b", apps[name]), name
     assert re.search(r"\bUSB 2\b", apps["osmosdr_hs"])
     assert "CONSOLE" not in apps["osmosdr_hs"]
-    # The rule itself: same profile, no console app, no drive held by the PC.
+    # The rule itself: same profile (the one the host makes of the app's mask), no console app,
+    # and no app that brought disks of its own for the drive (the PC may hold the drive, which the
+    # host's own proxy keeps up through a switch).
     switch = body((MULTIAPP / "src/apps.c").read_text(), r"^static bool switch_ok")
-    assert "app->usb != usb_profile" in switch
-    assert "console" in switch and "MULTIAPP_USB_MSC" in switch
+    assert "profile_of(app) != usb_profile" in switch
+    assert "console" in switch and "MULTIAPP_USB_OWN_DISKS" in switch
 
 
 def test_s31_takes_the_in_place_branch_of_a_request():
@@ -236,10 +239,15 @@ def test_s31_takes_the_in_place_branch_of_a_request():
     assert "SOC_SERIES" not in unload_branch
 
 
-def test_every_start_may_mount_the_volume_again():
-    # An in-place switch starts the next app in the same boot: the read-write mount stays.
-    mount = body((MULTIAPP / "src/drive.c").read_text(), r"^int multiapp_drive_mount_rw")
-    assert mount.index("if (mounted_rw)") < mount.index("fs_mount")
+def test_an_app_start_does_not_mount_the_volume():
+    # The calibration has a partition of its own: nothing keeps the FAT volume mounted between
+    # reads, so the PC's writes are never behind a stale mount.
+    drive = (MULTIAPP / "src/drive.c").read_text()
+    assert "mount_rw" not in drive and "mounted_rw" not in drive
+    start = (MULTIAPP / "src/apps.c").read_text()
+    assert "mount_rw" not in start
+    read = body(drive, r"^static ssize_t read_path")
+    assert read.index("claim(false") < read.index("fs_mount(") < read.index("fs_unmount(")
 
 
 def test_osmosdr_forwarders_drop_the_handlers_of_an_unloaded_app():
@@ -374,50 +382,48 @@ def test_capture_ends_on_request_in_the_multiapp_build_only():
     assert "#if defined(MULTIAPP_NAME)" in main
 
 
-# ---- the one lock for the device's writes to the volume ----
+# ---- the device's claim on the volume against the PC's drive ----
 
-def test_drive_write_lock_api():
+def test_drive_claim_api():
     drive = (MULTIAPP / "src/drive.c").read_text()
     header = (MULTIAPP / "include/multiapp/multiapp.h").read_text()
     # Declared where host and extensions both reach it, defined by the host, so that exports.py
     # exports it to an extension that imports it.
-    assert re.search(r"^int multiapp_drive_write_begin\(k_timeout_t timeout\);", header, re.M)
-    assert re.search(r"^void multiapp_drive_write_end\(void\);", header, re.M)
-    begin = body(drive, r"^int multiapp_drive_write_begin")
-    assert "k_mutex_lock(&write_lock, timeout)" in begin
-    assert "-EAGAIN" in begin and "-EBUSY" in begin
-    # Refused while the PC holds the volume, before the lock and again after waiting for it.
-    assert begin.count("msc_exported") == 2
-    assert "k_mutex_unlock(&write_lock)" in begin
-    assert "k_mutex_unlock(&write_lock)" in body(drive, r"^void multiapp_drive_write_end")
-    # The MSC boot path sets the hook.
-    export = body(drive, r"^int multiapp_drive_export")
-    assert "multiapp_drive_msc_set(true)" in export
-    assert re.search(r"^void multiapp_drive_msc_set\(bool", (MULTIAPP / "src/apps.h").read_text()
-                     + drive, re.M)
+    for sig in (r"int multiapp_drive_read_begin\(k_timeout_t timeout\)", r"void multiapp_drive_read_end\(void\)",
+                r"int multiapp_drive_write_begin\(k_timeout_t timeout\)", r"void multiapp_drive_write_end\(void\)",
+                r"void multiapp_drive_busy_hook\(bool \(\*busy\)\(void\)\)"):
+        assert re.search(rf"^{sig};", header, re.M), sig
+        assert re.search(rf"^{sig}\n\{{", drive, re.M), sig
+    # A writer's claim is a write (the medium goes away and stays away), a reader's is not.
+    assert "claim(true, timeout)" in body(drive, r"^int multiapp_drive_write_begin")
+    assert "claim(false, timeout)" in body(drive, r"^int multiapp_drive_read_begin")
+    assert "drive_give(&px)" in body(drive, r"^void multiapp_drive_write_end")
+    assert "drive_give(&px)" in body(drive, r"^void multiapp_drive_read_end")
+    # Every device access to the volume after boot is under a claim: the app's files and the kernel
+    # files (both read_path()), refused on the USB thread, and a read never hides the medium.
+    text = body(drive, r"^static ssize_t read_path")
+    assert text.count("claim(false, K_MSEC(CLAIM_MS))") == 1 and "-EBUSY" in text
+    assert re.search(r"in_usb_thread = in_usb_thread", drive)
+    # The drive's class sets the hook once it is on the bus; boots without the drive never do.
+    assert re.search(r"^void multiapp_drive_msc_set\(bool", (MULTIAPP / "src/apps.h").read_text(), re.M)
+    assert "msc_exported" not in drive
+    # The radio module tells the host whether a ring runs, and takes it back before it unloads.
+    up = (MULTIAPP / "ext/sdr_up.c").read_text()
+    assert up.index("multiapp_drive_busy_hook(NULL)") < up.index("ret = esp_sdr_release_radio()")
+    assert "multiapp_drive_busy_hook(ring_runs)" in up
 
 
-def test_the_calibration_store_writes_under_the_lock_in_the_multiapp_build_only():
+def test_the_calibration_store_names_no_multiapp_symbol():
+    # The store has its own partition in the multiapp host: no claim of the volume, no lock but its
+    # own, and the same code in every build (standalone apps keep their backends).
     src = (REPO / "lib/esp_sdr/src/esp_sdr_calstore.c").read_text()
-    lines = src.splitlines()
-    marks = guarded(src)
-    # The multiapp symbols appear only where CONFIG_ESP_SDR_AS_EXTENSION is the condition.
-    for i, line in enumerate(lines):
-        if re.search(r"multiapp_drive_write_(begin|end)|<multiapp/multiapp\.h>", line):
-            assert ("defined(CONFIG_ESP_SDR_AS_EXTENSION)", True) in marks[i], f"line {i + 1}"
-    assert re.search(r"#else\n#define STORE_BEGIN\(\) 0\n#define STORE_END\(\)\s+\(\(void\)0\)\n#endif",
-                     src)
-    # Both writers (save, clear) bracket the settings call; the readers do not take it.
-    for name, call in (("esp_sdr_cal_save", "settings_save_one"),
-                       ("esp_sdr_cal_clear", "settings_delete")):
-        fn = body(src, rf"^int {name}\(")
-        assert fn.index("STORE_BEGIN()") < fn.index(call) < fn.rindex("STORE_END()"), name
-        # A refusal returns before anything is written or any other lock is taken.
-        assert fn.index("STORE_BEGIN()") < fn.index("k_mutex_lock(&cal_lock")
-    assert "STORE_BEGIN" not in body(src, r"^int esp_sdr_cal_load\(")
-    # Every settings write of the library is one of those two.
+    assert "multiapp_drive" not in src and "multiapp/multiapp.h" not in src
+    assert "STORE_BEGIN" not in src and "STORE_END" not in src
+    # Every settings write of the library is one of two, and each takes the store's own lock.
     writers = set(re.findall(r"\b(settings_(?:save_one|delete|save))\(", src))
     assert writers == {"settings_save_one", "settings_delete"}
+    for name in ("esp_sdr_cal_save", "esp_sdr_cal_clear"):
+        assert "k_mutex_lock(&cal_lock" in body(src, rf"^int {name}\(")
 
 
 # ---- hot-swapping a stage (doc/apps/multiapp-internals.md): what the unload has to do for it ----
@@ -458,11 +464,20 @@ def test_the_stage_abi_is_one_hash_for_the_app_and_its_kernels():
     assert "_stage_fn" not in header
 
 
-def test_kernel_files_are_not_read_while_the_pc_holds_the_volume():
+def test_kernel_files_are_read_under_the_claim_on_both_chips():
     drive = (MULTIAPP / "src/drive.c").read_text()
-    body = drive[drive.index("ssize_t multiapp_drive_read_file"):]
-    body = body[:body.index("\n}\n")]
-    assert "atomic_get(&msc_exported)" in body and "-EBUSY" in body
+    read = drive[drive.index("ssize_t multiapp_drive_read_file"):]
+    read = read[:read.index("\n}\n")]
+    # No chip is left out (the S3's FATFS object is out of ring bank 0) and no refusal on the
+    # PC's holding the drive: the claim is made in read_path(), which gives -EBUSY on a timeout.
+    assert "ENOTSUP" not in read and "SOC_SERIES" not in read and "msc_exported" not in read
+    assert "return read_path(path, buf, max)" in read
+    assert "-EBUSY" in body(drive, r"^static ssize_t read_path")
+    # A file the PC is still copying is tried once more after a pause, here and for an app's file.
+    shell = (MULTIAPP / "src/stage_shell.c").read_text()
+    load = body(shell, r"^static int cmd_load")
+    assert "DRIVE_RETRY_MS" in load and "multiapp_drive_on_bus()" in load
+    assert "DRIVE_RETRY_MS" in body((MULTIAPP / "src/apps.c").read_text(), r"^static int load_extension")
     # The upload is dropped under the command lock like the other commands.
     shell = (MULTIAPP / "src/stage_shell.c").read_text()
     abort = shell[shell.index("static int cmd_abort"):]
@@ -510,3 +525,140 @@ def test_stages_need_the_unload_and_the_shell_has_the_subcommand():
     assert "depends on MULTIAPP_UNLOAD" in stages
     apps = (MULTIAPP / "src/apps.c").read_text()
     assert "SHELL_CMD(stage, &multiapp_stage_cmds" in apps
+
+
+# ---- the 802.15.4 driver's stage tx_gen: a stage of a module, not of the app ----
+
+DRIVER_C = (REPO / "lib/ieee802154/ieee154_esp_sdr.c").read_text()
+
+
+def function_body(text, signature):
+    body = text[text.index(signature):]
+    return body[:body.index("\n}\n")]
+
+
+def test_the_drivers_stage_is_the_modules_and_its_holder_idles_before_it_lets_the_radio_go():
+    # One owner at a time, handed on through radio_lock: whoever syncs holds the radio, and is idle
+    # again before it gives it back, so a swap can land between two holders.
+    assert "MULTIAPP_STAGE_DEFINE_INTERNAL(tx_gen, ieee154_dsp_tx_gen_fn_t, tx_gen);" in DRIVER_C
+    ring = function_body(DRIVER_C, "static void ring_thread_fn")
+    give = ring.index("tx_gen_give()")
+    assert ring.index("ack_prefix()") < ring.index("esp_sdr_ring_run(") < give
+    assert give < ring.index("k_mutex_unlock(&d->radio_lock)", give)
+    tx = function_body(DRIVER_C, "static int sdr154_tx")
+    assert (tx.index("radio_take(d)") < tx.index("tx_gen_take()") < tx.index("tx_gen_give()")
+            < tx.index("radio_give(d)"))
+    bench = function_body(DRIVER_C, "int ieee154_esp_sdr_bench(")
+    assert bench.index("radio_take(d)") < bench.index("tx_gen_take()") < bench.index("tx_gen_give()")
+    # ack_prefix() is the ring thread's sync and nobody else's.
+    assert DRIVER_C.count("ack_prefix();") == 1
+    assert "tx_gen_take()" in function_body(DRIVER_C, "static void ack_prefix")
+    # The ring's burst is armed with the trampoline, never with a kernel's own address: a burst armed
+    # by the PHY thread as a run ends must not call freed code.
+    assert DRIVER_C.count("TX_GEN_BURST,") == 2
+    assert "esp_sdr_ring_burst_arm(" in DRIVER_C and ", tx_gen," not in DRIVER_C
+    burst = function_body(DRIVER_C, "static __maybe_unused void tx_gen_burst")
+    assert "tx_gen_cur(" in burst
+    # Give puts the built-in function back before it idles, so a stray call finds a function that
+    # stays.
+    giving = function_body(DRIVER_C, "static void tx_gen_give")
+    assert giving.index("tx_gen_cur = tx_gen") < giving.index("tx_gen_stage_idle()")
+
+
+def test_the_drivers_kernels_import_nothing_and_share_the_dsp_headers_with_the_module():
+    assert "multiapp_stage_abi(tx_gen HEADERS" in CMAKE
+    abi = CMAKE[CMAKE.index("multiapp_stage_abi(tx_gen HEADERS"):][:200]
+    assert "ieee154_dsp.h" in abi and "ieee154_phy.h" in abi
+    # The module, not an app, is built with the hash.
+    assert "llext_compile_definitions(ieee154_ext MULTIAPP_STAGE_ABI_tx_gen=${stage_abi_tx_gen})" in CMAKE
+    for kernel in ("tx_gen_ref", "tx_gen_alt"):
+        assert f"multiapp_kernel({kernel} STAGE tx_gen APP ieee154 INTERNAL" in CMAKE
+        source = (REPO / f"apps/wpan/kernels/{kernel}.c").read_text()
+        assert "MULTIAPP_KERNEL_DEFINE(tx_gen, ieee154_dsp_tx_gen_fn_t, " in source
+        # The state comes through the user argument: no symbol of the module (the loader would take
+        # it, as the stage's owner, but the driver's own state is static and would not link).
+        assert "high->" not in source and "high_ram" not in source
+    # The standalone driver gets the header's macros as plain calls.
+    assert "apps/multiapp/include" in (REPO / "lib/ieee802154/CMakeLists.txt").read_text()
+
+
+def test_wpan_stops_the_radio_before_the_host_drops_the_drivers_kernels():
+    # The kernels go before the app does (app_unload()), and the ring thread of the module may be
+    # inside one: wpan's stop hook ends the radio, as the DFU download's does.
+    main = (REPO / "apps/wpan/src/main.c").read_text()
+    hook = function_body(main, "int multiapp_app_stop(void)")
+    assert "app_usb_dfu_prepare()" in hook
+    dfu = function_body(main, "void app_usb_dfu_prepare(void)")
+    assert "api->stop(radio)" in dfu
+
+
+# ---- the stage's owner: one extension, for the build check and the load check alike ----
+
+STAGE_OWNERS = {
+    # stage: (the extension multiapp_kernel(... APP <it>) names, the source that defines the stage)
+    "tx_gen": ("ieee154", "lib/ieee802154/ieee154_esp_sdr.c"),
+    "ring_sink": ("rfprobe", "apps/rfprobe/src/main.c"),
+    "hello_op": ("hello", "apps/multiapp/ext/hello.c"),
+}
+
+
+def test_the_build_check_names_the_extension_that_defines_the_stage():
+    # exports.py check-kernel reads the globals of the library of "APP"; the loader accepts the
+    # extension that holds the stage's object (and the running app), so the two agree only if APP is
+    # the defining extension: a module for the driver's stage, the app for the others.
+    kernels = re.findall(r"^\s*multiapp_kernel\((\w+) STAGE (\w+) APP (\w+)", CMAKE, re.M)
+    assert {stage for _, stage, _ in kernels} == set(STAGE_OWNERS)
+    for kernel, stage, app in kernels:
+        owner, source = STAGE_OWNERS[stage]
+        assert app == owner, f"{kernel}: stage {stage} is defined in {owner}, not {app}"
+        assert re.search(rf"MULTIAPP_STAGE_DEFINE\w*\({stage},", (REPO / source).read_text())
+
+
+def test_the_load_check_takes_the_app_and_the_stages_owner_and_no_other_extension():
+    apps = (MULTIAPP / "src/apps.c").read_text()
+    deps = function_body(apps, "static int kernel_check_deps")
+    assert "dep != loaded" in deps and "multiapp_stage_owned_by(stage, dep, ext_has)" in deps
+    # The descriptor names the stage, so it is read (it is relocated at load) before the check, and
+    # the check before the constructors run.
+    load = function_body(apps, "int multiapp_kernel_load")
+    assert (load.index('llext_find_sym(&k->ext->exp_tab, "multiapp_kernel")')
+            < load.index("kernel_check_deps(k, desc->stage)") < load.index("llext_bringup("))
+    # ... and the owner is where the stage's object is.
+    stage = (MULTIAPP / "src/stage.c").read_text()
+    owned = function_body(stage, "bool multiapp_stage_owned_by")
+    assert "holds(ext, (uintptr_t)s->st)" in owned
+
+
+def test_a_stage_in_internal_ram_takes_only_internal_kernels():
+    # The driver's generator runs with interrupts off and the ring's sink at the ring's rate: a
+    # PSRAM kernel stalls on the cache whenever the flash is written. hello_op may be anywhere.
+    assert "MULTIAPP_STAGE_DEFINE_INTERNAL(ring_sink," in (REPO / "apps/rfprobe/src/main.c").read_text()
+    assert "MULTIAPP_STAGE_DEFINE(hello_op," in (MULTIAPP / "ext/hello.c").read_text()
+    for stage in ("tx_gen", "ring_sink"):
+        abi = CMAKE[CMAKE.index(f"multiapp_stage_abi({stage} HEADERS"):]
+        assert abi[:abi.index(")")].rstrip().endswith("INTERNAL")
+    assert "multiapp_stage_abi(hello_op HEADERS ${CMAKE_CURRENT_LIST_DIR}/ext/hello_stage.h)" in CMAKE
+    # multiapp_kernel() errors when the stage is internal and the kernel is not.
+    kernel = function_body(CMAKE.replace("\nendfunction()", "\n}"), "function(multiapp_kernel name)")
+    assert "stage_internal_${KERN_STAGE} AND NOT KERN_INTERNAL" in kernel and "FATAL_ERROR" in kernel
+    # ... and the host refuses one whose function is not in the region the loader made internal.
+    stage = (MULTIAPP / "src/stage.c").read_text()
+    install = function_body(stage, "int multiapp_stage_install")
+    assert "s->st->internal && !kernel_in_internal_ram(k)" in install
+    inside = function_body(stage, "static bool kernel_in_internal_ram")
+    assert "k->fast_size" in inside and "k->fast" in inside
+
+
+def test_the_drop_of_a_stages_kernels_closes_the_stage_and_waits_for_its_owner():
+    stage = (MULTIAPP / "src/stage.c").read_text()
+    drop = function_body(stage, "int multiapp_stage_drop_kernels")
+    assert (drop.index("s->closed = true") < drop.index("stage_wait_quiet(s)")
+            < drop.index("multiapp_kernel_unload(KERNEL(s))") < drop.index("s->closed = false"))
+    sync = function_body(stage, "void *multiapp_stage_sync")
+    assert sync.index("s->closed") < sync.index("s->owner = me")
+    assert "return -EBUSY" in function_body(stage, "static int stage_wait_quiet")
+    # The app's unload fails (the caller reboots) when the drop does.
+    apps = (MULTIAPP / "src/apps.c").read_text()
+    unload = function_body(apps, "static int app_unload")
+    after = unload[unload.index("multiapp_stage_drop_kernels()"):]
+    assert after.index("if (ret != 0)") < after.index("return ret") < after.index("app_cutoff(def)")

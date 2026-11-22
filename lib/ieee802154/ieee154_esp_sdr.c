@@ -42,6 +42,8 @@
 #include <esp_sdr/ieee154_esp_sdr.h>
 #include <esp_sdr/ieee154_phy.h>
 
+#include <multiapp/stage.h>
+
 #include "ieee154_dsp.h"
 
 LOG_MODULE_REGISTER(esp_sdr_154, CONFIG_ESP_SDR_IEEE802154_LOG_LEVEL);
@@ -120,6 +122,78 @@ tx_gen(void *user, uint32_t *dst, uint64_t index, uint32_t n)
 	ARG_UNUSED(user);
 	ieee154_dsp_tx_gen(&high->tx, dst, index, n);
 }
+
+/*
+ * tx_gen is a stage a kernel can replace while the radio runs (include/multiapp/stage.h, "Hot-swapping a
+ * stage" in doc/apps/multiapp-internals.md; the kernels are apps/wpan/kernels). The stage is this
+ * module's, not the app's: the generator is called by this driver's threads (the ring thread's runs, the
+ * DAC filler, the bench), whichever app uses the radio.
+ *
+ * The quiescent point is the radio holder's: radio_lock is held and the ring is not running, or the ring
+ * thread has just taken the lock and is about to start a run. The holder syncs there (tx_gen_take()), and
+ * is idle again (tx_gen_give()) when its run or its transmission has ended, before it lets the radio go.
+ * Only one thread holds the radio at a time, so the stage has one owner at a time, handed on through
+ * radio_lock: the ring thread for a whole run (it arms the bursts' builder, which the ring CPU calls
+ * inside the run), the thread that transmits for the length of a frame, the shell for a bench. Between its
+ * take and give a thread calls the function it got and no other.
+ *
+ * The stage is declared internal (MULTIAPP_STAGE_DEFINE_INTERNAL()): the host takes only a kernel in
+ * internal RAM, as the generator runs with interrupts off. When the app unloads, the host drops the
+ * kernel with the stage closed: tx_gen_take() then returns the built-in function and takes no
+ * ownership, whichever thread asks (the network stack's transmit thread does, which wpan's stop hook
+ * cannot hold off), and the host waits for the owner to leave before it unloads.
+ *
+ * With the ring running (wpan on) the stage is busy and a swap waits for the run's end, which nothing
+ * brings about by itself: swap with the radio off, or while a transmit job runs (each frame's radio_take()
+ * stops the ring, and the ring thread's idle call applies the swap). The state of the kernel is passed
+ * through the user argument (&high->tx), so that it needs no global of this module.
+ * Without a stage (a standalone build) all of this is the plain call it was.
+ */
+#if defined(MULTIAPP_NAME) && defined(CONFIG_MULTIAPP_STAGES)
+#define TX_GEN_STAGED 1
+#endif
+
+MULTIAPP_STAGE_DEFINE_INTERNAL(tx_gen, ieee154_dsp_tx_gen_fn_t, tx_gen);
+
+#if defined(TX_GEN_STAGED)
+#define TX_GEN_USER (&high->tx)
+
+/* The function the radio holder synced: what the ring's builder calls. The built-in one when nobody is inside. */
+static ieee154_dsp_tx_gen_fn_t volatile tx_gen_cur = tx_gen;
+
+static ieee154_dsp_tx_gen_fn_t tx_gen_take(void)
+{
+	ieee154_dsp_tx_gen_fn_t fn = tx_gen_stage_sync();
+
+	tx_gen_cur = fn;
+	return fn;
+}
+
+static void tx_gen_give(void)
+{
+	/* A call that strays after this one finds the built-in function, which never unloads. */
+	tx_gen_cur = tx_gen;
+	tx_gen_stage_idle();
+}
+
+/*
+ * What the ring's burst is armed with (the PHY thread arms it, and so does the shell, while the ring
+ * thread holds the stage): the ring CPU calls it inside the run, so the kernel it reaches is the one
+ * the ring thread synced before the run, and a swap cannot unload it while the run goes on. Armed
+ * with the kernel's own address instead, a burst armed as a run ended would call freed code.
+ */
+ESP_SDR_CODE(PACED_SAMPLE, tx_gen_burst)
+static __maybe_unused void tx_gen_burst(void *user, uint32_t *dst, uint64_t index, uint32_t n)
+{
+	tx_gen_cur(user, dst, index, n);
+}
+#define TX_GEN_BURST tx_gen_burst
+#else
+#define TX_GEN_USER      NULL
+#define TX_GEN_BURST     tx_gen
+#define tx_gen_take()    tx_gen
+#define tx_gen_give()    ((void)0)
+#endif
 
 /* --------------------------------------------------------------- driver */
 
@@ -548,7 +622,8 @@ static void ack_prefix(void)
 	uint32_t *bank = esp_sdr_ring_burst_buf(&words);
 
 	ack_build(0);
-	tx_gen(NULL, bank, 0, ACK_PREFIX_WORDS);
+	/* The ring thread's sync: its idle call is after the run (ring_thread_fn()). */
+	tx_gen_take()(TX_GEN_USER, bank, 0, ACK_PREFIX_WORDS);
 	ack.armed = false;
 	ack.fired = false;
 }
@@ -616,8 +691,8 @@ static bool on_header(const uint8_t *psdu, uint8_t have, uint8_t len, uint32_t e
 	e_out = blk_r + (end_pos - blk_pos);
 	end_pair = pair + 4 * (int64_t)(int32_t)(e_out - (uint32_t)(pair / 4U));
 	ack_build(psdu[2]);
-	ret = esp_sdr_ring_burst_arm(end_pair, end_pair + ack_limit_us * PAIRS_PER_US, tx_gen,
-				     NULL, ACK_PREFIX_WORDS,
+	ret = esp_sdr_ring_burst_arm(end_pair, end_pair + ack_limit_us * PAIRS_PER_US, TX_GEN_BURST,
+				     TX_GEN_USER, ACK_PREFIX_WORDS,
 				     (uint32_t)ieee154_dsp_tx_samples(&high->tx));
 	if (ret != 0) {
 		STATS_UPDATE(d->stats.ack_arm_failed++);
@@ -709,8 +784,9 @@ int ieee154_esp_sdr_ack_test(uint8_t seq)
 	/* A frame "ending" two units from now. */
 	end = pair + 2U * ESP_SDR_RING_UNIT_MIN;
 	ack_build(seq);
-	ret = esp_sdr_ring_burst_arm(end, end + ack_limit_us * PAIRS_PER_US, tx_gen, NULL,
-				     ACK_PREFIX_WORDS, (uint32_t)ieee154_dsp_tx_samples(&high->tx));
+	ret = esp_sdr_ring_burst_arm(end, end + ack_limit_us * PAIRS_PER_US, TX_GEN_BURST,
+				     TX_GEN_USER, ACK_PREFIX_WORDS,
+				     (uint32_t)ieee154_dsp_tx_samples(&high->tx));
 	if (ret == 0 && !esp_sdr_ring_burst_fire(end + ack_delay_us * PAIRS_PER_US)) {
 		ret = -EIO;
 	}
@@ -778,6 +854,10 @@ static void ring_thread_fn(void *p1, void *p2, void *p3)
 		k_mutex_unlock(&phy_lock);
 #endif
 		ret = esp_sdr_ring_run(&ring_cfg, &st);
+#if defined(CONFIG_ESP_SDR_IEEE802154_AUTO_ACK)
+		/* The run is over: no burst is built any more, a swap of tx_gen may land. */
+		tx_gen_give();
+#endif
 		/* Status of a run that started; 0x7f: it could not. */
 		crumb(IEEE154_ESP_SDR_EV_RING_END, ret == 0 || ret == -EIO ? (uint32_t)st.status : 0x7fU);
 		k_mutex_unlock(&d->radio_lock);
@@ -1059,7 +1139,10 @@ static int sdr154_tx(const struct device *dev, enum ieee802154_tx_mode mode, str
 	radio_take(d);
 	ieee154_dsp_tx_build(&high->tx, psdu, (uint8_t)len);
 	crumb(IEEE154_ESP_SDR_EV_TX, (uint32_t)len);
-	ret = esp_sdr_tx_dac_play_gen(tx_gen, NULL, ieee154_dsp_tx_samples(&high->tx));
+	ret = esp_sdr_tx_dac_play_gen(tx_gen_take(), TX_GEN_USER,
+				      ieee154_dsp_tx_samples(&high->tx));
+	/* The filler has stopped: the stage is idle until the next frame. */
+	tx_gen_give();
 	crumb(IEEE154_ESP_SDR_EV_TX_END, (uint32_t)-ret);
 	if (ret == 0) {
 		STATS_UPDATE(d->stats.tx_frames++);
@@ -1256,11 +1339,37 @@ void ieee154_esp_sdr_get_stats(struct ieee154_esp_sdr_stats *stats)
 	ieee154_phy_rx_counts(&stats->phy);
 }
 
+#if defined(TX_GEN_STAGED)
+/*
+ * The oracle of a swapped tx_gen: the words the stage's function wrote (@p got, the bench's bank) against
+ * the built-in one's, which this builds in bank 1 (the CPUs' while the radio is held): 0 for a kernel of
+ * the same algorithm, the count of words that differ otherwise, UINT32_MAX if there is no room to check.
+ * The same compare as "wpan bench dma ack", which a multiapp build does not have (the GDMA layer is
+ * not built as an extension).
+ */
+static uint32_t tx_gen_differ(const uint32_t *got, uint32_t n)
+{
+	size_t words;
+	uint32_t *ref = esp_sdr_tx_loop_buf(1, &words);
+	uint32_t differ = 0;
+
+	if (ref == NULL || n > words) {
+		return UINT32_MAX;
+	}
+	tx_gen(&high->tx, ref, 0, n);
+	for (uint32_t k = 0; k < n; k++) {
+		differ += got[k] != ref[k];
+	}
+	return differ;
+}
+#endif
+
 int ieee154_esp_sdr_bench(struct ieee154_esp_sdr_bench *b)
 {
 	struct sdr154_data *d = &sdr154;
 	/* An Imm-Ack with frame pending clear, its FCS appended below. */
 	uint8_t ack[5] = {0x02, 0x00, 0x5a};
+	ieee154_dsp_tx_gen_fn_t gen;
 	uint32_t *bank, t0, t1;
 	size_t words;
 	uint32_t n;
@@ -1284,14 +1393,15 @@ int ieee154_esp_sdr_bench(struct ieee154_esp_sdr_bench *b)
 		radio_give(d);
 		return -ENOMEM;
 	}
+	gen = tx_gen_take();
 	t0 = k_cycle_get_32();
-	tx_gen(NULL, bank, 0, n);
+	gen(TX_GEN_USER, bank, 0, n);
 	t1 = k_cycle_get_32();
 	b->ack_gen_cyc = t1 - t0;
 	/* What changes between ACKs: from the frame control's high nibble (slot 416) on. */
 	t0 = k_cycle_get_32();
-	tx_gen(NULL, bank + 416U * IEEE154_DSP_SLOT, 416U * IEEE154_DSP_SLOT,
-	       n - 416U * IEEE154_DSP_SLOT);
+	gen(TX_GEN_USER, bank + 416U * IEEE154_DSP_SLOT, 416U * IEEE154_DSP_SLOT,
+	    n - 416U * IEEE154_DSP_SLOT);
 	t1 = k_cycle_get_32();
 	b->ack_tail_cyc = t1 - t0;
 	/* The same under the ring's conditions: vector unit on, interrupts off (best of 8). */
@@ -1303,13 +1413,18 @@ int ieee154_esp_sdr_bench(struct ieee154_esp_sdr_bench *b)
 		__asm__ volatile("rsr.cpenable %0" : "=r"(cp));
 		esp_sdr_pie_enable();
 		t0 = esp_sdr_ccount();
-		tx_gen(NULL, bank + 416U * IEEE154_DSP_SLOT, 416U * IEEE154_DSP_SLOT,
-		       n - 416U * IEEE154_DSP_SLOT);
+		gen(TX_GEN_USER, bank + 416U * IEEE154_DSP_SLOT, 416U * IEEE154_DSP_SLOT,
+		    n - 416U * IEEE154_DSP_SLOT);
 		t1 = esp_sdr_ccount();
 		__asm__ volatile("wsr.cpenable %0\n\trsync" : : "r"(cp));
 		arch_irq_unlock(key);
 		b->ack_tail_ring_cyc = MIN(b->ack_tail_ring_cyc, t1 - t0);
 	}
+	tx_gen_give();
+#if defined(TX_GEN_STAGED)
+	/* The bank holds the whole frame the stage's function wrote (the last pass is the ring's). */
+	b->stage_differ = tx_gen_differ(bank, n);
+#endif
 
 	/* Front end: RX to TX and back (a loop session without playback). */
 	t0 = k_cycle_get_32();

@@ -17,7 +17,13 @@
  *   (under the lock, so that an install that just happened is told from one that did not) and
  *   unloads the kernel;
  * - after the ack the previous kernel is unloaded; "revert" swaps to the app's own function and
- *   unloads; an app's unload drops every kernel first, as they hold its use count.
+ *   unloads; an app's unload drops every kernel first, as they hold its use count. A stage can be a
+ *   module's (the 802.15.4 driver's tx_gen), whose threads outlive the app: the drop closes the stage
+ *   (a sync returns the built-in function and takes no ownership, so nobody new enters a kernel that
+ *   is going), waits a bounded time for the owner to leave and, if it does not, leaves the kernel
+ *   loaded and fails (-EBUSY: the switch falls back to a reboot);
+ * - a stage that asked for internal RAM (MULTIAPP_STAGE_DEFINE_INTERNAL()) takes no kernel whose
+ *   function is not in the internal region it was loaded into.
  *
  * The shell side (one swap or load at a time) holds stage_lock; the app's calls only the stage's
  * spinlock. This file does not know llext: apps.c loads and unloads, tests/host compiles this
@@ -41,6 +47,15 @@ LOG_MODULE_DECLARE(multiapp, LOG_LEVEL_INF);
 
 #define STAGES_MAX 4
 
+/* How long a drop waits for a thread that is still inside a stage to leave it. */
+#ifndef MULTIAPP_STAGE_QUIET_MS
+#define MULTIAPP_STAGE_QUIET_MS CONFIG_MULTIAPP_STAGE_TIMEOUT_MS
+#endif
+/* A thread that ended inside the stage (the app's threads are aborted before the drop) is not inside. */
+#ifndef MULTIAPP_STAGE_OWNER_DEAD
+#define MULTIAPP_STAGE_OWNER_DEAD(t) (((t)->base.thread_state & _THREAD_DEAD) != 0U)
+#endif
+
 struct slot {
 	struct multiapp_stage *st;
 	/* FNV-1a of the type spelling, from the app's side. */
@@ -53,6 +68,8 @@ struct slot {
 	k_tid_t owner;
 	/* A second thread synced while the owner was inside: no swap is safe. */
 	bool shared;
+	/* A drop of the stage's kernel is under way: sync returns the built-in function. */
+	bool closed;
 	uint32_t applied_cyc;
 	uint32_t swaps;
 	/* Under stage_lock: a kernel runs this stage (kernels[], same index). */
@@ -163,6 +180,15 @@ void *multiapp_stage_sync(struct multiapp_stage *st)
 		return st->cur;
 	}
 	key = k_spin_lock(&s->lock);
+	if (s->closed) {
+		/*
+		 * The kernel is being dropped: the built-in function, which never unloads, and no
+		 * ownership, so that the drop is not kept waiting for a call that is not in the kernel.
+		 */
+		fn = st->dflt;
+		k_spin_unlock(&s->lock, key);
+		return fn;
+	}
 	if (s->owner != NULL && s->owner != me) {
 		/* Two threads inside: whatever the host swaps, one of them may still run the old one. */
 		breach = !s->shared;
@@ -207,8 +233,9 @@ void multiapp_stage_idle(struct multiapp_stage *st)
 			ack = true;
 		}
 	} else if (s->owner != NULL) {
-		/* Not the thread that is inside: it does not make the stage quiescent. */
-		ignored = true;
+		/* Not the thread that is inside: it does not make the stage quiescent (a sync that a
+		 * closed stage answered with the built-in function leaves no owner, and no warning). */
+		ignored = !s->closed;
 	}
 	k_spin_unlock(&s->lock, key);
 	if (ack) {
@@ -278,6 +305,19 @@ static bool stage_shared(struct slot *s)
 	return shared;
 }
 
+/*
+ * Whether the kernel's function runs from internal RAM: the loader put the kernel's fast code
+ * (.module_fast) in the internal region heap when its trailer said INTERNAL, and the function lies
+ * in it. Code left in .text is in PSRAM whatever the trailer says.
+ */
+static bool kernel_in_internal_ram(const struct multiapp_kernel *k)
+{
+	const uintptr_t fn = (uintptr_t)k->fn, lo = (uintptr_t)k->fast;
+
+	return k->place != MULTIAPP_PLACE_PSRAM && k->fast_size != 0U && fn >= lo &&
+	       fn - lo < k->fast_size;
+}
+
 int multiapp_stage_install(const char *stage, const uint8_t *file, size_t len, const char *source,
 			   uint32_t timeout_ms, struct multiapp_stage_result *res)
 {
@@ -316,6 +356,11 @@ int multiapp_stage_install(const char *stage, const uint8_t *file, size_t len, c
 		LOG_ERR("%s: built for \"%s\" (%08x), stage %s has \"%s\" (%08x)", k->name,
 			k->desc->sig_text, sig_hash(k->desc->sig_text), s->st->name,
 			s->st->sig_text, s->sig);
+		ret = -ENOEXEC;
+	} else if (s->st->internal && !kernel_in_internal_ram(k)) {
+		LOG_ERR("%s: stage %s runs from internal RAM (interrupts off, or at a ring's rate) and "
+			"this kernel's function is not: build it INTERNAL, with its code placed by "
+			"ESP_SDR_CODE() (multiapp_kernel(... INTERNAL))", k->name, s->st->name);
 		ret = -ENOEXEC;
 	} else {
 		ret = stage_request(s, k->fn, timeout_ms, res);
@@ -381,6 +426,37 @@ out:
 	return ret;
 }
 
+/*
+ * With the stage closed (sync answers with the built-in function and takes no ownership): wait for
+ * the thread that is inside to leave. 0 when nobody is, -EBUSY after MULTIAPP_STAGE_QUIET_MS, and for
+ * a stage that two threads were inside at once, whose second thread nobody can follow.
+ */
+static int stage_wait_quiet(struct slot *s)
+{
+	for (uint32_t ms = 0;; ms++) {
+		k_spinlock_key_t key = k_spin_lock(&s->lock);
+		k_tid_t owner = s->owner;
+		bool shared = s->shared;
+
+		/* A thread that ended inside (the app's are aborted before the drop) is out of it. */
+		if (owner != NULL && MULTIAPP_STAGE_OWNER_DEAD(owner)) {
+			s->owner = NULL;
+			owner = NULL;
+		}
+		k_spin_unlock(&s->lock, key);
+		if (shared) {
+			return -EBUSY;
+		}
+		if (owner == NULL) {
+			return 0;
+		}
+		if (ms >= MULTIAPP_STAGE_QUIET_MS) {
+			return -EBUSY;
+		}
+		k_msleep(1);
+	}
+}
+
 int multiapp_stage_drop_kernels(void)
 {
 	int worst = 0;
@@ -394,19 +470,37 @@ int multiapp_stage_drop_kernels(void)
 		if (s->st == NULL || !s->has_kernel) {
 			continue;
 		}
-		/* The app has ended: nothing runs the stage, the default is back without a handshake. */
+		/*
+		 * The built-in function from now on, and no new caller of the kernel: a thread of a
+		 * module's stage (the driver's transmit path) may sync at any time, and the app's
+		 * unload is no quiescent point for it.
+		 */
 		key = k_spin_lock(&s->lock);
+		s->closed = true;
 		s->st->cur = s->st->dflt;
 		s->pending = NULL;
 		k_spin_unlock(&s->lock, key);
-		ret = multiapp_kernel_unload(KERNEL(s));
+		ret = stage_wait_quiet(s);
 		if (ret == 0) {
-			s->has_kernel = false;
+			ret = multiapp_kernel_unload(KERNEL(s));
+			if (ret == 0) {
+				s->has_kernel = false;
+			} else {
+				LOG_ERR("stage %s: kernel %s did not unload (%d)", s->st->name,
+					KERNEL(s)->name, ret);
+			}
 		} else {
-			LOG_ERR("stage %s: kernel %s did not unload (%d)", s->st->name,
-				KERNEL(s)->name, ret);
+			LOG_ERR("stage %s: a thread is still inside kernel %s after %u ms (or two were "
+				"inside at once): it stays loaded, unused", s->st->name,
+				KERNEL(s)->name, (unsigned int)MULTIAPP_STAGE_QUIET_MS);
+		}
+		if (ret != 0) {
 			worst = ret;
 		}
+		/* Open again: with the built-in function, whatever became of the kernel. */
+		key = k_spin_lock(&s->lock);
+		s->closed = false;
+		k_spin_unlock(&s->lock, key);
 	}
 	k_mutex_unlock(&stage_lock);
 	return worst != 0 ? -EBUSY : 0;
@@ -435,6 +529,20 @@ void multiapp_stage_forget(bool (*in)(const void *obj, void *ctx), void *ctx)
 		}
 	}
 	k_mutex_unlock(&stage_lock);
+}
+
+bool multiapp_stage_owned_by(const char *name, const struct llext *ext,
+			     bool (*holds)(const struct llext *ext, uintptr_t addr))
+{
+	struct slot *s;
+	bool owned;
+
+	/* The mutex is recursive: the shell's thread holds it while it loads a kernel. */
+	k_mutex_lock(&stage_lock, K_FOREVER);
+	s = slot_find(name);
+	owned = s != NULL && holds(ext, (uintptr_t)s->st);
+	k_mutex_unlock(&stage_lock);
+	return owned;
 }
 
 size_t multiapp_stage_count(void)

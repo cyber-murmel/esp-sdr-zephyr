@@ -19,8 +19,17 @@
 /* USB classes the host registers for an app, besides the CDC-ACM shell and DFU. */
 #define MULTIAPP_USB_NCM    (1U << 0)
 #define MULTIAPP_USB_VENDOR (1U << 1)
-/* The host's own, in boots without an app: the FAT volume as a USB drive. */
+/*
+ * The host's own: the FAT volume as a USB drive, which the PC may use while the app runs
+ * (src/drive.c). src/profile.h adds it to every app that leaves an IN endpoint free, so an app's
+ * `USB` mask does not name it, and boots without an app have it alone.
+ */
 #define MULTIAPP_USB_MSC    (1U << 2)
+/*
+ * With MULTIAPP_USB_MSC: the app registers the drive's disks itself (MicroPython's
+ * src/usb_disks.c) and the host's proxy stays out of it.
+ */
+#define MULTIAPP_USB_OWN_DISKS (1U << 3)
 
 /* What ends an extension file (apptrail.py), checked before llext reads it. */
 struct multiapp_trailer {
@@ -101,14 +110,39 @@ int multiapp_wifi_bind(const struct device *dev);
 int multiapp_wifi_unbind(const struct device *dev);
 
 /*
- * The one lock for the device's own writes to the FAT volume (src/drive.c; see "Writers and
- * readers of the volume" in doc/apps/multiapp-internals.md): a writer, host or extension, calls
- * begin before it writes and end after, from the same thread. Returns 0; -EAGAIN if another writer
- * kept the lock for @p timeout; -EBUSY while the PC has the volume as a USB drive (the PC writes
- * then, the device may not).
+ * The device's claim on the FAT volume (src/drive.c; see "Writers and readers of the volume" in
+ * doc/apps/multiapp-internals.md). The PC may have the volume as a USB drive; code of the host or
+ * an extension that reads it calls multiapp_drive_read_begin() before and multiapp_drive_read_end()
+ * after, code that writes it multiapp_drive_write_begin() and multiapp_drive_write_end(), from the
+ * same thread. Both take the one lock that orders the device's users, wait for the PC's disk access
+ * in flight to end (100 ms with none running) and then let the device mount the volume itself
+ * (fs_mount(): the volume is read afresh), as nothing mounts it between claims.
+ *
+ * - A reader does not hide the drive: the PC's next accesses wait until the end of the claim and go
+ *   on. A file the PC is still copying is half there: check what was read and ask again.
+ * - A writer hides the drive (the PC sees no medium and drops what it cached), and at the end
+ *   syncs the volume and keeps the drive away at least 3 s from when it went, and while a ring runs
+ *   until it stops, so that the PC reads the volume again. Not for a thread that streams: keep it
+ *   short.
+ *
+ * Calls nest in one thread (a write inside a read is refused). Return 0; -EAGAIN if another user
+ * kept the lock for @p timeout; -EBUSY if the PC's access did not end in that time (go without the
+ * volume, it was not taken); -EDEADLK from the USB thread, which carries the PC's data and so
+ * cannot wait for it, and for a write inside a read. Without the drive on the bus (a boot without
+ * the class) it is only the lock. The caller's stack must be internal RAM: the flash driver turns
+ * the cache off.
  */
+int multiapp_drive_read_begin(k_timeout_t timeout);
+void multiapp_drive_read_end(void);
 int multiapp_drive_write_begin(k_timeout_t timeout);
 void multiapp_drive_write_end(void);
+
+/*
+ * The radio module's tell whether a ring runs, from multiapp_module_up() until multiapp_module_down()
+ * takes it back with NULL (after which no call of it is running): a writer's hold is not over
+ * while it returns true.
+ */
+void multiapp_drive_busy_hook(bool (*busy)(void));
 
 /* Whether the boot's app has dump bank 2 as a module heap (BANK2): the SDR must stay off it. */
 bool multiapp_bank2_reserved(void);

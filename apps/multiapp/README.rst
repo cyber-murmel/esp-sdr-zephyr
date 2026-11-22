@@ -67,6 +67,9 @@ ESP32-S31
 - J4's VBUS is the board's own: connect it with VBUS cut, as
   `osmosdr_hs <../osmosdr_hs/README.rst>`__ explains.
 - The shell is on a CDC-ACM port of J4; the console and the log stay on the UART port.
+- Flash (16 MB, ``boards/partitions_s31.dtsi``): MCUboot and two 3840 KiB slots in the lower 8 MB
+  (Espressif's table), a 16 KiB ``calibration`` partition at 0x7e0000 for the crystal calibration
+  (settings on ZMS), and the FAT volume in the upper 8 MB at 0x800000.
 - The extensions are RISC-V relocatable objects and their code runs where llext writes it, in
   PSRAM; ``osmosdr_hs`` keeps its USB batches in internal RAM
   (`multiapp internals <../../doc/apps/multiapp-internals.md>`__).
@@ -127,7 +130,7 @@ On the CDC-ACM shell:
    osmosdr       17900 bytes, file 17900 bytes
    link          81320 bytes, file 81320 bytes
    uart:~$ multiapp run rfprobe
-   rfprobe: rebooting into it (eject the drive first: the PC may not have written it out)
+   rfprobe: rebooting into it (unmount the drive on the PC first, if it wrote to it)
    (with an app of the same USB profile loaded, or none: "rfprobe: started", no reboot)
 
 and, on the shell of the boot into it:
@@ -136,7 +139,7 @@ and, on the shell of the boot into it:
 
    uart:~$ multiapp info
    host 0.1.0, build 8a61693d
-   boot: rfprobe, start 0, USB profile 0x0
+   boot: rfprobe, start 0, USB profile 0x4
    rfprobe (file): text 3002 at 0x42167c5c, data 448, bss 4, rodata 872, 6067 bytes in heaps
      command probe
    uart:~$ probe f 2437
@@ -155,9 +158,10 @@ Commands
    * - ``multiapp run <name>``
      - starts the app. With another app loaded it stops and unloads that one and the modules the new
        app leaves out, then loads the new one, without a reboot, if both have the same USB profile
-       (not the drive's), neither takes the console, and the running app ends (its ``main()``
-       returns or its ``multiapp_app_stop()`` makes it). Otherwise it reboots into the app. An
-       error after the unload began reboots too. The shell stays up for an in-place switch.
+       (the drive is in all but ``stream``'s), neither takes the console, and the running app ends
+       (its ``main()`` returns or its ``multiapp_app_stop()`` makes it). Otherwise it reboots into
+       the app. An error after the unload began reboots too. The shell stays up for an in-place
+       switch.
    * - ``multiapp info``
      - the host's build id, the stack its ``main()`` used, the loaded app's origin, sizes and
        commands, the uptime, the area's owner, and a line per heap (module_heap, module_high_heap,
@@ -197,8 +201,13 @@ running with a small kernel, without a reboot. An app declares a stage
 - A kernel imports only what the host exports already or the app defines: the build says
   otherwise. Changing a kernel never changes the host's build id, so no file goes stale.
 - ``put``/``data``/``end`` upload the file as base64 lines over the shell (UART or CDC-ACM);
-  ``kswap.py`` paces them. ``load`` reads a file of the volume (not on the ESP32-S3 yet).
+  ``kswap.py`` paces them. ``load`` reads a file of the volume, on both chips (the PC's
+  drive is hidden meanwhile, `Copying over USB`_).
 - ``CONFIG_MULTIAPP_KERNELS_IN_VOLUME`` also puts the kernels in the FAT image.
+- On the ESP32-S3 the 802.15.4 driver's waveform generator ``tx_gen`` is a stage too, of the
+  ``ieee154`` module (``apps/wpan/kernels``: ``tx_gen_ref``, the same algorithm, and ``tx_gen_alt``,
+  one chip inverted on purpose). Swap with the radio off (``wpan off``); ``wpan bench ack`` then
+  prints how many words differ from the built-in generator (0 for ``tx_gen_ref``).
 - Details, the protocol and what it guarantees:
   `multiapp internals <../../doc/apps/multiapp-internals.md>`__.
 
@@ -222,11 +231,25 @@ The volume
 Copying over USB
 ----------------
 
-- In a boot without an app the PC sees the volume as a USB drive next to the shell.
-- Copy files from ``build/multiapp/multiapp/llext/files/`` onto it, eject it (the PC may cache what
-  it writes), then ``multiapp run`` the app.
-- Writes are slow, about 60 kB/s: every 4 KiB flash page is erased and rewritten.
-- ``west dfu --storage`` writes the whole volume (``mkfat.py`` builds its image).
+- The PC sees the volume as a USB drive next to the shell in every boot, an app running or not,
+  except ``stream``'s: its NCM network function takes the S3's last IN endpoint, so copy in a boot
+  of another app. On the S31 ``osmosdr_hs``'s stream and the drive share the controller
+  (``g-tx-fifo-size`` in the board's overlay).
+- Copy files from ``build/multiapp/multiapp/llext/files/`` (apps) or the build's kernel files onto
+  it, ``sync``, then ``udisksctl unmount -b /dev/sdX``. Do not ``eject``: Zephyr's mass storage then
+  reports no medium until the next enumeration.
+- Then ``multiapp run`` the app or ``multiapp stage load <stage> <file>``. The device mounts the
+  volume afresh for the read and reads what the PC wrote. The drive stays: the PC's accesses wait
+  for the read, then go on, so a copy in progress is delayed, not cut. A file the PC is still
+  copying is read once more after 200 ms if it fails its CRC; a PC that copies without a pause
+  starves the read, which gives up with ``-EBUSY`` after 2 s.
+- The device never writes the volume: the S31's crystal calibration is in a partition of its own
+  (``calibration``, settings on ZMS), so a calibration over USB does not disturb a PC that has the
+  drive mounted. A device writer that did (``multiapp_drive_write_begin()``) would hide the drive
+  for at least 3 s, and while a ring runs until it stops.
+- Writes are slow, about 60 kB/s: every 4 KiB flash page is erased and rewritten, and while it
+  is, the flash cache is off for both CPUs (a running ring may restart).
+- ``west dfu --storage`` writes the whole volume (``mkfat.py`` builds its image); unmount first.
 
 MicroPython
 ===========
@@ -256,7 +279,8 @@ Boards
 - On the XIAO it has the display, LVGL, the knob and the SD card, all of them in its file: the
   launcher comes up on the panel as in the standalone app.
 - ``/SD:`` is the card, and the PC sees two drives, the volume and the card, of which a boot
-  without an app offers only the volume.
+  without an app offers only the volume. MicroPython registers the proxies of both
+  (``usb_disks.c``) and the host's own proxy for the volume stays out of that boot.
 - A restart comes up without an app, with the panel dark: ``multiapp run micropython`` starts it,
   or ``CONFIG_MULTIAPP_AUTOSTART`` at every boot, which the Communicator sets.
 - On the Communicator it has the display and the keyboard, and no SD card.

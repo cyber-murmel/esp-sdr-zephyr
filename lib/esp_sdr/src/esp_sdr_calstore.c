@@ -3,7 +3,9 @@
  *
  * The crystal calibration in Zephyr settings, key "esp_sdr/cal", with a version word. The
  * app picks the backend; the apps here use the file backend on a FAT volume in the
- * storage partition (apps/common/calstore.conf and calstore.overlay).
+ * storage partition (apps/common/calstore.conf and calstore.overlay), apps/multiapp on the
+ * ESP32-S31 settings on ZMS in a partition of its own, so that the device never writes the FAT
+ * volume the PC may have as a USB drive.
  */
 
 #include <errno.h>
@@ -17,20 +19,6 @@
 #include <esp_sdr/esp_sdr_cal.h>
 
 #include "esp_sdr_priv.h"
-
-#if defined(CONFIG_ESP_SDR_AS_EXTENSION)
-/*
- * A module of apps/multiapp: the host owns the volume, and its one lock orders the device's writes
- * to it (multiapp_drive_write_begin(): -EBUSY while the PC has the volume as a drive). Other
- * builds have the volume to themselves and name no multiapp symbol.
- */
-#include <multiapp/multiapp.h>
-#define STORE_BEGIN() multiapp_drive_write_begin(K_SECONDS(2))
-#define STORE_END()   multiapp_drive_write_end()
-#else
-#define STORE_BEGIN() 0
-#define STORE_END()   ((void)0)
-#endif
 
 LOG_MODULE_DECLARE(esp_sdr, CONFIG_ESP_SDR_LOG_LEVEL);
 
@@ -91,35 +79,27 @@ int esp_sdr_cal_load(struct esp_sdr_cal_record *rec)
 int esp_sdr_cal_save(const struct esp_sdr_cal_record *rec)
 {
 	struct cal_entry e = {.version = CAL_VERSION, .rec = *rec};
-	int ret = STORE_BEGIN();
+	int ret;
 
-	if (ret != 0) {
-		return ret;
-	}
 	k_mutex_lock(&cal_lock, K_FOREVER);
 	ret = settings_subsys_init();
 	if (ret == 0) {
 		ret = settings_save_one(CAL_KEY, &e, sizeof(e));
 	}
 	k_mutex_unlock(&cal_lock);
-	STORE_END();
 	return ret;
 }
 
 int esp_sdr_cal_clear(void)
 {
-	int ret = STORE_BEGIN();
+	int ret;
 
-	if (ret != 0) {
-		return ret;
-	}
 	k_mutex_lock(&cal_lock, K_FOREVER);
 	ret = settings_subsys_init();
 	if (ret == 0) {
 		ret = settings_delete(CAL_KEY);
 	}
 	k_mutex_unlock(&cal_lock);
-	STORE_END();
 	return ret;
 }
 

@@ -114,7 +114,7 @@ esp_dsp_s3_fft(mp_esp_dsp)
 
 # Its stack is one the area holds, as the flash needs (src/boot.c): main() only starts that thread.
 multiapp_extension(micropython APP ${mp_app} APP_CONF ${mp_ext}/app.conf STACK 1536 AREA FILE_ONLY
-  CONSOLE USB 4 REQUIRES sdr ${mp_options} # MULTIAPP_USB_MSC
+  CONSOLE USB 12 REQUIRES sdr ${mp_options} # MULTIAPP_USB_MSC | MULTIAPP_USB_OWN_DISKS
   KCONFIG ${mp_kconfig}
   KCONFIG_OWN "MICROPY.*" "SENSOR.*" "CONSOLE_HANDLER" "UART_CONSOLE_DEBUG_SERVER_HOOKS"
               "SHELL_BACKEND_DUMMY" "SHELL_PROMPT_DUMMY" "SHELL_BACKEND_DUMMY_.*" "SHELL_DUMMY_.*"

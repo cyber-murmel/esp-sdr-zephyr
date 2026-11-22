@@ -188,6 +188,15 @@ struct ieee154_esp_sdr_bench {
 	uint32_t ack_tail_ring_cyc;
 	/** Front end switch RX to TX and back, settle times included, in us. */
 	uint32_t to_tx_us, to_rx_us;
+#if defined(CONFIG_MULTIAPP_STAGES) && defined(MULTIAPP_NAME)
+	/**
+	 * apps/multiapp, where the waveform generator is a hot-swappable stage (tx_gen): the words of the
+	 * ACK that the stage's function wrote and the built-in generator's differ, 0 for a kernel of the
+	 * same algorithm, UINT32_MAX when it could not be checked. What "wpan bench dma ack" prints as
+	 * "words differ" in a standalone build.
+	 */
+	uint32_t stage_differ;
+#endif
 };
 
 /** @brief Time the ACK waveform build and the front end switches (radio taken meanwhile). */

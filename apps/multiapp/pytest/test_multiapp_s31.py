@@ -39,7 +39,7 @@ def test_files(shell: Shell):
 def test_osmosdr_hs_from_file(shell: Shell):
     # The board's default app, with the vendor class for its stream.
     out = shell.exec_command("multiapp info")
-    assert any(line.startswith("boot: osmosdr_hs, start 0, USB profile 0x2") for line in out), out
+    assert any(line.startswith("boot: osmosdr_hs, start 0, USB profile 0x6") for line in out), out
     assert any(line.startswith("osmosdr_hs (file):") for line in out), out
 
 

@@ -366,7 +366,7 @@ static void ring_sink(void *user, uint8_t *node, uint64_t index)
  * A hot-swappable stage when built as a multiapp extension (multiapp stage ...): the sink runs on
  * the diag16 thread during a run, so the quiescent point is the shell's, around each run.
  */
-MULTIAPP_STAGE_DEFINE(ring_sink, esp_sdr_diag16_sink_t, ring_sink);
+MULTIAPP_STAGE_DEFINE_INTERNAL(ring_sink, esp_sdr_diag16_sink_t, ring_sink);
 
 static int cmd_ring(const struct shell *sh, size_t argc, char **argv)
 {

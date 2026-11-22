@@ -20,6 +20,7 @@
 #include <zephyr/ztest.h>
 
 #include <esp_sdr/ieee154_phy.h>
+#include <multiapp/stage.h>
 #include <test_rng.h>
 #include <ieee154_dsp.h>
 
@@ -164,11 +165,15 @@ static void *suite_setup(void)
 	return NULL;
 }
 
+static ieee154_dsp_tx_gen_fn_t gold_gen;
+static void lib_gen(void *user, uint32_t *dst, uint64_t index, uint32_t n);
+
 static void before_each(void *fixture)
 {
 	ARG_UNUSED(fixture);
 	test_rng_seed(RNG_SEED);
 	ieee154_phy_rx_reset();
+	gold_gen = lib_gen;
 }
 
 ZTEST_SUITE(ieee154_dsp, NULL, suite_setup, before_each, NULL, NULL);
@@ -407,6 +412,12 @@ static void ref_tx_gen(const struct ieee154_dsp_tx *t, uint32_t *dst, uint64_t i
 	}
 }
 
+/* The library's generator, as the stage tx_gen's type has it (the user argument is the frame). */
+static void lib_gen(void *user, uint32_t *dst, uint64_t index, uint32_t n)
+{
+	ieee154_dsp_tx_gen(user, dst, index, n);
+}
+
 #define GOLD_MAX_WORDS ((6U + IEEE154_PHY_PSDU_MAX + 2U) * 64U * IEEE154_DSP_SLOT)
 #define GOLD_PAD       8U
 #define GOLD_SENTINEL  0xdeadbeefU
@@ -428,7 +439,7 @@ static void gold_compare(uint64_t index, uint32_t n, uint32_t off, const char *w
 		gold_new[k] = GOLD_SENTINEL;
 	}
 	ref_tx_gen(&tx, &gold_ref[GOLD_PAD + off], index, n);
-	ieee154_dsp_tx_gen(&tx, &gold_new[GOLD_PAD + off], index, n);
+	gold_gen(&tx, &gold_new[GOLD_PAD + off], index, n);
 	for (uint32_t k = 0; k < total; k++) {
 		zassert_equal(gold_new[k], gold_ref[k],
 			      "%s: index %llu n %u off %u nchips %u: word %u is %08x, want %08x", what,
@@ -448,7 +459,7 @@ static void gold_build_random(uint8_t len)
 }
 
 /* Random frames of every PSDU length 1..127: whole, and cut at random points. */
-ZTEST(ieee154_dsp, test_golden_words_random_frames)
+static void golden_random_frames(void)
 {
 	for (uint32_t len = 1; len <= IEEE154_PHY_PSDU_MAX; len++) {
 		gold_build_random((uint8_t)len);
@@ -469,7 +480,7 @@ ZTEST(ieee154_dsp, test_golden_words_random_frames)
 }
 
 /* Walk the whole frame in random chunk sizes (1 to 450 words, odd sizes among them). */
-ZTEST(ieee154_dsp, test_golden_words_chunk_walk)
+static void golden_chunk_walk(void)
 {
 	static const uint8_t lens[] = {1, 2, 5, 31, 32, 33, 64, 100, 126, 127};
 
@@ -499,7 +510,7 @@ ZTEST(ieee154_dsp, test_golden_words_chunk_walk)
  * ACKs (5 byte PSDU, random sequence number and frame pending bit, the FCS appended): whole,
  * split at 777 as the decode test does, and the ring's variable part from slot 416 on.
  */
-ZTEST(ieee154_dsp, test_golden_words_ack)
+static void golden_ack(void)
 {
 	const uint32_t first = 416U * IEEE154_DSP_SLOT;
 
@@ -521,5 +532,141 @@ ZTEST(ieee154_dsp, test_golden_words_ack)
 		for (uint32_t pos = first; pos < total; pos += 400U) {
 			gold_compare(pos, MIN(400U, total - pos), 0, "ack slices");
 		}
+	}
+}
+
+ZTEST(ieee154_dsp, test_golden_words_random_frames)
+{
+	golden_random_frames();
+}
+
+ZTEST(ieee154_dsp, test_golden_words_chunk_walk)
+{
+	golden_chunk_walk();
+}
+
+ZTEST(ieee154_dsp, test_golden_words_ack)
+{
+	golden_ack();
+}
+
+/* ------------------------------------------------- the hot-swap kernels */
+
+/*
+ * apps/wpan/kernels, linked in: the driver's stage tx_gen (lib/ieee802154/ieee154_esp_sdr.c) can run
+ * tx_gen_ref in place of its built-in generator, and tx_gen_alt, which is wrong on purpose. Both are
+ * called through the descriptors they export, as the host does.
+ */
+extern const struct multiapp_kernel_desc multiapp_kernel_ref, multiapp_kernel_alt;
+
+ZTEST(ieee154_dsp, test_kernel_descriptors_name_the_stage)
+{
+	const struct multiapp_kernel_desc *const k[] = {&multiapp_kernel_ref, &multiapp_kernel_alt};
+
+	ARRAY_FOR_EACH(k, i) {
+		zassert_equal(k[i]->magic, MULTIAPP_KERNEL_MAGIC);
+		zassert_str_equal(k[i]->stage, "tx_gen");
+		/* The spelling the driver's stage declares (MULTIAPP_STAGE_DEFINE(tx_gen, <this>, ...)). */
+		zassert_str_equal(k[i]->sig_text, "ieee154_dsp_tx_gen_fn_t");
+		zassert_not_null(k[i]->fn);
+	}
+	zassert_not_equal(multiapp_kernel_ref.fn, multiapp_kernel_alt.fn);
+}
+
+/* The kernel as the stage runs it: the same words as the library's generator for any frame and chunk. */
+ZTEST(ieee154_dsp, test_kernel_ref_golden_words_random_frames)
+{
+	gold_gen = multiapp_kernel_ref.fn;
+	golden_random_frames();
+}
+
+ZTEST(ieee154_dsp, test_kernel_ref_golden_words_chunk_walk)
+{
+	gold_gen = multiapp_kernel_ref.fn;
+	golden_chunk_walk();
+}
+
+ZTEST(ieee154_dsp, test_kernel_ref_golden_words_ack)
+{
+	gold_gen = multiapp_kernel_ref.fn;
+	golden_ack();
+}
+
+/* The kernel's words against the library's directly, the compare "wpan bench ack" makes on the board. */
+ZTEST(ieee154_dsp, test_kernel_ref_equals_library_generator)
+{
+	static uint32_t lib[GOLD_MAX_WORDS], ker[GOLD_MAX_WORDS];
+	const ieee154_dsp_tx_gen_fn_t fn = multiapp_kernel_ref.fn;
+
+	for (int i = 0; i < 40; i++) {
+		uint8_t ack[5] = {0x02, 0x00, (uint8_t)i};
+
+		(void)ieee154_phy_append_fcs(ack, 3U);
+		ieee154_dsp_tx_build(&tx, ack, sizeof(ack));
+		const uint32_t total = (uint32_t)ieee154_dsp_tx_samples(&tx);
+
+		ieee154_dsp_tx_gen(&tx, lib, 0, total);
+		fn(&tx, ker, 0, total);
+		zassert_mem_equal(ker, lib, 4U * total, "ack %d", i);
+	}
+	gold_build_random(IEEE154_PHY_PSDU_MAX);
+	const uint32_t total = (uint32_t)ieee154_dsp_tx_samples(&tx);
+
+	ieee154_dsp_tx_gen(&tx, lib, 0, total);
+	fn(&tx, ker, 0, total);
+	zassert_mem_equal(ker, lib, 4U * total, "longest frame");
+}
+
+/*
+ * tx_gen_alt: the library's words with chip 500 inverted, and nothing else: the oracle sees a number
+ * of words that differ (the two slots the chip is in, at most 2 x 20), and the rest is the same.
+ */
+ZTEST(ieee154_dsp, test_kernel_alt_inverts_one_chip)
+{
+	static uint32_t lib[GOLD_MAX_WORDS], ker[GOLD_MAX_WORDS], flip[GOLD_MAX_WORDS];
+	const ieee154_dsp_tx_gen_fn_t fn = multiapp_kernel_alt.fn;
+	static const uint8_t lens[] = {3, 5, 6, 40, 127};
+
+	ARRAY_FOR_EACH(lens, l) {
+		gold_build_random(lens[l]);
+		const uint32_t total = (uint32_t)ieee154_dsp_tx_samples(&tx);
+		struct ieee154_dsp_tx inv = tx;
+		uint32_t differ = 0, first = UINT32_MAX, last = 0;
+
+		inv.chips[500U / 32U] ^= 1U << (31U - 500U % 32U);
+		ieee154_dsp_tx_gen(&tx, lib, 0, total);
+		ieee154_dsp_tx_gen(&inv, flip, 0, total);
+		fn(&tx, ker, 0, total);
+		/* The same as the library's generator on a frame with that one chip the other way. */
+		zassert_mem_equal(ker, flip, 4U * total, "len %u", lens[l]);
+		for (uint32_t k = 0; k < total; k++) {
+			if (ker[k] != lib[k]) {
+				differ++;
+				first = MIN(first, k);
+				last = k;
+			}
+		}
+		zassert_between_inclusive(differ, 1U, 2U * IEEE154_DSP_SLOT, "len %u: %u words differ",
+					  lens[l], differ);
+		zassert_true(first >= 500U * IEEE154_DSP_SLOT && last < 502U * IEEE154_DSP_SLOT,
+			     "len %u: words differ from %u to %u", lens[l], first, last);
+	}
+}
+
+/* Chunks that cut the two slots anywhere give the same words as the whole frame in one call. */
+ZTEST(ieee154_dsp, test_kernel_alt_chunks_agree_with_the_whole_frame)
+{
+	static uint32_t whole[GOLD_MAX_WORDS], part[GOLD_MAX_WORDS];
+	const ieee154_dsp_tx_gen_fn_t fn = multiapp_kernel_alt.fn;
+
+	gold_build_random(60);
+	const uint32_t total = (uint32_t)ieee154_dsp_tx_samples(&tx);
+
+	fn(&tx, whole, 0, total);
+	for (uint32_t chunk = 1; chunk < 3U * IEEE154_DSP_SLOT; chunk += 7U) {
+		for (uint32_t pos = 0; pos < total; pos += chunk) {
+			fn(&tx, &part[pos], pos, MIN(chunk, total - pos));
+		}
+		zassert_mem_equal(part, whole, 4U * total, "chunk %u", chunk);
 	}
 }

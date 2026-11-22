@@ -1,13 +1,15 @@
 /*
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * The apps as files: <name>.llext on the FAT volume (partition "fat", disk
- * "FLASH"). The host reads it only at boot, before USB and before an app:
- * the FATFS object is in bank 0, which an app's ring overwrites. Reads go in
- * chunks below a sector,
- * so the flash driver never gets a PSRAM buffer. A boot without an app lends
- * the volume to the PC as a USB drive; the DFU target "fat" writes it whole
- * (mkfat.py, west dfu --storage).
+ * The apps as files: <name>.llext on the FAT volume (partition "fat", disk "FLASH"). The host reads
+ * them at boot, before USB, and when an app starts. The PC may use the volume as a USB drive in
+ * every boot that has an endpoint for it, an app running or not: the drive goes through a proxy
+ * disk (src/drive_proxy.h). The device only reads the volume (an app's file, a kernel file), and
+ * takes it for the time with a claim that makes the PC's disk accesses wait, without hiding the
+ * medium. A device writer would hide it (multiapp_drive_write_begin()); the crystal calibration is
+ * not one: it has a partition of its own. Reads go in chunks below a sector, so the flash driver
+ * never gets a PSRAM buffer. The DFU target "fat" writes the volume whole (mkfat.py, west dfu
+ * --storage).
  */
 
 #include <errno.h>
@@ -15,7 +17,9 @@
 #include <string.h>
 
 #include <ff.h>
+#include <zephyr/drivers/disk.h>
 #include <zephyr/fs/fs.h>
+#include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/storage/disk_access.h>
@@ -31,12 +35,17 @@
 
 #include "app_usb.h"
 #include "apps.h"
+#include "drive_proxy.h"
 
 LOG_MODULE_DECLARE(multiapp, LOG_LEVEL_INF);
 
 #define MOUNT_POINT "/FLASH:"
+/* The flash disk's name, behind the proxy the PC's drive uses. */
+#define DISK_NAME   "FLASH"
 #define READ_CHUNK  256U
 #define MAX_APPS    16U
+/* How long the device waits to have the volume, the PC's command in flight included. */
+#define CLAIM_MS    2000
 
 static FATFS multiapp_fat_fs;
 static struct fs_mount_t fat_mount = {
@@ -89,29 +98,64 @@ static ssize_t read_file(struct fs_file_t *f, uint8_t *buf, size_t max, const ui
 	}
 }
 
-#if defined(CONFIG_SETTINGS_FILE)
-/* Mounted read-write for the boot's app: the reads below use that mount. */
-static bool mounted_rw;
+/*
+ * The PC's drive and the device take turns (src/drive_proxy.h): every device access to the volume
+ * after boot is bracketed by drive_take() and drive_give(), in a thread of an internal stack (the
+ * shell's, main's, an app's: the flash driver turns the cache off) that is not the USB thread. A
+ * read waits for the PC's command in flight, makes the PC's next accesses wait, mounts the volume
+ * afresh and reads; the medium stays. While the PC has the medium and no claim is held, the device
+ * does not touch the volume.
+ */
+static struct drive_proxy px;
 
-int multiapp_drive_mount_rw(void)
+/* Before the PC gets the medium back after a writer. */
+static void sync_volume(void)
 {
-	int ret;
-
-	/* Every app start asks, an in-place switch included: mounted, it stays so. */
-	if (mounted_rw) {
-		return 0;
-	}
-	fat_mount.flags = FS_MOUNT_FLAG_NO_FORMAT;
-	ret = fs_mount(&fat_mount);
-	if (ret != 0) {
-		fat_mount.flags = FS_MOUNT_FLAG_READ_ONLY | FS_MOUNT_FLAG_NO_FORMAT;
-		LOG_WRN("volume not mounted read-write (%d)", ret);
-		return ret;
-	}
-	mounted_rw = true;
-	return 0;
+	(void)disk_access_ioctl(DISK_NAME, DISK_IOCTL_CTRL_SYNC, NULL);
 }
-#endif
+
+/* Zephyr's USB thread: its callbacks carry the PC's data, so a claim there would wait for itself. */
+static bool in_usb_thread(void)
+{
+	const char *name = k_thread_name_get(k_current_get());
+
+	return name != NULL && strcmp(name, "usbd") == 0;
+}
+
+static int claim(bool write, k_timeout_t timeout)
+{
+	int ret = drive_take(&px, timeout, write);
+
+	if (ret == -EDEADLK) {
+		LOG_ERR("the volume is claimed from the USB thread (or a write inside a read): refused");
+	}
+	return ret;
+}
+
+int multiapp_drive_write_begin(k_timeout_t timeout)
+{
+	return claim(true, timeout);
+}
+
+int multiapp_drive_read_begin(k_timeout_t timeout)
+{
+	return claim(false, timeout);
+}
+
+void multiapp_drive_write_end(void)
+{
+	drive_give(&px);
+}
+
+void multiapp_drive_read_end(void)
+{
+	drive_give(&px);
+}
+
+void multiapp_drive_busy_hook(bool (*busy)(void))
+{
+	drive_proxy_set_busy(&px, busy);
+}
 
 int multiapp_drive_scan(void)
 {
@@ -172,11 +216,13 @@ int multiapp_drive_file(const char *name, ssize_t *size, bool *same)
 }
 
 /*
- * The USB drives, in a host section whatever the boot runs. In a boot without an app the volume itself,
- * and the SD card's LUN has no medium. MicroPython registers disks of its own that hide a volume while
- * the board writes it (its src/usb_disks.c), and these point at them from the start of its boot.
+ * The USB drive, in a host section whatever the boot runs: the LUN's disk is a proxy that reports no
+ * medium while the device has the volume (drive_proxy.h). MicroPython registers disks of its own
+ * that do the same (its src/usb_disks.c), and a boot with it points the LUN at them
+ * (multiapp_drive_app_disks()). The SD card's LUN has no medium in the other boots.
  */
-static char usb_flash_disk[8] = "FLASH";
+#define PROXY_NAME "HFLASH"
+static char usb_flash_disk[8] = PROXY_NAME;
 
 USBD_DEFINE_MSC_LUN(a_fat, usb_flash_disk, "ESP-SDR", "multiapp", "1.0");
 #if DT_NODE_EXISTS(DT_NODELABEL(sd_fs))
@@ -188,81 +234,127 @@ void multiapp_drive_app_disks(void)
 	strcpy(usb_flash_disk, "UFLASH");
 }
 
-/*
- * The device's writes to the volume (calibration settings today, files later) take one lock, so
- * that the writers keep out of each other's way and out of the PC's: a PC that has the volume as a
- * drive is its only writer (doc/apps/multiapp-internals.md, "Writers and readers of the volume").
- */
-static K_MUTEX_DEFINE(write_lock);
-/* HOOK: set while the PC holds the volume over USB MSC; the begin below refuses then. */
-static atomic_t msc_exported;
-
-void multiapp_drive_msc_set(bool exported)
+/* Only the device initializes the disk (the boot's mount does): the USB thread must not race it. */
+static int proxy_init(struct disk_info *disk)
 {
-	atomic_set(&msc_exported, exported ? 1 : 0);
-}
-
-int multiapp_drive_write_begin(k_timeout_t timeout)
-{
-	if (atomic_get(&msc_exported) != 0) {
-		return -EBUSY;
-	}
-	if (k_mutex_lock(&write_lock, timeout) != 0) {
-		return -EAGAIN;
-	}
-	/* The PC may have taken the volume while this waited. */
-	if (atomic_get(&msc_exported) != 0) {
-		k_mutex_unlock(&write_lock);
-		return -EBUSY;
-	}
+	ARG_UNUSED(disk);
 	return 0;
 }
 
-void multiapp_drive_write_end(void)
+static int proxy_status(struct disk_info *disk)
 {
-	k_mutex_unlock(&write_lock);
+	ARG_UNUSED(disk);
+	if (!drive_proxy_visible(&px)) {
+		return DISK_STATUS_NOMEDIA;
+	}
+	return disk_access_status(DISK_NAME);
 }
 
-int multiapp_drive_export(void)
+/* The MSC thread's accesses (its stack is internal: the flash driver turns the cache off). */
+static int proxy_read(struct disk_info *disk, uint8_t *buf, uint32_t sector, uint32_t count)
 {
-	/* The PC writes from here on: the device's writers get -EBUSY. */
-	multiapp_drive_msc_set(true);
-	/* MSC reports no medium until the disk is initialized. */
-	return disk_access_init("FLASH");
+	int ret = -EIO;
+
+	ARG_UNUSED(disk);
+	if (drive_proxy_io_begin(&px)) {
+		ret = disk_access_read(DISK_NAME, buf, sector, count);
+		drive_proxy_io_end(&px);
+	}
+	return ret;
 }
 
-/* Read the file at @p path of the volume whole into @p buf; its size or -errno. */
+static int proxy_write(struct disk_info *disk, const uint8_t *buf, uint32_t sector,
+		       uint32_t count)
+{
+	int ret = -EIO;
+
+	ARG_UNUSED(disk);
+	if (drive_proxy_io_begin(&px)) {
+		ret = disk_access_write(DISK_NAME, buf, sector, count);
+		drive_proxy_io_end(&px);
+	}
+	return ret;
+}
+
+static int proxy_ioctl(struct disk_info *disk, uint8_t cmd, void *buf)
+{
+	ARG_UNUSED(disk);
+	switch (cmd) {
+	case DISK_IOCTL_GET_SECTOR_COUNT:
+	case DISK_IOCTL_GET_SECTOR_SIZE:
+	case DISK_IOCTL_GET_ERASE_BLOCK_SZ:
+	case DISK_IOCTL_CTRL_SYNC:
+		return disk_access_ioctl(DISK_NAME, cmd, buf);
+	default:
+		/* Init, deinit and power stay with the device's mounts. */
+		return 0;
+	}
+}
+
+static const struct disk_operations proxy_ops = {
+	.init = proxy_init,
+	.status = proxy_status,
+	.read = proxy_read,
+	.write = proxy_write,
+	.ioctl = proxy_ioctl,
+};
+
+static struct disk_info proxy_info = {.name = PROXY_NAME, .ops = &proxy_ops};
+
+/* Before USB starts (app_usb_init()), whose MSC class looks the LUN's disk up. */
+static int drive_proxy_setup(void)
+{
+	/* Device users mount the volume themselves, inside the claim: nothing to remount. */
+	static const struct drive_proxy_hooks hooks = {
+		.sync = sync_volume,
+		.in_usb_thread = in_usb_thread,
+	};
+
+	drive_proxy_init(&px, &hooks);
+	return disk_access_register(&proxy_info);
+}
+SYS_INIT(drive_proxy_setup, APPLICATION, 0);
+
+bool multiapp_drive_on_bus(void)
+{
+	return drive_proxy_is_on_bus(&px);
+}
+
+void multiapp_drive_msc_set(bool on_bus)
+{
+	/* MSC reports no medium until the disk is initialized (the boot's scan did, when it found a volume). */
+	if (on_bus && disk_access_status(DISK_NAME) != DISK_STATUS_OK) {
+		(void)disk_access_init(DISK_NAME);
+	}
+	drive_proxy_on_bus(&px, on_bus);
+}
+
+/*
+ * Read the file at @p path of the volume whole into @p buf; its size or -errno. The claim first:
+ * -EBUSY when the PC's access does not end in time (a copy that goes on), -EDEADLK from the USB
+ * thread. The volume is mounted for this read and unmounted after: f_mount(..., 1) reads the boot
+ * sector and the FAT afresh, so what the PC wrote is what is read.
+ */
 static ssize_t read_path(const char *path, uint8_t *buf, size_t max)
 {
 	struct fs_file_t f;
 	ssize_t ret;
 
-#if defined(CONFIG_SETTINGS_FILE)
-	if (!mounted_rw) {
-		ret = fs_mount(&fat_mount);
-		if (ret != 0) {
-			return ret;
-		}
-	}
-#else
-	ret = fs_mount(&fat_mount);
+	ret = claim(false, K_MSEC(CLAIM_MS));
 	if (ret != 0) {
-		return ret;
+		return ret == -EAGAIN ? -EBUSY : ret;
 	}
-#endif
-	fs_file_t_init(&f);
-	ret = fs_open(&f, path, FS_O_READ);
+	ret = fs_mount(&fat_mount);
 	if (ret == 0) {
-		ret = read_file(&f, buf, max, NULL, NULL);
-		(void)fs_close(&f);
-	}
-#if defined(CONFIG_SETTINGS_FILE)
-	if (!mounted_rw) {
+		fs_file_t_init(&f);
+		ret = fs_open(&f, path, FS_O_READ);
+		if (ret == 0) {
+			ret = read_file(&f, buf, max, NULL, NULL);
+			(void)fs_close(&f);
+		}
 		(void)fs_unmount(&fat_mount);
 	}
-#else
-	(void)fs_unmount(&fat_mount);
-#endif
+	drive_give(&px);
 	return ret;
 }
 
@@ -276,23 +368,9 @@ ssize_t multiapp_drive_read(const char *name, uint8_t *buf, size_t max)
 
 ssize_t multiapp_drive_read_file(const char *file, uint8_t *buf, size_t max)
 {
-#if defined(CONFIG_SOC_SERIES_ESP32S3)
-	/*
-	 * The FATFS object is in ring bank 0 (multiapp_bank0.ld), which a running app's ring
-	 * overwrites: not while an app runs, until the object moves out of the bank.
-	 */
-	ARG_UNUSED(file);
-	ARG_UNUSED(buf);
-	ARG_UNUSED(max);
-	return -ENOTSUP;
-#else
 	char path[48];
 	int n;
 
-	/* The PC has the volume as a drive: it may be writing it, and a read now could see half a file. */
-	if (atomic_get(&msc_exported) != 0) {
-		return -EBUSY;
-	}
 	/* A name in the volume's root: no path, no hidden file. */
 	if (file[0] == '\0' || file[0] == '.' || strpbrk(file, "/\\:") != NULL) {
 		return -EINVAL;
@@ -302,7 +380,6 @@ ssize_t multiapp_drive_read_file(const char *file, uint8_t *buf, size_t max)
 		return -ENAMETOOLONG;
 	}
 	return read_path(path, buf, max);
-#endif
 }
 
 /*

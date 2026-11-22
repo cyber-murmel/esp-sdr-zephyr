@@ -44,6 +44,7 @@
 #include "app_crash.h"
 #include "app_usb.h"
 #include "apps.h"
+#include "profile.h"
 #include "runguard.h"
 
 LOG_MODULE_REGISTER(multiapp, LOG_LEVEL_INF);
@@ -214,6 +215,12 @@ static int boot_ret;
 /* How long it took: the modules it needs, with the radio coming up, then the app itself. */
 static uint32_t modules_ms, app_ms;
 
+/* The classes a boot of @p app registers: its own and the drive where an endpoint is left (profile.h). */
+static uint32_t profile_of(const struct multiapp_embedded *app)
+{
+	return multiapp_usb_profile(app->usb, IS_ENABLED(CONFIG_USBD_MSC_CLASS));
+}
+
 /*
  * Internal RAM for one user per boot: the boot's app if it has buffers there
  * (ESP_SDR_HIGH_BUF_DEFINE(), exports.py), else the 802.15.4 driver.
@@ -306,7 +313,7 @@ static int boot_pick(void)
 		}
 	}
 	app = multiapp_embedded_find(boot_name);
-	usb_profile = app != NULL ? app->usb : MULTIAPP_USB_MSC;
+	usb_profile = app != NULL ? profile_of(app) : MULTIAPP_USB_MSC;
 	area_app = app != NULL && app->area ? app : NULL;
 	bank2_app = app != NULL && app->bank2 ? app : NULL;
 	return 0;
@@ -355,9 +362,14 @@ void app_usb_classes(struct usbd_context *ctx)
 		(void)usbd_unregister_class(ctx, "esp_sdr_usb", USBD_SPEED_FS, 1);
 		CLASS_DROP_HS(ctx, "esp_sdr_usb");
 	}
-	if (IS_ENABLED(CONFIG_USBD_MSC_CLASS) && (usb_profile & MULTIAPP_USB_MSC) == 0U) {
-		(void)usbd_unregister_class(ctx, "msc_0", USBD_SPEED_FS, 1);
-		CLASS_DROP_HS(ctx, "msc_0");
+	if (IS_ENABLED(CONFIG_USBD_MSC_CLASS)) {
+		if ((usb_profile & MULTIAPP_USB_MSC) == 0U) {
+			(void)usbd_unregister_class(ctx, "msc_0", USBD_SPEED_FS, 1);
+			CLASS_DROP_HS(ctx, "msc_0");
+		} else if ((usb_profile & MULTIAPP_USB_OWN_DISKS) == 0U) {
+			/* The drive is on the bus: the device's own use of the volume hides it from the PC. */
+			multiapp_drive_msc_set(true);
+		}
 	}
 }
 
@@ -507,6 +519,19 @@ static int check_trailer(const char *name, const char *source, const uint8_t *da
 	return 0;
 }
 
+/* Read the app's file and check its trailer: 0, or -errno with the bytes read (or the error) in @p n. */
+static int read_checked(const struct multiapp_embedded *app, ssize_t *n, size_t *elf_size,
+			uint32_t *stack_need)
+{
+	*n = multiapp_drive_status() == 0 ? multiapp_drive_read(app->name, FILE_BUF, FILE_BUF_SIZE)
+					  : multiapp_drive_status();
+	if (*n < 0) {
+		return (int)*n;
+	}
+	return check_trailer(app->name, "file", FILE_BUF, *n, MULTIAPP_TRAILER_MAGIC, elf_size,
+			     stack_need);
+}
+
 /* Read one extension, from its file if the volume has a good one, and load it. */
 static int load_extension(const struct multiapp_embedded *app, struct llext **ext,
 			  const char **source, uint32_t *stack_need)
@@ -517,10 +542,14 @@ static int load_extension(const struct multiapp_embedded *app, struct llext **ex
 	ssize_t n;
 	int ret;
 
-	n = multiapp_drive_status() == 0 ? multiapp_drive_read(app->name, FILE_BUF, FILE_BUF_SIZE)
-					 : multiapp_drive_status();
-	if (n >= 0 && check_trailer(app->name, "file", FILE_BUF, n, MULTIAPP_TRAILER_MAGIC, &elf_size,
-			  stack_need) == 0) {
+	ret = read_checked(app, &n, &elf_size, stack_need);
+	if ((ret == -EBADMSG || ret == -ENOEXEC || ret == -EIO || ret == -EINVAL) &&
+	    multiapp_drive_on_bus()) {
+		/* The PC may be copying the file, or the FAT is half written: once more after a pause. */
+		k_msleep(DRIVE_RETRY_MS);
+		ret = read_checked(app, &n, &elf_size, stack_need);
+	}
+	if (ret == 0) {
 		data = FILE_BUF;
 		*source = "file";
 	} else if (app->elf != NULL &&
@@ -771,20 +800,24 @@ static int ext_unload(const char *name, struct llext **ext, bool up)
 /*
  * A hot-swap kernel (include/multiapp/stage.h, src/stage.c): a small extension loaded into the
  * running app from a file image, under a name of its own each time (llext knows an extension by
- * name, and a second load of a name only counts a user). It may import from the host and the app,
- * nothing else: a symbol found in another loaded extension would make a dependency whose use count
- * guards the wrong thing (llext also drops the ones past LLEXT_MAX_DEPENDENCIES silently), so any
- * dependency but the app's is refused.
+ * name, and a second load of a name only counts a user). It may import from the host, the app and
+ * the extension that holds its stage (the app, or the module that defined it: the 802.15.4
+ * driver's tx_gen), nothing else: a symbol found in another loaded extension would make a dependency
+ * whose use count guards the wrong thing (llext also drops the ones past LLEXT_MAX_DEPENDENCIES
+ * silently), so any other dependency is refused. exports.py check-kernel makes the same check at
+ * build time against the library multiapp_kernel(... APP <extension>) names.
  */
 static unsigned int kernel_seq;
 
-static int kernel_check_deps(const struct multiapp_kernel *k)
+static int kernel_check_deps(const struct multiapp_kernel *k, const char *stage)
 {
 	for (int i = 0; i < LLEXT_MAX_DEPENDENCIES && k->ext->dependency[i] != NULL; i++) {
-		if (k->ext->dependency[i] != loaded) {
+		const struct llext *dep = k->ext->dependency[i];
+
+		if (dep != loaded && !multiapp_stage_owned_by(stage, dep, ext_has)) {
 			LOG_ERR("%s: imports from extension %s: a kernel may import only from the "
-				"host and from the app (exports.py checks that at build time)",
-				k->name, k->ext->dependency[i]->name);
+				"host, from the app and from the extension that holds its stage %s "
+				"(exports.py checks that at build time)", k->name, dep->name, stage);
 			return -ENOEXEC;
 		}
 	}
@@ -850,7 +883,18 @@ int multiapp_kernel_load(const uint8_t *file, size_t len, const char *source,
 	ret = area_check(k->name, k->ext);
 	if (ret == 0) {
 		sync_text(k->ext);
-		ret = kernel_check_deps(k);
+		/* Relocated at load: the descriptor is readable before the constructors run, and
+		 * says which stage, hence whose extension, the dependencies may be. */
+		desc = llext_find_sym(&k->ext->exp_tab, "multiapp_kernel");
+		if (desc == NULL || !ext_has(k->ext, (uintptr_t)desc) ||
+		    desc->magic != MULTIAPP_KERNEL_MAGIC || desc->stage == NULL ||
+		    desc->sig_text == NULL || !ext_has(k->ext, (uintptr_t)desc->fn)) {
+			LOG_ERR("%s: no usable descriptor (multiapp_kernel, MULTIAPP_KERNEL_DEFINE())",
+				k->name);
+			ret = -ENOEXEC;
+		} else {
+			ret = kernel_check_deps(k, desc->stage);
+		}
 	}
 	if (ret == 0) {
 		ret = llext_bringup(k->ext);
@@ -860,18 +904,9 @@ int multiapp_kernel_load(const uint8_t *file, size_t len, const char *source,
 		}
 	}
 	if (ret == 0) {
-		desc = llext_find_sym(&k->ext->exp_tab, "multiapp_kernel");
-		if (desc == NULL || !ext_has(k->ext, (uintptr_t)desc) ||
-		    desc->magic != MULTIAPP_KERNEL_MAGIC || desc->stage == NULL ||
-		    desc->sig_text == NULL || !ext_has(k->ext, (uintptr_t)desc->fn)) {
-			LOG_ERR("%s: no usable descriptor (multiapp_kernel, MULTIAPP_KERNEL_DEFINE())",
-				k->name);
-			ret = -ENOEXEC;
-		} else {
-			k->desc = desc;
-			k->fn = desc->fn;
-			kernel_fill(k);
-		}
+		k->desc = desc;
+		k->fn = desc->fn;
+		kernel_fill(k);
 	}
 	if (ret != 0) {
 		(void)multiapp_kernel_unload(k);
@@ -1040,14 +1075,6 @@ int multiapp_start(const char *name)
 		return -EBUSY;
 	}
 	boot_step(STEP_LOADING);
-#if defined(CONFIG_SETTINGS_FILE)
-	/*
-	 * The settings file on the volume, read-write for the boot (apps/common/calstore.conf, and
-	 * the PHY's calibration as the hal keeps it there): a boot with an app never gives the volume
-	 * to the PC. The files load through this mount.
-	 */
-	(void)multiapp_drive_mount_rw();
-#endif
 	started = k_uptime_get_32();
 	ret = area_claim(app);
 	if (ret == 0) {
@@ -1377,16 +1404,17 @@ static int multiapp_switch(const struct multiapp_embedded *app)
 
 /*
  * Whether going from what runs to @p app needs no reboot: the USB descriptors and the classes
- * the host registered stay as they were (the same profile, none of them the drive that the PC
- * may hold), and nobody wants the console, which the shell gives up for good.
+ * the host registered stay as they were (the same profile; the drive, which the PC may hold, is the
+ * host's and stays up through the switch, except where the app brought its own disks), and nobody
+ * wants the console, which the shell gives up for good.
  */
 static bool switch_ok(const struct multiapp_embedded *app)
 {
-	if (app->console || app->usb != usb_profile) {
+	if (app->console || profile_of(app) != usb_profile) {
 		return false;
 	}
-	if (loaded != NULL &&
-	    (loaded_def == NULL || loaded_def->console || (usb_profile & MULTIAPP_USB_MSC) != 0U)) {
+	if (loaded != NULL && (loaded_def == NULL || loaded_def->console ||
+			       (usb_profile & MULTIAPP_USB_OWN_DISKS) != 0U)) {
 		/* No def: an app that failed to unload, which only a reboot replaces. */
 		return false;
 	}
@@ -1423,7 +1451,7 @@ int multiapp_request(const char *name)
 		LOG_ERR("%s: switching in place failed (%d), rebooting into it", name, ret);
 	}
 #else
-	if (loaded == NULL && app->usb == usb_profile && (!app->area || area_app == app) &&
+	if (loaded == NULL && profile_of(app) == usb_profile && (!app->area || area_app == app) &&
 	    (!app->bank2 || bank2_app == app) && !app->console) {
 		return multiapp_start(name);
 	}
@@ -1450,7 +1478,7 @@ bool multiapp_boot(void)
 		LOG_ERR("%s: not started (%d)", boot_name, ret);
 		/* USB has not started: it comes up without the app's classes, with the drive. */
 		usb_profile = MULTIAPP_USB_MSC;
-	} else if ((usb_profile & MULTIAPP_USB_MSC) != 0U) {
+	} else if ((usb_profile & MULTIAPP_USB_OWN_DISKS) != 0U) {
 		multiapp_drive_app_disks();
 	}
 	/* Before the shell is open: "multiapp info" tells. */
@@ -1663,7 +1691,7 @@ static int cmd_run(const struct shell *sh, size_t argc, char **argv)
 	} else if (ret == 1) {
 		shell_print(sh, "%s: rebooting into it%s", argv[1],
 			    (usb_profile & MULTIAPP_USB_MSC) != 0U
-				    ? " (eject the drive first: the PC may not have written it out)"
+				    ? " (unmount the drive on the PC first, if it wrote to it)"
 				    : "");
 		ret = 0;
 	} else if (ret != 0) {

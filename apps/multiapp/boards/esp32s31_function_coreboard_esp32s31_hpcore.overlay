@@ -2,8 +2,9 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * The ESP32-S31-Function-CoreBoard-1's USB 2.0 OTG HS port, its USB-A socket J4: the shell on a
- * CDC-ACM port, the drive, DFU and osmosdr_hs's stream. Its VBUS is driven whenever the board has
- * power: connect it with VBUS cut (apps/osmosdr_hs/README.rst). The console stays on UART0.
+ * CDC-ACM port, the drive (also while an app runs), DFU and osmosdr_hs's stream. Its VBUS is
+ * driven whenever the board has power: connect it with VBUS cut (apps/osmosdr_hs/README.rst). The
+ * console stays on UART0.
  */
 
 / {
@@ -16,11 +17,14 @@ zephyr_udc0: &usb_otg {
 	status = "okay";
 
 	/*
-	 * A FIFO per IN endpoint, in the order the classes take them: CDC-ACM's notification (1) and
-	 * data (2), then osmosdr_hs's stream or the drive (3). The stream needs at least 256 words
-	 * (apps/osmosdr_hs's overlay); 608 of the controller's 896 are left after RX and EP0.
+	 * A FIFO per IN endpoint, in the order the classes take them (first fit, in the order CDC-ACM,
+	 * DFU, the vendor class, the drive): CDC-ACM's notification (EP1, 16 words: interrupt only) and
+	 * data (EP2), then osmosdr_hs's stream (EP3: at least 256 words, apps/osmosdr_hs's overlay) and
+	 * the drive (EP4: 128 words, one 512-byte bulk packet, the least a bulk IN endpoint has). A boot
+	 * without osmosdr_hs gives the drive EP3. With RX (256) and EP0 (32) the 608 words below make
+	 * the 896 the controller has (GHWCFG3), none left over.
 	 */
-	g-tx-fifo-size = <16 128 400 16 16 16 16>;
+	g-tx-fifo-size = <16 128 288 128 16 16 16>;
 
 	cdc_acm_uart0: cdc_acm_uart0 {
 		compatible = "zephyr,cdc-acm-uart";

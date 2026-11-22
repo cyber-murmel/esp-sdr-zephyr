@@ -1024,6 +1024,13 @@ static int cmd_bench(const struct shell *sh, size_t argc, char **argv)
 			    ret, b.ack_words, b.ack_build_cyc, b.ack_gen_cyc, b.ack_tail_cyc);
 		shell_print(sh, "ack from slot 416 as the ring builds it (vector unit, irqs off, best"
 			    " of 8): %u cycles", b.ack_tail_ring_cyc);
+#if defined(CONFIG_MULTIAPP_STAGES) && defined(MULTIAPP_NAME)
+		/* The oracle of a hot-swapped generator (multiapp stage list): 0 with a kernel of the same
+		 * algorithm, the words that differ otherwise.
+		 */
+		shell_print(sh, "ack from the tx_gen stage: %u words differ from the built-in generator",
+			    b.stage_differ);
+#endif
 		shell_print(sh, "front end: to tx %u us, to rx %u us (settle times included)",
 			    b.to_tx_us, b.to_rx_us);
 		return ret;
@@ -1158,6 +1165,19 @@ void app_usb_dfu_prepare(void)
 	}
 	radio_on = false;
 }
+
+#if defined(MULTIAPP_NAME)
+/*
+ * The host unloads wpan (apps/multiapp): the radio stops first, as for a DFU download. The ring thread
+ * and the transmit thread are then out of the driver's stage tx_gen (idle), so that a hot-swapped
+ * kernel of it, which the host drops before it unloads the app, is not in a call.
+ */
+int multiapp_app_stop(void)
+{
+	app_usb_dfu_prepare();
+	return 0;
+}
+#endif
 #endif
 
 int main(void)

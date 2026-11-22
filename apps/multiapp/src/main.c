@@ -23,15 +23,12 @@ int main(void)
 	app_cpu_pin_system_threads(0);
 	app_cpu_pin_self(0);
 	/*
-	 * The files while bank 0 and the flash are the host's alone, then the app and the
-	 * modules it needs, the radio among them, before USB, whose classes call its
-	 * handlers (osmosdr's).
+	 * The files while the flash is the host's alone, then the app and the modules it needs, the
+	 * radio among them, before USB, whose classes call its handlers (osmosdr's).
 	 */
 	(void)multiapp_drive_scan();
-	if (!multiapp_boot()) {
-		/* No app: the volume goes to the PC as a USB drive. */
-		(void)multiapp_drive_export();
-	}
+	/* Without an app (none asked for, or it failed) the PC still has the volume as a USB drive. */
+	(void)multiapp_boot();
 	/* The USB shell and DFU, and the trial watchdog that reverts an image that hangs. */
 	if (app_usb_init() != 0) {
 		printk("multiapp: usb init failed\n");
