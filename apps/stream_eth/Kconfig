@@ -1,0 +1,79 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+mainmenu "ESP-SDR stream over Ethernet"
+
+config APP_VRT_STREAM_ID
+	hex "VITA 49 stream identifier of the receive stream"
+	default 0x5d5d0001
+
+config APP_VRT_PORT
+	int "UDP port for commands, and the source port of every packet the board sends"
+	default 4992
+
+config APP_VRT_RATE_HZ
+	int "Sample rate at boot, S/s (160 MHz over an even number)"
+	default 20000000
+
+config APP_VRT_MTU_CAP
+	int "Largest IP packet the stream makes, in bytes"
+	range 576 1500
+	default 1492
+	help
+	  The packets fill the interface's MTU or this, whichever is smaller. 1492 is what the
+	  router of the lab LAN announces; "stream mtu 1500" raises it on a direct cable.
+
+config APP_VRT_CELLS
+	int "Packets of staging between the ring and the MAC"
+	range 8 256
+	default 32
+	help
+	  One cell is 1472 bytes of internal RAM, of which the image has some 250 KiB below the
+	  diag16 ring for everything. The consumer drops whole nodes when the MAC is this far
+	  behind: 32 cells are 0.6 ms at 40 MS/s.
+
+config APP_VRT_BATCH
+	int "Frames the sender hands to the MAC at once"
+	range 1 32
+	default 8
+
+config APP_VRT_CLIP_STRIDE
+	int "Over-range check: one 32-bit word in this many"
+	range 1 64
+	default 4
+	help
+	  1 looks at every sample byte (about 3 cycles a byte), 4 at a quarter of them. A clipped
+	  run shorter than 8 samples can slip by.
+
+config APP_VRT_RAMFUNC
+	bool "Run the sender from internal RAM"
+	depends on SOC_FAMILY_ESPRESSIF_ESP32
+
+config APP_VRT_SENDER_CPU
+	int "CPU of the sender thread with SMP (-1: not pinned)"
+	default 1
+	range -1 1
+
+config APP_VRT_RX_CPU
+	int "CPU of the ring consumer thread with SMP (-1: not pinned)"
+	default 0
+	range -1 1
+
+config APP_VRT_SILENT_S
+	int "Seconds without a renewal after which the subscriber is dropped"
+	default 5
+
+config APP_VRT_V6_ZERO_CSUM
+	bool "Zero UDP checksum over IPv6 for a host that asks for it"
+	help
+	  A subscriber that sets bit 0 of the byte after its cookie (and UDP_NO_CHECK6_RX on its
+	  socket) gets IPv6 packets with the UDP checksum 0 (RFC 6935/6936, on-link only), which
+	  saves the checksum's cycles. Risk: nothing then checks the payload end to end; the
+	  Ethernet FCS covers each hop. Off by default.
+
+config APP_VRT_ALLOW_OFFLINK
+	bool "Take subscriptions from hosts beyond the connected prefixes"
+	help
+	  By default only unicast hosts on a connected prefix or link-local may subscribe or ask.
+	  There is no authentication: do not expose the port.
+
+source "Kconfig.zephyr"

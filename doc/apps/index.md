@@ -40,6 +40,7 @@ One line per app, in the reading order of this part.
 | [osmosdr_serial](../../apps/osmosdr_serial/README.rst) | The same over USB-Serial-JTAG, UART or SDIO; on the WHY2025 badge's C6 gapless 80 MS/s receive |
 | [osmosdr_bridge](../../apps/osmosdr_bridge/README.rst) | The WHY2025 badge's P4 as a USB high-speed osmosdr device, its C6 running `osmosdr_serial` behind it |
 | [osmosdr_hs](../../apps/osmosdr_hs/README.rst) | The ESP32-S31 as a USB high-speed osmosdr device, its own radio up to 20 MS/s |
+| [stream_eth](../../apps/stream_eth/README.rst) | The ESP32-S31 CoreBoard's gapless receive as VITA 49.2 signal data over UDP on gigabit Ethernet, 20 to 40 MS/s, unicast to whoever subscribes |
 | [chancap](../../apps/chancap/README.rst) | One capture per packet per channel of a grid, as VITA 49.2 over USB |
 
 ### Protocols
@@ -80,6 +81,7 @@ is in [Samples in and out](../samples/index.md).
 | osmosdr_serial | | yes, also WHY2025 | yes | MCH2022 | | | |
 | osmosdr_bridge | | | | | | WHY2025 | |
 | osmosdr_hs | | | | | yes, m | | |
+| stream_eth | | | | | yes, m | | |
 | chancap | yes | | | | | | |
 | link | yes, m | | | | | | |
 | wpan | yes, m | yes | | | | | |

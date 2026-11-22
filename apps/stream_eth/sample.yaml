@@ -1,0 +1,20 @@
+sample:
+  name: ESP-SDR stream over Ethernet
+  description: >-
+    Gapless I/Q from the ESP32-S31's diag16 ring as VITA 49.2 signal data over UDP on the
+    CoreBoard's gigabit Ethernet, up to 40 MS/s, unicast to whoever asks on port 4992
+common:
+  tags: esp-sdr
+  platform_allow:
+    - esp32s31_function_coreboard/esp32s31/hpcore
+  integration_platforms:
+    - esp32s31_function_coreboard/esp32s31/hpcore
+tests:
+  sample.esp_sdr.stream_eth:
+    build_only: true
+  sample.esp_sdr.stream_eth.onecore:
+    build_only: true
+    extra_args: EXTRA_CONF_FILE=onecore.conf
+  sample.esp_sdr.stream_eth.product:
+    build_only: true
+    extra_args: EXTRA_CONF_FILE="ramfunc.conf;coalesce.conf;product.conf"

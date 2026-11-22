@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+mainmenu "ESP-SDR receive bench"
+
+config APP_RXB_RING
+	int "Claimed frames the receive interrupt can hand to the consumer (a power of two)"
+	range 8 256
+	default 32
+	help
+	  Every claimed frame is a buffer of the network stack's receive pool until the consumer
+	  returns it: CONFIG_NET_BUF_RX_COUNT must cover the DMA ring (CONFIG_DWMAC_NB_RX_DESCS - 1
+	  buffers are always with the MAC), this ring and the stack's own need (the build checks).
+	  A frame that finds the ring full is dropped and counted, never passed to the stack.
+
+config APP_RXB_STACK_HEADROOM
+	int "Receive buffers kept for the stack (ARP, ND, ICMP, DHCP)"
+	default 16
+
+config APP_RXB_CONSUMER_CPU
+	int "CPU of the consumer thread (-1: not pinned)"
+	default 1
+	range -1 1
+
+config APP_RXB_CONSUMER_PRIO
+	int "Priority of the consumer thread (preemptible), below the network threads"
+	default 10
+	help
+	  The network threads run at 8 (prj.conf): ARP, ND and ping are served before the consumer
+	  on its CPU, even in a flood.
+
+config APP_RXB_RAMFUNC
+	bool "Run the hook and the consumer from internal RAM"
+	default y
+	depends on SOC_FAMILY_ESPRESSIF_ESP32
+
+source "Kconfig.zephyr"

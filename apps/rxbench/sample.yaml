@@ -1,0 +1,15 @@
+sample:
+  name: ESP-SDR receive bench
+  description: >-
+    UDP to port 4993 of the ESP32-S31 CoreBoard's gigabit Ethernet, taken from the DMA ring by
+    the MAC driver's receive hook before the network stack sees it (CONFIG_ETH_DWMAC_RX_FAST),
+    checked by a consumer thread on the second core
+common:
+  tags: esp-sdr
+  platform_allow:
+    - esp32s31_function_coreboard/esp32s31/hpcore
+  integration_platforms:
+    - esp32s31_function_coreboard/esp32s31/hpcore
+tests:
+  sample.esp_sdr.rxbench:
+    build_only: true

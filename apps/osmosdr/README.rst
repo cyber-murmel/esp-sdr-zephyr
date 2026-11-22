@@ -121,6 +121,109 @@ In GNU Radio: ``osmosdr.source(args="numchan=1 soapy=0,driver=esdr")`` and
 15.625 kS/s; other requests get the nearest one, which ``getSampleRate()`` reports). Changing a
 setting while streaming restarts the device's stream: expect a few ms of zeros.
 
+The ESP32-S31 over Ethernet: ``vrt=<address>``
+----------------------------------------------
+
+``vrt=<address>[:port]`` selects a third link: the VITA 49.2 receive stream of the ESP32-S31's
+`stream_eth <../stream_eth/README.rst>`__ app over UDP (receive only, CS8 native, 1 channel):
+
+.. code-block:: console
+
+   SoapySDRUtil --probe="driver=esdr,vrt=192.0.2.10"
+   gqrx        # device string: soapy=0,driver=esdr,vrt=fe80::1234%eth0
+
+Address forms: ``192.0.2.10``, ``host.name``, ``192.0.2.10:4992``, a link-local IPv6
+address with its interface ``fe80::1234%enp3s0`` (a bare IPv6 address has no port; with one,
+``[fe80::1234%enp3s0]:4992``). ``vrt_port=<port>`` is the same as the port in the address; the
+default is 4992. The board is named, not found: ``--find`` only echoes the arguments, nothing
+is sent until the device opens. Opening asks the board for its state (a VITA command packet with
+no settings: it does not subscribe). Each address of the name is tried in turn, IPv6 (link-local, then
+the others) before IPv4, with 1.5 s for each to answer; if none does, opening fails with an error
+saying how many were tried.
+
+How it works (``VrtLink`` in ``SoapyEsdr.cpp``, the packet words in ``vrt_wire.h``):
+
+- One UDP socket, ``connect()``ed to the board and used both ways. The board answers from its
+  port 4992, so no inbound firewall rule is needed. Addresses are tried IPv6 first (link-local,
+  other IPv6), then IPv4. Subscription as the board's README: ``VRTS`` is answered ``VRTC`` + cookie,
+  ``VRTS`` + cookie subscribes (``VRTK``) and is renewed every 250 ms (the board drops a host after 5 s without a renewal and, flooded, loses most of what it receives; it takes 60 datagrams a second from the subscriber; a fresh ``VRTC`` means a
+  stale cookie or a reboot: the new one is used, the settings are sent again), ``VRTX`` + cookie
+  when the stream stops. ``VRTB`` (another host has the stream) is an error at activation saying
+  so; ``vrt_takeover=1`` in the device string sends ``VRTT`` + cookie at activation to take it
+  over (never on a renewal: a host that was taken over is not taken back, no ping-pong). Settings
+  are sent only once subscribed and repeated until acknowledged. The query at open needs no subscription. The receive buffer is the largest the system grants
+  without root (``net.core.rmem_max``; the log line at open says what it got: at 20 MS/s and up,
+  ``sysctl -w net.core.rmem_max=134217728`` as root is worth it), ``SO_RXQ_OVFL`` counts datagrams
+  the kernel dropped.
+- Frequency, gain and sample rate are the command packets of ``stream_eth/tools/vrt_udp.c`` (stream
+  ID ``0x5d5d0001``, frequency in Hz, gain stage 1 as the PHY's gain index or ``-1`` for
+  automatic, sample rate), sent as execute and query state: the board applies them, answers with
+  the execution acknowledge (a refusal names the fields, the log says which and what was sent),
+  then with the query-state acknowledge, which carries its **settings epoch**: an 8 bit counter
+  (state and event indicators, user bits 7..0) that goes up by one at every accepted change that
+  restarts the ring and stays where it is for a command that changes nothing. Every run's context
+  carries it. Samples count only while the last context has the epoch of the last acknowledged
+  command (equal, nothing else: no frequency tolerance, no waiting time), so a retune of 1 Hz is
+  told from the old run exactly, a lost command or acknowledge is sent again until it is
+  acknowledged, and a reboot (epoch 0 again, the subscription renewed with a fresh cookie, or the
+  link back after 5 s) makes the module send its settings again. A command is not a subscription.
+  While streaming one worker thread sends the changes: the latest want wins, at most 20 commands a
+  second (a drag does not queue), unless the want is exactly what the board last took (no command,
+  no restart, no blackout: gqrx repeats values often). A call of the application waits at most 0.5 s
+  for the board's answer; a refusal returns an error and the want is back at what the board
+  has (also one that arrives later: ``getFrequency()``, ``getSampleRate()`` and ``getGain()`` read
+  the link's want); while the link is gone or the stream taken by another host the call only keeps
+  the setting, and it goes out when the link is back. A set made during the activation is not lost.
+  The board restarts its ring for a change (a gap of tens of ms: zero filled; the samples of a refused
+  change are not lost).
+- **The board cannot be asked for its ranges**, so the module uses the app's fixed values:
+  2200 to 2900 MHz, gain index 0 to 71 (a table index, not dB) and automatic, rates 40, 20, 16, 10,
+  8, 5, 4, 3.2, 2.5, 2, 1.6, 1.25, 1, 0.8 and 0.64 MS/s (the nearest is taken, as on USB), no
+  transmit, no bandwidth, no frequency correction, no temperature or calibration sensors. The current
+  frequency (to a whole kHz), gain and rate are read from the board at open.
+- One receive thread (``recvmmsg``, 64 datagrams a call) parses each data packet (stream ID,
+  trailer, time) and repacks the int8 I,Q pairs as the receive blocks the other links deliver, so
+  the code after the link is shared and CS8, CS16 and CF32 work as there. The block index is the
+  sample index from the packet time (seconds and picoseconds against the rate): a lost packet is a
+  jump in it, which the module fills with zeros up to 1 M samples (the time axis stays continuous,
+  as on USB) and reports as ``SOAPY_SDR_END_BURST`` beyond. The packet count (modulo 16) is a check
+  for losses the time does not show; a packet behind the time (reordered, up to 100 ms) is dropped.
+  A restart on the board (time going back, a rate change in a context packet) is reported as a
+  loss too. Context packets keep the rate (and the centre frequency, sensor ``vrt_rf_hz``).
+- Nothing (no data or context packet) for 5 s means the link is gone: a warning in the log, ``readStream()`` keeps returning
+  ``SOAPY_SDR_TIMEOUT``, the renewals go on and when the board answers again the settings are sent
+  again (it may have rebooted and started with its defaults).
+- Counters (sensors ``vrt_packets``, ``vrt_lost_packets``, ``vrt_lost_samples``,
+  ``vrt_board_dropped_samples`` (the trailer's sample loss), ``vrt_kernel_drops``,
+  ``vrt_late_packets``, ``vrt_restarts``, ``vrt_bad_packets``, ``vrt_link_up``) and a line in the log when the stream stops.
+
+Not done: stream timestamps (``readStream()`` returns no time; the VRT time is used for the index
+only), the 4-bit wire format, transmit.
+
+gqrx
+----
+
+The development shell has gqrx and the module (``SOAPY_SDR_PLUGIN_PATH`` is set), nothing to build::
+
+   nix-shell shell.nix --run gqrx
+
+Elsewhere build the module (above) or ``nix-build -A soapy-esdr``, against the SoapySDR gqrx uses, and
+set ``SOAPY_SDR_PLUGIN_PATH`` to its directory.
+
+*File, Configure I/O devices*: device ``Other``, device string
+``soapy=0,driver=esdr,vrt=fe80::1234%eth0`` (the board's IPv6 address, link-local with the PC's
+interface, or its IPv4 address; ``soapy=0`` is needed), input rate ``20000000`` (any rate above;
+gqrx also offers 40000000), decimation ``None`` (or more: the reduction happens in gqrx, after the
+whole stream has arrived), bandwidth ``0`` (ignored), LNB LO ``0``. On the main window: the
+frequency must lie in 2200 to 2900 MHz; the *RF* gain slider is the PHY's gain index 0 to 71
+(*Hardware AGC* is automatic gain, ``-1``). Expect on the wire (IPv4, MTU 1492): 2 bytes a sample
+plus 66 bytes of headers per 1440 bytes: 20 MS/s is 40 MB/s of samples, about 28k packets/s and
+340 Mb/s; 40 MS/s is 80 MB/s, 55.6k packets/s and 670 Mb/s, which needs a gigabit link, a
+large ``rmem_max`` and gqrx cores to spare (gqrx works in complex floats: 40 MS/s is 320 MB/s inside
+the process; start at 8 or 10 MS/s and go up while the log shows no ``kernel dropped`` and the
+waterfall no zero bursts). The log line when the stream stops (``esdr: vrt: ... lost ...``) says
+how many packets and samples went missing.
+
 Stream arguments
 ================
 

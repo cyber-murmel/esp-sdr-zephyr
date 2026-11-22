@@ -1,0 +1,11 @@
+common:
+  tags:
+    - esp-sdr
+    - stream
+  platform_allow:
+    - native_sim
+    - native_sim/native/64
+tests:
+  unit.esp_sdr.vrt_eth:
+    integration_platforms:
+      - native_sim
