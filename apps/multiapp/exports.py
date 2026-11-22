@@ -60,6 +60,26 @@ def nobits_sections(path):
 # heap (a load fault at its first allocation, a board run: the dummy shell's history heap) and a K_THREAD_DEFINE thread
 # never starts. The semaphores, mutexes, queues and work items are initialized at compile time and are fine.
 BOOT_INIT_SECTION = re.compile(r"^\._(k_heap|k_mem_slab|net_buf_pool|static_thread_data)\.")
+# One such object is unused: every shell defines its history heap (Z_SHELL_HISTORY_DEFINE), with history on or off,
+# and only reaches it with CONFIG_SHELL_HISTORY (shell.h: .history is NULL otherwise). The S3's MicroPython extension
+# has a dummy shell for esdr.shell() and no history, so its heap is let through only while neither the host's
+# configuration nor the extension's own (llext/<app>_kconfig.h) turns history on.
+SHELL_HISTORY_HEAP = re.compile(r"^\._k_heap\.static\.shell_\w+_history_heap_$")
+SHELL_HISTORY_ON = re.compile(r"^#define CONFIG_SHELL_HISTORY 1$", re.M)
+
+
+def shell_history_on(lib, app):
+    """Whether the host's autoconf.h or the extension's <app>_kconfig.h next to lib enables CONFIG_SHELL_HISTORY
+    (True when either cannot be read: then the heap counts as used)."""
+    lib = Path(lib)
+    for header in (lib.parent.parent / "zephyr" / "include" / "generated" / "zephyr" / "autoconf.h",
+                   lib.parent / f"{app}_kconfig.h"):
+        try:
+            if SHELL_HISTORY_ON.search(header.read_text()):
+                return True
+        except OSError:
+            return True
+    return False
 
 
 def boot_init_objects(lib):
@@ -73,6 +93,7 @@ def boot_init_objects(lib):
     found = []
     if not objdir.is_dir():
         return found
+    history_unused = not shell_history_on(lib, m.group(1))
     # Only the objects the link used: the directory also holds those of sources dropped since. The FILE symbols of the
     # link's output name the sources (a path or a plain name, "mp_repl_s31.c"), the objects are "<source>.obj" or ".o".
     linked = set()
@@ -91,6 +112,8 @@ def boot_init_objects(lib):
             with open(obj, "rb") as f:
                 for sec in ELFFile(f).iter_sections():
                     if BOOT_INIT_SECTION.match(sec.name):
+                        if history_unused and SHELL_HISTORY_HEAP.match(sec.name):
+                            continue
                         found.append(f"{obj.name}: {sec.name}")
         except Exception:  # not an ELF object
             continue

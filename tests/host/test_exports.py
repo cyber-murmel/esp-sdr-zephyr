@@ -448,6 +448,48 @@ def test_a_static_k_heap_in_an_extension_is_found(tmp_path):
     assert exports.boot_init_objects(str(lib)) == ["x.c.obj: ._k_heap.static.my_heap"]
 
 
+HISTORY_HEAP = ('char h[16] __attribute__((section("._k_heap.static.shell_dummy_history_heap_")));'
+                ' int f(void){return h[0];}\n')
+
+
+def _configs(tmp_path, host, ext):
+    gen = tmp_path / "zephyr" / "include" / "generated" / "zephyr"
+    gen.mkdir(parents=True)
+    (gen / "autoconf.h").write_text(host)
+    (tmp_path / "llext" / "demo_kconfig.h").write_text(ext)
+
+
+def test_an_unused_shell_history_heap_passes(tmp_path):
+    # Every shell defines its history heap; without CONFIG_SHELL_HISTORY it is never used (the S3's MicroPython dummy shell).
+    cc = shutil.which("cc") or shutil.which("gcc")
+    if cc is None:
+        pytest.skip("no host C compiler")
+    objdir = _ext_with_objects(tmp_path, cc, {"x.c": HISTORY_HEAP})
+    lib = _link(tmp_path, cc, objdir, ["x.c"])
+    _configs(tmp_path, "#define CONFIG_SHELL 1\n", "#define CONFIG_SHELL_BACKEND_DUMMY 1\n")
+    assert exports.boot_init_objects(str(lib)) == []
+
+
+@pytest.mark.parametrize("host, ext", [("#define CONFIG_SHELL_HISTORY 1\n", ""), ("", "#define CONFIG_SHELL_HISTORY 1\n")])
+def test_a_shell_history_heap_in_use_is_found(tmp_path, host, ext):
+    cc = shutil.which("cc") or shutil.which("gcc")
+    if cc is None:
+        pytest.skip("no host C compiler")
+    objdir = _ext_with_objects(tmp_path, cc, {"x.c": HISTORY_HEAP})
+    lib = _link(tmp_path, cc, objdir, ["x.c"])
+    _configs(tmp_path, host, ext)
+    assert exports.boot_init_objects(str(lib)) == ["x.c.obj: ._k_heap.static.shell_dummy_history_heap_"]
+
+
+def test_a_shell_history_heap_counts_when_the_configs_are_missing(tmp_path):
+    cc = shutil.which("cc") or shutil.which("gcc")
+    if cc is None:
+        pytest.skip("no host C compiler")
+    objdir = _ext_with_objects(tmp_path, cc, {"x.c": HISTORY_HEAP})
+    lib = _link(tmp_path, cc, objdir, ["x.c"])
+    assert exports.boot_init_objects(str(lib)) == ["x.c.obj: ._k_heap.static.shell_dummy_history_heap_"]
+
+
 def test_the_check_ignores_the_objects_of_dropped_sources(tmp_path):
     cc = shutil.which("cc") or shutil.which("gcc")
     if cc is None:
