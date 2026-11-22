@@ -7,6 +7,8 @@ common:
     - native_sim/native/64
   integration_platforms:
     - native_sim
+  # CI (coverage, 32-bit native_sim): 44 s without the sanitizer, over twister's default 60 s with it
+  timeout: 300
 
 tests:
   unit.esp_sdr.txs: {}
