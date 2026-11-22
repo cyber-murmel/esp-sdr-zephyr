@@ -29,8 +29,9 @@ int multiapp_module_up(void)
 }
 
 /*
- * The inverse (src/apps.c, when the next boot's modules leave this one out): the ring, the DAC's
- * threads, the arbiter's claim and hooks.
+ * The inverse (src/apps.c, when the next boot's modules leave this one out). ESP32-S3: the ring,
+ * the DAC's threads, the arbiter's claim and hooks. ESP32-S31: a ring run still going, a tone or
+ * DAC loop the app left, the PHY off and the modem clock given back (esp_sdr_release_radio()).
  */
 int multiapp_module_down(void)
 {

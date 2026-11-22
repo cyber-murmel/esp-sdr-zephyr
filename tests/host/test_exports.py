@@ -164,6 +164,26 @@ def test_relocatable_module(tmp_path, run_main, two_objs):
     assert '__asm__("k_yield")' in out and '__asm__("k_sleep")' in out
 
 
+def test_relocatable_down_hook_is_the_modules_own(tmp_path, run_main):
+    # The ESP32-S31's sdr module (one relocatable object): its multiapp_module_down() calls the
+    # host's modem clock (reference counted there), and stays its own symbol, never a host export.
+    cc = shutil.which("cc") or shutil.which("gcc")
+    if cc is None:
+        pytest.skip("no host C compiler")
+    src = tmp_path / "sdr.c"
+    src.write_text("extern void modem_clock_module_disable(int module);"
+                   "int multiapp_module_down(void) { modem_clock_module_disable(1); return 0; }"
+                   "int multiapp_module_up(void) { return 0; }")
+    obj = tmp_path / "sdr.o"
+    subprocess.run([cc, "-c", "-o", obj, src], check=True)
+    lib = tmp_path / "libsdr_ext_llext_lib.obj"
+    subprocess.run([cc, "-r", "-nostdlib", "-o", lib, obj], check=True)
+    assert {"multiapp_module_down", "multiapp_module_up"} <= exports.defines(lib)
+    out = generate(tmp_path, run_main, lib, modules=("sdr",))["exports"]
+    assert '__asm__("modem_clock_module_disable")' in out
+    assert "multiapp_module_down" not in out
+
+
 def test_psram_section(tmp_path, run_main, lib, monkeypatch):
     # Where EXT_RAM_BSS_ATTR places nothing in PSRAM (ESP32-S31), the section by name.
     monkeypatch.setattr(exports, "host_objects",

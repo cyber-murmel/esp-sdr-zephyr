@@ -164,6 +164,26 @@ static int capture_step(const struct survey_step *step)
 	return 0;
 }
 
+#if defined(MULTIAPP_NAME)
+/*
+ * Built as an extension of apps/multiapp: the host asks main() to end before it unloads the app
+ * (include/multiapp/multiapp.h), which the survey loop below would never do by itself. The
+ * semaphore ends the pause between surveys at once, the flag the survey between two of its steps.
+ */
+static atomic_t quit;
+static K_SEM_DEFINE(quit_sem, 0, 1);
+#define CAPTURE_QUIT() (atomic_get(&quit) != 0)
+
+int multiapp_app_stop(void)
+{
+	atomic_set(&quit, 1);
+	k_sem_give(&quit_sem);
+	return 0;
+}
+#else
+#define CAPTURE_QUIT() false
+#endif
+
 ESP_SDR_CODE(COLD, main)
 int main(void)
 {
@@ -187,10 +207,19 @@ int main(void)
 		unsigned int failed = 0;
 
 		for (size_t s = 0; s < ARRAY_SIZE(survey); s++) {
+			if (CAPTURE_QUIT()) {
+				return 0;
+			}
 			failed += capture_step(&survey[s]) != 0;
 		}
 		printf("esp-sdr rx: survey done, %u failed\n", failed);
+#if defined(MULTIAPP_NAME)
+		if (k_sem_take(&quit_sem, K_SECONDS(10)) == 0 || CAPTURE_QUIT()) {
+			return 0;
+		}
+#else
 		k_sleep(K_SECONDS(10));
+#endif
 	}
 	return 0;
 }

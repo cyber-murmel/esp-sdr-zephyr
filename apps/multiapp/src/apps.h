@@ -80,8 +80,15 @@ int multiapp_request(const char *name);
 /* At boot: start the app a request or CONFIG_MULTIAPP_AUTOSTART names; true if one runs. */
 bool multiapp_boot(void);
 
-/* A global function of the loaded app, by name (its hooks), or NULL. */
+/* A global function of the loaded app, by name (its hooks), or NULL; NULL once it is unloading. */
 void *multiapp_app_fn(const char *name);
+
+/*
+ * The app is unloading (multiapp_app_fn() finds nothing now): forget the handlers src/osmosdr.c
+ * found in it and wait for the USB thread to leave the ones it is in. 0, or -EBUSY if one does not
+ * return (the app's memory must stay then).
+ */
+int multiapp_osmosdr_drop(void);
 
 /* What an app's app_usb_init() calls: nothing to do (include/multiapp/ext.h). */
 int multiapp_ext_usb_init(void);
@@ -104,6 +111,12 @@ int multiapp_drive_status(void);
 int multiapp_drive_file(const char *name, ssize_t *size, bool *same);
 /* Hand the volume to the PC over USB (a boot without an app): ready the disk. */
 int multiapp_drive_export(void);
+/*
+ * Whether the PC holds the volume as a USB drive: multiapp_drive_write_begin() refuses then.
+ * multiapp_drive_export() sets it; the boots that run an app while MSC is registered will set and
+ * clear it as the PC takes the medium and gives it back.
+ */
+void multiapp_drive_msc_set(bool exported);
 /* Mount the volume read-write for the boot's app, its files read through it: 0 or -errno. */
 int multiapp_drive_mount_rw(void);
 

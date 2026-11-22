@@ -51,14 +51,15 @@ config ESP_SDR_PHY_ONLY
 
 config MULTIAPP_UNLOAD
 	bool "Switch apps in place, unloading the running one"
-	default y if SOC_SERIES_ESP32S3
+	default y if SOC_SERIES_ESP32S3 || SOC_SERIES_ESP32S31
 	select THREAD_MONITOR
 	select SYS_HEAP_RUNTIME_STATS
 	help
 	  "multiapp run" stops the running app, unloads it and the modules the next one does not
 	  need (the Wi-Fi driver, the SDR) and loads the next, when the two boots are compatible
 	  (same USB profile, no console app). Otherwise, and when anything refuses to stop, it
-	  reboots into the next app. Only the ESP32-S3 is exercised on hardware.
+	  reboots into the next app. Exercised on hardware on the ESP32-S3; the ESP32-S31 builds
+	  with it, its radio module's down path is not yet tried on a board.
 
 config MULTIAPP_STOP_TIMEOUT_MS
 	int "How long an app's main() may take to end before the switch gives up"

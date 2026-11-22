@@ -145,6 +145,14 @@ static void stream_replan(void)
 	k_sem_give(&kick);
 }
 
+#if defined(MULTIAPP_NAME)
+/* The host wants main() to end (multiapp_app_stop()). */
+static atomic_t quit;
+#define HS_QUIT() (atomic_get(&quit) != 0)
+#else
+#define HS_QUIT() false
+#endif
+
 static void batch_drop(uint32_t n)
 {
 	/* The host is behind: these go, the next block says so. */
@@ -240,8 +248,11 @@ static void ring_sink(void *user, uint8_t *node, uint64_t index)
 	uint64_t sample;
 
 	ARG_UNUSED(user);
-	/* esp_sdr_diag16_run() clears a stop requested just before it starts: this ends that run. */
-	if (atomic_get(&want_gen) != run_gen) {
+	/*
+	 * esp_sdr_diag16_run() clears a stop requested just before it starts: this ends that run.
+	 * Quitting counts too: a stop that came after main() read its generation is not a new one.
+	 */
+	if (atomic_get(&want_gen) != run_gen || HS_QUIT()) {
 		esp_sdr_diag16_stop();
 	}
 	if (run_first) {
@@ -603,7 +614,7 @@ void usb_sdr_out_done(uint8_t *data, size_t len, int err)
 {
 	/* Nothing transmits: a host's samples go nowhere. */
 	ARG_UNUSED(len);
-	if (err != -ECONNABORTED && usb_sdr_enabled()) {
+	if (err != -ECONNABORTED && usb_sdr_enabled() && !HS_QUIT()) {
 		(void)usb_sdr_submit_out(data, OUT_BYTES);
 	}
 }
@@ -622,6 +633,9 @@ static void stream_off(void)
 static void link_work_fn(struct k_work *work)
 {
 	ARG_UNUSED(work);
+	if (HS_QUIT()) {
+		return;
+	}
 	if (usb_sdr_enabled()) {
 		/* Read requests pending on bulk OUT, as a host's tool expects of the endpoint. */
 		for (size_t k = 0; k < ARRAY_SIZE(out_buf); k++) {
@@ -672,6 +686,10 @@ static void msg_cb(struct usbd_context *const ctx, const struct usbd_msg *const 
 #define SPIN_STACK 1024
 static K_THREAD_STACK_DEFINE(spin_stack, SPIN_STACK);
 static struct k_thread spin_thread;
+#if defined(MULTIAPP_NAME)
+/* The extension's unload ends the thread (hs_release()); it may never have started. */
+static bool spin_started;
+#endif
 static volatile uint32_t spins;
 
 static void spin_fn(void *a, void *b, void *c)
@@ -688,6 +706,9 @@ static void spin_start(void)
 {
 	k_thread_create(&spin_thread, spin_stack, K_THREAD_STACK_SIZEOF(spin_stack), spin_fn, NULL,
 			NULL, NULL, K_LOWEST_APPLICATION_THREAD_PRIO, 0, K_NO_WAIT);
+#if defined(MULTIAPP_NAME)
+	spin_started = true;
+#endif
 }
 
 static uint32_t spins_in(uint32_t ms)
@@ -755,6 +776,45 @@ static void selftest(void)
 }
 #endif
 
+#if defined(MULTIAPP_NAME)
+/*
+ * Built as an extension of apps/multiapp (include/multiapp/multiapp.h): the host calls this before
+ * it unloads the app and then joins main()'s thread. main() is the stream thread: a ring run ends
+ * at its next block, a wait for a request at once, and the loop below returns. Nothing else is
+ * started here: the ring's interrupt is the library's, taken and freed per run.
+ */
+int multiapp_app_stop(void)
+{
+	atomic_set(&quit, 1);
+	stream_replan();
+	return 0;
+}
+
+/*
+ * The last of the app, run by the host's unload once nothing calls into the app any more
+ * (apps.c, app_unload()): what the app left queued with the system work queue and the USB class
+ * must not outlive its memory. The work items first (one may be submitting), then every transfer
+ * the class holds, IN batches and OUT reads alike; the host's class stays, as the PC has it open.
+ */
+static void __attribute__((destructor)) hs_release(void)
+{
+	struct k_work_sync sync;
+
+	(void)k_work_cancel_sync(&link_work, &sync);
+	(void)k_work_cancel_sync(&suspend_work, &sync);
+#if defined(CONFIG_APP_HS_LOAD_LOG)
+	(void)k_work_cancel_delayable_sync(&load_log, &sync);
+#endif
+#if defined(CONFIG_APP_HS_SELFTEST) || defined(CONFIG_APP_HS_LOAD_LOG)
+	if (spin_started) {
+		k_thread_abort(&spin_thread);
+		spin_started = false;
+	}
+#endif
+	usb_sdr_cancel();
+}
+#endif /* MULTIAPP_NAME */
+
 int main(void)
 {
 	struct usbd_context *ctx;
@@ -789,6 +849,12 @@ int main(void)
 		}
 	}
 	LOG_INF("USB up");
+#if defined(MULTIAPP_NAME)
+	/* A host that kept the interface enabled while the app reloaded sends no link event. */
+	if (usb_sdr_enabled()) {
+		k_work_submit(&link_work);
+	}
+#endif
 
 	for (;;) {
 		k_spinlock_key_t key;
@@ -797,6 +863,14 @@ int main(void)
 		/* Before the snapshot: a request after it shows in both. */
 		k_sem_reset(&kick);
 		gen = atomic_get(&want_gen);
+		/*
+		 * After the generation is read: the multiapp stop hook sets the flag before it moves
+		 * the generation, so a stop that this read did not see is seen here, and one after
+		 * this read changes the generation, which the run's sink checks.
+		 */
+		if (HS_QUIT()) {
+			break;
+		}
 		key = k_spin_lock(&want_lock);
 		s = want;
 		k_spin_unlock(&want_lock, key);
@@ -822,5 +896,19 @@ int main(void)
 		run_gen = gen;
 		stream_run(&s, 0U);
 	}
+#if defined(MULTIAPP_NAME)
+	/*
+	 * Batches may still be queued: their cancellations would reach the next app's handler (and
+	 * its count) if they came after the unload. Cancel and wait for them while this app is loaded.
+	 */
+	usb_sdr_cancel_in();
+	for (int64_t end = k_uptime_get() + CANCEL_MS;
+	     atomic_get(&in_flight) != 0 && k_uptime_get() < end;) {
+		k_msleep(1);
+	}
+	if (atomic_get(&in_flight) != 0) {
+		LOG_WRN("%ld IN transfers did not end", (long)atomic_get(&in_flight));
+	}
+#endif
 	return 0;
 }

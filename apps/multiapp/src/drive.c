@@ -27,6 +27,8 @@
 
 #include <esp_sdr/esp_sdr_place.h>
 
+#include <multiapp/multiapp.h>
+
 #include "app_usb.h"
 #include "apps.h"
 
@@ -95,6 +97,10 @@ int multiapp_drive_mount_rw(void)
 {
 	int ret;
 
+	/* Every app start asks, an in-place switch included: mounted, it stays so. */
+	if (mounted_rw) {
+		return 0;
+	}
 	fat_mount.flags = FS_MOUNT_FLAG_NO_FORMAT;
 	ret = fs_mount(&fat_mount);
 	if (ret != 0) {
@@ -182,8 +188,45 @@ void multiapp_drive_app_disks(void)
 	strcpy(usb_flash_disk, "UFLASH");
 }
 
+/*
+ * The device's writes to the volume (calibration settings today, files later) take one lock, so
+ * that the writers keep out of each other's way and out of the PC's: a PC that has the volume as a
+ * drive is its only writer (doc/apps/multiapp-internals.md, "Writers and readers of the volume").
+ */
+static K_MUTEX_DEFINE(write_lock);
+/* HOOK: set while the PC holds the volume over USB MSC; the begin below refuses then. */
+static atomic_t msc_exported;
+
+void multiapp_drive_msc_set(bool exported)
+{
+	atomic_set(&msc_exported, exported ? 1 : 0);
+}
+
+int multiapp_drive_write_begin(k_timeout_t timeout)
+{
+	if (atomic_get(&msc_exported) != 0) {
+		return -EBUSY;
+	}
+	if (k_mutex_lock(&write_lock, timeout) != 0) {
+		return -EAGAIN;
+	}
+	/* The PC may have taken the volume while this waited. */
+	if (atomic_get(&msc_exported) != 0) {
+		k_mutex_unlock(&write_lock);
+		return -EBUSY;
+	}
+	return 0;
+}
+
+void multiapp_drive_write_end(void)
+{
+	k_mutex_unlock(&write_lock);
+}
+
 int multiapp_drive_export(void)
 {
+	/* The PC writes from here on: the device's writers get -EBUSY. */
+	multiapp_drive_msc_set(true);
 	/* MSC reports no medium until the disk is initialized. */
 	return disk_access_init("FLASH");
 }

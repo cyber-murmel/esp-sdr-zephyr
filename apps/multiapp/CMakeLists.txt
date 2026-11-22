@@ -400,7 +400,9 @@ endif()
 
 multiapp_extension(hello ${hello_requires} SOURCES ${CMAKE_CURRENT_LIST_DIR}/ext/hello.c)
 multiapp_extension(capture STACK 4096 REQUIRES sdr SOURCES ${apps_dir}/capture/src/main.c)
-multiapp_extension(rfprobe STACK 2048 REQUIRES sdr SOURCES ${apps_dir}/rfprobe/src/main.c)
+# probe i2s (the S3's I2S bit clock bench) is in its own source.
+multiapp_extension(rfprobe STACK 2048 REQUIRES sdr
+  SOURCES ${apps_dir}/rfprobe/src/main.c ${apps_dir}/rfprobe/src/i2sbench.c)
 multiapp_extension(wpan STACK 1536 REQUIRES ieee154 SOURCES ${apps_dir}/wpan/src/main.c)
 set(stream ${apps_dir}/stream/src)
 multiapp_extension(stream APP ${apps_dir}/stream STACK 2048 USB 1 REQUIRES sdr # MULTIAPP_USB_NCM

@@ -27,6 +27,15 @@
 #if defined(CONFIG_SOC_SERIES_ESP32S3) && defined(CONFIG_ESP_SDR_TX)
 #include <esp_sdr/esp_sdr_tx.h>
 #endif
+#if defined(CONFIG_SOC_SERIES_ESP32S31)
+#include <esp_sdr/esp_sdr_tx.h>
+#if defined(CONFIG_ESP_SDR_DIAG16)
+#include <esp_sdr/esp_sdr_diag16.h>
+#endif
+#if defined(CONFIG_ESP_SDR_REPLAY)
+#include <esp_sdr/esp_sdr_replay.h>
+#endif
+#endif
 
 #if defined(CONFIG_ESP_SDR_PHY_ONLY)
 #include <zephyr/init.h>
@@ -402,6 +411,21 @@ static int radio_up(void)
 #endif
 }
 
+#if defined(CONFIG_SOC_SERIES_ESP32S31)
+/*
+ * radio_up() undone, in its order: the PHY's Wi-Fi flag and power (phy_close_rf(), the common
+ * clock), the modem clock reference the host counts (a reload of this module would take a second),
+ * the power domain (a no-op on this chip). The rftest flag lives in the library and goes with it.
+ */
+static void radio_down(void)
+{
+	phy_wifi_enable_set(0);
+	esp_phy_disable(PHY_MODEM_WIFI);
+	modem_clock_module_disable(PERIPH_WIFI_MODULE);
+	esp_wifi_bt_power_domain_off();
+}
+#endif
+
 /*
  * esp_timer takes its interrupt on the CPU that starts it, and radio_up() runs on whichever CPU
  * the first esp_sdr_init() does: in Ubertooth main, which SMP put on CPU 1, so the PHY's PLL
@@ -529,6 +553,43 @@ out:
 	return ret;
 }
 
+#if defined(CONFIG_SOC_SERIES_ESP32S31) && defined(CONFIG_ESP_SDR_PHY_ONLY)
+/*
+ * The S31's radio is the PHY, the dump engine and the DAC reader: no arbiter, no thread, and the
+ * ring's interrupt is taken and freed per run (esp_sdr_diag16_run()). What an app leaves is the
+ * app's to stop in its multiapp_app_stop(): a run ends with the app thread that holds esp_sdr_lock
+ * for it, and the replay and the paced streams must be stopped by the thread that started them
+ * (a mutex belongs to its taker). A lock that stays held is a thread that ended without: -EBUSY.
+ */
+int esp_sdr_release_radio(void)
+{
+#if defined(CONFIG_ESP_SDR_DIAG16)
+	if (esp_sdr_diag16_active()) {
+		esp_sdr_diag16_stop();
+		for (int i = 0; esp_sdr_diag16_active() && i < 200; i++) {
+			k_msleep(10);
+		}
+		if (esp_sdr_diag16_active()) {
+			return -EBUSY;
+		}
+	}
+#endif
+	if (k_mutex_lock(&esp_sdr_lock, K_SECONDS(1)) != 0) {
+		return -EBUSY;
+	}
+	/* Both are nothing if idle: a tone or a DAC loop the app left, the radio back to receive. */
+#if defined(CONFIG_ESP_SDR_REPLAY)
+	esp_sdr_replay_stop();
+#endif
+	esp_sdr_tx_tone_stop();
+	if (esp_sdr_ready) {
+		esp_sdr_ready = false;
+		radio_down();
+	}
+	k_mutex_unlock(&esp_sdr_lock);
+	return 0;
+}
+#else
 int esp_sdr_release_radio(void)
 {
 	int ret = 0;
@@ -563,6 +624,7 @@ int esp_sdr_release_radio(void)
 	k_mutex_unlock(&esp_sdr_lock);
 	return ret;
 }
+#endif /* CONFIG_SOC_SERIES_ESP32S31 && CONFIG_ESP_SDR_PHY_ONLY */
 
 int esp_sdr_retune(void)
 {

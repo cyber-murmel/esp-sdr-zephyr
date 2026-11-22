@@ -61,7 +61,9 @@ ESP32-S31
 - On the ESP32-S31-Function-CoreBoard-1 the host boots into ``osmosdr_hs``, the SDR on the
   board's USB 2.0 HS port J4 (``CONFIG_MULTIAPP_AUTOSTART`` in the board's configuration file).
 - ``hello``, ``capture`` and ``rfprobe`` are the other apps, and the radio is one module, ``sdr``
-  (`Modules`_).
+  (`Modules`_). ``multiapp run`` switches among them in place; to and from ``osmosdr_hs``, whose
+  USB profile differs, it reboots.
+  Built, not yet run on a board.
 - J4's VBUS is the board's own: connect it with VBUS cut, as
   `osmosdr_hs <../osmosdr_hs/README.rst>`__ explains.
 - The shell is on a CDC-ACM port of J4; the console and the log stay on the UART port.
@@ -159,8 +161,9 @@ Commands
    * - ``multiapp info``
      - the host's build id, the stack its ``main()`` used, the loaded app's origin, sizes and
        commands, the uptime, the area's owner, and a line per heap (module_heap, module_high_heap,
-       bank2_heap in a BANK2 boot, psram_code, psram_data, kernel): free, largest free block, used,
-       peak. A soak watches these and the uptime, which only grows without a reboot
+       bank2_heap in a BANK2 boot, psram_code and psram_data, or psram_ext on the S31, kernel):
+       free, largest free block, used, peak. A soak watches these and the uptime, which only grows
+       without a reboot
    * - ``multiapp crash``
      - what ended the previous boot (fatal error, watchdog, how far a boot into an app got) and
        the USB thread's stack use in the last DFU download

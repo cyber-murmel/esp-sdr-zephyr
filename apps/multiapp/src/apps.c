@@ -154,6 +154,8 @@ static bool main_held;
 #if defined(CONFIG_APP_USB_MSG_HOOK)
 /* The app's USB message callback (ext/usbd_prelude.h): a pointer into the app, dropped with it. */
 static usbd_msg_cb_t app_msg_cb;
+/* How many of its calls are in progress (app_usb_msg()). */
+static atomic_t app_msg_users;
 #endif
 
 /* What this host's apps carry in their trailers (buildid.py). */
@@ -779,6 +781,41 @@ int multiapp_module_load(const char *name)
 	return def != NULL && def->module ? module_load(def) : -ENOENT;
 }
 
+/*
+ * Cut the app off from what calls into it (its handlers by name for the vendor class, the USB
+ * message hook), and wait until no call is inside it: its memory may go after this. Everything is
+ * cleared first and then waited for, since the callers count themselves in before they read.
+ * 0, or -EBUSY with the app as it was, loaded (a handler does not return, so its memory stays).
+ */
+static int app_cutoff(const struct multiapp_embedded *def)
+{
+	const struct multiapp_info *info = loaded_info;
+	int ret = 0;
+
+	__atomic_store_n(&loaded_info, NULL, __ATOMIC_SEQ_CST);
+#if defined(CONFIG_APP_USB_MSG_HOOK)
+	__atomic_store_n(&app_msg_cb, NULL, __ATOMIC_SEQ_CST);
+	for (int ms = 0; atomic_get(&app_msg_users) != 0; ms++) {
+		if (ms == 1000) {
+			LOG_ERR("%s: a USB message callback does not return", def->name);
+			ret = -EBUSY;
+			break;
+		}
+		k_msleep(1);
+	}
+#endif
+	if (ret == 0) {
+		ret = multiapp_osmosdr_drop();
+		if (ret != 0) {
+			LOG_ERR("%s: a USB handler does not return (%d)", def->name, ret);
+		}
+	}
+	if (ret != 0) {
+		__atomic_store_n(&loaded_info, info, __ATOMIC_SEQ_CST);
+	}
+	return ret;
+}
+
 /* The shell gives up the CDC-ACM port. USB has not started, so nobody is talking to it. */
 static int console_take(void)
 {
@@ -878,8 +915,13 @@ int multiapp_start(const char *name)
 	return 0;
 
 unload:
-	/* Nothing of it has run yet but its constructors, so it can go. */
-	loaded_info = NULL;
+	/*
+	 * Nothing of it has run yet but its constructors, so it can go, once the host's callbacks
+	 * (the USB class may have looked up a handler since loaded_info was set) have left it.
+	 */
+	if (app_cutoff(app) != 0) {
+		return -EBUSY;
+	}
 	loaded_def = NULL;
 	ext_unload(app, &loaded, up);
 	loaded = NULL;
@@ -954,11 +996,12 @@ static int app_unload(void)
 	if (ret != 0) {
 		return ret;
 	}
-	loaded_info = NULL;
+	/* An error leaves the app loaded and ended: the caller reboots. */
+	ret = app_cutoff(def);
+	if (ret != 0) {
+		return ret;
+	}
 	loaded_def = NULL;
-#if defined(CONFIG_APP_USB_MSG_HOOK)
-	app_msg_cb = NULL;
-#endif
 	if (area_owner == def) {
 		area_owner = NULL;
 	}
@@ -1124,7 +1167,9 @@ static bool switch_ok(const struct multiapp_embedded *app)
 	if (app->console || app->usb != usb_profile) {
 		return false;
 	}
-	if (loaded != NULL && (loaded_def->console || (usb_profile & MULTIAPP_USB_MSC) != 0U)) {
+	if (loaded != NULL &&
+	    (loaded_def == NULL || loaded_def->console || (usb_profile & MULTIAPP_USB_MSC) != 0U)) {
+		/* No def: an app that failed to unload, which only a reboot replaces. */
 		return false;
 	}
 	return true;
@@ -1206,7 +1251,7 @@ struct usbd_context *multiapp_usbd(usbd_msg_cb_t msg_cb)
 	for (int ms = 0; (ctx = app_usb_context()) == NULL && ms < USBD_WAIT_MS; ms += 10) {
 		k_msleep(10);
 	}
-	app_msg_cb = msg_cb;
+	__atomic_store_n(&app_msg_cb, msg_cb, __ATOMIC_SEQ_CST);
 	return ctx;
 }
 
@@ -1219,9 +1264,15 @@ int multiapp_usbd_enable(struct usbd_context *ctx)
 
 void app_usb_msg(struct usbd_context *ctx, const struct usbd_msg *msg)
 {
-	if (app_msg_cb != NULL) {
-		app_msg_cb(ctx, msg);
+	usbd_msg_cb_t cb;
+
+	/* Counted, so that an unload waits for a callback that is inside the app. */
+	atomic_inc(&app_msg_users);
+	cb = __atomic_load_n(&app_msg_cb, __ATOMIC_SEQ_CST);
+	if (cb != NULL) {
+		cb(ctx, msg);
 	}
+	atomic_dec(&app_msg_users);
 }
 #endif
 
@@ -1241,7 +1292,10 @@ void *multiapp_psram_spare(size_t *size)
 
 void *multiapp_app_fn(const char *name)
 {
-	return loaded != NULL ? (void *)llext_find_sym(&loaded->exp_tab, name) : NULL;
+	/* app_unload() clears it first: from then on no handler of the app is handed out. */
+	const struct multiapp_info *info = __atomic_load_n(&loaded_info, __ATOMIC_SEQ_CST);
+
+	return info != NULL && loaded != NULL ? (void *)llext_find_sym(&loaded->exp_tab, name) : NULL;
 }
 
 /* The host main()'s stack use, measured as it returns, and the CPU that started USB. */
@@ -1449,6 +1503,9 @@ static void heap_line(const struct shell *sh, const char *name, struct k_heap *h
 #if defined(CONFIG_HARVARD) && defined(CONFIG_LLEXT_HEAP_DYNAMIC)
 extern struct k_heap llext_instr_heap, llext_data_heap;
 #endif
+#if !defined(CONFIG_HARVARD) && defined(CONFIG_LLEXT_HEAP_DYNAMIC)
+extern struct k_heap llext_heap;
+#endif
 #if CONFIG_HEAP_MEM_POOL_SIZE > 0
 extern struct k_heap _system_heap;
 #endif
@@ -1491,6 +1548,9 @@ static int cmd_info(const struct shell *sh, size_t argc, char **argv)
 	heap_line(sh, "psram_code", &llext_instr_heap);
 	heap_line(sh, "psram_data", &llext_data_heap);
 #endif
+#if !defined(CONFIG_HARVARD) && defined(CONFIG_LLEXT_HEAP_DYNAMIC)
+	heap_line(sh, "psram_ext", &llext_heap);
+#endif
 #if CONFIG_HEAP_MEM_POOL_SIZE > 0
 	heap_line(sh, "kernel", &_system_heap);
 #endif
@@ -1498,6 +1558,11 @@ static int cmd_info(const struct shell *sh, size_t argc, char **argv)
 		    area_app != NULL ? area_app->name : "none");
 	if (loaded == NULL) {
 		shell_print(sh, "no app loaded");
+		return 0;
+	}
+	if (loaded_info == NULL) {
+		/* An unload that failed half way: the next request reboots. */
+		shell_print(sh, "an app is loaded but cut off, not running (the log has why)");
 		return 0;
 	}
 	shell_print(sh, "%s (%s): text %zu at %p, data %zu, bss %zu, rodata %zu, %zu bytes in heaps",

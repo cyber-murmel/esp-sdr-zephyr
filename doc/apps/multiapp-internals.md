@@ -252,9 +252,10 @@ never runs the ring, so bank 0 is free in its boots.
 
 ### Unloading
 
-Replacing the running app without a reboot (`CONFIG_MULTIAPP_UNLOAD`, on by default on the ESP32-S3
-only; the S31 boots as before). The code is in `src/apps.c`; on the board it is untested but for the
-build (the soak is `tmp/coex/t6soak.py`, see the end of this section).
+Replacing the running app without a reboot (`CONFIG_MULTIAPP_UNLOAD`, on by default on the
+ESP32-S3 and the ESP32-S31). The code is in `src/apps.c`. The S3's is soaked on the board
+(`tmp/coex/t6soak.py`, see the end of this section); the S31's builds and its host tests pass, and
+no board has run it yet ([The ESP32-S31, in place](#the-esp32-s31-in-place)).
 
 #### When it applies
 
@@ -271,8 +272,8 @@ follow the loaded app: osmosdr's buffers and the Wi-Fi heap take turns). Bank 2 
 heap (`BANK2`, `coex`) changes what the SDR module learns when it loads, so a switch that adds or
 drops `BANK2` unloads every module and re-initializes the heap first (it logs what a leak left in
 it). Still a reboot: console apps (`micropython`), a changed USB profile (osmosdr with its vendor
-class, stream with NCM, against the rest), the S31, and any app whose `main()` does not return and
-that has no stop hook (`capture` loops for good: `rfprobe` is the app of the soak).
+class, stream with NCM, against the rest), and any app whose `main()` does not return and that has
+no stop hook (`capture` has one, between two steps of its survey: `rfprobe` is the app of the soak).
 
 #### The order
 
@@ -368,6 +369,44 @@ source` for core 0, `0x600C2800` for core 1) and the FROM_CPU rows, which must n
   the private heap in the Wi-Fi module; the soak's `psram_*` and kernel lines show if any leaks into
   the host's.
 
+#### The ESP32-S31, in place
+
+The same code, with these differences (nothing of it has run on a board yet):
+
+- **USB profiles.** `hello`, `capture` and `rfprobe` have no class of their own (profile 0) and
+  switch among themselves in place; `capture` ends through its `multiapp_app_stop()` (a flag looked
+  at between two survey steps and a semaphore for the pause), as its `main()` never returns.
+  `osmosdr_hs` has the vendor class (profile 2): to and from it, a reboot.
+- **`osmosdr_hs`** (`apps/osmosdr_hs/src/main.c`, in the multiapp build only, under
+  `#if defined(MULTIAPP_NAME)`): `multiapp_app_stop()` sets a quit flag, ends a ring run
+  (`stream_replan()`) and wakes `main()`, which leaves its loop. The library's ring interrupt is
+  taken and freed per run, so no ISR or thread of the app is left. The flag is read after the
+  generation (`multiapp_app_stop()` sets the flag first) and by the ring's sink, so that a stop
+  landing between the two cannot be lost. Before `main()` returns it cancels the IN batches still
+  queued and waits for their completions, which would otherwise reach the next app's handler. Its
+  destructor, which the host runs when nothing calls into the app any more, cancels the work items
+  and every transfer the vendor class holds (the class stays in the host, open on the PC). A
+  restarted app arms the OUT reads itself, as the PC sends no new link event.
+- **The vendor class forwarders** (`src/osmosdr.c`) keep the app's handlers (found by name) until
+  it unloads: `app_cutoff()` makes `multiapp_app_fn()` return nothing (`loaded_info` cleared),
+  clears the USB message hook, then `multiapp_osmosdr_drop()` forgets the handlers, waits for the
+  USB thread to leave the ones it is in, and forgets again (a forwarder counts itself in before it
+  reads the cache, so one that starts after the first forget finds nothing). `-EBUSY` after a
+  second puts the app back as it was, loaded, and reboots; the same cut-off runs when an app's
+  constructors fail. `tests/host/test_multiapp_forwarders.py` runs the forwarders on the host.
+- **`sdr`** (the one radio module, `ext/sdr_up.c`): `esp_sdr_release_radio()` has an S31 version in
+  `lib/esp_sdr/src/esp_sdr.c`. It ends a ring run that is still going, takes `esp_sdr_lock` with a
+  one second timeout (a lock a dead thread holds is `-EBUSY`: the replay and the paced streams must
+  be stopped by the thread that started them), stops a DAC loop and a tone, marks the library not
+  ready and undoes `radio_up()`: `phy_wifi_enable_set(0)`, `esp_phy_disable()` (the PHY's RF off),
+  the host's modem clock reference, the power domain (a no-op on this chip). There is no arbiter,
+  and no thread or interrupt of the library outside a run. What it does not undo: the dump engine's
+  forced clocks and the TCM clock force (`dump_regs()`), which a reload sets up again, and the ROM
+  PHY's own state. The module unloads only if the next boot's list leaves it out (no app does
+  today) or through `multiapp_module_unload("sdr")`; a reload runs the PHY's full calibration again.
+- `multiapp info` has a `psram_ext` line (the one llext heap in PSRAM) where the S3 has
+  `psram_code` and `psram_data`.
+
 #### The per-extension API, and the kernel swap
 
 `src/apps.h` exposes `multiapp_module_load(name)` (a module with the modules it `REQUIRES`, its
@@ -448,6 +487,27 @@ right after the switch had its windows (91 % of the time, no failure).
   that image: deterministic FAT12, 4 KiB clusters on the erase page, long names.
 - `west dfu --esptool` and the shell command `usj` are in the
   [multiapp](../../apps/multiapp/README.rst) README.
+
+#### Writers and readers of the volume
+
+Who may touch the volume while an app runs (src/drive.c, `include/multiapp/multiapp.h`):
+
+- **Writers take the lock.** The device's own writes (the crystal calibration today, files later)
+  are bracketed by `multiapp_drive_write_begin(timeout)` and `multiapp_drive_write_end()`, called by
+  the same thread. The lock is one `k_mutex`: `-EAGAIN` when another writer kept it for the
+  timeout, `-EBUSY` while the PC has the volume as a USB drive (`multiapp_drive_msc_set()`, set by
+  `multiapp_drive_export()` in a boot without an app; the hook the boots that run an app beside MSC
+  will drive). `esp_sdr_cal_save()` and `esp_sdr_cal_clear()` (`lib/esp_sdr/src/esp_sdr_calstore.c`,
+  the settings file `/FLASH:/settings`, osmosdr_hs's SET_CAL) take it in the multiapp build only
+  (`CONFIG_ESP_SDR_AS_EXTENSION`); standalone apps name no multiapp symbol. The DFU target `fat`
+  rewrites the whole volume at the PC's request and is not routed through it.
+- **Readers remount.** The PC may have written the volume since the device mounted it, so a reader
+  mounts it afresh (`f_mount(..., 1)`, which reads the boot sector and FAT again), checks the
+  trailer CRC of what it read and retries on a mismatch (a write may be half done).
+- **Threads that touch flash need an internal stack.** The flash driver turns the cache off while
+  it erases or writes, and a stack in PSRAM is behind that cache: the thread that writes (the USB
+  thread for SET_CAL, 4096 bytes) and any thread of an extension that calls a writer must have one
+  in internal RAM.
 
 ### The stock Wi-Fi driver as a module
 

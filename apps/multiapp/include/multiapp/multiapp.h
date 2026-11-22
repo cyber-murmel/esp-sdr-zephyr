@@ -10,6 +10,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>
 
 /* Bumped on incompatible changes below; the host refuses other values. */
@@ -91,6 +92,16 @@ int multiapp_wifi_bind(const struct device *dev);
  * IPv4 addresses go, and it is on the host's idle device again.
  */
 int multiapp_wifi_unbind(const struct device *dev);
+
+/*
+ * The one lock for the device's own writes to the FAT volume (src/drive.c; see "Writers and
+ * readers of the volume" in doc/apps/multiapp-internals.md): a writer, host or extension, calls
+ * begin before it writes and end after, from the same thread. Returns 0; -EAGAIN if another writer
+ * kept the lock for @p timeout; -EBUSY while the PC has the volume as a USB drive (the PC writes
+ * then, the device may not).
+ */
+int multiapp_drive_write_begin(k_timeout_t timeout);
+void multiapp_drive_write_end(void);
 
 /* Whether the boot's app has dump bank 2 as a module heap (BANK2): the SDR must stay off it. */
 bool multiapp_bank2_reserved(void);
