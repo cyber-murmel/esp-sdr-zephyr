@@ -827,6 +827,8 @@ static struct {
 	size_t len, pos;
 } dc;
 
+/* In IRAM: with the block path it runs on the other core, and a flash cache miss stalls both. */
+ESP_SDR_CODE(PACED_SAMPLE, dc_input)
 static bool dc_input(void *user, int16_t *i, int16_t *q)
 {
 	uint32_t w = dc.tab[dc.pos];
@@ -836,6 +838,26 @@ static bool dc_input(void *user, int16_t *i, int16_t *q)
 	*i = (int16_t)(w & 0xffffU);
 	*q = (int16_t)(w >> 16);
 	return true;
+}
+
+/*
+ * The stream for @p dt CPU cycles, interrupts locked (the local mask: irq_lock() is the global
+ * SMP lock, which the block path's fill must not wait on). The loop is in IRAM like the poll:
+ * out of flash it took cache misses, with the other core's fetches in the same cache, of
+ * thousands of cycles. Returns the sync's result: nothing ran if it failed.
+ */
+ESP_SDR_CODE(PACED_CHUNK, tx_dc_run)
+static __noinline int tx_dc_run(uint32_t dt)
+{
+	unsigned int key = arch_irq_lock();
+	int ret = esp_sdr_paced_sync();
+	uint32_t c0 = esp_sdr_paced_cycles();
+
+	while (ret == 0 && esp_sdr_paced_cycles() - c0 < dt) {
+		(void)esp_sdr_tx_paced_poll();
+	}
+	arch_irq_unlock(key);
+	return ret;
 }
 
 /*
@@ -852,10 +874,9 @@ static int cmd_tx_dc(const struct shell *sh, size_t argc, char **argv)
 	unsigned int interp = (unsigned int)arg(argv, argc, 5, 1);
 	unsigned int power = (unsigned int)arg(argv, argc, 6, 2);
 	struct esp_sdr_paced_stats st;
-	uint32_t *tab, c0, dt;
+	uint32_t *tab, dt;
 	long cycles;
 	size_t words;
-	unsigned int key;
 	int ret;
 
 	if (busy(sh)) {
@@ -880,21 +901,20 @@ static int cmd_tx_dc(const struct shell *sh, size_t argc, char **argv)
 		shell_error(sh, "dc: start %d", ret);
 		return ret;
 	}
-	key = irq_lock();
-	esp_sdr_paced_sync();
-	c0 = esp_sdr_paced_cycles();
 	dt = (uint32_t)((uint64_t)ms * (ESP_SDR_CPU_HZ / 1000U));
-	while (esp_sdr_paced_cycles() - c0 < dt) {
-		(void)esp_sdr_tx_paced_poll();
-	}
-	irq_unlock(key);
+	ret = tx_dc_run(dt);
 	esp_sdr_paced_get_stats(&st);
 	esp_sdr_tx_paced_stop();
+	if (ret != 0) {
+		shell_error(sh, "dc: sync %d", ret);
+		return ret;
+	}
 	shell_print(sh, "dc rate %ld x%u tone %+ld Hz period %u: samples %llu (%u per s) late %u "
-		    "late_max %u cycles",
+		    "late_max %u cycles starved %u events %u",
 		    rate, interp, lround((double)cycles * (double)rate / (double)dc.len),
 		    (unsigned int)dc.len, (unsigned long long)st.samples,
-		    (unsigned int)(st.samples * 1000U / ms), st.late, st.late_max);
+		    (unsigned int)(st.samples * 1000U / ms), st.late, st.late_max, st.starved,
+		    st.events);
 	return 0;
 }
 
@@ -941,12 +961,17 @@ static int cmd_tx_dcraw(const struct shell *sh, size_t argc, char **argv)
 		return ret;
 	}
 	/* One poll writes the register's upper bits with the injection on. */
-	key = irq_lock();
-	esp_sdr_paced_sync();
-	while (!esp_sdr_tx_paced_poll()) {
+	key = arch_irq_lock();
+	ret = esp_sdr_paced_sync();
+	while (ret == 0 && !esp_sdr_tx_paced_poll()) {
 	}
 	upper = *reg & ~GENMASK(19, 0);
-	irq_unlock(key);
+	arch_irq_unlock(key);
+	if (ret != 0) {
+		esp_sdr_tx_paced_stop();
+		shell_error(sh, "dcraw: sync %d", ret);
+		return ret;
+	}
 	for (size_t k = 0; k < len; k++) {
 		double ph = esp_sdr_tone_phase(cycles, k, len);
 
@@ -955,7 +980,7 @@ static int cmd_tx_dcraw(const struct shell *sh, size_t argc, char **argv)
 	}
 	step = cpu / (uint32_t)rate;
 	dt = (uint32_t)((uint64_t)ms * (cpu / 1000U));
-	key = irq_lock();
+	key = arch_irq_lock();
 	c0 = esp_sdr_paced_cycles();
 	t = c0 + step;
 	while (t - c0 < dt) {
@@ -974,7 +999,7 @@ static int cmd_tx_dcraw(const struct shell *sh, size_t argc, char **argv)
 		t += step;
 		n++;
 	}
-	irq_unlock(key);
+	arch_irq_unlock(key);
 	esp_sdr_tx_paced_stop();
 	shell_print(sh, "dcraw rate %ld tone %+ld Hz period %u: samples %u late %u late_max %u cycles",
 		    rate, lround((double)cycles * (double)rate / (double)len), (unsigned int)len, n,
@@ -1014,13 +1039,18 @@ static int cmd_tx_carrier(const struct shell *sh, size_t argc, char **argv)
 		return ret;
 	}
 	/* Two polls: the second writes the value the first computed. */
-	key = irq_lock();
-	esp_sdr_paced_sync();
-	for (int k = 0; k < 2; k++) {
+	key = arch_irq_lock();
+	ret = esp_sdr_paced_sync();
+	for (int k = 0; ret == 0 && k < 2; k++) {
 		while (!esp_sdr_tx_paced_poll()) {
 		}
 	}
-	irq_unlock(key);
+	arch_irq_unlock(key);
+	if (ret != 0) {
+		esp_sdr_tx_paced_stop();
+		shell_error(sh, "carrier: sync %d", ret);
+		return ret;
+	}
 	if (rx & 4) {
 		phy_pbus_workmode();
 	}
@@ -1161,9 +1191,9 @@ static int cmd_tx_gap(const struct shell *sh, size_t argc, char **argv)
 			return ret;
 		}
 	}
-	key = irq_lock();
+	key = arch_irq_lock();
 	turns = iram != 0 ? gap_loop_iram(r, dt, hist, &max) : gap_loop_flash(r, dt, hist, &max);
-	irq_unlock(key);
+	arch_irq_unlock(key);
 	if (chain != 0) {
 		esp_sdr_tx_paced_stop();
 	}

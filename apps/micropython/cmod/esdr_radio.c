@@ -913,17 +913,18 @@ static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(esdr_tx_wait_obj, 0, 1, esdr_tx_wait_
 
 static mp_obj_t esdr_tx_stats_fn(void)
 {
-	mp_obj_t d = mp_obj_new_dict(4);
+	mp_obj_t d = mp_obj_new_dict(5);
 
 	mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_played),
 			  mp_obj_new_int_from_ull(esdr_remote_tx_played()));
 #if defined(ESDR_LOCAL_TX_BURSTS)
-	uint32_t late, late_max, missing;
+	uint32_t late, late_max, missing, starved;
 
-	esdr_local_tx_pacing(&late, &late_max, &missing);
+	esdr_local_tx_pacing(&late, &late_max, &missing, &starved);
 	mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_late), mp_obj_new_int_from_uint(late));
 	mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_late_max), mp_obj_new_int_from_uint(late_max));
 	mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_missing), mp_obj_new_int_from_uint(missing));
+	mp_obj_dict_store(d, MP_OBJ_NEW_QSTR(MP_QSTR_starved), mp_obj_new_int_from_uint(starved));
 #endif
 	return d;
 }

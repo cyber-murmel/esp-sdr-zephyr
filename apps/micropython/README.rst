@@ -1250,7 +1250,8 @@ Transmit on the S31
 - For buffers the power steps scale the samples, 1.4 dB a step.
 - A burst locks interrupts for its length: the panel keeps its picture (no underrun; its frame
   counter misses the frames meanwhile), LVGL, touch and the console wait.
-- ``tx_stats()`` adds the last burst's ``late``, ``late_max`` (CPU cycles) and ``missing``.
+- ``tx_stats()`` adds the last burst's ``late``, ``late_max`` (CPU cycles), ``missing`` and ``starved`` (blocks the other core's fill did
+  not have ready, 0 without ``CONFIG_ESP_SDR_PACED_TX_BLOCK``).
 - A call costs some 36 ms beyond its samples: three retunes and the chain's start and stop.
 
 `Transmit <../../doc/samples/transmit.md>`__ describes the replay loop, its interpolation and

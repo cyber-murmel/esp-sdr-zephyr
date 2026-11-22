@@ -25,12 +25,31 @@
  * periods late over the samples it missed instead); the stats count it. One
  * direction at a time.
  *
- * On the ESP32-S31 the poll runs from IRAM and costs about 220 CPU cycles a
- * write (a TX DC store alone 48): rate times factor up to 1 MHz, such as
- * 250 kS/s x4 or 125 kS/s x8, keeps every write on time. Keep the input
- * callback and the polling loop in IRAM with their data in internal RAM; code
- * fetched through the flash cache stalls a write now and then by up to a few
- * microseconds.
+ * On the ESP32-S31 the poll runs from IRAM and costs about 220 CPU cycles a write (a TX DC
+ * store alone 48): rate times factor up to 1 MHz, such as 250 kS/s x4 or 125 kS/s x8, keeps
+ * every write on time. With CONFIG_ESP_SDR_PACED_TX_BLOCK (SMP, off by default) the poll only
+ * stores a DAC word computed ahead by a thread on the other core: rate times factor up to
+ * 2 MHz, such as 250 kS/s x8 or 500 kS/s x4. Then:
+ * - The fill thread is created by esp_sdr_tx_paced_start() on the core the caller is not on,
+ *   spins there (cooperative, outranking every thread on that core, no kernel call) until
+ *   esp_sdr_tx_paced_stop(), and ends. The caller must stay on its core from the start to the
+ *   stop (pin it). Every other thread pinned to the fill core is frozen for the stream's length:
+ *   the caller must not need a mutex or a service of such a thread between start and stop.
+ *   Start and stop sleep (thread start and join): never call them with interrupts or the
+ *   scheduler locked; lock interrupts only after the start and unlock them before the stop.
+ * - The caller must call esp_sdr_paced_sync() before polling, and stop the stream when it fails:
+ *   the sync has the thread take the first inputs while it waits, 1 s at most (-ETIMEDOUT).
+ *   After a failure the poll plays the idle word and counts starved; the played-samples count
+ *   stays at 0, so a loop that waits for it must bound itself.
+ * - The input callback runs on that thread, up to CONFIG_ESP_SDR_PACED_BLOCKS blocks
+ *   (CONFIG_ESP_SDR_PACED_BLOCK_WORDS words each) ahead of the DAC, concurrently with the
+ *   caller: its data is shared between two cores, and it must neither take irq_lock() (under
+ *   SMP the global lock the caller may hold while polling) nor make kernel calls that wait.
+ * - The caller locks interrupts with arch_irq_lock(), not irq_lock(): that is the local mask.
+ * - start returns -ENODEV, and nothing is started, when the other core cannot run the thread
+ *   (no second core, not up, the pin refused): there is no fall back to the per-word path.
+ * Keep the input callback and the polling loop in IRAM with their data in internal RAM; code
+ * fetched through the flash cache stalls a write now and then by up to a few microseconds.
  */
 
 #ifndef ESP_SDR_ESP_SDR_PACED_H_
@@ -61,6 +80,12 @@ struct esp_sdr_paced_stats {
 	uint32_t late_max;
 	/** Receive: estimator restarts. Transmit: input samples that were missing (played as 0). */
 	uint32_t events;
+	/**
+	 * Transmit with CONFIG_ESP_SDR_PACED_TX_BLOCK: blocks of DAC words that were not ready at the
+	 * swap (the block played again). The fill thread did not keep up (a slow input callback,
+	 * a stalled core): raise CONFIG_ESP_SDR_PACED_BLOCKS.
+	 */
+	uint32_t starved;
 };
 
 /**
@@ -103,7 +128,8 @@ void esp_sdr_rx_paced_stop(void);
 /**
  * Transmit input: store the next sample (full scale +-32767) and return true,
  * or return false when none is available (played as 0). Called from the poll,
- * once per input sample: must not block.
+ * once per input sample: must not block. With CONFIG_ESP_SDR_PACED_TX_BLOCK it runs on the
+ * fill thread on the other core, blocks before the sample is played (see the file comment).
  */
 typedef bool (*esp_sdr_tx_paced_input_t)(void *user, int16_t *i, int16_t *q);
 
@@ -116,19 +142,30 @@ typedef bool (*esp_sdr_tx_paced_input_t)(void *user, int16_t *i, int16_t *q);
  * @param power Power step, 0 weakest to esp_sdr_tx_paced_power_max(). No effect on the
  *        ESP32-C5 and ESP32-S31, whose level follows the samples only
  *        (doc/radio/gain.md).
- * @param input Called once per input sample from esp_sdr_tx_paced_poll().
+ * @param input Called once per input sample from esp_sdr_tx_paced_poll() (with
+ *        CONFIG_ESP_SDR_PACED_TX_BLOCK the first two blocks of inputs are taken by
+ *        esp_sdr_paced_sync(), not by this function).
  * @param user Passed to @p input.
  * @return 0, -EINVAL, -ERANGE outside the transmit range, -EAGAIN before
- *         esp_sdr_init().
+ *         esp_sdr_init(), -EBUSY when a stream runs (block path), -ENODEV when the fill thread
+ *         cannot run (block path).
  */
 int esp_sdr_tx_paced_start(uint32_t rate_hz, unsigned int interp, unsigned int power,
 			   esp_sdr_tx_paced_input_t input, void *user);
 
 /**
- * @brief Write the next DAC value if it is due, then compute the one after.
+ * @brief Write the next DAC value if it is due, then take the one after (computed, or the
+ * next off the block with CONFIG_ESP_SDR_PACED_TX_BLOCK).
  * @return true when a value was written.
  */
 bool esp_sdr_tx_paced_poll(void);
+
+/**
+ * @brief Input samples played so far by the running transmit stream, the count a caller ends
+ * its stream on (not the calls of its input callback, which run ahead of the DAC with
+ * CONFIG_ESP_SDR_PACED_TX_BLOCK). Cheap: call it after a poll that returned true.
+ */
+uint64_t esp_sdr_tx_paced_samples(void);
 
 /** @brief Turn the transmit chain off and release the radio; no-op when stopped. */
 void esp_sdr_tx_paced_stop(void);
@@ -169,9 +206,13 @@ uint32_t esp_sdr_paced_deadline(void);
 
 /**
  * @brief Restart the running stream's clock: the next sample is due one
- * period from now. Call once interrupts are locked, after the start.
+ * period from now. Call once interrupts are locked, after the start. With
+ * CONFIG_ESP_SDR_PACED_TX_BLOCK the first call also waits for the fill thread's first two blocks
+ * of inputs.
+ * @return 0, -ETIMEDOUT when they did not come within 1 s (stop the stream; a second call may
+ *         still succeed), -EPERM when the caller runs on the fill core. Always 0 otherwise.
  */
-void esp_sdr_paced_sync(void);
+int esp_sdr_paced_sync(void);
 
 /** @brief Statistics of the running or last stream. */
 void esp_sdr_paced_get_stats(struct esp_sdr_paced_stats *stats);

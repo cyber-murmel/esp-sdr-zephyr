@@ -12,3 +12,21 @@ tests:
     platform_allow:
       - esp32s31_function_coreboard/esp32s31/hpcore
       - ues31s043h800v480c_u/esp32s31/hpcore
+  # The block path: the DAC words computed by a thread pinned to the other core (CPU 0 stores,
+  # CPU 1 fills; every thread starts on CPU 0 with PIN_ONLY).
+  integration.esp_sdr.tx_paced_api.s31.smp:
+    extra_configs:
+      - CONFIG_SMP=y
+      - CONFIG_SCHED_CPU_MASK_PIN_ONLY=y
+      - CONFIG_ESP_SDR_PACED_TX_BLOCK=y
+    platform_allow:
+      - esp32s31_function_coreboard/esp32s31/hpcore
+      - ues31s043h800v480c_u/esp32s31/hpcore
+  # SMP on, the per-word path as before: the poll alone on CPU 0 with the second core running.
+  integration.esp_sdr.tx_paced_api.s31.smp_word:
+    extra_configs:
+      - CONFIG_SMP=y
+      - CONFIG_SCHED_CPU_MASK_PIN_ONLY=y
+    platform_allow:
+      - esp32s31_function_coreboard/esp32s31/hpcore
+      - ues31s043h800v480c_u/esp32s31/hpcore

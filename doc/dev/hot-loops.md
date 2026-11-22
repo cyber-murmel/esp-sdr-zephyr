@@ -46,7 +46,7 @@ time of writing.
 | 3 | C6 gapless markers | `fill_marks()` (`esp_sdr_gapless.c:357`), `prepare()` (`:400`), guards (`:47` to `:49`) | 1536 words a unit, about 2000 cycles, 9 % of the CPU ([Rings](../samples/rings.md)) | size `LATE_LIMIT` and the guards to the measured lateness (about 30 in IRAM) | about 1300 cycles a unit; per-unit cap about +15 to 20 % | low to medium: a late switch becomes a ring error and a restart | deferred: needs the C6 badge |
 | 4 | C6 gapless copy into staging | `copy_words()` (`esp_sdr_gapless.c:1039`) | 2.5 cycles a word (3.6 on the badge), unrolled by 8 | unroll by 32, or a computed entry into one unrolled block | 2.5 down to about 2.15 cycles a word, cap +10 to 15 % | low: about 300 B more IRAM | deferred: needs the C6 badge |
 | 5 | S3 ring sentinels | `geom_init()` (`esp_sdr_ring.c:74`) | `late` 896 (1024-pair units) up to 2000; 2944 to 7168 sentinel words a unit; measured worst 60 to 137 pairs late | `late` near 256 | about 0.3 to 0.6 cycles a pair of the 15 | low to medium: same failure mode as 3 | built, value to be measured (S3) |
-| 6 | S31 paced TX | `esp_sdr_tx_paced_poll()` (`esp_sdr_paced.c:434`) | about 220 cycles a write at x8; DAC writes capped at 1 MHz ([Paced](../samples/paced.md)) | interpolate a block ahead into TCM so the timed loop only stores | DAC rate toward the 2 MS/s store-only ceiling; 250 kS/s x 8 becomes possible | medium: one block of latency; needs a fill-in schedule | deferred: needs the S31 |
+| 6 | S31 paced TX | `esp_sdr_tx_paced_poll()` (`esp_sdr_paced.c:434`) | about 220 cycles a write at x8; DAC writes capped at 1 MHz ([Paced](../samples/paced.md)) | interpolate a block ahead into TCM so the timed loop only stores | DAC rate toward the 2 MS/s store-only ceiling; 250 kS/s x 8 becomes possible | medium: one block of latency; needs a fill-in schedule | built, unit tested; board measurement pending |
 | 7 | C6 packer, shift 0 and 1 | `pack_run()` (`esp_sdr_gapless.c:571`), `sat_lut` (`:532`) | 9 to 13 cycles a sample, a 2 KB table in block 0 | branchless SWAR clamp instead of the table | same speed; frees 2 KB of block 0 | low | deferred: needs the C6 badge |
 | 8 | Ubertooth GFSK demodulator | `apps/ubertooth/src/gfsk_groups.S`, `gfsk_slice.S` | 53 of 60 cycles a sample open ([GFSK](../modem/gfsk.md)) | per-mode kernel variants (static, not self-modifying) | 1 to 2 cycles a sample | costs IRAM the S3 does not have (1.4 KB left); skip | deferred: skip for now, with the board |
 | 9 | Paced RX fill (C6, C5) | `esp_sdr_rx_paced_fill_iq8()` (`esp_sdr_paced.c:214`) | 59 of 80 cycles a sample at 2 MS/s, three register reads a sample | read Q once and fix the I/Q skew on the host with a fractional delay | maybe 59 to about 45, so 2.5 to 3+ MS/s | high: the skew must be constant and corrected exactly, or the image rises | deferred: needs the C6 or C5 |
@@ -186,18 +186,39 @@ cycles over 8 words, the 0.5 above the 2-cycle load and store floor.
 
 The timed loop should only store a ready value.
 
-- Today `esp_sdr_tx_paced_poll()` does the input callback, the history update and a 2 x 8-tap FIR
+- Before: `esp_sdr_tx_paced_poll()` did the input callback, the history update and a 2 x 8-tap FIR
   between stores: about 220 cycles a write on the S31, where the DAC register store alone costs
   48 ([Paced](../samples/paced.md)). A loop that only stores prepacked words reaches 2 MS/s exactly.
-- Proposed: fill a block of DAC words (one interpolated input chunk) into TCM, and give the timed
-  loop a fill quota per gap. On paper at 2 MS/s there are 160 cycles a write: 48 for the store,
-  40 to 60 for an 8-tap complex MAC from TCM **(estimate)** and the rest for the poll.
-- That could lift interpolated TX from 250 kS/s x 4 to 250 kS/s x 8, or 500 kS/s x 4.
+- First attempt (one core): two blocks of 128 DAC words, a fill step in the gap before the next
+  store (input callbacks, or the words of one FIR phase for a few inputs). Measured on the board at
+  320 MHz, in cycles: a TX DC store 52, a load 48, a poll without work 46, a pop 7, the fill 78 to 91
+  a word (128 units a step) up to 162 to 208 (one unit). At 2 MHz of writes a slot is 160 cycles:
+  store, poll and pop leave about 55, less than one word's fill, so one core cannot do it (a fill
+  threshold of 100 cycles meant the fill never ran). At 1 MHz or less it worked (late 0, worst
+  lateness 76 to 111 cycles) but no better than the per-word path (worst 27). Dropped.
+- Now (`CONFIG_ESP_SDR_PACED_TX_BLOCK`, SMP, off by default; `esp_sdr_paced_blk.c`): the same fill
+  on the other core, in a thread that spins and does no kernel call, into a ring of 4 blocks of 128
+  words; the poll stores, pops and swaps only. A block not ready at the swap is played again and
+  counted (`starved`). Block states are the only shared words (acquire and release); internal RAM
+  has no cache between the cores. Details and rules (cores, locks, sync, failure) in
+  [Paced](../samples/paced.md).
+- Code size of the kernel from the generated RISC-V (rv32imafc, no Zbb, no PIE): the loop for several
+  words per step is 61 instructions a word: 16 `lh`, 16 `mul`, 14 `add`, a shift, two range
+  compares and the packing. On the fill core it has the slot to itself.
+- Tests: `tests/unit/paced_blk` (native_sim, bit exact against a copy of the per-word path for x1,
+  x2, x4 and x8 with missing inputs, saturation, random block sizes and fill steps, a starved swap,
+  stop and start, rings of 2 and 4 blocks) and `tests/integration/esp_sdr_tx_paced_api` (scenario
+  `.s31.smp`).
 - On the C6 and C5, paced TX is limited by the host link (USB-Serial-JTAG delivers about
   239 kS/s, [Transports](../samples/transports.md)), not the CPU. There this only helps on-chip
-  sources (tones, beacons, precomputed packets).
+  sources (tones, beacons, precomputed packets); the option does not exist there (one core).
 
-**Status.** Deferred: needs the S31.
+**Status.** Measured on the S31 CoreBoard (`tests/integration/esp_sdr_tx_paced_api`, `.s31.smp`, CPU 0
+stores, CPU 1 fills): 250 kS/s x8 (2 MHz of writes) late 0, late_max 34 cycles, starved 0; 500 kS/s x4
+30; 400 kS/s x4 30; 125 kS/s x8 34; 625 kS/s x4 (2.5 MHz) late_max 59; the 3.2 MHz rows come late, as
+expected. The one-core and `.s31.smp_word` runs match main (late_max 24 to 40; 250 kS/s x1 73 with SMP
+on). From the rfprobe shell the same stream was late (late_max 2170 to 2556) while its loop and
+callback ran from flash (see [Paced](../samples/paced.md), keep the timed loop in IRAM).
 
 ## 7. C6 packer: compute instead of table
 

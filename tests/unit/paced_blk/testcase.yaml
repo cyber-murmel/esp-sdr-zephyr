@@ -1,0 +1,25 @@
+common:
+  tags:
+    - esp-sdr
+    - paced
+  platform_allow:
+    - native_sim
+    - native_sim/native/64
+  integration_platforms:
+    - native_sim
+
+tests:
+  # The ring of the block path at its shortest and at the default length.
+  unit.esp_sdr.paced_blk:
+    extra_args: PBLOCKS=4
+  unit.esp_sdr.paced_blk.two_blocks:
+    extra_args: PBLOCKS=2
+  # Block sizes that are not a multiple of 32 words: the miss maps' columns.
+  unit.esp_sdr.paced_blk.words16:
+    extra_args:
+      - PBLOCKS=3
+      - PWORDS=16
+  unit.esp_sdr.paced_blk.words40:
+    extra_args:
+      - PBLOCKS=4
+      - PWORDS=40

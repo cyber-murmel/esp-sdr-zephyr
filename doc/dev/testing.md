@@ -373,7 +373,7 @@ Each test has one id per board:
 | `integration.esp_sdr.diag16_api.s31` | the S31's 16-lane ring |
 | `integration.esp_sdr.dumpring_api.s31`, `.s31.smp` | the S31's ring without the bus, single core and both cores |
 | `integration.esp_sdr.replay_api.c5`, `.s31` | the DAC-engine replay |
-| `integration.esp_sdr.tx_paced_api.s31` | the S31's CPU-paced transmit |
+| `integration.esp_sdr.tx_paced_api.s31`, `.s31.smp_word`, `.s31.smp` | the S31's CPU-paced transmit: one core, SMP with the per-word path, SMP with the block path (the other core computes the words) |
 
 ### Deploying per board
 
@@ -509,7 +509,16 @@ It checks the S31's CPU-paced transmit:
 - the TX DC register as it was;
 - the receive floor afterwards.
 
-It runs about 2 s.
+With the block path (`.s31.smp`, `CONFIG_ESP_SDR_PACED_TX_BLOCK`) it also checks:
+
+- 250 kS/s x8, 500 kS/s x4, 400 kS/s x4 and 125 kS/s x8 with no late write and no starved block,
+  and a ladder up to 3.2 MHz of writes that is printed only;
+- a second start refused (`-EBUSY`) and three start and stop rounds;
+- a callback that blocks past the sync's 1 s (`-ETIMEDOUT`, the idle word played, a second sync
+  succeeding, a clean stream afterwards);
+- the caller on CPU 1 with the fill on CPU 0 (also in `.s31.smp_word`).
+
+It runs about 2 s (about 12 s with the block path).
 
 - Its stream, input callback and polling loop are all in IRAM. So placed, every rate keeps its
   sample count to one and no write comes a whole period late; the worst lateness is about 27

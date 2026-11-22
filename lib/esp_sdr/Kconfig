@@ -159,6 +159,48 @@ config ESP_SDR_PACED
 	  TX DC value register, paced by the CPU from the caller's loop. The
 	  ESP32-S31 has no IQ estimator: transmit only.
 
+config ESP_SDR_PACED_TX_BLOCK
+	bool "Paced transmit: DAC words computed a block ahead by the other core"
+	default n
+	depends on ESP_SDR_PACED && SMP && SOC_SERIES_ESP32S31
+	select SCHED_CPU_MASK
+	help
+	  esp_sdr_tx_paced_poll() only stores a precomputed DAC word; the FIR
+	  and the input callback run in a thread pinned to the core the caller
+	  of esp_sdr_tx_paced_start() is not on, which fills blocks of DAC words
+	  ahead. That core spins for the length of a stream. The input callback
+	  runs on that core, up to CONFIG_ESP_SDR_PACED_BLOCKS blocks ahead of
+	  the DAC, and must not take irq_lock() (doc/samples/paced.md). Off:
+	  the per-word path, up to 1 MHz of DAC writes. On one core the
+	  block fill measured no better than it (doc/dev/hot-loops.md).
+
+config ESP_SDR_PACED_BLOCK_WORDS
+	int "Paced transmit block size in DAC words"
+	default 128
+	range 16 512
+	depends on ESP_SDR_PACED_TX_BLOCK
+	help
+	  Blocks of this many 32-bit words, and the input history of one
+	  (2 bytes a word for I and Q each), in internal RAM. A multiple of 8.
+
+config ESP_SDR_PACED_BLOCKS
+	int "Paced transmit blocks in the ring"
+	default 4
+	range 2 8
+	depends on ESP_SDR_PACED_TX_BLOCK
+	help
+	  Blocks of DAC words between the fill thread and the poll. One
+	  plays, the others are filled: a stall of the fill core as long as
+	  (blocks - 1) blocks of playing time is absorbed without a replay.
+
+config ESP_SDR_PACED_FILL_STACK_SIZE
+	int "Paced transmit fill thread stack size"
+	default 1024
+	depends on ESP_SDR_PACED_TX_BLOCK
+	help
+	  The fill loop and the FIR need little; the input callback's own
+	  needs come on top. Internal RAM is tight.
+
 config ESP_SDR_TRIG
 	bool "Triggered 80 MS/s snapshots (ESP32-C6)"
 	default y

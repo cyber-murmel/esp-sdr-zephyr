@@ -591,7 +591,7 @@ static mp_obj_t esdr_tx_start_fn(size_t n_args, const mp_obj_t *pos_args, mp_map
 	if (tx.ret == 0) {
 		key = irq_lock();
 		esp_sdr_paced_sync();
-		while (tx.calls < tx.n + TX_TAIL) {
+		while (esp_sdr_tx_paced_samples() < (uint64_t)tx.n + TX_TAIL) {
 			(void)esp_sdr_tx_paced_poll();
 		}
 		irq_unlock(key);

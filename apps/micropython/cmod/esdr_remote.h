@@ -121,8 +121,9 @@ uint64_t esdr_remote_tx_played(void);
 /* The S31 on the chip (esdr_local.c) plays a buffer once, blocking, inside tx_start. */
 #define ESDR_LOCAL_TX_BURSTS 1
 /* The last burst's pacing: writes a whole period late, the worst lateness in CPU cycles, input
- * samples that were missing. */
-void esdr_local_tx_pacing(uint32_t *late, uint32_t *late_max, uint32_t *missing);
+ * samples that were missing, blocks the fill did not have ready (the SMP block path; else 0). */
+void esdr_local_tx_pacing(uint32_t *late, uint32_t *late_max, uint32_t *missing,
+			  uint32_t *starved);
 #endif
 
 struct esdr_remote_trig_stats {

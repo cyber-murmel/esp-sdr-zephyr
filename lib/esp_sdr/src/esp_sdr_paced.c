@@ -3,6 +3,8 @@
  *
  * CPU-paced streaming on the ESP32-C6 and C5, transmit only on the ESP32-S31 (esp_sdr_paced.h).
  * Timing comes from the CPU cycle counter; the caller polls with interrupts locked.
+ * Transmit with CONFIG_ESP_SDR_PACED_TX_BLOCK: the caller only stores, a thread on the other core
+ * computes the words (esp_sdr_paced_blk.h).
  */
 
 #include <errno.h>
@@ -21,6 +23,9 @@
 #include <esp_sdr/esp_sdr_place.h>
 
 #include "esp_sdr_priv.h"
+#if defined(CONFIG_ESP_SDR_PACED_TX_BLOCK)
+#include "esp_sdr_paced_blk.h"
+#endif
 
 LOG_MODULE_DECLARE(esp_sdr, CONFIG_ESP_SDR_LOG_LEVEL);
 
@@ -293,9 +298,117 @@ static struct {
 	void *user;
 	uint32_t power, mhz;
 	int16_t coef[FIR_MAX_L][FIR_TAPS];
+#if !defined(CONFIG_ESP_SDR_PACED_TX_BLOCK)
 	/* History, newest first, mirrored so that a window is contiguous. */
 	int16_t hi[2 * FIR_TAPS], hq[2 * FIR_TAPS];
+#endif
 } txp;
+
+#if defined(CONFIG_ESP_SDR_PACED_TX_BLOCK)
+/* The blocks of DAC words and the input history: internal RAM, read by both cores. */
+static struct esp_sdr_paced_blk txb ESP_SDR_DATA(STATE, txb);
+
+ESP_SDR_STACK_DEFINE(fill_stack, CONFIG_ESP_SDR_PACED_FILL_STACK_SIZE);
+static struct k_thread fill_thread ESP_SDR_DATA_F(STATE, fill_thread, ATOMIC);
+
+/* Between start and stop, shared with the fill thread (atomics; no kernel calls on its path). */
+static struct {
+	uint32_t up, req, done, quit;
+	uint32_t cpu;
+	bool created;
+} fl ESP_SDR_DATA(STATE, fl);
+
+/* The fill thread: the input callback and the FIR, no kernel call. */
+ESP_SDR_CODE(PACED_SAMPLE, fill_main) static void fill_main(void *a, void *b, void *c)
+{
+	bool run = false;
+
+	ARG_UNUSED(a);
+	ARG_UNUSED(b);
+	ARG_UNUSED(c);
+	__atomic_store_n(&fl.up, 1U, __ATOMIC_RELEASE);
+	while (!__atomic_load_n(&fl.quit, __ATOMIC_ACQUIRE)) {
+		if (!run) {
+			/* The first two blocks, on request of esp_sdr_paced_sync(). */
+			if (__atomic_load_n(&fl.req, __ATOMIC_ACQUIRE) != 0U) {
+				esp_sdr_paced_blk_prefill(&txb);
+				run = true;
+				__atomic_store_n(&fl.done, 1U, __ATOMIC_RELEASE);
+			}
+		} else if (esp_sdr_paced_blk_work(&txb)) {
+			esp_sdr_paced_blk_fill(&txb, PBLK_MAX_WORDS);
+			continue;
+		}
+		__asm__ volatile("nop");
+	}
+}
+
+/*
+ * The fill thread on the core the caller is not on, up before the radio is touched. The caller
+ * must stay on its core until the stop (pin it; apps built with CPU_MASK_PIN_ONLY do): the fill
+ * thread outranks every thread on its core, so a caller moved there would not run again before
+ * the stop. esp_sdr_paced_sync() refuses (-EPERM) a caller it finds on that core.
+ */
+static int fill_up(void)
+{
+	unsigned int key = arch_irq_lock();
+	uint32_t cpu = arch_proc_id() == 0U ? 1U : 0U;
+	int ret;
+
+	arch_irq_unlock(key);
+	if (arch_num_cpus() < 2U) {
+		LOG_ERR("paced tx: no second core to fill the blocks");
+		return -ENODEV;
+	}
+	memset(&fl, 0, sizeof(fl));
+	fl.cpu = cpu;
+	k_thread_create(&fill_thread, fill_stack, K_KERNEL_STACK_SIZEOF(fill_stack), fill_main,
+			NULL, NULL, NULL, K_PRIO_COOP(0),
+			IS_ENABLED(CONFIG_FPU_SHARING) ? K_FP_REGS : 0, K_FOREVER);
+	k_thread_name_set(&fill_thread, "esp_sdr_paced_fill");
+	fl.created = true;
+	/* A running thread would not move: -EINVAL. */
+	ret = k_thread_cpu_pin(&fill_thread, (int)cpu);
+	if (ret != 0) {
+		LOG_ERR("paced tx: pinning the fill thread to CPU %u: %d", cpu, ret);
+		fl.created = false;
+		k_thread_abort(&fill_thread);
+		return -ENODEV;
+	}
+	k_thread_start(&fill_thread);
+	for (int t = 0; t < 200 && !__atomic_load_n(&fl.up, __ATOMIC_ACQUIRE); t++) {
+		k_msleep(1);
+	}
+	if (!__atomic_load_n(&fl.up, __ATOMIC_ACQUIRE)) {
+		LOG_ERR("paced tx: CPU %u does not run the fill thread", cpu);
+		k_thread_abort(&fill_thread);
+		fl.created = false;
+		return -ENODEV;
+	}
+	return 0;
+}
+
+static void fill_down(void)
+{
+	if (!fl.created) {
+		return;
+	}
+	__atomic_store_n(&fl.quit, 1U, __ATOMIC_RELEASE);
+	if (k_thread_join(&fill_thread, K_SECONDS(1)) != 0) {
+		LOG_ERR("paced tx: the fill thread (the input callback?) does not stop");
+		k_thread_abort(&fill_thread);
+	}
+	fl.created = false;
+	if (IS_ENABLED(CONFIG_THREAD_STACK_INFO) && IS_ENABLED(CONFIG_INIT_STACKS)) {
+		size_t unused;
+
+		if (k_thread_stack_space_get(&fill_thread, &unused) == 0) {
+			LOG_INF("paced tx: fill stack %u B free of %u B", (unsigned int)unused,
+				(unsigned int)K_KERNEL_STACK_SIZEOF(fill_stack));
+		}
+	}
+}
+#endif
 
 /* Blackman-windowed sinc low-pass at the input Nyquist frequency, split into L phases (Q15). */
 static void fir_design(uint32_t l)
@@ -400,17 +513,35 @@ int esp_sdr_tx_paced_start(uint32_t rate_hz, unsigned int interp, unsigned int p
 	if (!esp_sdr_ready) {
 		return -EAGAIN;
 	}
+#if defined(CONFIG_ESP_SDR_PACED_TX_BLOCK)
+	/* The lock is recursive: a second start from the owner would get through it. */
+	if (tx_on) {
+		return -EBUSY;
+	}
+#endif
 	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+#if defined(CONFIG_ESP_SDR_PACED_TX_BLOCK)
+	ret = fill_up();
+	if (ret != 0) {
+		k_mutex_unlock(&esp_sdr_lock);
+		return ret;
+	}
+#endif
 	ret = esp_sdr_tx_chain_on(power);
 	if (ret != 0) {
+#if defined(CONFIG_ESP_SDR_PACED_TX_BLOCK)
+		fill_down();
+#endif
 		k_mutex_unlock(&esp_sdr_lock);
 		return ret;
 	}
 	esp_sdr_paced_cycles_enable();
 	memset(&stats, 0, sizeof(stats));
 	fir_design(interp);
+#if !defined(CONFIG_ESP_SDR_PACED_TX_BLOCK)
 	memset(txp.hi, 0, sizeof(txp.hi));
 	memset(txp.hq, 0, sizeof(txp.hq));
+#endif
 	txp.l = interp;
 	txp.ph = 0;
 	txp.pos = 0;
@@ -420,11 +551,42 @@ int esp_sdr_tx_paced_start(uint32_t rate_hz, unsigned int interp, unsigned int p
 	txp.upper = (txp.orig & ~TXDC_IQ) | TXDC_INJECT;
 	txp.next = txp.upper;
 	txp.step = ESP_SDR_CPU_HZ / (rate_hz * interp);
+#if defined(CONFIG_ESP_SDR_PACED_TX_BLOCK)
+	/*
+	 * No input is taken yet: esp_sdr_paced_sync() has the fill thread take the first two blocks,
+	 * so that the caller can still load what the input reads between the start and the sync.
+	 */
+	esp_sdr_paced_blk_init(&txb, interp, CONFIG_ESP_SDR_PACED_BLOCK_WORDS, txp.coef, txp.upper,
+			       input, user);
+#endif
 	txp.target = esp_sdr_paced_cycles() + txp.step;
 	tx_on = true;
 	return 0;
 }
 
+#if defined(CONFIG_ESP_SDR_PACED_TX_BLOCK)
+BUILD_ASSERT(CONFIG_ESP_SDR_PACED_BLOCK_WORDS % 8 == 0, "a block holds whole inputs of every phase count");
+
+/* The store, then the next word off the block: the swap is the only other work. */
+ESP_SDR_CODE(PACED_SAMPLE, esp_sdr_tx_paced_poll) bool esp_sdr_tx_paced_poll(void)
+{
+	uint32_t now = esp_sdr_paced_cycles();
+
+	if ((int32_t)(now - txp.target) < 0) {
+		return false;
+	}
+	note_late(now - txp.target, txp.step);
+	sys_write32(txp.next, TXDC_REG);
+	txp.next = esp_sdr_paced_blk_pop(&txb);
+	txp.target += txp.step;
+	return true;
+}
+
+ESP_SDR_CODE(PACED_SAMPLE, esp_sdr_tx_paced_samples) uint64_t esp_sdr_tx_paced_samples(void)
+{
+	return esp_sdr_paced_blk_played(&txb);
+}
+#else
 /* The DAC word, each component clamped to +-511. */
 static inline uint32_t iq10(int32_t i, int32_t q)
 {
@@ -475,25 +637,69 @@ ESP_SDR_CODE(PACED_SAMPLE, esp_sdr_tx_paced_poll) bool esp_sdr_tx_paced_poll(voi
 	return true;
 }
 
+#endif
+
+#if !defined(CONFIG_ESP_SDR_PACED_TX_BLOCK)
+ESP_SDR_CODE(PACED_SAMPLE, esp_sdr_tx_paced_samples) uint64_t esp_sdr_tx_paced_samples(void)
+{
+	return stats.samples;
+}
+#endif
+
 void esp_sdr_tx_paced_stop(void)
 {
 	if (!tx_on) {
 		return;
 	}
 	sys_write32(txp.orig, TXDC_REG);
+#if defined(CONFIG_ESP_SDR_PACED_TX_BLOCK)
+	/* The fill thread is gone before the counts are read and the next start. */
+	fill_down();
+	/* Kept for esp_sdr_paced_get_stats() after the stream. */
+	esp_sdr_paced_blk_stats(&txb, &stats.samples, &stats.events);
+	stats.starved = txb.starved;
+#endif
 	esp_sdr_tx_chain_off();
 	tx_on = false;
 	k_mutex_unlock(&esp_sdr_lock);
 }
-void esp_sdr_paced_sync(void)
+int esp_sdr_paced_sync(void)
 {
+#if defined(CONFIG_ESP_SDR_PACED_TX_BLOCK)
+	if (tx_on && !txb.primed) {
+		/* The fill thread takes 2 blocks of inputs while we wait: before the clock restarts. */
+		uint32_t t0 = esp_sdr_paced_cycles();
+
+		/* The caller cannot run on the fill core: it is moved, and must be pinned. */
+		if (arch_proc_id() == fl.cpu) {
+			LOG_ERR("paced tx: the caller runs on CPU %u, the fill core; pin it", fl.cpu);
+			return -EPERM;
+		}
+		__atomic_store_n(&fl.req, 1U, __ATOMIC_RELEASE);
+		while (!__atomic_load_n(&fl.done, __ATOMIC_ACQUIRE) &&
+		       esp_sdr_paced_cycles() - t0 < ESP_SDR_CPU_HZ) {
+		}
+		if (!__atomic_load_n(&fl.done, __ATOMIC_ACQUIRE)) {
+			/*
+			 * Nothing is played from the blocks, whenever the fill ends: until the play
+			 * the poll replays the idle word (starved). The caller stops the stream; a
+			 * second sync may still succeed when the fill was only slow.
+			 */
+			LOG_ERR("paced tx: no blocks from the fill thread on CPU %u within 1 s (the "
+				"input callback blocks, or that core is held)", fl.cpu);
+			return -ETIMEDOUT;
+		}
+		esp_sdr_paced_blk_play(&txb);
+	}
+#endif
 	if (tx_on) {
 		txp.target = esp_sdr_paced_cycles() + txp.step;
-		return;
+		return 0;
 	}
 #if defined(IQE_CTRL1_REG)
 	rxp.target = esp_sdr_paced_cycles() + rxp.step;
 #endif
+	return 0;
 }
 
 uint32_t esp_sdr_paced_deadline(void)
@@ -511,4 +717,11 @@ uint32_t esp_sdr_paced_deadline(void)
 void esp_sdr_paced_get_stats(struct esp_sdr_paced_stats *s)
 {
 	*s = stats;
+#if defined(CONFIG_ESP_SDR_PACED_TX_BLOCK)
+	if (tx_on) {
+		/* As played, not as pulled: the fill runs blocks ahead. */
+		esp_sdr_paced_blk_stats(&txb, &s->samples, &s->events);
+		s->starved = txb.starved;
+	}
+#endif
 }

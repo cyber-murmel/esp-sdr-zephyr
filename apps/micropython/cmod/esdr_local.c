@@ -1791,12 +1791,13 @@ static void gen_offset(const struct esdr_gen *gen)
 /* Input samples played after the last one, zeros, for the interpolation filter to empty. */
 #define TX_TAIL      16U
 /* The highest DAC write rate (input rate times factor) the poll keeps on time. */
-#define TX_WRITE_MAX 1000000U
+#define TX_WRITE_MAX (IS_ENABLED(CONFIG_ESP_SDR_PACED_TX_BLOCK) ? 2000000U : 1000000U)
 /* The power ladder in dB a step, the carrier's (TX_ATT_STEP quarter dB). */
 #define TX_DB_STEP   ((float)TX_ATT_STEP / 4.0f)
 
 extern uint32_t __esp_sdr_bank_start[], __esp_sdr_bank_end[];
 
+/* The callback runs on the fill thread: written before the start, read there, summed after the stop. */
 static struct {
 	const uint32_t *words;
 	uint32_t n, pos, calls;
@@ -1819,17 +1820,44 @@ static bool txb_input(void *user, int16_t *i, int16_t *q)
 	return true;
 }
 
-/* The stream until the tail has gone in: everything it runs in IRAM, interrupts locked. */
+/*
+ * The stream until the tail has gone in: everything it runs in IRAM, interrupts locked (the local
+ * mask: irq_lock() is the global SMP lock, which the block fill must not wait on). Bounded by
+ * twice the length of the burst: a fill that stops mid-stream freezes the played count.
+ * @return 0, the sync's error, or -ETIMEDOUT.
+ */
 ESP_SDR_CODE(PACED_CHUNK, txb_run)
-static __noinline void txb_run(void)
+static __noinline int txb_run(uint32_t rate)
 {
-	unsigned int key = irq_lock();
+	/* In 64 bits: the cycle counter wraps at 13 s, a slow burst is longer. */
+	const uint64_t limit = 2ULL * ((uint64_t)txb.n + TX_TAIL) * (ESP_SDR_CPU_HZ / rate) +
+			       ESP_SDR_CPU_HZ / 50U;
+	uint64_t spent = 0;
+	unsigned int key = arch_irq_lock();
+	int ret = esp_sdr_paced_sync();
+	uint32_t last = esp_sdr_paced_cycles();
 
-	esp_sdr_paced_sync();
-	while (txb.calls < txb.n + TX_TAIL) {
+	/*
+	 * Until the tail has been played, not until the input has been asked for: with
+	 * CONFIG_ESP_SDR_PACED_TX_BLOCK the callback (txb_input, on the fill thread of the other
+	 * core) runs blocks ahead of the DAC. The count is the inputs whose first word has been
+	 * taken: the same instant as the per-word path's last input call, so the last real word
+	 * and the filter's tail (TX_TAIL - 1 zero inputs, more than the 8 taps) have been stored
+	 * when the loop ends.
+	 */
+	while (ret == 0 && esp_sdr_tx_paced_samples() < (uint64_t)txb.n + TX_TAIL) {
+		uint32_t now;
+
 		(void)esp_sdr_tx_paced_poll();
+		now = esp_sdr_paced_cycles();
+		spent += now - last;
+		last = now;
+		if (spent > limit) {
+			ret = -ETIMEDOUT;
+		}
 	}
-	irq_unlock(key);
+	arch_irq_unlock(key);
+	return ret;
 }
 
 /* The samples' factor for a scale and the power step: the carrier's ladder, TX_DB_STEP a step. */
@@ -2013,18 +2041,20 @@ static int tx_burst(uint32_t rate, const int16_t *buf, size_t n, bool repeat, ui
 
 			__esp_sdr_bank_start[j] = (uint32_t)i | ((uint32_t)q << 16);
 		}
-		txb_run();
+		ret = txb_run(rate);
 		esp_sdr_paced_get_stats(&txb.stats);
 		esp_sdr_tx_paced_stop();
-		txb.played = n;
+		txb.played = ret == 0 ? n : 0;
 	}
 	/* Back to receive at the settings' frequency. */
 	(void)tune(set.freq_hz);
 	return ret;
 }
 
-void esdr_local_tx_pacing(uint32_t *late, uint32_t *late_max, uint32_t *missing)
+void esdr_local_tx_pacing(uint32_t *late, uint32_t *late_max, uint32_t *missing,
+			  uint32_t *starved)
 {
+	*starved = txb.stats.starved;
 	*late = txb.stats.late;
 	*late_max = txb.stats.late_max;
 	*missing = txb.stats.events;
