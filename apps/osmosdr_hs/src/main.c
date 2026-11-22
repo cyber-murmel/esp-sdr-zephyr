@@ -56,9 +56,16 @@ BUILD_ASSERT(ARRAY_SIZE(rates_hz) <= ESDR_RATES_MAX, "more rates than a reply ho
 BUILD_ASSERT(CONFIG_ESP_SDR_DIAG16_RING_KB * 1024U % BATCH_BYTES == 0U, "whole batches in the ring");
 /*
  * Transfers waiting for the host. The ring never waits, so they have memory of their own: a host
- * that falls behind gets whole blocks or none, never what the DMA has written over them.
+ * that falls behind gets whole blocks or none, never what the DMA has written over them. Copying,
+ * that is in_buf; with CONFIG_APP_HS_ZEROCOPY it is the ring's slabs themselves, as many spare
+ * ones as the library has (CONFIG_ESP_SDR_DIAG16_SPARE_SLABS, this many).
  */
 #define IN_FLIGHT_MAX 3
+BUILD_ASSERT(!IS_ENABLED(CONFIG_APP_HS_ZEROCOPY) || BATCH_NODES == ESP_SDR_DIAG16_SLAB_NODES,
+	     "a batch is a slab");
+#if defined(CONFIG_APP_HS_ZEROCOPY)
+BUILD_ASSERT(CONFIG_ESP_SDR_DIAG16_SPARE_SLABS >= IN_FLIGHT_MAX, "a spare for every transfer");
+#endif
 
 /* Three transfers take some 3 ms; longer, and the host has stopped reading. */
 #define DRAIN_MS  20
@@ -108,8 +115,10 @@ static atomic_val_t run_gen;
 
 static struct esdr_stats stats;
 static atomic_t in_flight;
+#if !defined(CONFIG_APP_HS_ZEROCOPY)
 static uint8_t in_buf[IN_FLIGHT_MAX][BATCH_BYTES] __aligned(64);
 static uint8_t in_next;
+#endif
 
 /* The batch being gathered; the stream thread's. */
 static uint8_t *batch_first;
@@ -118,7 +127,6 @@ static uint32_t batch_n;
 static uint16_t next_flags;
 static uint64_t next_index;
 static uint64_t index_base;
-extern uint8_t __esp_sdr_ring_start[];
 
 /* The host said stop: what comes next is a new stream, however soon. */
 static atomic_t stream_ended;
@@ -137,6 +145,55 @@ static void stream_replan(void)
 	k_sem_give(&kick);
 }
 
+static void batch_drop(uint32_t n)
+{
+	/* The host is behind: these go, the next block says so. */
+	stats.rx_overflows++;
+	stats.rx_overflow_samples += (uint64_t)n * ESP_SDR_DIAG16_PAYLOAD / 2U;
+	next_flags |= ESDR_BLK_GAP | ESDR_BLK_OVERFLOW;
+}
+
+#if defined(CONFIG_APP_HS_ZEROCOPY)
+/*
+ * The batch's nodes are the tail of one slab of the ring (it ends where the slab does). The library
+ * swaps the slab for a spare, looking at how far the DMA is before and after, and the transfer reads
+ * the old memory as it stands: nothing is copied. Whatever the library refuses is dropped as
+ * before, and the ring is untouched by it.
+ */
+static void batch_send(void)
+{
+	size_t bytes = batch_n * ESDR_BLOCK_BYTES;
+	uint8_t *first = batch_first;
+	uint32_t n = batch_n;
+	uint8_t *slab;
+
+	batch_first = NULL;
+	batch_n = 0U;
+	if (n == 0U) {
+		return;
+	}
+	if (!IS_ENABLED(CONFIG_APP_HS_SELFTEST) && !usb_sdr_enabled()) {
+		batch_drop(n);
+		return;
+	}
+	if (esp_sdr_diag16_slab_detach(batch_index, &slab) != 0) {
+		batch_drop(n);
+		return;
+	}
+	if (IS_ENABLED(CONFIG_APP_HS_SELFTEST)) {
+		/* The swap's cost is the point: the memory goes straight back. */
+		stats.rx_blocks += n;
+		(void)esp_sdr_diag16_slab_release(slab);
+		return;
+	}
+	atomic_inc(&in_flight);
+	if (usb_sdr_submit_in(first, bytes) != 0) {
+		atomic_dec(&in_flight);
+		(void)esp_sdr_diag16_slab_release(slab);
+		batch_drop(n);
+	}
+}
+#else
 static void batch_send(void)
 {
 	size_t bytes = batch_n * ESDR_BLOCK_BYTES;
@@ -151,12 +208,14 @@ static void batch_send(void)
 	}
 	if (!IS_ENABLED(CONFIG_APP_HS_SELFTEST) &&
 	    (atomic_get(&in_flight) >= IN_FLIGHT_MAX || !usb_sdr_enabled())) {
-		goto drop;
+		batch_drop(n);
+		return;
 	}
 	memcpy(copy, first, bytes);
 	/* A thread held off long enough has copied what the DMA was writing. */
 	if (!esp_sdr_diag16_node_valid(batch_index)) {
-		goto drop;
+		batch_drop(n);
+		return;
 	}
 	if (IS_ENABLED(CONFIG_APP_HS_SELFTEST)) {
 		stats.rx_blocks += n;
@@ -165,22 +224,19 @@ static void batch_send(void)
 	atomic_inc(&in_flight);
 	if (usb_sdr_submit_in(copy, bytes) != 0) {
 		atomic_dec(&in_flight);
-		goto drop;
+		batch_drop(n);
+		return;
 	}
 	/* Transfers finish in order and fewer than all are out: the next one is free. */
 	in_next = (in_next + 1U) % IN_FLIGHT_MAX;
-	return;
-drop:
-	/* The host is behind: these go, the next block says so. */
-	stats.rx_overflows++;
-	stats.rx_overflow_samples += (uint64_t)n * ESP_SDR_DIAG16_PAYLOAD / 2U;
-	next_flags |= ESDR_BLK_GAP | ESDR_BLK_OVERFLOW;
 }
+#endif
 
 static void ring_sink(void *user, uint8_t *node, uint64_t index)
 {
 	struct esdr_block_hdr *h = (struct esdr_block_hdr *)node;
-	uint32_t nr = (uint32_t)((node - __esp_sdr_ring_start) / ESDR_BLOCK_BYTES);
+	/* From the index, never the address: after a swap the nodes are not one run of memory. */
+	uint32_t nr = esp_sdr_diag16_node_nr(index);
 	uint64_t sample;
 
 	ARG_UNUSED(user);
@@ -346,6 +402,11 @@ static void stream_run(const struct settings *s, uint32_t seconds)
 	}
 	LOG_INF("ring stopped: %u S/s, %llu bytes, phase slips %u, skips %u, %d ppm/100",
 		s->rate_hz, rs.bytes, rs.phase_tries, rs.skips, rs.ppm_x100);
+	if (IS_ENABLED(CONFIG_APP_HS_ZEROCOPY)) {
+		LOG_INF("slabs: %u swapped, %u no spare, %u too close, %u stale, %u spares free",
+			rs.slab_swaps, rs.slab_nospare, rs.slab_close, rs.slab_stale,
+			esp_sdr_diag16_slabs_free());
+	}
 }
 
 int usb_sdr_control_out(uint8_t req, uint16_t value, const uint8_t *data, size_t len)
@@ -526,7 +587,10 @@ int usb_sdr_control_in(uint8_t req, uint16_t value, uint8_t *buf, size_t max)
 
 void usb_sdr_in_done(uint8_t *data, size_t len, int err)
 {
-	ARG_UNUSED(data);
+	/* Whatever the outcome: the host is done with the memory, and the ring may have it. */
+	if (IS_ENABLED(CONFIG_APP_HS_ZEROCOPY)) {
+		(void)esp_sdr_diag16_slab_release(data);
+	}
 	if (err == 0) {
 		stats.usb_in_bytes += len;
 		stats.rx_blocks += (uint32_t)(len / ESDR_BLOCK_BYTES);

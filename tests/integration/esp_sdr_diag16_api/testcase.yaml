@@ -11,3 +11,8 @@ tests:
     platform_allow:
       - esp32s31_function_coreboard/esp32s31/hpcore
       - ues31s043h800v480c_u/esp32s31/hpcore
+  integration.esp_sdr.diag16_api.s31.zerocopy:
+    extra_configs:
+      - CONFIG_ESP_SDR_DIAG16_ZEROCOPY=y
+    platform_allow:
+      - esp32s31_function_coreboard/esp32s31/hpcore

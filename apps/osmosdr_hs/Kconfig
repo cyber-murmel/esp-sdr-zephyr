@@ -15,6 +15,16 @@ config APP_HS_LOAD_LOG
 	  A low priority thread counts what it gets, against what it got before
 	  USB came up, and the log has it every 10 s.
 
+config APP_HS_ZEROCOPY
+	bool "Hand the ring's slabs to USB by re-linking descriptors, no copy"
+	select ESP_SDR_DIAG16_ZEROCOPY
+	help
+	  Off: batch_send() copies 8 ring nodes (32 KiB) into one of 3 buffers
+	  of the app per USB transfer. On: the transfer reads the ring's own
+	  memory, and the ring's descriptors take a spare slab in its place
+	  (esp_sdr_diag16_slab_detach()). The 3 spares belong to the library
+	  then, so the RAM is the same either way. See ../README.rst.
+
 source "samples/subsys/usb/common/Kconfig.sample_usbd"
 
 source "Kconfig.zephyr"

@@ -281,3 +281,250 @@ ZTEST(esp_sdr_diag16_api, test_dc_correct)
 		     "DC still %d %d (1/256 step)", s.dc_after[0], s.dc_after[1]);
 	zassert_ok(esp_sdr_rx_set_gain(ESP_SDR_RX_GAIN_AUTO));
 }
+
+#if defined(CONFIG_ESP_SDR_DIAG16_ZEROCOPY)
+#define SLAB_BYTES (ESP_SDR_DIAG16_SLAB_NODES * ESP_SDR_DIAG16_NODE)
+#define HOLD_MAX   3U
+#define SNAPS      HOLD_MAX
+
+/*
+ * A consumer that takes slabs as they complete and keeps them: what it holds must stay as it was
+ * (the DMA runs on in the spares), a fourth must be refused for want of a spare, and what comes
+ * back must be taken again.
+ */
+struct zc {
+	uint8_t *held[HOLD_MAX];
+	uint32_t held_n;
+	uint32_t taken, nospare, close, stale, bad_other;
+	uint32_t snaps;
+	/* What a slab held, hashed the moment before it was taken (a copy would not fit the image). */
+	uint8_t *snap_of[SNAPS];
+	uint32_t hash_of[SNAPS];
+	bool give_back;
+	/* Slabs go to a thread that gives them back, as the USB completion does. */
+	bool to_thread;
+	/* Take a slab though the run began inside it: the sink knows only the last node's pointer. */
+	bool any_slab;
+	uint32_t started_mid;
+	bool seen;
+};
+
+K_MSGQ_DEFINE(slab_q, sizeof(uint8_t *), 8, 4);
+
+static struct zc z;
+
+static uint32_t slab_hash(const uint8_t *p)
+{
+	const uint32_t *w = (const uint32_t *)p;
+	uint32_t h = 2166136261U;
+
+	for (size_t k = 0; k < SLAB_BYTES / 4U; k++) {
+		h = (h ^ w[k]) * 16777619U;
+		h ^= h >> 15;
+	}
+	return h;
+}
+static uint8_t *slab_first_node;
+
+static void zc_sink(void *user, uint8_t *node, uint64_t index)
+{
+	unsigned int nr = esp_sdr_diag16_node_nr(index);
+	uint8_t *slab;
+	int ret;
+
+	ARG_UNUSED(user);
+	if (!z.seen) {
+		z.seen = true;
+		z.started_mid += nr % ESP_SDR_DIAG16_SLAB_NODES != 0U ? 1U : 0U;
+	}
+	if (nr % ESP_SDR_DIAG16_SLAB_NODES == 0U) {
+		slab_first_node = node;
+	}
+	if (nr % ESP_SDR_DIAG16_SLAB_NODES != ESP_SDR_DIAG16_SLAB_NODES - 1U) {
+		return;
+	}
+	if (z.any_slab) {
+		/* The slab's start by arithmetic: its nodes are consecutive in memory. */
+		slab_first_node = node - (ESP_SDR_DIAG16_SLAB_NODES - 1U) * ESP_SDR_DIAG16_NODE;
+	}
+	/* A run may start inside a slab: only a slab seen from its first node counts. */
+	if (slab_first_node == NULL) {
+		return;
+	}
+	/* What the copy would have read, taken before the swap. */
+	if (z.snaps < SNAPS && z.held_n == z.snaps) {
+		z.hash_of[z.snaps] = slab_hash(slab_first_node);
+	}
+	ret = esp_sdr_diag16_slab_detach(index, &slab);
+	if (ret == 0) {
+		z.taken++;
+		if (slab != slab_first_node) {
+			z.bad_other++;
+		}
+		if (z.to_thread) {
+			/* Never blocks the sink: a full queue is a release done here. */
+			if (k_msgq_put(&slab_q, &slab, K_NO_WAIT) != 0) {
+				zassert_ok(esp_sdr_diag16_slab_release(slab));
+			}
+		} else if (z.give_back) {
+			zassert_ok(esp_sdr_diag16_slab_release(slab));
+		} else if (z.held_n < HOLD_MAX) {
+			if (z.snaps < SNAPS && z.held_n == z.snaps) {
+				z.snap_of[z.snaps++] = slab;
+			}
+			z.held[z.held_n++] = slab;
+		}
+	} else if (ret == -ENOMEM) {
+		z.nospare++;
+	} else if (ret == -EAGAIN) {
+		z.close++;
+	} else if (ret == -ESTALE) {
+		z.stale++;
+	} else {
+		z.bad_other++;
+	}
+}
+
+ZTEST(esp_sdr_diag16_api, test_slab_detach_keeps_what_it_hands_out)
+{
+	struct esp_sdr_diag16_cfg cfg = {
+		.rate_hz = 20000000U,
+		.seconds = 1U,
+		.sink = zc_sink,
+	};
+	struct esp_sdr_diag16_stats s = {0};
+
+	zassert_ok(esp_sdr_rx_set_gain(QUIET_GAIN));
+	memset(&z, 0, sizeof(z));
+	slab_first_node = NULL;
+	zassert_equal(esp_sdr_diag16_slabs_free(), CONFIG_ESP_SDR_DIAG16_SPARE_SLABS);
+	zassert_ok(esp_sdr_diag16_run(&cfg, &s));
+	zassert_equal(z.held_n, HOLD_MAX, "a consumer holds as many as there are spares");
+	zassert_true(z.nospare > 0U, "the fourth must have been refused");
+	zassert_equal(z.bad_other, 0U);
+	zassert_equal(z.stale, 0U, "a sink this quick is never stale");
+	zassert_equal(s.slab_swaps, z.taken);
+	zassert_equal(s.slab_nospare, z.nospare);
+	zassert_equal(esp_sdr_diag16_slabs_free(), 0U);
+	/* The run is over, the ring ran on for a second: the held memory is what it was. */
+	for (unsigned int k = 0; k < SNAPS; k++) {
+		zassert_equal(slab_hash(z.snap_of[k]), z.hash_of[k],
+			      "slab %u was written after the swap", k);
+	}
+	/* A restart with all three out must run, and must not touch them. */
+	cfg.sink = sink;
+	cfg.user = &c;
+	memset(&c, 0, sizeof(c));
+	zassert_ok(esp_sdr_diag16_run(&cfg, &s));
+	zassert_equal(c.gaps, 0U);
+	for (unsigned int k = 0; k < SNAPS; k++) {
+		zassert_equal(slab_hash(z.snap_of[k]), z.hash_of[k],
+			      "slab %u was written by the restart", k);
+	}
+	for (unsigned int k = 0; k < z.held_n; k++) {
+		zassert_ok(esp_sdr_diag16_slab_release(z.held[k]));
+	}
+	zassert_equal(esp_sdr_diag16_slabs_free(), CONFIG_ESP_SDR_DIAG16_SPARE_SLABS);
+	zassert_equal(esp_sdr_diag16_slab_release(z.held[0]), -EALREADY);
+}
+
+/* Taken and given back at once, for a second at 40 MS/s: the pool never runs dry, nothing stale. */
+ZTEST(esp_sdr_diag16_api, test_slab_detach_and_release_at_speed)
+{
+	struct esp_sdr_diag16_cfg cfg = {
+		.rate_hz = 40000000U,
+		.seconds = 2U,
+		.sink = zc_sink,
+	};
+	struct esp_sdr_diag16_stats s = {0};
+
+	zassert_ok(esp_sdr_rx_set_gain(QUIET_GAIN));
+	memset(&z, 0, sizeof(z));
+	slab_first_node = NULL;
+	z.give_back = true;
+	zassert_ok(esp_sdr_diag16_run(&cfg, &s));
+	/* 2 s of 80 MB/s in slabs of payload: nearly every slab of the run, not half of them. */
+	zassert_true(z.taken >= 40000000U * 2U * 2U / (ESP_SDR_DIAG16_SLAB_NODES *
+						       ESP_SDR_DIAG16_PAYLOAD) * 9U / 10U,
+		     "only %u swaps", z.taken);
+	zassert_equal(z.stale, 0U);
+	zassert_equal(z.close, 0U);
+	zassert_equal(z.nospare, 0U);
+	zassert_equal(z.bad_other, 0U);
+	zassert_equal(s.skips, 0U);
+	zassert_equal(esp_sdr_diag16_slabs_free(), CONFIG_ESP_SDR_DIAG16_SPARE_SLABS);
+}
+
+/* Starts land anywhere in a slab: swapping the slab a run began in must work as any other. */
+ZTEST(esp_sdr_diag16_api, test_slab_detach_after_a_start_inside_a_slab)
+{
+	struct esp_sdr_diag16_cfg cfg = {.rate_hz = 20000000U, .seconds = 1U, .sink = zc_sink};
+	struct esp_sdr_diag16_stats s = {0};
+	uint32_t mid = 0U;
+
+	zassert_ok(esp_sdr_rx_set_gain(QUIET_GAIN));
+	for (unsigned int k = 0; k < 6U; k++) {
+		memset(&z, 0, sizeof(z));
+		z.give_back = true;
+		z.any_slab = true;
+		slab_first_node = NULL;
+		zassert_ok(esp_sdr_diag16_run(&cfg, &s));
+		mid += z.started_mid;
+		zassert_equal(z.bad_other, 0U, "run %u: a slab came back from the wrong place", k);
+		zassert_equal(z.stale, 0U);
+		zassert_equal(z.close, 0U);
+		zassert_true(z.taken > 40U, "run %u: %u swaps", k, z.taken);
+		zassert_equal(esp_sdr_diag16_slabs_free(), CONFIG_ESP_SDR_DIAG16_SPARE_SLABS);
+	}
+	/* Not a test of the draw, only that it was drawn: a start inside a slab is 7 in 8. */
+	zassert_true(mid > 0U, "no run began inside a slab");
+}
+
+#define REL_STACK 1024
+static K_THREAD_STACK_DEFINE(rel_stack, REL_STACK);
+static struct k_thread rel_thread;
+static volatile bool rel_stop;
+static volatile uint32_t rel_count, rel_bad;
+
+static void rel_fn(void *a, void *b, void *c)
+{
+	uint8_t *slab;
+
+	ARG_UNUSED(a);
+	ARG_UNUSED(b);
+	ARG_UNUSED(c);
+	while (!rel_stop || k_msgq_num_used_get(&slab_q) != 0U) {
+		if (k_msgq_get(&slab_q, &slab, K_MSEC(5)) == 0) {
+			/* Some time out, as a transfer is. */
+			k_busy_wait(300);
+			rel_bad += esp_sdr_diag16_slab_release(slab) != 0 ? 1U : 0U;
+			rel_count++;
+		}
+	}
+}
+
+/* The completion comes from another thread (and core) than the sink: the pool must hold. */
+ZTEST(esp_sdr_diag16_api, test_slab_release_from_another_thread)
+{
+	struct esp_sdr_diag16_cfg cfg = {.rate_hz = 20000000U, .seconds = 2U, .sink = zc_sink};
+	struct esp_sdr_diag16_stats s = {0};
+
+	zassert_ok(esp_sdr_rx_set_gain(QUIET_GAIN));
+	memset(&z, 0, sizeof(z));
+	z.to_thread = true;
+	slab_first_node = NULL;
+	rel_stop = false;
+	rel_count = rel_bad = 0U;
+	k_thread_create(&rel_thread, rel_stack, K_THREAD_STACK_SIZEOF(rel_stack), rel_fn, NULL, NULL,
+			NULL, K_PRIO_PREEMPT(2), 0, K_NO_WAIT);
+	zassert_ok(esp_sdr_diag16_run(&cfg, &s));
+	rel_stop = true;
+	zassert_ok(k_thread_join(&rel_thread, K_SECONDS(2)));
+	zassert_equal(rel_bad, 0U, "a release was refused");
+	zassert_true(z.taken > 100U, "only %u swaps", z.taken);
+	zassert_equal(z.bad_other, 0U);
+	zassert_equal(z.stale, 0U);
+	zassert_equal(esp_sdr_diag16_slabs_free(), CONFIG_ESP_SDR_DIAG16_SPARE_SLABS,
+		      "a slab was lost between the threads");
+}
+#endif

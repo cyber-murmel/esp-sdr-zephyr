@@ -35,6 +35,7 @@
 
 #include <esp_sdr/esp_sdr_place.h>
 #include <esp_sdr/esp_sdr.h>
+#include <esp_sdr/esdr_dma_ring.h>
 #include <esp_sdr/esp_sdr_diag16.h>
 
 #include "esp_sdr_priv.h"
@@ -49,6 +50,21 @@ LOG_MODULE_DECLARE(esp_sdr, CONFIG_ESP_SDR_LOG_LEVEL);
 #define MAX_RATE_HZ  40000000U
 #define STALL_MS     500
 #define NODES        (CONFIG_ESP_SDR_DIAG16_RING_KB * 1024U / ESP_SDR_DIAG16_NODE)
+#define SLAB_NODES   ESP_SDR_DIAG16_SLAB_NODES
+#define SLAB_BYTES   (SLAB_NODES * ESP_SDR_DIAG16_NODE)
+#ifdef CONFIG_ESP_SDR_DIAG16_ZEROCOPY
+#define SPARES       CONFIG_ESP_SDR_DIAG16_SPARE_SLABS
+#else
+#define SPARES       0U
+#endif
+/*
+ * How far the DMA may be from coming round to a slab for it to be swapped, in nodes. The DMA takes a
+ * node's descriptor when it begins the node before, so it needs the lead (nodes finished since the
+ * slab's first) to be NODES - 1 for that; the count is the interrupt's and can be a node or two
+ * behind the DMA (51 us a node at 40 MS/s, and an interrupt held off by others), and the descriptor
+ * burst may read one ahead. A swap needs a lead of at most NODES - SWAP_MARGIN.
+ */
+#define SWAP_MARGIN  4U
 
 /* One RX channel of the AXI group, fixed: Zephyr's GDMA driver has no use for it. */
 #define DMA_GROUP    GDMA_LL_AXI_GROUP_START_ID
@@ -60,6 +76,11 @@ LOG_MODULE_DECLARE(esp_sdr, CONFIG_ESP_SDR_LOG_LEVEL);
 #define EOF_BYTES    (EOF_NODES * ESP_SDR_DIAG16_PAYLOAD)
 
 BUILD_ASSERT(NODES % EOF_NODES == 0U, "the frames fill the ring");
+BUILD_ASSERT(NODES % SLAB_NODES == 0U, "the slabs fill the ring");
+BUILD_ASSERT(NODES / SLAB_NODES + SPARES <= ESDR_DMA_RING_SLABS_MAX, "too many slabs");
+#ifdef CONFIG_ESP_SDR_DIAG16_ZEROCOPY
+BUILD_ASSERT(NODES > 2U * SLAB_NODES + SWAP_MARGIN, "a slab and its margin fit the ring");
+#endif
 BUILD_ASSERT(EOF_BYTES * 8U <= PARL_IO_RX_BITLEN_V, "a frame fits the length field");
 BUILD_ASSERT(ESP_SDR_DIAG16_HOLE % DMA_BURST == 0U, "the samples are on a burst boundary");
 BUILD_ASSERT(ESP_SDR_DIAG16_PAYLOAD % DMA_BURST == 0U, "a node is whole bursts");
@@ -80,6 +101,49 @@ static const int8_t default_pins[ESP_SDR_DIAG16_PINS] = {
 extern uint8_t __esp_sdr_ring_start[];
 static dma_descriptor_align8_t desc[NODES];
 
+#if SPARES != 0
+#define SPARE_MEM (&spare_mem[0][0])
+/* The memory a consumer holds while the ring goes on without it: the library's, in the image. */
+static uint8_t spare_mem[SPARES][SLAB_BYTES] __aligned(64);
+#else
+#define SPARE_MEM ((uint8_t *)NULL)
+#endif
+
+static void ring_set_buf(void *ctx, unsigned int node, uint8_t *buf)
+{
+	ARG_UNUSED(ctx);
+	desc[node].buffer = buf + ESP_SDR_DIAG16_HOLE;
+}
+
+static void ring_fence(void *ctx)
+{
+	ARG_UNUSED(ctx);
+	barrier_dmem_fence_full();
+}
+
+static const struct esdr_dma_ring_ops ring_ops = {
+	.set_buf = ring_set_buf,
+	.fence = ring_fence,
+};
+/*
+ * The ring and the spares must be internal SRAM the AXI DMA reaches and no cache covers: the high
+ * SRAM (TCM), which holds the image's .bss, the ring and the USB buffers alike. A spare that the
+ * linker put anywhere else would be corrupted without a sign.
+ */
+#define SRAMHP_ADDR DT_REG_ADDR(DT_NODELABEL(sramhp))
+#define SRAMHP_SIZE DT_REG_SIZE(DT_NODELABEL(sramhp))
+
+static bool mem_in_axi_window(const void *p, size_t len)
+{
+	uintptr_t a = (uintptr_t)p;
+
+	return a >= SRAMHP_ADDR && a + len <= SRAMHP_ADDR + SRAMHP_SIZE;
+}
+
+/* Set up with the first run, never again: it holds what a consumer has out. */
+static struct esdr_dma_ring pool;
+static bool pool_ready;
+
 static struct {
 	/*
 	 * Written by the interrupt. The byte count is two words: prod_seq is odd while they change,
@@ -90,6 +154,7 @@ static struct {
 	volatile uint64_t tick_first, tick_last;
 	volatile uint64_t prod_first, prod_last;
 	volatile uint32_t isrs;
+	uint32_t slab_swaps, slab_nospare, slab_close, slab_stale;
 	volatile bool overrun;
 	uint32_t wake_bytes;
 	/* Where the sink's index starts. */
@@ -136,6 +201,134 @@ bool esp_sdr_diag16_node_valid(uint64_t index)
 {
 	/* A node's margin, as for skipping: the count moves with the interrupt, after the DMA. */
 	return esp_sdr_diag16_produced() - index < (NODES - 1U) * ESP_SDR_DIAG16_PAYLOAD;
+}
+
+unsigned int esp_sdr_diag16_node_nr(uint64_t index)
+{
+	return (unsigned int)((st.first / ESP_SDR_DIAG16_PAYLOAD + index / ESP_SDR_DIAG16_PAYLOAD) %
+			      NODES);
+}
+
+/* Is the DMA, by the count, far enough from the slab that starts at @p first_index to swap it? */
+static bool slab_lead_ok(int64_t first_index)
+{
+	int64_t lead = (int64_t)esp_sdr_diag16_produced() - first_index;
+
+	return esdr_dma_ring_swap_safe(lead, NODES, ESP_SDR_DIAG16_PAYLOAD, SWAP_MARGIN);
+}
+
+/*
+ * Where the DMA is, from the hardware: the RX channel's in_dscr register, "the current inlink
+ * descriptor" (the HAL calls it the prefetched one: it may be the one being fetched). Read-only, one
+ * word, live, so a read is as coherent as a register can be; the two older ones (bf0, bf1) are three
+ * separate reads and add nothing. Returns the ring node, or -1 for an address outside desc[].
+ */
+static int hw_node(void)
+{
+	uintptr_t x = axi_dma_ll_rx_get_prefetched_desc_addr(AXI_DMA_LL_GET_HW(0), DMA_CH);
+	uintptr_t base = (uintptr_t)&desc[0];
+
+	if (x < base || x >= base + sizeof(desc)) {
+		return -1;
+	}
+	return (int)((x - base) / sizeof(desc[0]));
+}
+
+/*
+ * The DMA is not in [first - HW_PREFETCH, first + SLAB_NODES), modulo the ring: not on the slab, and
+ * not so close behind it that it has fetched, or is fetching, the slab's first descriptor. The
+ * register may name the descriptor being fetched or the one finishing, and the descriptor burst may
+ * read one ahead: HW_PREFETCH is 2.
+ */
+#define HW_PREFETCH 2U
+
+static bool hw_clear(unsigned int first)
+{
+	int k = hw_node();
+	unsigned int d;
+
+	if (k < 0) {
+		return false;
+	}
+	d = (first + NODES - (unsigned int)k) % NODES; /* nodes from the DMA forward to the slab */
+	return d > HW_PREFETCH && d <= NODES - SLAB_NODES;
+}
+
+int esp_sdr_diag16_slab_detach(uint64_t index, uint8_t **slab)
+{
+	unsigned int nr = esp_sdr_diag16_node_nr(index);
+	unsigned int first = nr - nr % SLAB_NODES;
+	int64_t first_index = (int64_t)index -
+			      (int64_t)(nr - first) * (int64_t)ESP_SDR_DIAG16_PAYLOAD;
+	uint8_t *spare, *old;
+	unsigned int key;
+	bool before, after;
+
+	if (!st.running || !pool_ready || slab == NULL) {
+		return -EINVAL;
+	}
+	/* Slabs held back after a stale swap, once the count is two laps past them. */
+	(void)esdr_dma_ring_reap(&pool, prod_get(), 2ULL * NODES * ESP_SDR_DIAG16_PAYLOAD);
+	/* Cheap: the interrupt's count. Not a proof (it lags); the registers below are. */
+	if (!slab_lead_ok(first_index) ||
+	    esp_sdr_diag16_produced() < (uint64_t)(first_index + (int64_t)SLAB_NODES *
+						   ESP_SDR_DIAG16_PAYLOAD)) {
+		/*
+		 * Too far on, or the slab's last node not finished (by the count, which never runs
+		 * ahead): in_dscr may name the node after the one being written, so the hardware
+		 * check below accepts the DMA on the node after the slab only if that one is done.
+		 */
+		st.slab_close++;
+		return -EAGAIN;
+	}
+	spare = esdr_dma_ring_spare_take(&pool);
+	if (spare == NULL) {
+		st.slab_nospare++;
+		return -ENOMEM;
+	}
+	/*
+	 * With interrupts off on this core, so that the three looks and the writes between them span
+	 * well under a node (51 us at 40 MS/s): the DMA's place before and after is then one lap's
+	 * fraction apart, and a place clear of the slab at both ends cannot hide a lap.
+	 */
+	key = irq_lock();
+	before = hw_clear(first);
+	old = before ? esdr_dma_ring_swap(&pool, first, spare) : NULL;
+	after = old != NULL && hw_clear(first);
+	irq_unlock(key);
+	if (!before) {
+		(void)esdr_dma_ring_put(&pool, spare);
+		st.slab_close++;
+		return -EAGAIN;
+	}
+	if (old == NULL) {
+		/* Cannot happen: the spare is out and the node is in range. */
+		(void)esdr_dma_ring_put(&pool, spare);
+		return -EINVAL;
+	}
+	if (!after || !slab_lead_ok(first_index)) {
+		/*
+		 * The DMA may have taken the old descriptors before the swap and be writing the old
+		 * memory: it is not a spare until the DMA is past it (reaped by the count, or the
+		 * group's reset at the next start).
+		 */
+		st.slab_stale++;
+		(void)esdr_dma_ring_quarantine(&pool, old, prod_get());
+		return -ESTALE;
+	}
+	st.slab_swaps++;
+	*slab = old;
+	return 0;
+}
+
+int esp_sdr_diag16_slab_release(const uint8_t *data)
+{
+	return pool_ready ? esdr_dma_ring_put(&pool, data) : -EINVAL;
+}
+
+unsigned int esp_sdr_diag16_slabs_free(void)
+{
+	return pool_ready ? esdr_dma_ring_free_count(&pool) : 0U;
 }
 
 ESP_SDR_CODE(PACED_CHUNK, ring_isr)
@@ -251,10 +444,10 @@ static bool wait_produced(uint64_t bytes)
 	return false;
 }
 
+/* From the descriptor: after a swap the ring's nodes are no longer one run of memory. */
 static inline uint8_t *node_at(uint64_t byte)
 {
-	return __esp_sdr_ring_start +
-	       (byte / ESP_SDR_DIAG16_PAYLOAD % NODES) * ESP_SDR_DIAG16_NODE;
+	return (uint8_t *)desc[byte / ESP_SDR_DIAG16_PAYLOAD % NODES].buffer - ESP_SDR_DIAG16_HOLE;
 }
 
 /*
@@ -480,16 +673,32 @@ static void pads_release(const int8_t *pins)
 	}
 }
 
-static void ring_init(void)
+static int ring_init(void)
 {
+	if (!pool_ready) {
+		int ret = esdr_dma_ring_init(&pool, &ring_ops, NULL, NODES, SLAB_NODES,
+					     ESP_SDR_DIAG16_NODE, __esp_sdr_ring_start, SPARE_MEM,
+					     SPARES);
+
+		if (ret != 0 || !mem_in_axi_window(__esp_sdr_ring_start, NODES * ESP_SDR_DIAG16_NODE) ||
+		    (SPARES != 0U && !mem_in_axi_window(SPARE_MEM, SPARES * SLAB_BYTES))) {
+			return -EFAULT;
+		}
+		pool_ready = true;
+	}
+	/*
+	 * A restart takes the ring's slabs as they are: the ones a consumer still holds are out of
+	 * the ring, never in it, so nothing here can reach memory USB is reading.
+	 */
 	for (unsigned int i = 0; i < NODES; i++) {
 		memset(&desc[i], 0, sizeof(desc[i]));
-		desc[i].buffer = __esp_sdr_ring_start + i * ESP_SDR_DIAG16_NODE + ESP_SDR_DIAG16_HOLE;
+		desc[i].buffer = esdr_dma_ring_node(&pool, i) + ESP_SDR_DIAG16_HOLE;
 		desc[i].dw0.size = ESP_SDR_DIAG16_PAYLOAD;
 		desc[i].dw0.length = 0;
 		desc[i].dw0.owner = DMA_DESCRIPTOR_BUFFER_OWNER_DMA;
 		desc[i].next = &desc[(i + 1U) % NODES];
 	}
+	return 0;
 }
 
 static void parlio_start(unsigned int div, bool falling)
@@ -528,6 +737,10 @@ static void dma_start(void)
 	PERIPH_RCC_ATOMIC() {
 		gdma_ll_enable_bus_clock(DMA_GROUP, true);
 		gdma_ll_reset_register(DMA_GROUP);
+	}
+	/* The reset ends every write in flight: what a stale swap held back is a spare again. */
+	if (pool_ready) {
+		(void)esdr_dma_ring_quarantine_clear(&pool);
 	}
 	axi_dma_ll_force_enable_reg_clock(dma, true);
 	axi_dma_ll_set_default_memory_range(dma);
@@ -600,13 +813,19 @@ int esp_sdr_diag16_run(const struct esp_sdr_diag16_cfg *cfg, struct esp_sdr_diag
 	st.tick_first = st.tick_last = 0;
 	st.prod_first = st.prod_last = 0;
 	st.isrs = 0;
+	st.slab_swaps = st.slab_nospare = st.slab_close = st.slab_stale = 0U;
 	st.overrun = false;
 	st.wake_bytes = MAX(cfg->wake_nodes, 1U) * ESP_SDR_DIAG16_PAYLOAD;
 	st.first = 0U;
 	k_sem_reset(&ring_sem);
 	atomic_set(&st.stop, 0);
 	s.byte_rate = cfg->rate_hz * 2U;
-	ring_init();
+	ret = ring_init();
+	if (ret != 0) {
+		st.running = false;
+		k_mutex_unlock(&esp_sdr_lock);
+		return ret;
+	}
 
 	esp_sdr_s31_rx_on();
 	esp_sdr_s31_diag_start();
@@ -715,6 +934,10 @@ int esp_sdr_diag16_run(const struct esp_sdr_diag16_cfg *cfg, struct esp_sdr_diag
 
 stop_ring:
 	s.isrs = st.isrs;
+	s.slab_swaps = st.slab_swaps;
+	s.slab_nospare = st.slab_nospare;
+	s.slab_close = st.slab_close;
+	s.slab_stale = st.slab_stale;
 	s.dma_raw = axi_dma_ll_rx_get_interrupt_status(AXI_DMA_LL_GET_HW(0), DMA_CH, true);
 	parlio_ll_rx_start_soft_recv(&PARL_IO, false);
 	parlio_ll_rx_start(&PARL_IO, false);

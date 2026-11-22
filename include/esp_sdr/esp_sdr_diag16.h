@@ -123,6 +123,12 @@ struct esp_sdr_diag16_stats {
 	int32_t dc_before[2], dc_after[2];
 	/** Debugging: ring interrupts, the raw DMA status. */
 	uint32_t isrs, dma_raw;
+	/**
+	 * esp_sdr_diag16_slab_detach() in this run: slabs handed over, refused for want of a spare,
+	 * refused because the DMA was too close to the slab, and swapped but not provably in time
+	 * (the slab went back to the pool, the data was dropped).
+	 */
+	uint32_t slab_swaps, slab_nospare, slab_close, slab_stale;
 };
 
 /**
@@ -164,6 +170,61 @@ uint64_t esp_sdr_diag16_produced(void);
  * @return false when the DMA may have started on that node again.
  */
 bool esp_sdr_diag16_node_valid(uint64_t index);
+
+/** Nodes in a slab: the unit esp_sdr_diag16_slab_detach() hands over. */
+#ifdef CONFIG_ESP_SDR_DIAG16_SLAB_NODES
+#define ESP_SDR_DIAG16_SLAB_NODES CONFIG_ESP_SDR_DIAG16_SLAB_NODES
+#else
+#define ESP_SDR_DIAG16_SLAB_NODES 8U
+#endif
+
+/**
+ * @return The ring position, 0 to the ring's nodes less one, of the node a sink got at @p index.
+ * The slab a node is in starts at the position rounded down to ESP_SDR_DIAG16_SLAB_NODES.
+ */
+unsigned int esp_sdr_diag16_node_nr(uint64_t index);
+
+/**
+ * @brief Take the slab a node is in out of the ring, with no copy.
+ *
+ * Meant for the sink, as the last node of a slab comes (@p index may be any node of the slab, but
+ * the slab's last node must be finished). The ring's descriptors for the slab's nodes are re-pointed at a spare slab, and the old
+ * memory, as the DMA left it (headers in the holes untouched), is the caller's until
+ * esp_sdr_diag16_slab_release(). Its node k is at slab + k * ESP_SDR_DIAG16_NODE; a sink's @p node
+ * pointers of that slab are inside it.
+ *
+ * Every node of the slab must be finished (the sink got the last one, so it is). It looks first at
+ * the count: if the DMA is within a few nodes of coming round to the slab again (the lead of the
+ * count over the slab's first node), nothing is done (-EAGAIN). Then, with interrupts locked on
+ * this core for a few microseconds, it reads the RX channel's current descriptor register (hardware,
+ * not the interrupt's count), swaps, and reads it again: the DMA must be clear of the slab and its
+ * first descriptor both times. If it was not provably so after the swap, the old memory may still be
+ * written: it is held back from the pool (-ESTALE) until two laps of the count or the next start.
+ * The data is not to be used on -EAGAIN or -ESTALE. Nothing waits. It is not worth retrying: both
+ * mean the consumer is a lap behind, and the next node only makes it worse.
+ *
+ * @param index The index a sink got, of any node of the slab.
+ * @param[out] slab The old slab, on 0.
+ * @return 0, -ENOMEM when no spare is free (nothing changed), -EAGAIN as above (nothing changed),
+ *         -ESTALE as above (swapped, old memory held back, not given to anyone), -EINVAL with no
+ *         run in progress.
+ */
+int esp_sdr_diag16_slab_detach(uint64_t index, uint8_t **slab);
+
+/**
+ * @brief Give back memory esp_sdr_diag16_slab_detach() handed out.
+ *
+ * From any thread or the USB stack's completion: it is one atomic operation. Any address inside
+ * the slab, as the consumer's own sub-ranges are. Once given back the memory may be written by the
+ * DMA at any moment.
+ *
+ * @return 0, -EINVAL for an address that is no slab's, or one in the ring, -EALREADY when the
+ *         slab is back already.
+ */
+int esp_sdr_diag16_slab_release(const uint8_t *data);
+
+/** @return Spare slabs free now. */
+unsigned int esp_sdr_diag16_slabs_free(void);
 
 /** @} */
 

@@ -39,7 +39,7 @@ marked **(estimate)** and claims not yet checked against the code or a board are
 | # | Lever | Chip | Gain (estimate) | Status |
 | --- | --- | --- | --- | --- |
 | 1 | GDMA gather of kept windows into staging | C6 | whole bursts from about 50 us to the staging limit | deferred: needs the C6 badge |
-| 2 | Hand ring nodes to USB by re-linking | S31 | no 32 KiB copy per batch | deferred: needs the S31 board |
+| 2 | Hand ring nodes to USB by re-linking | S31 | no 32 KiB copy per batch | built 2026-11-24 (`CONFIG_APP_HS_ZEROCOPY`, `esdr_dma_ring`, `esp_sdr_diag16_slab_detach()`), measured 2026-11-24/25 on the CoreBoard at 20 MS/s: 86 % of the CPU free against 80 % with the copy; 300 s runs with 0 or 1 dropped batch (all three spares out), no rejected swap; off by default |
 | 3 | TX waveforms as a gather of slots | S3 | 25k down to 3 to 6k cycles for the ACK tail (the CPU build is now 11.9k) | measured: the gather loses on latency (389 us against 192 us), the CPU build stays |
 | 4 | REGDMA register lists for paced TX and RX | C6, C5, S31 | lifts the C6's 250 kS/s TX ceiling | deferred: needs the C6 (first), then C5 and S31 |
 | 5 | Backup DMA register lists (bank switch, dump trigger, GDMA start) fired by one CPU store | S3 | CPU work of a dump or replay step down to one store plus the wait | built (`esp_sdr_bkdma_*`), measured 2026-11-24: 12 to 15 cycles a word, about 400 cycles a run, starts a GDMA chain; pays for longer lists, not for two words (see [the section](#the-s3-backup-dma-register-lists)); the S3 has no REGDMA, this is its stand-in |

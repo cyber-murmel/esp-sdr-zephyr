@@ -28,6 +28,24 @@ same chip.
 - The samples come from the gapless ring through the modem's diagnostic bus
   (``esp_sdr_diag16.h``); `Gapless receive <../../doc/samples/rings.md>`__ describes the ring.
 
+Copy or no copy
+===============
+
+By default ``batch_send()`` copies eight ring nodes (32 KiB) into one of three buffers per USB
+transfer. ``CONFIG_APP_HS_ZEROCOPY=y`` (west build ``-- -DCONFIG_APP_HS_ZEROCOPY=y``) hands the ring's
+own slab of eight nodes to USB instead: the ring's descriptors are re-pointed at one of three spare
+slabs (``esp_sdr_diag16_slab_detach()``), and the transfer's completion gives the memory back. The RAM is
+the same either way (the three spares move from the app into the library). A batch is dropped, with
+the overflow flag, when no spare is free, as with three transfers out today; the library also drops it
+when the DMA was too close to the slab to prove the swap in time (``slab_close`` and ``slab_stale`` in
+the ``ring stopped`` log). Checking an image: the samples of a held transfer cannot be told from a
+DMA overwrite by the block headers (the DMA never writes the hole), so a stream check needs a
+known signal (a tone, checked on the host for steps and repeats).
+
+Measured on the CoreBoard at 20 MS/s (HS port alone on its hub): 86 % of the CPU free against 80 % with
+the copy. Four runs of 300 s dropped no batch or one (the moment all three spares were out); none was
+refused as too close or stale. No repeated non-zero node in captures with forced gaps.
+
 Rates and formats
 =================
 

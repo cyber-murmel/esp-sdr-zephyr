@@ -244,6 +244,36 @@ config ESP_SDR_DIAG16_RING_KB
 	  a PARLIO frame's length holds. 128 KiB hold 3.3 ms at 20 MS/s. It takes
 	  this much from the top of the image's memory.
 
+config ESP_SDR_DIAG16_SLAB_NODES
+	int "Nodes in a slab"
+	default 8
+	range 1 16
+	depends on ESP_SDR_DIAG16
+	help
+	  The ring is cut into slabs of this many consecutive nodes (the ring's
+	  node count must be a multiple). A slab is what
+	  esp_sdr_diag16_slab_detach() hands to a consumer in one piece.
+
+config ESP_SDR_DIAG16_ZEROCOPY
+	bool "Hand ring slabs to a consumer by re-linking the descriptors"
+	depends on ESP_SDR_DIAG16
+	help
+	  esp_sdr_diag16_slab_detach(): a slab of the ring goes to a consumer
+	  as it is, with no copy, and the ring's descriptors take a spare slab in
+	  its place. The spares are memory of the library (one slab each, in
+	  the image's RAM), which a consumer that copies out of the ring would
+	  have had to provide itself. Without this option there are no spares and
+	  detach returns -ENOMEM.
+
+config ESP_SDR_DIAG16_SPARE_SLABS
+	int "Spare slabs"
+	default 3
+	range 1 8
+	depends on ESP_SDR_DIAG16_ZEROCOPY
+	help
+	  Slabs a consumer can hold at once: more than this many outstanding
+	  and the next detach fails with -ENOMEM (nothing is swapped).
+
 config ESP_SDR_REPLAY
 	bool "Loop replay through the DAC engine (ESP32-C5, ESP32-S31)"
 	depends on (SOC_SERIES_ESP32C5 && ESP_SDR_PACED) || SOC_SERIES_ESP32S31
