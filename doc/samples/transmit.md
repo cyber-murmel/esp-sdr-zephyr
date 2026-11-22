@@ -54,6 +54,10 @@ The ESP32-S3 plays words out of its banks ([SRAM bank ownership](index.md#sram-b
 ### One-shot and loop
 
 - One-shot calls (`esp_sdr_tx_play()`, `esp_sdr_tx_sweep()`) play prepared words from the dump bank.
+- `esp_sdr_tx_sweep()` synthesizes each segment of up to 16380 samples while the DAC is idle, so
+  it pauses between segments; the chirp's phase follows absolute time and stays continuous across
+  them. Within a segment the amplitude is flat to 1e-5 and the phase within 4.3e-4 rad of the
+  exact chirp for any sweep the call accepts (unit test `tests/unit/tx_sweep`, host float32).
 - Loop playback (`esp_sdr_tx_loop_*()`) holds the trigger bit and wraps only while it is held;
   pulsing the bit plays one pass.
 - Retriggered bursts (`esp_sdr_tx_play_for()`) leave a hole of about 1.35 us each.

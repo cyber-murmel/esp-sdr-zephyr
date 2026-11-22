@@ -19,7 +19,7 @@ there is.
 
 | Source | Item | Chip | Status |
 | --- | --- | --- | --- |
-| cnlohr_tricks | 1: renormalize the sweep oscillator | S3 (all chips with the sweep) | planned next (S3) |
+| cnlohr_tricks | 1: renormalize the sweep oscillator | S3 (all chips with the sweep) | done (S3), unit-tested; over the air capture pending |
 | cnlohr_tricks | 2: UBSan on the unit tests | native_sim | done |
 | cnlohr_tricks | 3: burst centre from three bins | pcap survey | deferred: low value, no consumer yet |
 | cnlohr_tricks | 4: Goertzel | any | deferred: no feature needs it |
@@ -45,10 +45,9 @@ point, LFSR whitening and the profile-then-assembly ladder (`esp_sdr_prof`, per-
 
 ### 1. TX sweep oscillator drift
 
-`sweep_fill()` (`lib/esp_sdr/src/esp_sdr_tx.c:299`) builds a chirp by rotating `z` by `w` each
-sample and `w` by `c`, all in float32, for up to `ESP_SDR_SAMPLES_MAX` = 16380 samples
-(`include/esp_sdr/esp_sdr.h:44`) a bank. Each bank restarts from the exact phase of absolute time.
-A float simulation at 40 MS/s, -15 to +15 MHz in 10 ms, amplitude 511:
+`sweep_fill()` rotated `z` by `w` each sample and `w` by `c`, all in float32, for up to
+`ESP_SDR_SAMPLES_MAX` = 16380 samples (`include/esp_sdr/esp_sdr.h:44`) a bank, with no
+renormalization. A float simulation at 40 MS/s, -15 to +15 MHz in 10 ms, amplitude 511 gave:
 
 | Variant | Worst amplitude error at a bank's end | Worst phase error |
 | --- | --- | --- |
@@ -60,23 +59,50 @@ A float simulation at 40 MS/s, -15 to +15 MHz in 10 ms, amplitude 511:
 Two causes:
 
 - **Amplitude.** Float rounding makes the length of `w` walk away from 1, and the length of `z` is
-  the product of all of them. One Newton step every 64 samples (4 multiplies) removes it.
-- **Phase.** Mostly a modelling slip. The step from sample j to j+1 of a discrete chirp is
-  `f + k (j + 0.5) / fs`, but `w` starts at `f`. That is half a chirp step short and adds up to
-  `n pi k / fs^2`, 0.096 rad over a bank here.
+  the product of all of them. One Newton step (4 multiplies) removes it.
+- **Phase.** The step from sample j to j+1 of a discrete chirp is `f + k (j + 0.5) / fs`, but `w`
+  started at `f`: half a chirp step short, `n pi k / fs^2` over a bank, 0.096 rad here. When the
+  chirp rate is small the update `w * c` also loses `c` in the rounding: `cos(c)` is exactly 1 and
+  `sin(c)` is added to a number of size 1 with an ulp of 6e-8.
 
-The result is a phase jump and an amplitude step at every bank boundary (every 0.4 ms at 40 MS/s),
-so there are spurs at the bank rate around the chirp. **Item:** the half-step offset plus the
-64-sample resync, which costs well under one cycle a sample **(estimate)**. A unit test measures
-amplitude and phase drift over a long sweep against a double reference; a capture of a sweep on a
-second board shows the amplitude flat.
+**Done** (2026-11-24, `lib/esp_sdr/src/esp_sdr_sweep.h`, test `tests/unit/tx_sweep`). The unit test
+runs the old recursion and the new fill over full 16380-sample banks of eight sweeps (the fastest
+the API allows, 1 ms across +-39.9 MHz at 80 MS/s and +-19.9 MHz at 40 MS/s, up to 1 Hz in 5 s and
+a constant tone) and compares `z` with the exact double phase:
+
+| | Worst amplitude error | Worst phase error |
+| --- | --- | --- |
+| Old, 40 MS/s +-15 MHz 10 ms (the case above) | 3.8 % | 0.10 rad |
+| Old, worst of the eight sweeps | 3667 % (80 MS/s +-30 MHz 100 ms) | 1.3 rad |
+| New, worst of the eight sweeps | 1.0e-5 | 4.3e-4 rad |
+
+The old recursion fails far worse than the simulation at the rates in between, probably because
+`|c|` is above 1 by `sin(c)^2 / 2` per sample once `cos(c)` rounds to 1 (not isolated). The new fill (all measured on the
+host, in float32 with the same operation order as the S3):
+
+- `w` is no longer a recursion: `w = wl * exp(j psi)`. `wl` is re-derived from double every 1024
+  samples (angle split into a float and its remainder, so the rounding of the angle is carried),
+  `exp(j psi)` is a short polynomial (`psi` stays below 0.2) of `psi = n * dpsi`, a product and not
+  a running sum (the sum's rounding added up to 1e-3 rad).
+- `w` is constant over blocks of 4 samples, at the block's middle frequency (half a chirp step
+  built in); the error of that is at most `tau k / fs^2` times 2, 3e-4 rad at the fastest sweep.
+- `z` is renormalized with one Newton step every 128 samples.
+
+Cost, an estimate (not measured on the board): the old loop did 4 multiplies and 2 adds on `z` and
+the same on `w` per sample. The new one does the `w` work (polynomial and complex multiply, about
+18 flops) once per 4 samples, so about 1.5 flops a sample less, plus the renormalization (about
+0.1 flops a sample) and two `sinf`/`cosf` and a few soft-double operations per 1024 samples (about
+1 cycle a sample at 150 to 200 cycles each). That is neutral to slightly faster than before, not
+slower; to be checked with the cycle counter. A capture of a sweep on the second board shows the
+amplitude flat (pending).
 
 The integer form from the page (`a += b*d; b -= a*d`) stays bounded but traces an ellipse (radius
 ripple about 4 %, an image near -28 dBc **(estimate)**): a test tone for cores without an FPU,
 not a clean I/Q source.
 
 **Applies to:** the sweep on the S3 first (the board with the capture partner on the desk); the
-same function serves the other chips. **Status:** planned next (S3).
+same function serves the other chips. **Status:** done on the host (S3 build checked); the over
+the air capture is still to do.
 
 ### 2. UBSan on the unit tests
 

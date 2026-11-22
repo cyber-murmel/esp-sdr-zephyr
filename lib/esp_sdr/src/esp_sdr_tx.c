@@ -23,6 +23,7 @@
 #include "rx_lo.h"
 
 #include "esp_sdr_priv.h"
+#include "esp_sdr_sweep.h"
 
 /* One physical LO selector feeds both mixers; named for the transmit side. */
 #define tx_lo_select rx_lo_select
@@ -291,38 +292,6 @@ int esp_sdr_tx_play(enum esp_sdr_rate rate, const uint32_t *words, size_t count)
 	return esp_sdr_tx_play_for(rate, words, count, 0, NULL);
 }
 
-/*
- * Fill bank[0..n) with a chirp starting at t (s): frequency f0 + k t. Phase
- * is taken from absolute time, so segments line up across the synthesis
- * gaps; per sample only a complex rotation.
- */
-static void sweep_fill(volatile uint32_t *bank, size_t n, double t, double fs, double f0,
-		       double k, float amp)
-{
-	double phase = fmod(ESP_SDR_TAU * (f0 * t + 0.5 * k * t * t), ESP_SDR_TAU);
-	double f = f0 + k * t;
-	float zr = cosf((float)phase), zi = sinf((float)phase);
-	float wr = cosf((float)(ESP_SDR_TAU * f / fs)), wi = sinf((float)(ESP_SDR_TAU * f / fs));
-	float cr = cosf((float)(ESP_SDR_TAU * k / (fs * fs)));
-	float ci = sinf((float)(ESP_SDR_TAU * k / (fs * fs)));
-
-	for (size_t j = 0; j < n; j++) {
-		float tr;
-
-		float vi = amp * zr, vq = amp * zi;
-
-		/* Inline rounding: lroundf() is a library call and dominated the loop. */
-		bank[j] = esp_sdr_tx_word((int16_t)CLAMP((int)(vi + (vi < 0.0f ? -0.5f : 0.5f)), -511, 511),
-					  (int16_t)CLAMP((int)(vq + (vq < 0.0f ? -0.5f : 0.5f)), -511, 511));
-		tr = zr * wr - zi * wi;
-		zi = zr * wi + zi * wr;
-		zr = tr;
-		tr = wr * cr - wi * ci;
-		wi = wr * ci + wi * cr;
-		wr = tr;
-	}
-}
-
 ESP_SDR_CODE(COLD, esp_sdr_tx_sweep)
 int esp_sdr_tx_sweep(enum esp_sdr_rate rate, float f0_hz, float f1_hz, uint32_t duration_ms,
 		  int amp, struct esp_sdr_tx_sweep_stats *stats)
@@ -355,7 +324,7 @@ int esp_sdr_tx_sweep(enum esp_sdr_rate rate, float f0_hz, float f1_hz, uint32_t 
 		}
 		/* The engine only sees bank writes made while the CPU owns the bank. */
 		REG_WRITE(SENSITIVE_INTERNAL_SRAM_USAGE_3_REG, dac_saved);
-		sweep_fill(bank, n, t, fs, f0_hz, k, (float)amp);
+		esp_sdr_sweep_fill(bank, n, t, fs, f0_hz, k, (float)amp);
 		esp_sdr_dac_select(0);
 		if (!dac_burst(n)) {
 			ret = -ETIMEDOUT;
