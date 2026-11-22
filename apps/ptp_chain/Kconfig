@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+mainmenu "PTP chain"
+
+config APP_CHAIN_RING
+	int "Exchanges between the receive interrupt and the stats thread (a power of two)"
+	range 16 4096
+	default 512
+	help
+	  The thread drains the ring every few ms: it must hold the exchanges of the longest burst
+	  (about one per frame) plus that. A full ring drops the exchange and counts it.
+
+config APP_CHAIN_LOG
+	int "Exchanges kept for chain dump (a power of two)"
+	range 16 8192
+	default 4096
+	help
+	  40 bytes each, in internal RAM.
+
+config APP_CHAIN_PPS_PIN
+	int "GPIO that carries the MAC's PPS output (J2 pin 7 is GPIO2)"
+	range 0 28
+	default 2
+	help
+	  GPIO0 to GPIO28 (gpio0 has 32 pins, 29 and up are reserved).
+
+config APP_CHAIN_PTP_REF_HZ
+	int "Reference clock of the MAC's PTP counter, Hz (PLL_F80M)"
+	default 80000000
+
+config APP_CHAIN_PPS
+	bool "Route the PPS output to the pin"
+	default y
+
+config APP_CHAIN_THREAD_STACK
+	int "Stack of the stats thread"
+	default 3072
+
+source "Kconfig.zephyr"

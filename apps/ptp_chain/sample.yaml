@@ -1,0 +1,14 @@
+sample:
+  name: PTP chain
+  description: >-
+    Clock offset between the DWMAC IEEE 1588 clocks of two ESP32-S31 CoreBoards on a direct
+    Ethernet cable, from a ping-pong of raw frames stamped by the MAC hardware
+common:
+  tags: esp-sdr
+  platform_allow:
+    - esp32s31_function_coreboard/esp32s31/hpcore
+  integration_platforms:
+    - esp32s31_function_coreboard/esp32s31/hpcore
+tests:
+  sample.esp_sdr.ptp_chain:
+    build_only: true

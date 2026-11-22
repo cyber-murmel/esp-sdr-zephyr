@@ -1,0 +1,33 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * The gigabit Ethernet of the ESP32-S31-Function-CoreBoard-1: YT8531 on RGMII (GPIO4-19, MDC 5,
+ * MDIO 6, PHY reset 7). TWAI shares GPIO13/14 with TX_CLK and RX_CLK. GPIO2 (J2 pin 7) carries
+ * the PPS output (CONFIG_APP_CHAIN_PPS_PIN).
+ *
+ * Clocks: the YT8531 runs from its own 25 MHz crystal (Y2); the MAC's PTP reference is PLL_F80M
+ * (80 MHz), set up in code, not in this devicetree.
+ */
+
+&eth {
+	status = "okay";
+};
+
+&mdio {
+	status = "okay";
+};
+
+&phy {
+	status = "okay";
+	/* Gigabit: the 125 MHz reference clock, so let the PHY offer 1000BASE-T. */
+	/delete-property/ default-speeds;
+};
+
+&twai0 {
+	status = "disabled";
+};
+
+/* Die temperature for the window lines: the crystal's rate drifts with it */
+&coretemp {
+	status = "okay";
+};
