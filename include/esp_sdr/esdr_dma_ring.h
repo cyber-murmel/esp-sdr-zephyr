@@ -100,6 +100,7 @@ uint8_t *esdr_dma_ring_spare_take(struct esdr_dma_ring *r);
  * write the old memory: the caller must prove from the ring's own progress that it had not. If it
  * cannot, esdr_dma_ring_put() takes the returned memory back.
  *
+ * @param r The ring.
  * @param first_node A ring node, rounded down to the start of its slab.
  * @param spare What esdr_dma_ring_spare_take() gave.
  * @return The old slab, or NULL when @p spare is not out or @p first_node is out of range
@@ -134,6 +135,8 @@ static inline bool esdr_dma_ring_swap_safe(int64_t lead, unsigned int nodes, uin
  * be a spare yet. It stays out of the pool until esdr_dma_ring_reap() or
  * esdr_dma_ring_quarantine_clear(). Owner's call.
  *
+ * @param r The ring.
+ * @param addr The slab: the memory esdr_dma_ring_swap() returned.
  * @param stamp A count that only grows, as the ring's byte count, for reap() to compare.
  * @return 0, -EINVAL when the slab is not out or already held back.
  */
