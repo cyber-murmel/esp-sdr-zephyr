@@ -1516,10 +1516,12 @@ static void ring_loop(void)
 			}
 			if (armed && gen_pos < burst.words &&
 			    (int32_t)(written + rs.gen_cost / cpp + 64U) < limit) {
-				uint32_t t0 = esp_sdr_ccount();
+				uint32_t t0 = esp_sdr_ccount(), dt;
 
 				(void)gen_slice(&gen_pos, GEN_SLICE);
-				rs.gen_cost = MAX(rs.gen_cost, esp_sdr_ccount() - t0);
+				dt = esp_sdr_ccount() - t0;
+				rs.gen_cost = MAX(rs.gen_cost, dt);
+				bst.gen_slice_max_cyc = MAX(bst.gen_slice_max_cyc, dt);
 			}
 		}
 		if (st->status != ESP_SDR_RING_OK) {

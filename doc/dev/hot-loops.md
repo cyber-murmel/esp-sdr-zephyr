@@ -41,7 +41,7 @@ time of writing.
 
 | # | Hot loop | Where | Today | Trick | Gain (estimate) | Risk | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | S3 ACK and burst waveform build, CPU 1 between ring polls | `ieee154_dsp_tx_gen()` (`lib/ieee802154/ieee154_dsp.h:109`), `GEN_SLICE` (`esp_sdr_ring.c:1202`) | about 85 cycles a 20-word slot, 25k cycles (105 us) for the ACK's variable part ([IEEE 802.15.4](../modem/ieee802154.md)) | chip shift register, template offset table, 128-bit copy | 3 to 4x on the build: 6 to 8k cycles instead of 25k; frees CPU 1 for box4 at short units | low: bit-exact against today's words | planned next (S3) |
+| 1 | S3 ACK and burst waveform build, CPU 1 between ring polls | `ieee154_dsp_tx_gen()` (`lib/ieee802154/ieee154_dsp.h:109`), `GEN_SLICE` (`esp_sdr_ring.c:1202`) | about 85 cycles a 20-word slot, 25k cycles (105 us) for the ACK's variable part ([IEEE 802.15.4](../modem/ieee802154.md)) | chip shift register, template offset table, 128-bit copy | 3 to 4x on the build: 6 to 8k cycles instead of 25k; frees CPU 1 for box4 at short units | low: bit-exact against today's words | done: 24.6k to 11.9k cycles |
 | 2 | GFSK modulator (Ubertooth TX, BLE advertising) | `emit_symbol()` (`apps/ubertooth/src/gfsk_mod.c:317`), `gen_steady()` (`gfsk_mod.c:344`) | 6.7 cycles a sample, a static count; 40 MS/s needs 267 MHz (`gfsk_mod.h:45`) | whole-symbol rows: 8 histories x 4 start phases x 40 words (h = 0.5), copied | 4 to 6x; first block in about 0.1 ms instead of 0.46 | low to medium: 5 KB of RAM per deviation, tight on the S3 | planned next (S3) |
 | 3 | C6 gapless markers | `fill_marks()` (`esp_sdr_gapless.c:357`), `prepare()` (`:400`), guards (`:47` to `:49`) | 1536 words a unit, about 2000 cycles, 9 % of the CPU ([Rings](../samples/rings.md)) | size `LATE_LIMIT` and the guards to the measured lateness (about 30 in IRAM) | about 1300 cycles a unit; per-unit cap about +15 to 20 % | low to medium: a late switch becomes a ring error and a restart | deferred: needs the C6 badge |
 | 4 | C6 gapless copy into staging | `copy_words()` (`esp_sdr_gapless.c:1039`) | 2.5 cycles a word (3.6 on the badge), unrolled by 8 | unroll by 32, or a computed entry into one unrolled block | 2.5 down to about 2.15 cycles a word, cap +10 to 15 % | low: about 300 B more IRAM | deferred: needs the C6 badge |
@@ -83,7 +83,24 @@ of the unit-boundary overrun is the build (**check**).
 golden-word test comes first: keep today's function as the reference and compare over random
 frames and chunkings.
 
-**Status.** Planned next (S3), with the golden-word test first.
+**Status.** Done (2026-11-24): the ACK's variable part as the ring builds it fell from 24.6k to
+11.9k cycles (41 cycles a slot, against the 20 to 25 estimated); bit-exact against the old build
+(`tests/unit/ieee154_dsp`); ACK timing over the air unchanged ([802.15.4](../modem/ieee802154.md#ack-waveform)).
+
+- `tests/unit/ieee154_dsp` holds the old `ieee154_dsp_tx_gen()` as a reference and compares words
+  over every PSDU length 1 to 127, random `(index, n)` chunkings (odd sizes, mid-slot starts,
+  unaligned destinations, past the end), 300 ACKs split at 777 and the ring's part from slot 416
+  in 400-word slices. It passed against the old code first.
+- The new `ieee154_dsp_tx_gen()` walks the chips in a shift register and adds the next template's
+  offset from the parity, the next chip and this chip (arithmetic instead of an 18 x 2 table:
+  no loads), no divide or bounds check per slot. The slot is five PIE 128-bit loads and stores
+  when the caller has the vector unit on and interrupts masked (the ring, the DAC filler; checked
+  from CPENABLE and PS), else scalar groups of 4 (threads, the ACK precompute, native_sim, any
+  other SoC). The templates are 16-byte aligned for it.
+- Read the cycles with `wpan bench ack` (`from slot 416 as the ring builds it`) and the longest
+  400-word slice with `wpan status` (`longest waveform slice`). Procedure and numbers:
+  [802.15.4](../modem/ieee802154.md#ack-waveform).
+- The estimate's target is about 6 to 8k cycles for the variable part, not yet measured.
 
 ## 2. GFSK as replayed symbols
 

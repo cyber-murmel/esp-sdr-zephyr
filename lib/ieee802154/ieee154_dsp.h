@@ -15,6 +15,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <zephyr/sys/util.h>
+#include <zephyr/toolchain.h>
+
 #include <esp_sdr/esp_sdr_dsp.h>
 #include <esp_sdr/esp_sdr_rx.h>
 #include <esp_sdr/esp_sdr_tx.h>
@@ -35,7 +38,7 @@
  * offset rotation (period 10 samples at 40 MS/s) restarts every slot, so 2
  * parities x 3 x 3 chip states (none, 0, 1) cover every slot.
  */
-typedef uint32_t ieee154_dsp_tmpl_t[2][3][3][IEEE154_DSP_SLOT];
+typedef uint32_t ieee154_dsp_tmpl_t[2][3][3][IEEE154_DSP_SLOT] __aligned(16);
 
 struct ieee154_dsp_tx {
 	uint32_t chips[IEEE154_DSP_CHIPS_MAX / 32U];
@@ -92,8 +95,9 @@ static inline uint64_t ieee154_dsp_tx_samples(const struct ieee154_dsp_tx *tx)
 	return (uint64_t)(tx->nchips + 1U) * IEEE154_DSP_SLOT;
 }
 
-/* State of chip n: 0 none, 1 for a 0 chip, 2 for a 1 chip. */
-static inline int ieee154_dsp_chip(const struct ieee154_dsp_tx *tx, uint32_t n)
+/* State of chip n: 0 none, 1 for a 0 chip, 2 for a 1 chip. Inlined: IRAM callers must not call out. */
+static inline __attribute__((always_inline)) int ieee154_dsp_chip(const struct ieee154_dsp_tx *tx,
+								  uint32_t n)
 {
 	if (n >= tx->nchips) {
 		return 0;
@@ -101,47 +105,149 @@ static inline int ieee154_dsp_chip(const struct ieee154_dsp_tx *tx, uint32_t n)
 	return 1 + (int)((tx->chips[n / 32U] >> (31U - n % 32U)) & 1U);
 }
 
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
+/* PS.INTLEVEL: nonzero while interrupts are masked (arch_irq_lock()). */
+#define IEEE154_DSP_PS_INTLEVEL 0xfU
+/* CPENABLE bit of the vector unit (coprocessor 3). */
+#define IEEE154_DSP_CPENABLE_PIE BIT(3)
+
+/*
+ * Whether the slot copy may use the vector unit: the caller (the ring, the DAC filler) enabled
+ * it on this CPU and holds interrupts off, as nothing saves its registers. Any other caller
+ * (a thread, the ACK precompute) takes the scalar copy.
+ */
+static inline bool ieee154_dsp_vec_ok(void)
+{
+	uint32_t cp, ps;
+
+	__asm__ volatile("rsr.cpenable %0" : "=r"(cp));
+	__asm__ volatile("rsr.ps %0" : "=r"(ps));
+	return (cp & IEEE154_DSP_CPENABLE_PIE) != 0U && (ps & IEEE154_DSP_PS_INTLEVEL) != 0U;
+}
+
+/* One 80 byte slot, both pointers 16 byte aligned: five 128-bit loads and stores (q0 to q3). */
+static inline __attribute__((always_inline)) void ieee154_dsp_copy_slot_vec(uint32_t *dst,
+									    const uint32_t *src)
+{
+	__asm__ volatile("ee.vld.128.ip q0, %[s], 16\n\t"
+			 "ee.vld.128.ip q1, %[s], 16\n\t"
+			 "ee.vld.128.ip q2, %[s], 16\n\t"
+			 "ee.vst.128.ip q0, %[d], 16\n\t"
+			 "ee.vld.128.ip q3, %[s], 16\n\t"
+			 "ee.vst.128.ip q1, %[d], 16\n\t"
+			 "ee.vld.128.ip q0, %[s], 16\n\t"
+			 "ee.vst.128.ip q2, %[d], 16\n\t"
+			 "ee.vst.128.ip q3, %[d], 16\n\t"
+			 "ee.vst.128.ip q0, %[d], 16\n\t"
+			 : [s] "+r"(src), [d] "+r"(dst)
+			 :
+			 : "memory");
+}
+#else
+static inline bool ieee154_dsp_vec_ok(void)
+{
+	return false;
+}
+
+static inline void ieee154_dsp_copy_slot_vec(uint32_t *dst, const uint32_t *src)
+{
+	ARG_UNUSED(dst);
+	ARG_UNUSED(src);
+}
+#endif
+
+/* One slot as groups of 4: plain word stores, a memcpy call per slot costs more than the copy. */
+static inline __attribute__((always_inline)) void ieee154_dsp_copy_slot(uint32_t *dst,
+									const uint32_t *src)
+{
+	for (uint32_t k = 0; k < IEEE154_DSP_SLOT; k += 4U) {
+		uint32_t w0 = src[k], w1 = src[k + 1U], w2 = src[k + 2U], w3 = src[k + 3U];
+
+		dst[k] = w0;
+		dst[k + 1U] = w1;
+		dst[k + 2U] = w2;
+		dst[k + 3U] = w3;
+	}
+}
+
 /*
  * DAC words for samples [index, index + n) of the frame (an esp_sdr_tx_dac_gen_t
- * body). Has to beat the DAC (40 MS/s) with room to spare: whole slots are
- * one fixed-size copy each.
+ * body). Has to beat the DAC (40 MS/s) with room to spare.
+ *
+ * Whole slots that have a next chip run off a shift register of the chips: the next slot's
+ * template is its parity, the next chip and this chip, added as word offsets (no divide, bounds
+ * check or variable shift per slot). The slot goes in five 128-bit copies where the vector unit
+ * is on and the addresses are aligned, else as scalar groups of 4. The first and last slot of a
+ * chunk and the last slot of the frame (no next chip) are copied word by word. The words are
+ * those of the per-slot chip lookup this replaced (tests/unit/ieee154_dsp).
  */
 static inline void ieee154_dsp_tx_gen(const struct ieee154_dsp_tx *tx, uint32_t *dst,
 				      uint64_t index, uint32_t n)
 {
+	/* Word strides in the template array: parity, chip, previous chip. */
+	enum { PAR = 9 * IEEE154_DSP_SLOT, CUR = 3 * IEEE154_DSP_SLOT, PRV = IEEE154_DSP_SLOT };
+	const uint32_t *base = &(*tx->tmpl)[0][0][0][0];
+	const uint32_t nchips = tx->nchips;
 	uint32_t s = (uint32_t)(index / IEEE154_DSP_SLOT);
-	uint32_t t = (uint32_t)(index % IEEE154_DSP_SLOT);
-	int prv = s == 0U ? 0 : ieee154_dsp_chip(tx, s - 1U);
+	uint32_t o = (uint32_t)(index % IEEE154_DSP_SLOT);
+	const bool vec = ieee154_dsp_vec_ok() && (((uintptr_t)dst | (uintptr_t)base) & 15U) == 0U;
 
 	while (n > 0U) {
-		int cur = ieee154_dsp_chip(tx, s);
-		const uint32_t *src = (*tx->tmpl)[s & 1U][cur][prv];
+		uint32_t run = n / IEEE154_DSP_SLOT;
+		/* Chip states: 0 none (past the end), 1, 2. */
+		const uint32_t cur = (uint32_t)ieee154_dsp_chip(tx, s);
+		const uint32_t prv = s == 0U ? 0U : (uint32_t)ieee154_dsp_chip(tx, s - 1U);
 
-		if (t == 0U && n >= IEEE154_DSP_SLOT) {
-			/* Plain word stores; a memcpy call per slot costs more than the copy. */
-			for (uint32_t k = 0; k < IEEE154_DSP_SLOT; k += 4U) {
-				uint32_t w0 = src[k], w1 = src[k + 1U], w2 = src[k + 2U],
-					 w3 = src[k + 3U];
-
-				dst[k] = w0;
-				dst[k + 1U] = w1;
-				dst[k + 2U] = w2;
-				dst[k + 3U] = w3;
-			}
-			dst += IEEE154_DSP_SLOT;
-			n -= IEEE154_DSP_SLOT;
-		} else {
-			uint32_t cnt = n < IEEE154_DSP_SLOT - t ? n : IEEE154_DSP_SLOT - t;
+		if (o != 0U || run == 0U || s + 1U >= nchips) {
+			const uint32_t *src = base + (s & 1U) * PAR + cur * CUR + prv * PRV;
+			uint32_t cnt = MIN(n, IEEE154_DSP_SLOT - o);
 
 			for (uint32_t k = 0; k < cnt; k++) {
-				dst[k] = src[t + k];
+				dst[k] = src[o + k];
 			}
 			dst += cnt;
 			n -= cnt;
-			t = 0;
+			o = 0U;
+			s++;
+			continue;
 		}
-		prv = cur;
-		s++;
+		/* Slots s .. s + run - 1, each followed by an existing chip. */
+		run = MIN(run, nchips - 1U - s);
+		n -= run * IEEE154_DSP_SLOT;
+
+		/* c20 and c60: cur at both strides; p20: prv. */
+		uint32_t par = (s & 1U) != 0U ? PAR : 0U;
+		uint32_t c20 = cur * PRV;
+		uint32_t c60 = cur * CUR;
+		uint32_t p20 = prv * PRV;
+		uint32_t c = s + 1U;
+
+		s += run;
+		while (run > 0U) {
+			/* The chips from c on, as many as this word of them holds. */
+			uint32_t w = tx->chips[c / 32U] << (c % 32U);
+			uint32_t k = MIN(run, 32U - c % 32U);
+
+			run -= k;
+			c += k;
+			do {
+				const uint32_t m = 0U - (w >> 31);
+				const uint32_t n20 = PRV + (PRV & m), n60 = CUR + (CUR & m);
+
+				if (vec) {
+					ieee154_dsp_copy_slot_vec(dst, base + par + c60 + p20);
+				} else {
+					ieee154_dsp_copy_slot(dst, base + par + c60 + p20);
+				}
+				dst += IEEE154_DSP_SLOT;
+				w <<= 1;
+				/* Parity flips, this chip becomes the previous one. */
+				par = PAR - par;
+				p20 = c20;
+				c20 = n20;
+				c60 = n60;
+			} while (--k > 0U);
+		}
 	}
 }
 

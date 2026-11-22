@@ -302,6 +302,8 @@ struct esp_sdr_ring_burst_stats {
 	uint32_t window_max_cyc;
 	/** Most waveform words still to build at a stop. */
 	uint32_t gen_left_max;
+	/** Longest waveform slice (GEN_SLICE words) between two polls of the ring, in CPU cycles. */
+	uint32_t gen_slice_max_cyc;
 };
 
 void esp_sdr_ring_burst_get_stats(struct esp_sdr_ring_burst_stats *stats);

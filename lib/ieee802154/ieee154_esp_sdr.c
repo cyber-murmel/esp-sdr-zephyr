@@ -35,6 +35,7 @@
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_place.h>
 #include <esp_sdr/esp_sdr_ring.h>
+#include <esp_sdr/esp_sdr_xtensa.h>
 #include <esp_sdr/ieee154_esp_sdr.h>
 #include <esp_sdr/ieee154_phy.h>
 
@@ -109,7 +110,8 @@ static void tmpl_init(void)
 
 /* Runs in the DAC filler (interrupts locked with the vector interpolator): IRAM, tables in internal RAM. */
 ESP_SDR_CODE(PACED_SAMPLE, tx_gen)
-static __attribute__((optimize("O3", "no-tree-loop-distribute-patterns"))) void
+static __attribute__((noclone, optimize("O3", "no-tree-loop-distribute-patterns",
+					"no-unswitch-loops"))) void
 tx_gen(void *user, uint32_t *dst, uint64_t index, uint32_t n)
 {
 	ARG_UNUSED(user);
@@ -1286,6 +1288,22 @@ int ieee154_esp_sdr_bench(struct ieee154_esp_sdr_bench *b)
 	       n - 416U * IEEE154_DSP_SLOT);
 	t1 = k_cycle_get_32();
 	b->ack_tail_cyc = t1 - t0;
+	/* The same under the ring's conditions: vector unit on, interrupts off (best of 8). */
+	b->ack_tail_ring_cyc = UINT32_MAX;
+	for (int i = 0; i < 8; i++) {
+		unsigned int key = arch_irq_lock();
+		uint32_t cp;
+
+		__asm__ volatile("rsr.cpenable %0" : "=r"(cp));
+		esp_sdr_pie_enable();
+		t0 = esp_sdr_ccount();
+		tx_gen(NULL, bank + 416U * IEEE154_DSP_SLOT, 416U * IEEE154_DSP_SLOT,
+		       n - 416U * IEEE154_DSP_SLOT);
+		t1 = esp_sdr_ccount();
+		__asm__ volatile("wsr.cpenable %0\n\trsync" : : "r"(cp));
+		arch_irq_unlock(key);
+		b->ack_tail_ring_cyc = MIN(b->ack_tail_ring_cyc, t1 - t0);
+	}
 
 	/* Front end: RX to TX and back (a loop session without playback). */
 	t0 = k_cycle_get_32();

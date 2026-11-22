@@ -782,6 +782,8 @@ static void print_sdr_status(const struct shell *sh)
 			    " waveform left at the stop max %u words",
 			    b.ready_max_pairs / 16, b.seen_max_pairs / 16, b.window_max_cyc,
 			    b.gen_left_max);
+		shell_print(sh, "bursts: longest waveform slice (400 words) between ring polls %u cycles",
+			    b.gen_slice_max_cyc);
 	}
 #endif
 	shell_print(sh, "acks %u, no ack %u, last tx error %d", s.acks, s.no_acks, s.tx_last_err);
@@ -946,6 +948,8 @@ static int cmd_bench(const struct shell *sh, size_t argc, char **argv)
 		shell_print(sh,
 			    "ack %d: %u words, chips %u cycles, words %u cycles (from slot 416: %u)",
 			    ret, b.ack_words, b.ack_build_cyc, b.ack_gen_cyc, b.ack_tail_cyc);
+		shell_print(sh, "ack from slot 416 as the ring builds it (vector unit, irqs off, best"
+			    " of 8): %u cycles", b.ack_tail_ring_cyc);
 		shell_print(sh, "front end: to tx %u us, to rx %u us (settle times included)",
 			    b.to_tx_us, b.to_rx_us);
 		return ret;

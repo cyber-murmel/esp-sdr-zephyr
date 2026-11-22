@@ -181,6 +181,8 @@ void ieee154_esp_sdr_get_stats(struct ieee154_esp_sdr_stats *stats);
 struct ieee154_esp_sdr_bench {
 	/** ACK waveform: chips, DAC words (all, and from slot 416 on) in CPU cycles; its length. */
 	uint32_t ack_build_cyc, ack_gen_cyc, ack_tail_cyc, ack_words;
+	/** The words from slot 416 on as the ring builds them: vector unit on, interrupts locked. */
+	uint32_t ack_tail_ring_cyc;
 	/** Front end switch RX to TX and back, settle times included, in us. */
 	uint32_t to_tx_us, to_rx_us;
 };

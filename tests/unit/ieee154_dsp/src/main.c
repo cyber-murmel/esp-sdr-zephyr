@@ -355,3 +355,171 @@ ZTEST(ieee154_dsp, test_mix_decimate_bit_exact)
 		}
 	}
 }
+
+/* ------------------------------------------------------- golden words */
+
+/*
+ * ieee154_dsp_tx_gen() as it was before the shift register and vector copy rewrite, kept
+ * verbatim (and its own chip lookup) as the reference: the words of any (index, n) must be equal.
+ */
+static int ref_chip(const struct ieee154_dsp_tx *t, uint32_t n)
+{
+	if (n >= t->nchips) {
+		return 0;
+	}
+	return 1 + (int)((t->chips[n / 32U] >> (31U - n % 32U)) & 1U);
+}
+
+static void ref_tx_gen(const struct ieee154_dsp_tx *t, uint32_t *dst, uint64_t index, uint32_t n)
+{
+	uint32_t s = (uint32_t)(index / IEEE154_DSP_SLOT);
+	uint32_t o = (uint32_t)(index % IEEE154_DSP_SLOT);
+	int prv = s == 0U ? 0 : ref_chip(t, s - 1U);
+
+	while (n > 0U) {
+		int cur = ref_chip(t, s);
+		const uint32_t *src = (*t->tmpl)[s & 1U][cur][prv];
+
+		if (o == 0U && n >= IEEE154_DSP_SLOT) {
+			for (uint32_t k = 0; k < IEEE154_DSP_SLOT; k += 4U) {
+				uint32_t w0 = src[k], w1 = src[k + 1U], w2 = src[k + 2U],
+					 w3 = src[k + 3U];
+
+				dst[k] = w0;
+				dst[k + 1U] = w1;
+				dst[k + 2U] = w2;
+				dst[k + 3U] = w3;
+			}
+			dst += IEEE154_DSP_SLOT;
+			n -= IEEE154_DSP_SLOT;
+		} else {
+			uint32_t cnt = n < IEEE154_DSP_SLOT - o ? n : IEEE154_DSP_SLOT - o;
+
+			for (uint32_t k = 0; k < cnt; k++) {
+				dst[k] = src[o + k];
+			}
+			dst += cnt;
+			n -= cnt;
+			o = 0;
+		}
+		prv = cur;
+		s++;
+	}
+}
+
+#define GOLD_MAX_WORDS ((6U + IEEE154_PHY_PSDU_MAX + 2U) * 64U * IEEE154_DSP_SLOT)
+#define GOLD_PAD       8U
+#define GOLD_SENTINEL  0xdeadbeefU
+
+static uint32_t gold_ref[GOLD_MAX_WORDS + 2U * GOLD_PAD];
+static uint32_t gold_new[GOLD_MAX_WORDS + 2U * GOLD_PAD];
+
+/*
+ * Both generators write samples [index, index + n) at buffer offset off (words, so any
+ * alignment): the words and the sentinels around them must be equal.
+ */
+static void gold_compare(uint64_t index, uint32_t n, uint32_t off, const char *what)
+{
+	const uint32_t total = n + 2U * GOLD_PAD;
+
+	zassert_true(total <= ARRAY_SIZE(gold_ref), "buffer");
+	for (uint32_t k = 0; k < total; k++) {
+		gold_ref[k] = GOLD_SENTINEL;
+		gold_new[k] = GOLD_SENTINEL;
+	}
+	ref_tx_gen(&tx, &gold_ref[GOLD_PAD + off], index, n);
+	ieee154_dsp_tx_gen(&tx, &gold_new[GOLD_PAD + off], index, n);
+	for (uint32_t k = 0; k < total; k++) {
+		zassert_equal(gold_new[k], gold_ref[k],
+			      "%s: index %llu n %u off %u nchips %u: word %u is %08x, want %08x", what,
+			      (unsigned long long)index, n, off, tx.nchips, k, gold_new[k],
+			      gold_ref[k]);
+	}
+}
+
+static void gold_build_random(uint8_t len)
+{
+	uint8_t psdu[IEEE154_PHY_PSDU_MAX];
+
+	for (uint32_t i = 0; i < len; i++) {
+		psdu[i] = (uint8_t)test_rng_u32();
+	}
+	ieee154_dsp_tx_build(&tx, psdu, len);
+}
+
+/* Random frames of every PSDU length 1..127: whole, and cut at random points. */
+ZTEST(ieee154_dsp, test_golden_words_random_frames)
+{
+	for (uint32_t len = 1; len <= IEEE154_PHY_PSDU_MAX; len++) {
+		gold_build_random((uint8_t)len);
+		const uint32_t total = (uint32_t)ieee154_dsp_tx_samples(&tx);
+
+		gold_compare(0, total, 0, "whole");
+		/* Past the end: all zero words. */
+		gold_compare(0, total + 3U * IEEE154_DSP_SLOT + 1U, 0, "past end");
+		gold_compare((uint64_t)total - 1U, 1U + IEEE154_DSP_SLOT, 1, "tail");
+		gold_compare((uint64_t)total + 7U, 90U, 0, "beyond");
+		for (int c = 0; c < 6; c++) {
+			uint32_t pos = test_rng_u32() % (total + 1U);
+			uint32_t n = 1U + test_rng_u32() % 1500U;
+
+			gold_compare(pos, n, test_rng_u32() % 4U, "chunk");
+		}
+	}
+}
+
+/* Walk the whole frame in random chunk sizes (1 to 450 words, odd sizes among them). */
+ZTEST(ieee154_dsp, test_golden_words_chunk_walk)
+{
+	static const uint8_t lens[] = {1, 2, 5, 31, 32, 33, 64, 100, 126, 127};
+
+	ARRAY_FOR_EACH(lens, l) {
+		gold_build_random(lens[l]);
+		const uint32_t total = (uint32_t)ieee154_dsp_tx_samples(&tx);
+
+		for (int pass = 0; pass < 3; pass++) {
+			uint32_t pos = 0;
+
+			while (pos < total + 60U) {
+				uint32_t n = pass == 0 ? 400U : 1U + test_rng_u32() % 450U;
+
+				if (pass == 1 && (test_rng_u32() & 1U)) {
+					/* Whole slots and groups of 4, off alignment. */
+					n = IEEE154_DSP_SLOT * (1U + test_rng_u32() % 20U) +
+					    (test_rng_u32() % 4U);
+				}
+				gold_compare(pos, n, test_rng_u32() % 4U, "walk");
+				pos += n;
+			}
+		}
+	}
+}
+
+/*
+ * ACKs (5 byte PSDU, random sequence number and frame pending bit, the FCS appended): whole,
+ * split at 777 as the decode test does, and the ring's variable part from slot 416 on.
+ */
+ZTEST(ieee154_dsp, test_golden_words_ack)
+{
+	const uint32_t first = 416U * IEEE154_DSP_SLOT;
+
+	for (int i = 0; i < 300; i++) {
+		uint8_t ack[5] = {(uint8_t)(0x02U | ((i & 1) ? 0x10U : 0U)), 0x00U,
+				  (uint8_t)(i < 256 ? i : test_rng_u32())};
+
+		(void)ieee154_phy_append_fcs(ack, 3U);
+		ieee154_dsp_tx_build(&tx, ack, sizeof(ack));
+		const uint32_t total = (uint32_t)ieee154_dsp_tx_samples(&tx);
+
+		gold_compare(0, total, 0, "ack");
+		gold_compare(0, 777U, 0, "ack head");
+		gold_compare(777U, total - 777U, 0, "ack rest");
+		gold_compare(first, total - first, 0, "ack from 416");
+		gold_compare(first, 400U, 1, "ack slice");
+		gold_compare(first + 400U, 400U, 0, "ack slice 2");
+		/* The whole tail in the ring's 400 word slices, then odd ones. */
+		for (uint32_t pos = first; pos < total; pos += 400U) {
+			gold_compare(pos, MIN(400U, total - pos), 0, "ack slices");
+		}
+	}
+}
