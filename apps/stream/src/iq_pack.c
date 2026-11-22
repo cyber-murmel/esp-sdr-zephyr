@@ -20,7 +20,8 @@ static inline uint32_t item(int32_t x, int32_t shift, int32_t lim, uint32_t mask
 	if (shift > 0) {
 		x = (x + (1 << (shift - 1))) >> shift;
 	} else {
-		x <<= -shift;
+		/* a product, not x << -shift: a left shift of a negative x is undefined */
+		x *= (int32_t)1 << -shift;
 	}
 	return (uint32_t)CLAMP(x, -lim, lim - 1) & mask;
 }
