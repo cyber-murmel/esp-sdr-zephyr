@@ -2,8 +2,10 @@
 """apps/multiapp/exports.py: what the host exports for its extensions, from a shared library
 the host compiler builds here (skipped without one)."""
 
+import re
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -39,9 +41,10 @@ def lib(tmp_path):
     return out
 
 
-def generate(tmp_path, run_main, *libs, area=4096, modules=()):
+def generate(tmp_path, run_main, *libs, area=4096, modules=(), owners=("demo",)):
     files = {k: tmp_path / f"{k}.c" for k in ("exports", "logs", "objects")}
     module_args = [arg for name in modules for arg in ("--module", name)]
+    module_args += [arg for name in owners for arg in ("--area-owner", name)]
     run_main(exports, "--exports", files["exports"], "--logs", files["logs"],
              "--objects", files["objects"], "--area-size", area, *module_args, *libs)
     return {k: p.read_text() for k, p in files.items()}
@@ -173,3 +176,97 @@ def test_psram_section(tmp_path, run_main, lib, monkeypatch):
     assert ('__attribute__((section(".ext_ram.bss"))) uint8_t demo_ring[4096] __aligned(4);'
             in out)
     assert "EXT_RAM_BSS_ATTR" not in out
+
+
+# The phy module's version script (apps/multiapp/ext/phy.ver): what its importers need.
+PHY_VER = Path(exports.__file__).parent / "ext/phy.ver"
+ARB_H = PHY_VER.parents[3] / "include/esp_sdr/esp_sdr_arb.h"
+
+
+def version_globals(path):
+    """The names a version script exports."""
+    text = re.sub(r"/\*.*?\*/", "", path.read_text(), flags=re.S)
+    return set(re.findall(r"^\s*(\w+);", text.split("local:")[0], re.M))
+
+
+def test_phy_exports_the_arbiter_api():
+    # Every function of esp_sdr_arb.h but the weak trace hook is imported by the sdr module,
+    # the wifi module or an app: the phy module must export it. The gate is private to the
+    # library (esp_sdr_priv.h), the wraps are the wifi module's.
+    names = version_globals(PHY_VER)
+    api = set(re.findall(r"^[\w ]+?\**\s*(esp_sdr_arb_\w+)\(", ARB_H.read_text(), re.M))
+    assert {"esp_sdr_arb_claim", "esp_sdr_arb_release", "esp_sdr_arb_wifi_attach"} <= api
+    assert (api - {"esp_sdr_arb_trace"}) <= names
+    assert {"esp_sdr_arb_gate", "__wrap_esp_phy_enable", "__wrap_esp_phy_disable"} <= names
+
+
+def test_phy_exports_what_wifi_calls():
+    # The wifi module has no libphy of its own: the PHY calls of its blobs and glue (nm of
+    # libnet80211, libpp, esp_adapter.c, wifi_init.c, 2026-11) resolve from phy.
+    need = {"esp_phy_disable", "esp_phy_modem_init", "esp_phy_modem_deinit",
+            "esp_phy_update_country_info", "esp_wifi_power_domain_on",
+            "esp_wifi_power_domain_off", "phy_wifi_enable_set", "ant_dft_cfg", "ant_wifirx_cfg",
+            "ant_wifitx_cfg", "chip_v7_set_chan_misc", "noise_check_loop", "phy_change_channel",
+            "phy_disable_low_rate", "phy_enable_low_rate", "phy_set_most_tpw",
+            "register_chipv7_phy_init_param", "set_rx_sense"}
+    assert need <= version_globals(PHY_VER)
+
+
+# The wifi module's version script and the espnow module's.
+WIFI_VER = PHY_VER.parent / "wifi.ver"
+ESPNOW_VER = PHY_VER.parent / "espnow.ver"
+
+
+def test_wifi_exports_what_espnow_imports():
+    # libespnow.a is split: manatick.o (the mt_ layer, which net80211 reads) stays in wifi and
+    # espnow.o goes to the espnow module, which imports these from wifi (nm of espnow.o,
+    # 2026-11), plus the driver calls of ext/espnow.c. g_osi_funcs_p and memcpy are the host's.
+    mt = {"mt_" + n for n in (
+        "add_peer deinit del_peer fetch_peer get_peer get_peer_num get_user_oui get_version init "
+        "is_peer_exist mod_peer register_recv_cb register_send_cb send set_peer_rate_config "
+        "set_pmk set_user_oui set_wake_window unregister_recv_cb unregister_send_cb").split()}
+    need = mt | {"esp_wifi_ipc_internal", "ieee80211_espnow_get_init_flag",
+                 "ieee80211_espnow_set_init_flag", "ieee80211_ioctl", "wifi_action_tx_process",
+                 "wifi_init_completed", "wifi_log", "wifi_roc_process",
+                 "wifi_sta_restore_default_mac", "g_wifi_menuconfig", "g_wifi_nvs",
+                 "esp_wifi_get_mode", "esp_wifi_set_mode", "esp_wifi_get_mac",
+                 "esp_wifi_connectionless_module_set_wake_interval"}
+    assert need <= version_globals(WIFI_VER)
+
+
+def test_espnow_exports_its_api():
+    text = ESPNOW_VER.read_text()
+    assert "esp_now_*;" in text and "esp_sdr_espnow_*;" in text
+    header = (PHY_VER.parents[3] / "include/esp_sdr/espnow.h").read_text()
+    # What the header declares is defined in ext/espnow.c, which the glob exports.
+    src = (PHY_VER.parent / "espnow.c").read_text()
+    for name in re.findall(r"^[\w ]+?\**\s*(esp_sdr_espnow_\w+)\(", header, re.M):
+        assert re.search(rf"^\w[\w ]*\**\s*{name}\(", src, re.M), name
+
+
+def test_area_has_one_owner(tmp_path, run_main, lib):
+    # coex's stack went to the area (ESP_SDR_PLACE_STACK is the high region) while wifi's heap was
+    # the whole area: an extension that does not own the area may not have buffers there.
+    with pytest.raises(SystemExit) as err:
+        generate(tmp_path, run_main, lib, owners=("wifi",))
+    assert "demo has buffers in the area" in str(err.value)
+    generate(tmp_path, run_main, lib, owners=("wifi", "demo"))
+
+
+def test_weak_symbol_relocations_are_refused(tmp_path, run_main):
+    cc = shutil.which("cc") or shutil.which("gcc")
+    if cc is None:
+        pytest.skip("no host C compiler")
+    src = tmp_path / "w.c"
+    src.write_text("__attribute__((weak)) void hook(void) {}\nvoid call(void) { hook(); }\n")
+    out = tmp_path / "libw_ext_llext_lib.so"
+    subprocess.run([cc, "-shared", "-fPIC", "-o", out, src], check=True)
+    assert exports.weak_relocations(out) == {"hook"}
+    with pytest.raises(SystemExit, match="weak"):
+        generate(tmp_path, run_main, out, owners=("w",))
+
+
+def test_no_weak_functions_in_extension_sources():
+    ext = Path(__file__).resolve().parents[2] / "apps/multiapp/ext"
+    for path in ext.rglob("*.[ch]"):
+        assert not re.search(r"__weak\b|attribute__\s*\(\(\s*weak", path.read_text()), path.name

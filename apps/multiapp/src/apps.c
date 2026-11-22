@@ -3,7 +3,9 @@
  *
  * Runs one app per boot as an llext extension (doc/apps/multiapp-internals.md): loads it
  * into PSRAM, runs its constructors (include/multiapp/ext.h) and starts its
- * main() in a thread. Starting another app reboots into it.
+ * main() in a thread. Starting another app stops and unloads the running one and the modules the next
+ * does not need and loads the rest, or reboots into it when the two boots are not compatible
+ * (the "Unloading" part of the document).
  */
 
 #include <errno.h>
@@ -20,6 +22,7 @@
 #include <zephyr/shell/shell_uart.h>
 #include <zephyr/sys/crc.h>
 #include <zephyr/sys/reboot.h>
+#include <zephyr/sys/sys_heap.h>
 #include <zephyr/usb/usbd.h>
 
 #include <esp_attr.h>
@@ -87,6 +90,15 @@ static struct k_heap module_heap;
 static uint8_t module_high_mem[CONFIG_MULTIAPP_MODULE_HIGH_HEAP_SIZE] __aligned(16)
 	ESP_SDR_DATA_F(STATE, module_high_mem, NOINIT);
 static struct k_heap module_high_heap;
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
+/*
+ * Dump bank 2 (the capture bank, esp_sdr_bank_s3.ld) as a second internal heap, for a boot whose
+ * app asks (BANK2): a module that does not fit module_heap goes whole into it. Nothing else of
+ * the image is there, and the SDR is told to stay off it (ext/sdr_up.c).
+ */
+extern uint8_t __esp_sdr_bank_start[], __esp_sdr_bank_end[];
+static struct k_heap bank2_heap;
+#endif
 
 static const struct llext_region_heap region_heaps[][LLEXT_MEM_COUNT] = {
 	[MULTIAPP_PLACE_INTERNAL] = {
@@ -101,11 +113,29 @@ static const struct llext_region_heap region_heaps[][LLEXT_MEM_COUNT] = {
 	},
 };
 
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
+/* The same placements with the bank-2 heap in module_heap's place. */
+static const struct llext_region_heap region_heaps_bank2[][LLEXT_MEM_COUNT] = {
+	[MULTIAPP_PLACE_INTERNAL] = {
+		[LLEXT_MEM_TEXT_ALT] = {&bank2_heap, MODULE_EXEC_OFFSET},
+		[LLEXT_MEM_DATA] = {&bank2_heap, 0},
+		[LLEXT_MEM_BSS] = {&bank2_heap, 0},
+	},
+	[MULTIAPP_PLACE_INTERNAL_HIGH_BSS] = {
+		[LLEXT_MEM_TEXT_ALT] = {&bank2_heap, MODULE_EXEC_OFFSET},
+		[LLEXT_MEM_DATA] = {&bank2_heap, 0},
+		[LLEXT_MEM_BSS] = {&module_high_heap, 0},
+	},
+};
+#endif
+
 /* The modules this boot has loaded, in the order they came. */
 static struct {
 	const struct multiapp_embedded *def;
 	struct llext *ext;
 	const char *source;
+	/* Its constructors have run (and so its destructors must). */
+	bool up;
 } modules[MODULES_MAX];
 static size_t module_count;
 
@@ -116,10 +146,15 @@ static struct k_thread app_thread;
 
 static ESP_SDR_DATA(BULK, loader) struct llext_buf_loader loader;
 static struct llext *loaded;
+static const struct multiapp_embedded *loaded_def;
 static const struct multiapp_info *loaded_info;
 static const char *loaded_source; /* "file" or "built-in" */
 /* The app's main() waits for multiapp_usb_up(). */
 static bool main_held;
+#if defined(CONFIG_APP_USB_MSG_HOOK)
+/* The app's USB message callback (ext/usbd_prelude.h): a pointer into the app, dropped with it. */
+static usbd_msg_cb_t app_msg_cb;
+#endif
 
 /* What this host's apps carry in their trailers (buildid.py). */
 static const uint8_t build_id[] = MULTIAPP_BUILD_ID;
@@ -175,11 +210,54 @@ static uint32_t modules_ms, app_ms;
 uint8_t multiapp_area[CONFIG_MULTIAPP_AREA_SIZE] __aligned(16)
 	ESP_SDR_DATA_F(STATE, multiapp_area, NOINIT);
 static const struct multiapp_embedded *area_app;
+/* Whoever has loaded with buffers in the area (an AREA app, the wifi module): one per boot. */
+static const struct multiapp_embedded *area_owner;
+
+/* The area's owner takes it as it loads; a second one would overlay the first's buffers. */
+static int area_claim(const struct multiapp_embedded *def)
+{
+	if (!def->area) {
+		return 0;
+	}
+	if (area_owner != NULL && area_owner != def) {
+		LOG_ERR("%s: the area is %s's already (one owner per boot)", def->name,
+			area_owner->name);
+		return -EBUSY;
+	}
+	area_owner = def;
+	return 0;
+}
+
+/* No region of a loaded extension may lie in the area, whoever owns it (a loader placement bug). */
+static int area_check(const struct multiapp_embedded *def, const struct llext *ext)
+{
+	uintptr_t lo = (uintptr_t)multiapp_area, hi = lo + sizeof(multiapp_area);
+
+	for (int i = 0; i < LLEXT_MEM_COUNT; i++) {
+		uintptr_t at = (uintptr_t)ext->mem[i];
+
+		if (ext->mem[i] != NULL && ext->mem_size[i] != 0 && at < hi &&
+		    at + ext->mem_size[i] > lo) {
+			LOG_ERR("%s: region %d (%p, %zu bytes) is in the area", def->name, i,
+				ext->mem[i], (size_t)ext->mem_size[i]);
+			return -EFAULT;
+		}
+	}
+	return 0;
+}
+/* The boot's app, if it has bank 2 for the modules (BANK2). */
+static const struct multiapp_embedded *bank2_app;
+
+/* Whether this boot keeps the SDR off dump bank 2 (ext/sdr_up.c asks). */
+bool multiapp_bank2_reserved(void)
+{
+	return bank2_app != NULL;
+}
 
 #if defined(CONFIG_ESP_SDR_IEEE802154_HIGH_RAM_APP)
 void *ieee154_esp_sdr_high_ram(size_t size)
 {
-	if (area_app != NULL || size > sizeof(multiapp_area)) {
+	if (area_app != NULL || area_owner != NULL || size > sizeof(multiapp_area)) {
 		return NULL;
 	}
 	return multiapp_area;
@@ -219,6 +297,7 @@ static int boot_pick(void)
 	app = multiapp_embedded_find(boot_name);
 	usb_profile = app != NULL ? app->usb : MULTIAPP_USB_MSC;
 	area_app = app != NULL && app->area ? app : NULL;
+	bank2_app = app != NULL && app->bank2 ? app : NULL;
 	return 0;
 }
 SYS_INIT(boot_pick, PRE_KERNEL_1, 0);
@@ -227,6 +306,12 @@ static int heaps_init(void)
 {
 	k_heap_init(&module_heap, module_heap_mem, sizeof(module_heap_mem));
 	k_heap_init(&module_high_heap, module_high_mem, sizeof(module_high_mem));
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
+	if (bank2_app != NULL) {
+		k_heap_init(&bank2_heap, __esp_sdr_bank_start,
+			    __esp_sdr_bank_end - __esp_sdr_bank_start);
+	}
+#endif
 #if defined(CONFIG_HARVARD)
 	return llext_heap_init_harvard_exec(instr_heap, sizeof(instr_heap), data_heap,
 					    sizeof(data_heap), IBUS_DBUS_OFFSET);
@@ -272,6 +357,16 @@ void multiapp_shell_register(const struct shell_static_entry *root)
 		return;
 	}
 	roots[root_count++] = root;
+}
+
+void multiapp_shell_unregister(const struct shell_static_entry *root)
+{
+	for (size_t i = 0; i < root_count; i++) {
+		if (roots[i] == root) {
+			roots[i] = roots[--root_count];
+			return;
+		}
+	}
 }
 
 static const struct shell_static_entry *root_find(const char *name)
@@ -401,8 +496,24 @@ static int load_extension(const struct multiapp_embedded *app, struct llext **ex
 	 */
 	loader = (struct llext_buf_loader)LLEXT_TEMPORARY_BUF_LOADER(data, elf_size);
 	ret = llext_load(&loader.loader, app->name, ext, &param);
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
+	if (ret == -ENOMEM && bank2_app != NULL && app->module &&
+	    app->place != MULTIAPP_PLACE_PSRAM) {
+		/* module_heap is full: llext freed what it took, the module goes into bank 2. */
+		LOG_INF("%s: module_heap is full, loading into dump bank 2", app->name);
+		param.region_heaps = region_heaps_bank2[app->place];
+		loader = (struct llext_buf_loader)LLEXT_TEMPORARY_BUF_LOADER(data, elf_size);
+		ret = llext_load(&loader.loader, app->name, ext, &param);
+	}
+#endif
 	if (ret != 0) {
 		LOG_ERR("%s: load failed (%d)", app->name, ret);
+		*ext = NULL;
+		return ret;
+	}
+	ret = area_check(app, *ext);
+	if (ret != 0) {
+		llext_unload(ext);
 		*ext = NULL;
 		return ret;
 	}
@@ -466,62 +577,206 @@ const struct device *multiapp_device_get_binding(const char *name)
 	return device_get_binding(name);
 }
 
+/* Where a region's code runs, and whether @p addr is inside one of @p ext's regions. */
+static bool ext_has(const struct llext *ext, uintptr_t addr)
+{
+	for (int i = 0; i < LLEXT_MEM_COUNT; i++) {
+		uintptr_t lo = (uintptr_t)ext->mem[i];
+		size_t size = ext->mem_size[i];
+
+		if (ext->mem[i] == NULL || size == 0U) {
+			continue;
+		}
+		if (addr >= lo && addr < lo + size) {
+			return true;
+		}
+#if defined(CONFIG_LLEXT_EXEC_ALIAS)
+		lo += ext->mem_exec_offset[i];
+		if (addr >= lo && addr < lo + size) {
+			return true;
+		}
+#endif
+	}
+	return false;
+}
+
+/* An app's hook by name, refused (NULL, logged) if it lies outside the extension's regions. */
+static void *ext_hook(const struct llext *ext, const char *name)
+{
+	const void *fn = llext_find_sym(&ext->exp_tab, name);
+
+	if (fn != NULL && !ext_has(ext, (uintptr_t)fn)) {
+		LOG_ERR("%s: not inside the extension (%p), not called", name, fn);
+		return NULL;
+	}
+	return (void *)fn;
+}
+
+#if defined(CONFIG_THREAD_MONITOR)
+#define SWEEP_MAX 16
+
+struct sweep {
+	const struct llext *ext;
+	k_tid_t found[SWEEP_MAX];
+	size_t count;
+};
+
+static void sweep_one(const struct k_thread *thread, void *data)
+{
+	struct sweep *sw = data;
+
+	if (thread == k_current_get() || sw->count == SWEEP_MAX) {
+		return;
+	}
+	/* The thread, its stack or its entry function is in the extension. */
+	if (ext_has(sw->ext, (uintptr_t)thread) ||
+	    ext_has(sw->ext, (uintptr_t)thread->stack_info.start) ||
+	    ext_has(sw->ext, (uintptr_t)thread->entry.pEntry)) {
+		sw->found[sw->count++] = (k_tid_t)thread;
+	}
+}
+
+/*
+ * What an extension's own stop (multiapp_app_stop(), multiapp_module_down()) and its destructors left
+ * running: a thread in its regions is aborted. It is the last resort: such a thread may hold a lock
+ * of the host's, so the extensions end theirs cleanly first and this logs what it finds.
+ */
+static void threads_sweep(const struct multiapp_embedded *def, const struct llext *ext)
+{
+	struct sweep sw = {.ext = ext};
+
+	k_thread_foreach_unlocked(sweep_one, &sw);
+	for (size_t i = 0; i < sw.count; i++) {
+		LOG_WRN("%s: thread %s still runs, aborted", def->name,
+			k_thread_name_get(sw.found[i]) != NULL ? k_thread_name_get(sw.found[i])
+							       : "(unnamed)");
+		k_thread_abort(sw.found[i]);
+	}
+}
+#else
+static void threads_sweep(const struct multiapp_embedded *def, const struct llext *ext)
+{
+	ARG_UNUSED(def);
+	ARG_UNUSED(ext);
+}
+#endif /* CONFIG_THREAD_MONITOR */
+
+/* Shell roots in @p ext's regions: its destructors took theirs off, a failed start's did not. */
+static void roots_drop(const struct llext *ext)
+{
+	for (size_t i = 0; i < root_count;) {
+		if (ext_has(ext, (uintptr_t)roots[i])) {
+			roots[i] = roots[--root_count];
+		} else {
+			i++;
+		}
+	}
+}
+
+/*
+ * Unload one extension, an app or a module (the same steps for the one-kernel swap of
+ * doc/apps/multiapp-internals.md): its destructors, what it left running, its shell roots, then
+ * the regions. @p up: its constructors have run, so its destructors must. llext_unload() counts
+ * down even when the extension is in use, so the count is checked first: -EBUSY if another
+ * extension imports from this one. Whatever refers into it must be gone before this is called.
+ */
+static int ext_unload(const struct multiapp_embedded *def, struct llext **ext, bool up)
+{
+	struct llext *e = *ext;
+
+	if (e->use_count != 1U) {
+		LOG_ERR("%s: %u users, not unloaded", def->name, e->use_count - 1U);
+		return -EBUSY;
+	}
+	if (up) {
+		(void)llext_teardown(e);
+	}
+	threads_sweep(def, e);
+	roots_drop(e);
+	return llext_unload(ext);
+}
+
+static int load_modules(const struct multiapp_embedded *app);
+
+/* One module, after the modules it needs, up and running; 0 at once if it is loaded already. */
+static int module_load(const struct multiapp_embedded *def)
+{
+	struct llext *ext;
+	uint32_t stack_need;
+	int (*up)(void);
+	int ret;
+
+	for (size_t i = 0; i < module_count; i++) {
+		if (modules[i].def == def) {
+			return 0;
+		}
+	}
+	ret = area_claim(def);
+	if (ret != 0) {
+		return ret;
+	}
+	ret = load_modules(def);
+	if (ret != 0) {
+		return ret;
+	}
+	if (module_count == ARRAY_SIZE(modules)) {
+		LOG_ERR("%s: more than %d modules", def->name, MODULES_MAX);
+		return -ENOMEM;
+	}
+	ret = load_extension(def, &modules[module_count].ext, &modules[module_count].source,
+			     &stack_need);
+	if (ret != 0) {
+		return ret;
+	}
+	ext = modules[module_count].ext;
+	modules[module_count].def = def;
+	modules[module_count].up = false;
+	module_count++;
+	ret = llext_bringup(ext);
+	if (ret != 0) {
+		LOG_ERR("%s: constructors failed (%d)", def->name, ret);
+		return ret;
+	}
+	modules[module_count - 1].up = true;
+	ret = module_init_table(def, ext);
+	if (ret != 0) {
+		return ret;
+	}
+	up = llext_find_sym(&ext->exp_tab, "multiapp_module_up");
+	if (up != NULL) {
+		ret = up();
+		if (ret != 0) {
+			LOG_ERR("%s: up failed (%d)", def->name, ret);
+			return ret;
+		}
+	}
+	return 0;
+}
+
 /* The modules @p app needs, each after those it needs itself, up and running. */
 static int load_modules(const struct multiapp_embedded *app)
 {
 	for (const char *const *req = app->requires; *req != NULL; req++) {
 		const struct multiapp_embedded *def = multiapp_embedded_find(*req);
-		bool have = false;
-		uint32_t stack_need;
 		int ret;
 
-		for (size_t i = 0; i < module_count; i++) {
-			have = have || modules[i].def == def;
-		}
-		if (have) {
-			continue;
-		}
 		if (def == NULL || !def->module) {
 			LOG_ERR("%s: no module %s", app->name, *req);
 			return -ENOENT;
 		}
-		ret = load_modules(def);
+		ret = module_load(def);
 		if (ret != 0) {
 			return ret;
-		}
-		if (module_count == ARRAY_SIZE(modules)) {
-			LOG_ERR("%s: more than %d modules", app->name, MODULES_MAX);
-			return -ENOMEM;
-		}
-		ret = load_extension(def, &modules[module_count].ext,
-				     &modules[module_count].source, &stack_need);
-		if (ret != 0) {
-			return ret;
-		}
-		struct llext *ext = modules[module_count].ext;
-		int (*up)(void);
-
-		modules[module_count].def = def;
-		module_count++;
-		ret = llext_bringup(ext);
-		if (ret != 0) {
-			LOG_ERR("%s: constructors failed (%d)", def->name, ret);
-			return ret;
-		}
-		ret = module_init_table(def, ext);
-		if (ret != 0) {
-			return ret;
-		}
-		up = llext_find_sym(&ext->exp_tab, "multiapp_module_up");
-		if (up != NULL) {
-			ret = up();
-			if (ret != 0) {
-				LOG_ERR("%s: up failed (%d)", def->name, ret);
-				return ret;
-			}
 		}
 	}
 	return 0;
+}
+
+int multiapp_module_load(const char *name)
+{
+	const struct multiapp_embedded *def = multiapp_embedded_find(name);
+
+	return def != NULL && def->module ? module_load(def) : -ENOENT;
 }
 
 /* The shell gives up the CDC-ACM port. USB has not started, so nobody is talking to it. */
@@ -540,6 +795,7 @@ int multiapp_start(const char *name)
 	int (*entry)(void);
 	size_t stack;
 	uint32_t stack_need, started;
+	bool up = false;
 	int ret;
 
 	if (app == NULL || app->module) {
@@ -558,7 +814,10 @@ int multiapp_start(const char *name)
 	(void)multiapp_drive_mount_rw();
 #endif
 	started = k_uptime_get_32();
-	ret = load_modules(app);
+	ret = area_claim(app);
+	if (ret == 0) {
+		ret = load_modules(app);
+	}
 	if (ret != 0) {
 		return ret;
 	}
@@ -598,11 +857,13 @@ int multiapp_start(const char *name)
 	}
 	loaded_info = info;
 	boot_step(STEP_CONSTRUCTORS);
+	loaded_def = app;
 	ret = llext_bringup(loaded);
 	if (ret != 0) {
 		LOG_ERR("%s: constructors failed (%d)", name, ret);
 		goto unload;
 	}
+	up = true;
 	/* A device that fails stays not ready, as in a standalone image: the app can still run. */
 	(void)module_init_table(app, loaded);
 	app_ms = k_uptime_get_32() - started;
@@ -617,10 +878,10 @@ int multiapp_start(const char *name)
 	return 0;
 
 unload:
-	/* Nothing of it has run yet, so it can go. */
+	/* Nothing of it has run yet but its constructors, so it can go. */
 	loaded_info = NULL;
-	root_count = 0;
-	llext_unload(&loaded);
+	loaded_def = NULL;
+	ext_unload(app, &loaded, up);
 	loaded = NULL;
 	return ret;
 }
@@ -637,7 +898,7 @@ void app_usb_dfu_prepare(void)
 	if (loaded == NULL) {
 		return;
 	}
-	prepare = llext_find_sym(&loaded->exp_tab, "app_usb_dfu_prepare");
+	prepare = ext_hook(loaded, "app_usb_dfu_prepare");
 	if (prepare != NULL) {
 		prepare();
 	}
@@ -651,6 +912,225 @@ static void reboot_handler(struct k_work *work)
 }
 static K_WORK_DELAYABLE_DEFINE(reboot_work, reboot_handler);
 
+static void reboot_into(const char *name)
+{
+	request.magic = REQUEST_MAGIC;
+	strncpy(request.name, name, sizeof(request.name) - 1);
+	request.name[sizeof(request.name) - 1] = '\0';
+	k_work_schedule(&reboot_work, K_MSEC(REBOOT_DELAY_MS));
+}
+
+#if defined(CONFIG_MULTIAPP_UNLOAD)
+/* The app ends: its own stop hook, then main() returns and its thread with it. */
+static int app_stop(void)
+{
+	int (*stop)(void) = ext_hook(loaded, "multiapp_app_stop");
+	int ret;
+
+	if (stop == NULL && llext_find_sym(&loaded->exp_tab, "multiapp_app_stop") != NULL) {
+		return -EFAULT;
+	}
+	if (stop != NULL) {
+		ret = stop();
+		if (ret != 0) {
+			LOG_ERR("%s: stop failed (%d)", loaded_def->name, ret);
+			return ret;
+		}
+	}
+	ret = k_thread_join(&app_thread, K_MSEC(CONFIG_MULTIAPP_STOP_TIMEOUT_MS));
+	if (ret != 0) {
+		LOG_ERR("%s: main() did not end (%d)", loaded_def->name, ret);
+		return -EBUSY;
+	}
+	return 0;
+}
+
+/* Unload the running app; once main() has ended nothing of the host refers into it but these. */
+static int app_unload(void)
+{
+	const struct multiapp_embedded *def = loaded_def;
+	int ret = app_stop();
+
+	if (ret != 0) {
+		return ret;
+	}
+	loaded_info = NULL;
+	loaded_def = NULL;
+#if defined(CONFIG_APP_USB_MSG_HOOK)
+	app_msg_cb = NULL;
+#endif
+	if (area_owner == def) {
+		area_owner = NULL;
+	}
+	area_app = NULL;
+	ret = ext_unload(def, &loaded, true);
+	loaded = NULL;
+	return ret;
+}
+
+/* Unload one module that nothing else imports from (-EBUSY otherwise), wherever it is loaded. */
+static int module_unload(size_t i)
+{
+	const struct multiapp_embedded *def = modules[i].def;
+	int (*down)(void) = modules[i].up ? llext_find_sym(&modules[i].ext->exp_tab,
+							   "multiapp_module_down")
+					  : NULL;
+	int ret;
+
+	if (modules[i].ext->use_count != 1U) {
+		LOG_ERR("%s: %u users, not unloaded", def->name, modules[i].ext->use_count - 1U);
+		return -EBUSY;
+	}
+	ret = down != NULL ? down() : 0;
+	if (ret != 0) {
+		LOG_ERR("%s: down failed (%d)", def->name, ret);
+		return ret;
+	}
+	ret = ext_unload(def, &modules[i].ext, modules[i].up);
+	if (ret != 0) {
+		return ret;
+	}
+	if (area_owner == def) {
+		area_owner = NULL;
+	}
+	for (size_t k = i + 1; k < module_count; k++) {
+		modules[k - 1] = modules[k];
+	}
+	module_count--;
+	return 0;
+}
+
+int multiapp_module_unload(const char *name)
+{
+	for (size_t i = 0; i < module_count; i++) {
+		if (strcmp(modules[i].def->name, name) == 0) {
+			return module_unload(i);
+		}
+	}
+	return -ENOENT;
+}
+
+/* Unload modules from the newest down until @p keep are left. */
+static int modules_unload_to(size_t keep)
+{
+	while (module_count > keep) {
+		int ret = module_unload(module_count - 1);
+
+		if (ret != 0) {
+			return ret;
+		}
+	}
+	return 0;
+}
+
+/* The modules @p app needs in load order, without repeats: how many, or -errno. */
+static int closure(const struct multiapp_embedded *app, const struct multiapp_embedded **out,
+		   size_t count, size_t max)
+{
+	for (const char *const *req = app->requires; *req != NULL; req++) {
+		const struct multiapp_embedded *def = multiapp_embedded_find(*req);
+		bool have = false;
+		int ret;
+
+		if (def == NULL || !def->module) {
+			return -ENOENT;
+		}
+		for (size_t i = 0; i < count; i++) {
+			have = have || out[i] == def;
+		}
+		if (have) {
+			continue;
+		}
+		ret = closure(def, out, count, max);
+		if (ret < 0) {
+			return ret;
+		}
+		count = ret;
+		if (count == max) {
+			return -ENOMEM;
+		}
+		out[count++] = def;
+	}
+	return count;
+}
+
+/*
+ * Replace what runs by @p app without a reboot: the loaded app goes, so do the modules the next
+ * boot needs another way (the ones after the first that differs, as the next boot would load them),
+ * then the next app loads with what is left. The caller checked that the boots are compatible; an
+ * error leaves what is loaded (nothing of the app, perhaps modules) and the caller reboots.
+ */
+static int multiapp_switch(const struct multiapp_embedded *app)
+{
+	const struct multiapp_embedded *want[MODULES_MAX];
+	bool bank2_flip = (bank2_app != NULL) != app->bank2;
+	size_t keep = 0;
+	int n, ret;
+
+	n = closure(app, want, 0, ARRAY_SIZE(want));
+	if (n < 0) {
+		return n;
+	}
+	if (loaded != NULL) {
+		ret = app_unload();
+		if (ret != 0) {
+			return ret;
+		}
+	}
+	/* What the SDR learned at load (bank 2 reserved) is not redone for a kept module. */
+	while (!bank2_flip && keep < module_count && keep < (size_t)n &&
+	       modules[keep].def == want[keep]) {
+		keep++;
+	}
+	ret = modules_unload_to(keep);
+	if (ret != 0) {
+		return ret;
+	}
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
+	if (bank2_flip) {
+		struct sys_memory_stats st;
+
+		/* Nothing is loaded now: what is left in the bank-2 heap is a leak. */
+		if (bank2_app != NULL &&
+		    sys_heap_runtime_stats_get(&bank2_heap.heap, &st) == 0 &&
+		    st.allocated_bytes != 0U) {
+			LOG_WRN("bank 2: %zu bytes still allocated", st.allocated_bytes);
+		}
+		bank2_app = app->bank2 ? app : NULL;
+		if (bank2_app != NULL) {
+			k_heap_init(&bank2_heap, __esp_sdr_bank_start,
+				    __esp_sdr_bank_end - __esp_sdr_bank_start);
+		}
+	}
+#endif
+	area_app = app->area ? app : NULL;
+	strncpy(boot_name, app->name, sizeof(boot_name) - 1);
+	boot_name[sizeof(boot_name) - 1] = '\0';
+	request.magic = TRIED_MAGIC;
+	strncpy(request.name, app->name, sizeof(request.name) - 1);
+	request.name[sizeof(request.name) - 1] = '\0';
+	ret = multiapp_start(app->name);
+	boot_ret = ret;
+	return ret;
+}
+
+/*
+ * Whether going from what runs to @p app needs no reboot: the USB descriptors and the classes
+ * the host registered stay as they were (the same profile, none of them the drive that the PC
+ * may hold), and nobody wants the console, which the shell gives up for good.
+ */
+static bool switch_ok(const struct multiapp_embedded *app)
+{
+	if (app->console || app->usb != usb_profile) {
+		return false;
+	}
+	if (loaded != NULL && (loaded_def->console || (usb_profile & MULTIAPP_USB_MSC) != 0U)) {
+		return false;
+	}
+	return true;
+}
+#endif /* CONFIG_MULTIAPP_UNLOAD */
+
 int multiapp_request(const char *name)
 {
 	const struct multiapp_embedded *app = multiapp_embedded_find(name);
@@ -661,18 +1141,36 @@ int multiapp_request(const char *name)
 	if (app->module) {
 		return -EINVAL;
 	}
+#if defined(CONFIG_MULTIAPP_UNLOAD)
+	if (switch_ok(app)) {
+		int ret;
+
+		/*
+		 * A fault during the switch resets into the app asked for: multiapp_switch()
+		 * replaces this with the tried record once the old app is gone.
+		 */
+		request.magic = REQUEST_MAGIC;
+		strncpy(request.name, name, sizeof(request.name) - 1);
+		request.name[sizeof(request.name) - 1] = '\0';
+		ret = multiapp_switch(app);
+
+		if (ret == 0) {
+			return 0;
+		}
+		LOG_ERR("%s: switching in place failed (%d), rebooting into it", name, ret);
+	}
+#else
 	if (loaded == NULL && app->usb == usb_profile && (!app->area || area_app == app) &&
-	    !app->console) {
+	    (!app->bank2 || bank2_app == app) && !app->console) {
 		return multiapp_start(name);
 	}
+#endif
 	/*
-	 * An app cannot stop, USB enumerates once, the area has one user per boot, and the shell
-	 * this runs on gives up the port before an app that wants it starts.
+	 * USB enumerates once, the area has one user per boot (a boot with the app on the console
+	 * or another USB profile), and the shell this runs on gives up the port before an app that
+	 * wants it starts.
 	 */
-	request.magic = REQUEST_MAGIC;
-	strncpy(request.name, name, sizeof(request.name) - 1);
-	request.name[sizeof(request.name) - 1] = '\0';
-	k_work_schedule(&reboot_work, K_MSEC(REBOOT_DELAY_MS));
+	reboot_into(name);
 	return 1;
 }
 
@@ -699,7 +1197,6 @@ bool multiapp_boot(void)
 
 #if defined(CONFIG_APP_USB_MSG_HOOK)
 /* ext/usbd_prelude.h: the app's sample_usbd_init_device() and usbd_enable(). */
-static usbd_msg_cb_t app_msg_cb;
 
 struct usbd_context *multiapp_usbd(usbd_msg_cb_t msg_cb)
 {
@@ -832,7 +1329,7 @@ static int proxy_cmd(const char *name, const struct shell *sh, size_t argc, char
 			       "Command of the loaded app (multiapp list)", UTIL_CAT(proxy_cmd_, _name), \
 			       1, SHELL_OPT_ARG_CHECK_SKIP)
 
-/* Every root command the apps register: hello, rfprobe, wpan, osmosdr and stream, link. */
+/* Every root command the apps register: hello, rfprobe, wpan, osmosdr and stream, link, wifitest, coex, espnow. */
 PROXY(hello);
 PROXY(probe);
 #if defined(CONFIG_SOC_SERIES_ESP32S3)
@@ -843,6 +1340,8 @@ PROXY(ofdm);
 #endif
 #if defined(CONFIG_MULTIAPP_WIFI)
 PROXY(wifi);
+PROXY(coex);
+PROXY(espnow);
 #endif
 
 static int cmd_list(const struct shell *sh, size_t argc, char **argv)
@@ -909,6 +1408,51 @@ static int cmd_run(const struct shell *sh, size_t argc, char **argv)
 #define EXEC_ADDR(ext, r) ((void *)(ext)->mem[r])
 #endif
 
+#if defined(CONFIG_SYS_HEAP_RUNTIME_STATS)
+/* The largest block a heap could hand out now, by trying: a heap's statistics have no such number. */
+static size_t heap_largest(struct k_heap *heap, size_t free_bytes)
+{
+	size_t lo = 0, hi = free_bytes;
+
+	while (hi - lo > 16U) {
+		size_t mid = lo + (hi - lo) / 2;
+		void *p = k_heap_alloc(heap, mid, K_NO_WAIT);
+
+		if (p != NULL) {
+			k_heap_free(heap, p);
+			lo = mid;
+		} else {
+			hi = mid;
+		}
+	}
+	return lo;
+}
+
+/*
+ * One line per heap, in the form tmp/coex/t6soak.py reads: free and the largest free block
+ * (fragmentation shows there first), used, the most ever used.
+ */
+static void heap_line(const struct shell *sh, const char *name, struct k_heap *heap)
+{
+	struct sys_memory_stats st;
+
+	if (sys_heap_runtime_stats_get(&heap->heap, &st) != 0) {
+		return;
+	}
+	shell_print(sh, "heap %s: free %zu largest %zu used %zu peak %zu", name, st.free_bytes,
+		    heap_largest(heap, st.free_bytes), st.allocated_bytes, st.max_allocated_bytes);
+}
+#else
+#define heap_line(sh, name, heap)
+#endif
+
+#if defined(CONFIG_HARVARD) && defined(CONFIG_LLEXT_HEAP_DYNAMIC)
+extern struct k_heap llext_instr_heap, llext_data_heap;
+#endif
+#if CONFIG_HEAP_MEM_POOL_SIZE > 0
+extern struct k_heap _system_heap;
+#endif
+
 static int cmd_info(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc);
@@ -935,19 +1479,23 @@ static int cmd_info(const struct shell *sh, size_t argc, char **argv)
 			    ext->mem_size[LLEXT_MEM_BSS], ext->mem[LLEXT_MEM_BSS],
 			    ext->mem_size[LLEXT_MEM_RODATA]);
 	}
-#if defined(CONFIG_SYS_HEAP_RUNTIME_STATS)
-	struct sys_memory_stats heap_stats;
-
-	if (sys_heap_runtime_stats_get(&module_heap.heap, &heap_stats) == 0) {
-		shell_print(sh, "module heap: %zu of %zu bytes used", heap_stats.allocated_bytes,
-			    heap_stats.allocated_bytes + heap_stats.free_bytes);
-	}
-	if (sys_heap_runtime_stats_get(&module_high_heap.heap, &heap_stats) == 0) {
-		shell_print(sh, "module high heap: %zu of %zu bytes used",
-			    heap_stats.allocated_bytes,
-			    heap_stats.allocated_bytes + heap_stats.free_bytes);
+	shell_print(sh, "uptime %lld ms", k_uptime_get());
+	heap_line(sh, "module_heap", &module_heap);
+	heap_line(sh, "module_high_heap", &module_high_heap);
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
+	if (bank2_app != NULL) {
+		heap_line(sh, "bank2_heap", &bank2_heap);
 	}
 #endif
+#if defined(CONFIG_HARVARD) && defined(CONFIG_LLEXT_HEAP_DYNAMIC)
+	heap_line(sh, "psram_code", &llext_instr_heap);
+	heap_line(sh, "psram_data", &llext_data_heap);
+#endif
+#if CONFIG_HEAP_MEM_POOL_SIZE > 0
+	heap_line(sh, "kernel", &_system_heap);
+#endif
+	shell_print(sh, "area: owner %s, app %s", area_owner != NULL ? area_owner->name : "none",
+		    area_app != NULL ? area_app->name : "none");
 	if (loaded == NULL) {
 		shell_print(sh, "no app loaded");
 		return 0;
@@ -988,7 +1536,8 @@ static int cmd_crash(const struct shell *sh, size_t argc, char **argv)
 
 SHELL_STATIC_SUBCMD_SET_CREATE(app_cmds,
 	SHELL_CMD(list, NULL, "The apps in this image", cmd_list),
-	SHELL_CMD_ARG(run, NULL, "<name>: start an app (reboots if one runs)", cmd_run, 2, 0),
+	SHELL_CMD_ARG(run, NULL, "<name>: start an app (replaces the running one, reboots if it cannot)",
+		      cmd_run, 2, 0),
 	SHELL_CMD(info, NULL, "The loaded app", cmd_info),
 	SHELL_CMD(crash, NULL, "What ended the previous boot", cmd_crash),
 	SHELL_SUBCMD_SET_END);

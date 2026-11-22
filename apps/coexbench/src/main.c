@@ -37,6 +37,8 @@ void coex_channel_refresh(void)
 
 	if (esp_wifi_get_channel(&primary, &second) == ESP_OK) {
 		phylog_set_channel(primary);
+		/* The arbiter makes no driver call of its own (esp_sdr_arb.h). */
+		esp_sdr_arb_wifi_set_channel(primary, (int)second);
 	}
 }
 

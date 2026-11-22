@@ -31,13 +31,15 @@ set(build_id_bin ${ext_dir}/multiapp_build_id.bin)
 set(build_id_h ${ext_dir}/multiapp_build_id.h)
 
 # multiapp_extension(<name> SOURCES <files> [APP <dir> [APP_CONF <fragment>]] [STACK <bytes>]
-#                    [USB <MULTIAPP_USB_* mask>] [AREA] [CONSOLE] [REQUIRES <modules>])
+#                    [USB <MULTIAPP_USB_* mask>] [AREA] [CONSOLE] [BANK2] [REQUIRES <modules>])
 #
 # The extension <name>, include/multiapp/ext.h in front of each source. APP:
 # the app's directory, for its CONFIG_APP_* values (appconfig.py), APP_CONF on
 # top of its own. AREA: it has buffers in the area (ESP_SDR_HIGH_BUF_DEFINE()).
 # CONSOLE: it takes the CDC-ACM port from the shell for the boot, and its main()
-# starts with USB up. REQUIRES: the modules the host loads before it.
+# starts with USB up. BANK2: the boot gets SRAM dump bank 2 as a second internal heap, which a
+# module that does not fit in module_heap loads into; the SDR then never uses that bank (rings
+# on banks 0 and 1, no bursts or transmit). REQUIRES: the modules the host loads before it.
 #
 # multiapp_module(<name> SOURCES <files> [INTERNAL [HIGH_BSS]] [DEVICES]
 #                 [REQUIRES <modules>] [LIBS <archives> [BLOBS_LD <script>]] [VERSION_SCRIPT <file>]
@@ -59,7 +61,7 @@ set(build_id_h ${ext_dir}/multiapp_build_id.h)
 # on top of the host's, whose differences it compiles with (extconfig.py); KCONFIG_AFTER
 # is a header right after those values.
 function(multiapp_extension name)
-  cmake_parse_arguments(EXT "AREA;MODULE;INTERNAL;HIGH_BSS;DEVICES;FILE_ONLY;CONSOLE"
+  cmake_parse_arguments(EXT "AREA;MODULE;INTERNAL;HIGH_BSS;DEVICES;FILE_ONLY;CONSOLE;BANK2"
                         "APP;APP_CONF;STACK;USB;VERSION_SCRIPT;PRELUDE;KCONFIG_AFTER;BLOBS_LD"
                         "SOURCES;REQUIRES;LIBS;INCLUDES;DEFINES;WRAP;KCONFIG;KCONFIG_OWN;KCONFIG_DROP"
                         ${ARGN})
@@ -305,6 +307,11 @@ function(multiapp_extension name)
   else()
     set(ext_console_${name} false PARENT_SCOPE)
   endif()
+  if(EXT_BANK2)
+    set(ext_bank2_${name} true PARENT_SCOPE)
+  else()
+    set(ext_bank2_${name} false PARENT_SCOPE)
+  endif()
   set(ext_requires_${name} ${EXT_REQUIRES} PARENT_SCOPE)
   set(ext_libs ${ext_libs} $<TARGET_FILE:${name}_ext_llext_lib> PARENT_SCOPE)
   set(ext_files ${ext_files} ${file} PARENT_SCOPE)
@@ -317,14 +324,27 @@ endmacro()
 # A copy of a blob for a module, its .rodata* writable. Built without PIC, its pointer tables
 # there need dynamic relocations, which the linker refuses in a read-only section; the module's
 # data is in RAM anyway.
+#
+# multiapp_blob(<out> <archive> [NAME <copy name>] [DROP <members>])
+# DROP: members taken out of the copy (ar d), for an archive two modules share; NAME tells the
+# copies apart.
 function(multiapp_blob out archive)
+  cmake_parse_arguments(BLOB "" "NAME" "DROP" ${ARGN})
   if(CONFIG_RISCV)
     # A relocatable object keeps every relocation: the blob goes in as it is.
     set(${out} ${archive} PARENT_SCOPE)
     return()
   endif()
-  get_filename_component(file ${archive} NAME)
+  if(BLOB_NAME)
+    set(file ${BLOB_NAME})
+  else()
+    get_filename_component(file ${archive} NAME)
+  endif()
   set(copy ${ext_dir}/blobs/${file})
+  set(drop)
+  if(BLOB_DROP)
+    set(drop COMMAND ${CMAKE_AR} d ${copy} ${BLOB_DROP})
+  endif()
   add_custom_command(
     OUTPUT ${copy}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${ext_dir}/blobs
@@ -332,6 +352,7 @@ function(multiapp_blob out archive)
             --readelf ${CMAKE_READELF} ${archive}
     COMMAND ${CMAKE_OBJCOPY} --wildcard
             --set-section-flags ".rodata*=alloc,load,data,contents" ${archive} ${copy}
+    ${drop}
     DEPENDS ${archive} ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/fastcheck.py
     VERBATIM
   )
@@ -345,13 +366,25 @@ if(CONFIG_SOC_SERIES_ESP32S3)
 # (CONFIG_ESP_SDR_AS_EXTENSION).
 include(${apps_dir}/../lib/esp_sdr/sources.cmake)
 include(${apps_dir}/../lib/ieee802154/sources.cmake)
+# The WMAC interrupt (0) is reserved on core 0, where the wifi module pins its task (ext/wifi.conf).
+# The host has no driver, so esp_cpu_intr.c would reserve it on core 1: the SDR's CPU in a coex boot.
+zephyr_compile_definitions(CONFIG_ESP32_WIFI_TASK_PINNED_TO_CORE_0=1)
 multiapp_blob(libphy ${ZEPHYR_HAL_ESPRESSIF_MODULE_DIR}/zephyr/blobs/lib/${CONFIG_SOC_SERIES}/libphy.a)
 multiapp_blob(librftest ${apps_dir}/../zephyr/blobs/lib/${CONFIG_SOC_SERIES}/librftest.a)
+# The radio arbiter (esp_sdr_arb.c) is in phy, which the Wi-Fi driver shares with the SDR: the real
+# esp_phy_enable() and esp_phy_disable() are phy's, and its wraps (__wrap_esp_phy_enable(), exported)
+# are what wifi's calls reach. phy's own PLL tracking (CONFIG_ESP_WIFI_ENABLED, phy_common.c) is
+# filtered by the arbiter to Wi-Fi's own holds (__wrap_phy_param_track_tot()).
+if(NOT CONFIG_ESP_SDR_ARB)
+  message(FATAL_ERROR "multiapp: the S3's phy module holds the radio arbiter: CONFIG_ESP_SDR_ARB=y")
+endif()
 multiapp_module(phy INTERNAL
   LIBS ${libphy} ${librftest}
   VERSION_SCRIPT ${CMAKE_CURRENT_LIST_DIR}/ext/phy.ver
-  DEFINES ${ESP_SDR_PHY_DEFINES}
-  SOURCES ${ESP_SDR_PHY_SOURCES})
+  WRAP esp_phy_enable esp_phy_disable phy_param_track_tot
+  DEFINES ${ESP_SDR_PHY_DEFINES} CONFIG_ESP_WIFI_ENABLED
+  INCLUDES ${ESP_SDR_INCLUDES}
+  SOURCES ${ESP_SDR_PHY_SOURCES} ${ESP_SDR_ARB_SOURCES} ${CMAKE_CURRENT_LIST_DIR}/ext/phy_down.c)
 multiapp_module(sdr INTERNAL HIGH_BSS REQUIRES phy
   INCLUDES ${ESP_SDR_INCLUDES}
   SOURCES ${ESP_SDR_SOURCES} ${CMAKE_CURRENT_LIST_DIR}/ext/sdr_up.c)
@@ -443,6 +476,16 @@ if(CONFIG_MULTIAPP_WIFI)
   include(${CMAKE_CURRENT_LIST_DIR}/wifi.cmake)
   multiapp_extension(wifitest STACK 2048 REQUIRES wifi
     SOURCES ${CMAKE_CURRENT_LIST_DIR}/ext/wifitest.c)
+  # ESP-NOW without joining an access point: the module and its shell, nothing else.
+  multiapp_extension(espnowtest STACK 2048 REQUIRES espnow
+    SOURCES ${CMAKE_CURRENT_LIST_DIR}/ext/espnowtest.c)
+  if(CONFIG_SOC_SERIES_ESP32S3 AND CONFIG_ESP_SDR_RING)
+    # Wi-Fi and the SDR in windows of its sleep (doc/radio/coexistence.md). No AREA: Wi-Fi's heap
+    # is the area, and the ring's banks are the host's. ieee154 takes the area when no AREA app
+    # is loaded, so it must not load with wifi.
+    multiapp_extension(coex STACK 2048 BANK2 REQUIRES wifi sdr espnow
+      SOURCES ${CMAKE_CURRENT_LIST_DIR}/ext/wifitest.c ${CMAKE_CURRENT_LIST_DIR}/ext/coex.c)
+  endif()
 endif()
 
 # MicroPython: the port, its C modules and frozen Python as an app.
@@ -462,6 +505,32 @@ add_custom_command(
   COMMENT "FAT volume of the multiapp extensions"
 )
 add_custom_target(multiapp_fat ALL DEPENDS ${fat_img})
+
+# The Wi-Fi driver's heap is the whole area, and ieee154 takes the area when no AREA app is loaded:
+# neither may load with wifi.
+function(ext_closure out name)
+  set(todo ${ext_requires_${name}})
+  set(seen)
+  while(todo)
+    list(POP_FRONT todo dep)
+    if(NOT dep IN_LIST seen)
+      list(APPEND seen ${dep})
+      list(APPEND todo ${ext_requires_${dep}})
+    endif()
+  endwhile()
+  set(${out} ${seen} PARENT_SCOPE)
+endfunction()
+if(CONFIG_MULTIAPP_WIFI)
+  foreach(name ${ext_names})
+    ext_closure(needs ${name})
+    if(wifi IN_LIST needs)
+      if(ext_area_${name} OR ieee154 IN_LIST needs)
+        message(FATAL_ERROR "multiapp: ${name} needs wifi and the area (an AREA app or ieee154): "
+                            "Wi-Fi's heap is the area")
+      endif()
+    endif()
+  endforeach()
+endif()
 
 # The embedded extensions, and what the host exports to them.
 set(embedded ${ext_dir}/embedded.c)
@@ -494,6 +563,7 @@ foreach(name ${ext_names})
   string(APPEND embedded_text
     "\t{\"${name}\", ${elf}, ${ext_usb_${name}}, ${ext_area_${name}}, "
     "${ext_module_${name}}, ${ext_place_${name}}, ${ext_devices_${name}}, ${ext_console_${name}}, "
+    "${ext_bank2_${name}}, "
     "${name}_requires},\n")
 endforeach()
 list(LENGTH ext_names ext_count)
@@ -507,6 +577,13 @@ set(objects ${ext_dir}/objects.c)
 set(module_args)
 foreach(name ${ext_modules})
   list(APPEND module_args --module ${name})
+endforeach()
+# The area has one owner per boot: an AREA app, or the wifi module (its heap). Nothing else may
+# have buffers there (exports.py), and the loader refuses a second owner (src/apps.c).
+foreach(name ${ext_names})
+  if(ext_area_${name})
+    list(APPEND module_args --area-owner ${name})
+  endif()
 endforeach()
 if(CONFIG_SOC_SERIES_ESP32S31)
   # Its EXT_RAM_BSS_ATTR places nothing in PSRAM (esp_sdr_place.h).

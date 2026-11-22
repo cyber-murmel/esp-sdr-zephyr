@@ -39,6 +39,8 @@ struct multiapp_embedded {
 	bool devices;
 	/* It takes the CDC-ACM port from the shell, and its main() starts with USB up. */
 	bool console;
+	/* SRAM dump bank 2 is the boot's second module heap, and the SDR leaves it alone. */
+	bool bank2;
 	/* The modules to load before it, NULL-terminated. */
 	const char *const *requires;
 };
@@ -50,6 +52,21 @@ const struct multiapp_embedded *multiapp_embedded_find(const char *name);
 
 /* Load @p name and start its main(); -EBUSY once an app is loaded. */
 int multiapp_start(const char *name);
+
+/*
+ * The per-extension path, for what loads or unloads one module into a running app (the kernel swap
+ * of doc/apps/multiapp-internals.md). A module is loaded with the modules it REQUIRES, its
+ * constructors and its multiapp_module_up(), and unloaded with its multiapp_module_down(), its
+ * destructors, a sweep of the threads it left in its regions, its shell roots and its regions,
+ * after the use count says nothing else imports from it.
+ *
+ * Both are for the shell's thread (they take the loader's data). Loading an extension that is
+ * loaded returns 0. Unloading returns -EBUSY when another extension imports from it or its down
+ * hook refuses, -ENOENT when it is not loaded; then it is as it was, apart from what its down
+ * hook had stopped.
+ */
+int multiapp_module_load(const char *name);
+int multiapp_module_unload(const char *name);
 
 /* USB has started: the main() of an app that wanted that runs now. */
 void multiapp_usb_up(void);

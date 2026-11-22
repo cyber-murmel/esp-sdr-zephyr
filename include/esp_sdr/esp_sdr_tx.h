@@ -312,6 +312,17 @@ void esp_sdr_tx_get_stats(struct esp_sdr_tx_stats *stats);
 void esp_sdr_tx_dac_get_stats(struct esp_sdr_tx_dac_stats *stats);
 
 /**
+ * @brief End the DAC's threads (the library unloads).
+ *
+ * Stops a session that plays and ends the player and the fillers, which esp_sdr_tx_start() cannot
+ * restart: it is for a library that goes away.
+ *
+ * @retval 0 on success.
+ * @retval -EBUSY if a session or a thread did not end in time.
+ */
+int esp_sdr_tx_dac_release(void);
+
+/**
  * Waveform source for esp_sdr_tx_dac_play_gen(): write @p n DAC words
  * (esp_sdr_tx_word()) for output samples [@p index, @p index + n) at the
  * 40 MS/s DAC rate. Runs in the filler, ahead of the air by up to two

@@ -43,6 +43,10 @@ extern struct net_if *const multiapp_wifi_iface;
 		net_mgmt_init_event_callback(&UTIL_CAT(_name, _cb), UTIL_CAT(_name, _call),        \
 					     _event_mask);                                          \
 		net_mgmt_add_event_callback(&UTIL_CAT(_name, _cb));                                \
+	}                                                                                          \
+	static void __attribute__((destructor)) UTIL_CAT(multiapp_exit_, _name)(void)             \
+	{                                                                                          \
+		net_mgmt_del_event_callback(&UTIL_CAT(_name, _cb));                                \
 	}
 
 #endif /* MULTIAPP_WIFI_PRELUDE_H_ */

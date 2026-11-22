@@ -1,9 +1,54 @@
-/* What the host looks up in the wifi module; the rest the linker drops. Apps reach Wi-Fi through
- * the host's net_mgmt. */
+/* What the host looks up in the wifi module, the few driver calls the coex app and the espnow
+ * module make, and what libespnow's espnow.o (the espnow module) imports; the rest the linker
+ * drops. Apps reach Wi-Fi through the host's net_mgmt. */
 {
 	global:
+		esp_wifi_connectionless_module_set_wake_interval;
+		esp_wifi_get_channel;
+		esp_wifi_get_config;
+		esp_wifi_get_mac;
+		esp_wifi_get_mode;
+		esp_wifi_get_ps;
+		esp_wifi_ipc_internal;
+		esp_wifi_set_channel;
+		esp_wifi_set_config;
+		esp_wifi_set_mode;
+		esp_wifi_set_ps;
+		ieee80211_espnow_get_init_flag;
+		ieee80211_espnow_set_init_flag;
+		ieee80211_ioctl;
 		multiapp_init_table;
+		multiapp_module_down;
 		multiapp_module_up;
+		wifi_action_tx_process;
+		wifi_init_completed;
+		wifi_log;
+		wifi_roc_process;
+		wifi_sta_restore_default_mac;
+		/* Data objects of the blobs. */
+		g_wifi_menuconfig;
+		g_wifi_nvs;
+		/* The mt_ layer (manatick.o), which stays here. */
+		mt_add_peer;
+		mt_deinit;
+		mt_del_peer;
+		mt_fetch_peer;
+		mt_get_peer;
+		mt_get_peer_num;
+		mt_get_user_oui;
+		mt_get_version;
+		mt_init;
+		mt_is_peer_exist;
+		mt_mod_peer;
+		mt_register_recv_cb;
+		mt_register_send_cb;
+		mt_send;
+		mt_set_peer_rate_config;
+		mt_set_pmk;
+		mt_set_user_oui;
+		mt_set_wake_window;
+		mt_unregister_recv_cb;
+		mt_unregister_send_cb;
 	local:
 		*;
 };

@@ -14,7 +14,6 @@ set(WIFI_SOURCES
   ${CMAKE_CURRENT_LIST_DIR}/ext/wifi_glue.c
   # Allocates through k_malloc(), which the module wraps. The host has its own copy.
   ${wifi_hal}/zephyr/port/heap/heap_caps_zephyr.c
-  ${ESP_SDR_PHY_SOURCES}
   ${wifi_hal}/components/esp_coex/esp32s3/esp_coex_adapter.c
   ${wifi_hal}/components/esp_wifi/esp32s3/esp_adapter.c
   ${wifi_hal}/components/esp_wifi/regulatory/esp_wifi_regulatory.c
@@ -172,15 +171,22 @@ set(WIFI_DEFINES
   CONFIG_ESP_PHY_ENABLE_USB
 )
 
-# Its own copy of the PHY's blob, from the phy module's writable archive: a Wi-Fi boot loads neither
-# phy nor sdr, and the blobs call far more of it than phy exports.
-set(WIFI_LIBS ${libphy})
-foreach(blob core net80211 pp espnow)
+# The PHY is the phy module's (REQUIRES phy), shared with the SDR and its arbiter: phy.ver exports
+# what the blobs and these sources call.
+set(WIFI_LIBS)
+foreach(blob core net80211 pp)
   multiapp_blob(wifi_lib_${blob} ${wifi_hal}/zephyr/blobs/lib/${CONFIG_SOC_SERIES}/lib${blob}.a)
   list(APPEND WIFI_LIBS ${wifi_lib_${blob}})
 endforeach()
+# libespnow.a holds two objects: manatick.o (the mt_ layer, whose g_mt, mt_get_peer_info and
+# g_espnow_user_oui net80211 reads, so it stays here) and espnow.o (the esp_now_ API, the espnow
+# module's, which loads after wifi and so cannot be imported from).
+set(espnow_blob ${wifi_hal}/zephyr/blobs/lib/${CONFIG_SOC_SERIES}/libespnow.a)
+multiapp_blob(wifi_lib_manatick ${espnow_blob} NAME libmanatick.a DROP espnow.o)
+list(APPEND WIFI_LIBS ${wifi_lib_manatick})
+multiapp_blob(espnow_lib ${espnow_blob} NAME libespnow_api.a DROP manatick.o)
 
-multiapp_module(wifi INTERNAL DEVICES FILE_ONLY
+multiapp_module(wifi INTERNAL DEVICES FILE_ONLY AREA REQUIRES phy
   KCONFIG ${CMAKE_CURRENT_LIST_DIR}/ext/wifi.conf
   KCONFIG_OWN "WIFI_ESP32" "ESP32_WIFI_.*" "ESP_WIFI_.*" "ESP_PHY_.*" "ESP32_PHY_.*"
   # Its crypto library, which it does not build; what wifi_glue.c replaces; the radio without Wi-Fi,
@@ -190,11 +196,22 @@ multiapp_module(wifi INTERNAL DEVICES FILE_ONLY
                "NET_TCP_WORKQ_STACK_SIZE"
   KCONFIG_AFTER ${CMAKE_CURRENT_LIST_DIR}/ext/wifi_compat.h
   PRELUDE ${CMAKE_CURRENT_LIST_DIR}/ext/wifi_prelude.h
+  # The PHY power calls go to the radio arbiter in the phy module (__wrap_esp_phy_enable).
   WRAP k_malloc k_aligned_alloc k_calloc k_realloc k_free
        z_impl_k_thread_stack_alloc z_impl_k_thread_stack_free
+       esp_phy_enable esp_phy_disable
   LIBS ${WIFI_LIBS}
   BLOBS_LD ${CMAKE_CURRENT_LIST_DIR}/ext/module_wifi.ld
   VERSION_SCRIPT ${CMAKE_CURRENT_LIST_DIR}/ext/wifi.ver
   INCLUDES ${WIFI_INCLUDES}
   DEFINES ${WIFI_DEFINES}
   SOURCES ${WIFI_SOURCES})
+
+# ESP-NOW: the esp_now_ API (espnow.o) and a small API and shell over it (ext/espnow.c). Nothing in
+# internal RAM, so it fits a boot whose module_heap is full. The wifi module's blobs and driver
+# calls it needs are exported by wifi.ver.
+multiapp_module(espnow REQUIRES wifi
+  FILE_ONLY
+  LIBS ${espnow_lib}
+  VERSION_SCRIPT ${CMAKE_CURRENT_LIST_DIR}/ext/espnow.ver
+  SOURCES ${CMAKE_CURRENT_LIST_DIR}/ext/espnow.c)

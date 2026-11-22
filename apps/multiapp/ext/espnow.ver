@@ -1,0 +1,14 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * What the espnow module exports: the Zephyr-side API (include/esp_sdr/espnow.h) and the esp_now_
+ * API of the blob, for an app that wants more than the API gives. The rest the linker drops.
+ */
+{
+	global:
+		esp_now_*;
+		esp_sdr_espnow_*;
+		multiapp_module_down;
+	local:
+		*;
+};

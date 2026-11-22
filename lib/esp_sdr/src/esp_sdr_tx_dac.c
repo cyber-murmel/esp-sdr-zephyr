@@ -49,6 +49,8 @@ static K_SEM_DEFINE(done_sem, 0, 1);
 /* Per filler: session start / half job, and session done / half done. */
 static struct k_sem job_sem[NFILL], ready_sem[NFILL], half_sem, half_done_sem;
 static atomic_t running, stop_req;
+/* The library unloads: every thread leaves its loop (esp_sdr_tx_dac_release()). */
+static atomic_t quit;
 /*
  * Free-running sample indices (wrap-safe differences, sessions < 2^31
  * samples): ring_w is written by write() on the network thread, ring_r is the
@@ -643,6 +645,9 @@ static void filler(void *p1, void *p2, void *p3)
 
 	for (;;) {
 		k_sem_take(&job_sem[f], K_FOREVER); /* session start */
+		if (atomic_get(&quit)) {
+			return;
+		}
 		if (f == 0) {
 			leader();
 		} else {
@@ -664,6 +669,9 @@ static void player(void *p1, void *p2, void *p3)
 		uint32_t prebuf;
 
 		k_sem_take(&start_sem, K_FOREVER);
+		if (atomic_get(&quit)) {
+			return;
+		}
 		prebuf = gen_fn != NULL ? 0U
 					: MAX(in_rate / 1000U * CONFIG_ESP_SDR_TX_DAC_PREBUF_MS,
 					      2U * BLOCK_WORDS / interp + 4U);
@@ -799,6 +807,37 @@ int esp_sdr_tx_dac_play_gen(esp_sdr_tx_dac_gen_t gen, void *user, uint64_t sampl
 	gen_fn = NULL;
 	atomic_set(&running, 0);
 	return sess_err != 0 || stats.restarts != 0U ? -EIO : 0;
+}
+
+int esp_sdr_tx_dac_release(void)
+{
+	int ret = 0;
+
+	if (atomic_get(&quit)) {
+		return 0;
+	}
+	/* A session ends at a stop request (a generator too); its player gives the done signal. */
+	if (atomic_get(&running)) {
+		atomic_set(&stop_req, 1);
+		if (k_sem_take(&done_sem, K_SECONDS(2)) != 0) {
+			return -EBUSY;
+		}
+	}
+	atomic_set(&quit, 1);
+	k_sem_give(&start_sem);
+	for (int f = 0; f < NFILL; f++) {
+		k_sem_give(&job_sem[f]);
+	}
+	if (k_thread_join(&player_thread, K_SECONDS(2)) != 0) {
+		ret = -EBUSY;
+	}
+	for (int f = 0; f < NFILL; f++) {
+		if (k_thread_join(&filler_threads[f], K_SECONDS(2)) != 0) {
+			ret = -EBUSY;
+		}
+	}
+	atomic_set(&running, 0);
+	return ret;
 }
 
 uint32_t esp_sdr_tx_dac_queued(void)

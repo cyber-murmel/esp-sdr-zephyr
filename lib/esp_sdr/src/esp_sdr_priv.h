@@ -649,6 +649,12 @@ void esp_sdr_s31_group_give(unsigned int key);
 int esp_sdr_retune(void);
 /* MAC_DUMP_USAGE one-hot bits of the capture bank. */
 int esp_sdr_bank_usage(uint32_t *usage);
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
+/* esp_sdr_bank2_reserve(): bank 2 belongs to the application for the boot. */
+extern bool esp_sdr_bank2_reserved;
+#else
+#define esp_sdr_bank2_reserved false
+#endif
 /* Settling after a retune (PLL lock), and the TX/RX turnaround (esp_sdr_set_turnaround()). */
 #define SDR_RETUNE_SETTLE_US 3000U
 extern uint32_t esp_sdr_turn_settle_us;

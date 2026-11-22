@@ -15,9 +15,18 @@
 #include <zephyr/sys/util.h>
 
 #include <esp_sdr/esp_sdr.h>
+#if defined(CONFIG_ESP_SDR_ARB)
+#include <esp_sdr/esp_sdr_arb.h>
+#endif
 #include <esp_sdr/esp_sdr_cal.h>
 #include <esp_sdr/esp_sdr_place.h>
 #include <esp_sdr/esp_sdr_rx.h>
+#if defined(CONFIG_ESP_SDR_RING)
+#include <esp_sdr/esp_sdr_ring.h>
+#endif
+#if defined(CONFIG_SOC_SERIES_ESP32S3) && defined(CONFIG_ESP_SDR_TX)
+#include <esp_sdr/esp_sdr_tx.h>
+#endif
 
 #if defined(CONFIG_ESP_SDR_PHY_ONLY)
 #include <zephyr/init.h>
@@ -319,10 +328,23 @@ int esp_sdr_bank_usage(uint32_t *usage)
 	return 0;
 }
 #else
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
+bool esp_sdr_bank2_reserved;
+
+void esp_sdr_bank2_reserve(void)
+{
+	esp_sdr_bank2_reserved = true;
+}
+#endif
+
 int esp_sdr_bank_usage(uint32_t *usage)
 {
 	uintptr_t base = (uintptr_t)__esp_sdr_bank_start;
 	uintptr_t bank = (base - DUMP_BANK0_ADDR) / DUMP_BANK_SIZE;
+
+	if (esp_sdr_bank2_reserved) {
+		return -EBUSY;
+	}
 
 	if (base < DUMP_BANK0_ADDR || (base - DUMP_BANK0_ADDR) % DUMP_BANK_SIZE != 0U ||
 	    bank >= DUMP_BANKS) {
@@ -356,13 +378,24 @@ static int radio_up(void)
 	modem_clock_module_enable(PERIPH_WIFI_MODULE);
 #else
 	/* wifi_module_enable(), which the hal builds only with the Wi-Fi driver. */
-	PERIPH_RCC_ATOMIC() {
-		periph_ll_wifi_module_enable_clk_clear_rst();
+#if defined(CONFIG_ESP_SDR_ARB)
+	/* A Wi-Fi driver in this boot has done it, and owns the module's clock and reset. */
+	if (!esp_sdr_arb_wifi_attached())
+#endif
+	{
+		PERIPH_RCC_ATOMIC() {
+			periph_ll_wifi_module_enable_clk_clear_rst();
+		}
 	}
 #endif
+#if defined(CONFIG_ESP_SDR_ARB)
+	/* The arbiter powers the PHY at the SDR's claim (esp_sdr_arb_claim()). */
+	return 0;
+#else
 	esp_phy_enable(PHY_MODEM_WIFI);
 	phy_wifi_enable_set(1);
 	return 0;
+#endif
 }
 
 /*
@@ -402,6 +435,42 @@ static int radio_up(void)
 }
 #endif
 
+#if defined(CONFIG_ESP_SDR_CALSTORE)
+/* The stored crystal correction is applied once, at the first claim the SDR holds the radio. */
+static bool cal_applied;
+#endif
+
+#if defined(CONFIG_ESP_SDR_ARB)
+static void arb_prepare(void)
+{
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+#if defined(CONFIG_ESP_SDR_CALSTORE)
+	if (!cal_applied) {
+		cal_applied = true;
+		esp_sdr_cal_apply_stored();
+	}
+#endif
+	if (esp_sdr_ready) {
+		esp_sdr_rx_prepare();
+	}
+	k_mutex_unlock(&esp_sdr_lock);
+}
+
+static void arb_restore(uint32_t wifi_mhz, unsigned int wifi_cbw)
+{
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+	esp_sdr_rx_arb_restore(wifi_mhz, wifi_cbw);
+	k_mutex_unlock(&esp_sdr_lock);
+}
+
+static void arb_register(void)
+{
+	static const struct esp_sdr_arb_ops ops = {.prepare = arb_prepare, .restore = arb_restore};
+
+	esp_sdr_arb_set_ops(&ops);
+}
+#endif
+
 int esp_sdr_init(void)
 {
 	uint32_t usage;
@@ -412,7 +481,7 @@ int esp_sdr_init(void)
 		return -ENODEV;
 	}
 #endif
-	if (esp_sdr_bank_usage(&usage) != 0) {
+	if (esp_sdr_bank_usage(&usage) != 0 && !esp_sdr_bank2_reserved) {
 		LOG_ERR("capture bank %p is not a dump bank", (void *)__esp_sdr_bank_start);
 		return -ENOMEM;
 	}
@@ -425,8 +494,24 @@ int esp_sdr_init(void)
 	if (ret != 0) {
 		goto out;
 	}
+#if defined(CONFIG_ESP_SDR_ARB)
+	arb_register();
+#if defined(CONFIG_ESP_SDR_AS_EXTENSION)
+	if (!esp_sdr_arb_wifi_attached()) {
+		/* No Wi-Fi in this boot: the radio stays the SDR's, as without the arbiter. */
+		ret = esp_sdr_arb_claim(K_NO_WAIT, NULL);
+		if (ret != 0) {
+			goto out;
+		}
+	}
+#endif
+#endif
 #if defined(CONFIG_ESP_SDR_CALSTORE)
-	esp_sdr_cal_apply_stored();
+	/* Under the arbiter it waits for a claim (arb_prepare()): Wi-Fi may own the PHY now. */
+	if (esp_sdr_arb_gate(false) == 0) {
+		cal_applied = true;
+		esp_sdr_cal_apply_stored();
+	}
 #endif
 	/* With the arbiter the front end is set up at each claim. */
 	if (esp_sdr_arb_gate(esp_sdr_rx_is_passive()) == 0) {
@@ -435,6 +520,41 @@ int esp_sdr_init(void)
 	esp_sdr_ready = true;
 	LOG_INF("receiver ready, bank %p", (void *)__esp_sdr_bank_start);
 out:
+	k_mutex_unlock(&esp_sdr_lock);
+	return ret;
+}
+
+int esp_sdr_release_radio(void)
+{
+	int ret = 0;
+
+#if defined(CONFIG_ESP_SDR_RING)
+	if (esp_sdr_ring_active()) {
+		esp_sdr_ring_stop();
+		for (int i = 0; esp_sdr_ring_active() && i < 200; i++) {
+			k_msleep(10);
+		}
+		if (esp_sdr_ring_active()) {
+			return -EBUSY;
+		}
+	}
+	esp_sdr_ring_burst_cancel();
+#endif
+#if defined(CONFIG_SOC_SERIES_ESP32S3) && defined(CONFIG_ESP_SDR_TX)
+	(void)esp_sdr_tx_stop();
+	ret = esp_sdr_tx_dac_release();
+	if (ret != 0) {
+		return ret;
+	}
+#endif
+#if defined(CONFIG_ESP_SDR_ARB)
+	/* A standing claim, or a window the app left; then the hooks into this module's code. */
+	esp_sdr_arb_set_stop_hook(NULL, NULL);
+	esp_sdr_arb_release();
+	esp_sdr_arb_set_ops(NULL);
+#endif
+	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
+	esp_sdr_ready = false;
 	k_mutex_unlock(&esp_sdr_lock);
 	return ret;
 }

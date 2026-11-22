@@ -41,6 +41,11 @@ extern "C" {
  *
  * Capture and ring calls of the library return -EBUSY without a claim (-EAGAIN for passive
  * captures while Wi-Fi sleeps).
+ *
+ * As modules (apps/multiapp, CONFIG_ESP_SDR_AS_EXTENSION) the arbiter is in the `phy` module,
+ * which the `wifi` and `sdr` modules share. A boot without the Wi-Fi driver (no
+ * esp_sdr_arb_wifi_attach()) gets a standing claim from esp_sdr_init(), with no deadline, so its
+ * apps run the SDR without claims as they did before the arbiter.
  */
 
 /** What esp_sdr_arb_trace() reports. */
@@ -113,6 +118,62 @@ void esp_sdr_arb_set_stop_hook(void (*fn)(void *user), void *user);
  * True without a claim.
  */
 bool esp_sdr_arb_window_over(void);
+
+/**
+ * @brief What the SDR does at a claim and a release. The library registers it in esp_sdr_init(),
+ * so the arbiter itself (the phy module of apps/multiapp) does not call the library's code.
+ */
+struct esp_sdr_arb_ops {
+	/** The PHY has just powered up for a claim: the SDR's frequency, front end, gain, filter. */
+	void (*prepare)(void);
+	/** Before the release: Wi-Fi's gain, filter codes and channel (MHz of its centre, 0
+	 *  unknown; @p cbw nonzero for HT40) back. */
+	void (*restore)(uint32_t wifi_mhz, unsigned int wifi_cbw);
+};
+
+/** @brief Register the SDR's side (esp_sdr_init() does); NULL takes it away (the SDR unloads). */
+void esp_sdr_arb_set_ops(const struct esp_sdr_arb_ops *ops);
+
+/**
+ * @brief The Wi-Fi driver is in this boot (apps/multiapp: the wifi module's multiapp_module_up()).
+ *
+ * Without it esp_sdr_init() takes a standing claim with no deadline, so the SDR's callers need no
+ * claim of their own, as without the arbiter. With it they claim per window. A standing claim
+ * already held is released.
+ */
+void esp_sdr_arb_wifi_attach(void);
+
+/**
+ * @brief Tell the arbiter Wi-Fi's channel, for the release to retune to.
+ *
+ * The arbiter makes no driver call of its own: a claim runs on the SDR's thread, which may hold
+ * a CPU the Wi-Fi task needs inside the blob's locks. The application reads the channel
+ * (esp_wifi_get_channel()) from its own thread before it starts the SDR and passes it here.
+ *
+ * @param primary Primary channel 1 to 14 (else ignored).
+ * @param second Second channel: 0 none, 1 above, 2 below (wifi_second_chan_t).
+ */
+void esp_sdr_arb_wifi_set_channel(uint8_t primary, int second);
+
+/**
+ * @brief The Wi-Fi driver is gone from this boot (its module unloaded, after its deinit).
+ *
+ * Clears the attach and any hold Wi-Fi left, and powers the PHY down if nothing else holds it. An
+ * SDR that initialized while Wi-Fi was attached claims per window; it must be reloaded to take the
+ * standing claim again (apps/multiapp unloads it with Wi-Fi).
+ */
+void esp_sdr_arb_wifi_detach(void);
+
+/**
+ * @brief The arbiter's module unloads: nothing may hold the PHY any more.
+ *
+ * @retval 0 The PHY is down, the hooks are cleared.
+ * @retval -EBUSY A client still holds the PHY; nothing changed.
+ */
+int esp_sdr_arb_shutdown(void);
+
+/** @return Whether esp_sdr_arb_wifi_attach() was called. */
+bool esp_sdr_arb_wifi_attached(void);
 
 /** @return Whether the SDR holds the radio and Wi-Fi has not asked for it back. */
 bool esp_sdr_arb_holds(void);

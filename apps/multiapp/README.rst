@@ -28,11 +28,13 @@ need living in the image itself. How it does that is in
 - ``hello`` (``ext/hello.c``) is the loader check; ``hello atomic`` tests atomics in PSRAM from
   both CPUs.
 - An extension's code and data are loaded into PSRAM and run from there.
-- One app runs per boot: an app cannot be stopped cleanly, so starting another one reboots into
-  it.
-- USB enumerates once per boot too: the classes an app needs besides the CDC-ACM shell and DFU
-  come with a reboot into it, as does the internal RAM area that osmosdr and the 802.15.4 driver
-  take turns on.
+- One app runs at a time. ``multiapp run`` stops the running app, unloads it and the modules
+  the next app does not need (the Wi-Fi driver, the SDR) and starts the next in place, when the
+  two are compatible; otherwise, and when anything refuses to stop, it reboots into it
+  (``multiapp-internals``, Unloading).
+- USB enumerates once per boot: the classes an app needs besides the CDC-ACM shell and DFU come with
+  a reboot into it, so an app with another USB profile or one that takes the console (MicroPython)
+  is a reboot.
 
 Hardware
 ********
@@ -124,6 +126,7 @@ On the CDC-ACM shell:
    link          81320 bytes, file 81320 bytes
    uart:~$ multiapp run rfprobe
    rfprobe: rebooting into it (eject the drive first: the PC may not have written it out)
+   (with an app of the same USB profile loaded, or none: "rfprobe: started", no reboot)
 
 and, on the shell of the boot into it:
 
@@ -148,10 +151,16 @@ Commands
    * - ``multiapp list``
      - each app's file next to the built-in copy (``differs`` when they are not the same)
    * - ``multiapp run <name>``
-     - reboots into the app, unless no app runs yet and USB already has its classes
+     - starts the app. With another app loaded it stops and unloads that one and the modules the new
+       app leaves out, then loads the new one, without a reboot, if both have the same USB profile
+       (not the drive's), neither takes the console, and the running app ends (its ``main()``
+       returns or its ``multiapp_app_stop()`` makes it). Otherwise it reboots into the app. An
+       error after the unload began reboots too. The shell stays up for an in-place switch.
    * - ``multiapp info``
-     - the host's build id, the stack its ``main()`` used, and the loaded app's origin, sizes and
-       commands
+     - the host's build id, the stack its ``main()`` used, the loaded app's origin, sizes and
+       commands, the uptime, the area's owner, and a line per heap (module_heap, module_high_heap,
+       bank2_heap in a BANK2 boot, psram_code, psram_data, kernel): free, largest free block, used,
+       peak. A soak watches these and the uptime, which only grows without a reboot
    * - ``multiapp crash``
      - what ended the previous boot (fatal error, watchdog, how far a boot into an app got) and
        the USB thread's stack use in the last DFU download
@@ -238,6 +247,60 @@ The stock Wi-Fi driver is the module ``wifi``, built by ``wifi.cmake``, and has 
 - ``wifi connect`` returns once DHCP has an address.
 - After an abrupt reset the access point may still have the board associated, and the first
   attempt fails: try again.
+- The module's PHY is the ``phy`` module's, shared with ``sdr`` through the radio arbiter
+  (``esp_sdr_arb.c``, in ``phy``), so a Wi-Fi boot loads ``phy`` too.
+- ``wifi`` needs the area for its heap: an app with ``AREA``, and ``ieee154``, cannot load with
+  it (a CMake error).
+
+Wi-Fi and the SDR: coex
+-----------------------
+
+``coex`` is ``wifitest``'s commands plus the SDR in the windows of Wi-Fi's sleep
+(`Coexistence <../../doc/radio/coexistence.md>`__). It needs ``wifi`` and ``sdr``, which together
+want about 43 KB of internal RAM: ``sdr`` loads into dump bank 2 (``BANK2``), so the ring runs on
+banks 0 and 1 and there are no burst captures (`multiapp internals
+<../../doc/apps/multiapp-internals.md>`__). ``wifi`` has no
+built-in copy, so ``wifi.llext`` must be on the volume.
+
+.. code-block:: console
+
+   uart:~$ multiapp run coex
+   uart:~$ wifi connect <ssid> <psk>     # typed here, never stored
+   uart:~$ coex ps min                   # none | min | max modem sleep
+   uart:~$ coex sdr 30 ring 2437         # <seconds> [ring] [MHz] [bg]
+   uart:~$ coex sdr result               # after "bg", which returns at once
+   uart:~$ coex arb                      # the arbiter's counters, "coex arb clear"
+   uart:~$ coex chan
+   uart:~$ net ping <gateway>
+
+- ``coex sdr`` runs the window loop on CPU 1: claim, a ring to the deadline, release. It prints the windows, the SDR's duty, the ring runs that ended at
+  the window against failures, and the gaps the sink counted inside runs.
+- Without power save (``coex ps none``) Wi-Fi never sleeps and every claim times out with
+  ``-EBUSY``.
+- The other boots are unchanged: without ``wifi``, ``esp_sdr_init()`` keeps a standing claim, so
+  ``osmosdr``, ``wpan``, ``capture`` and the rest need no claims.
+
+ESP-NOW: espnow
+---------------
+
+The module ``espnow`` (``espnow.o`` of the Wi-Fi blobs, an API in ``include/esp_sdr/espnow.h`` and
+the ``espnow`` shell, the same commands as ``apps/coexbench``) needs ``wifi``, and is in PSRAM
+only. It has no built-in copy, so ``espnow.llext`` must be on the volume. ``coex`` loads it, and
+``espnowtest`` loads it alone, without joining an access point:
+
+.. code-block:: console
+
+   uart:~$ multiapp run espnowtest       # or coex
+   uart:~$ espnow init                   # station mode if needed; prints the own MAC
+   uart:~$ espnow peer <aa:bb:cc:dd:ee:ff>
+   uart:~$ espnow send 100 20 32         # <count> <interval_ms> [bytes]
+   uart:~$ espnow stats [clear]
+   uart:~$ espnow rx 4                   # the last frames received
+   uart:~$ espnow window 20 100          # awake 20 ms of every 100 ms, for receiving under power save
+
+- Both boards must be on the same channel; the peer is on the current one.
+- In ``coex``, receiving needs the wake window while ``coex ps`` is ``min`` or ``max``, and the
+  SDR's ring windows then fall between the wake windows.
 
 Adding an app
 =============

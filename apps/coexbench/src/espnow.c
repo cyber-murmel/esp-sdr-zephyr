@@ -195,12 +195,32 @@ static int cmd_window(const struct shell *sh, size_t argc, char **argv)
 	return err == ESP_OK ? 0 : -EIO;
 }
 
+static int cmd_chan(const struct shell *sh, size_t argc, char **argv)
+{
+	int ch = atoi(argv[1]);
+	uint8_t primary = 0;
+	wifi_second_chan_t second;
+	esp_err_t err;
+
+	if (need_init(sh) != 0) {
+		return -ENODEV;
+	}
+	if (ch < 1 || ch > 14) {
+		return -EINVAL;
+	}
+	err = esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+	(void)esp_wifi_get_channel(&primary, &second);
+	shell_print(sh, "channel %d: %d, now %u", ch, err, primary);
+	return err == ESP_OK ? 0 : -EIO;
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(
 	espnow_cmds,
 	SHELL_CMD_ARG(init, NULL, "Set STA mode if needed, start ESP-NOW", cmd_init, 1, 0),
 	SHELL_CMD_ARG(peer, NULL, "<mac> unicast peer, current channel", cmd_peer, 2, 0),
 	SHELL_CMD_ARG(send, NULL, "<count> <interval_ms> [bytes]", cmd_send, 3, 1),
 	SHELL_CMD_ARG(stats, NULL, "[clear] rx and tx counters", cmd_stats, 1, 1),
+	SHELL_CMD_ARG(chan, NULL, "<1..14> primary channel (not associated)", cmd_chan, 2, 0),
 	SHELL_CMD_ARG(window, NULL, "<window_ms> <interval_ms> wake window", cmd_window, 3, 0),
 	SHELL_SUBCMD_SET_END);
 SHELL_CMD_REGISTER(espnow, &espnow_cmds, "ESP-NOW bench", NULL);

@@ -51,7 +51,7 @@ config ESP_SDR_WIFI_SHARED
 
 config ESP_SDR_ARB
 	bool "Radio arbiter: the SDR takes the radio in Wi-Fi's sleep windows"
-	depends on ESP_SDR_WIFI_SHARED && SOC_SERIES_ESP32S3 && !ESP_SDR_AS_EXTENSION
+	depends on SOC_SERIES_ESP32S3 && (ESP_SDR_WIFI_SHARED || ESP_SDR_AS_EXTENSION)
 	help
 	  Wraps the Wi-Fi blob's esp_phy_enable() and esp_phy_disable() (linker --wrap) and owns
 	  the real calls: the PHY is powered while Wi-Fi or the SDR needs it. The SDR takes the
@@ -60,6 +60,11 @@ config ESP_SDR_ARB
 	  esp_sdr_arb_release(), which restores Wi-Fi's gain, filter codes and channel. Wi-Fi's
 	  wake preempts a late SDR. Captures and ring runs need a claim (-EBUSY), except passive
 	  captures, which need Wi-Fi's PHY on (-EAGAIN). Without this option nothing changes.
+
+	  As extensions (ESP_SDR_AS_EXTENSION, apps/multiapp) the arbiter is in the phy module, which
+	  the wifi module shares with the SDR (the wifi module's calls are wrapped there too). esp_sdr_init()
+	  then takes a standing claim with no deadline when no Wi-Fi driver is attached
+	  (esp_sdr_arb_wifi_attach()), so the apps of a boot without Wi-Fi need no claims.
 
 config ESP_SDR_ARB_MARGIN_US
 	int "Window margin before the predicted Wi-Fi wake (us)"

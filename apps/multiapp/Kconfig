@@ -15,11 +15,13 @@ config MULTIAPP_DATA_HEAP_KB
 config MULTIAPP_MODULE_HEAP_SIZE
 	int "Internal RAM for the modules that run from it, bytes"
 	default 8192 if SOC_SERIES_ESP32S31
-	default 31744
+	default 35840
 	help
 	  IRAM_ATTR code, data and bss of the modules built INTERNAL: below ring
 	  bank 0 (src/apps.c), where a size that does not fit fails the host's
-	  link. wpan's boot needs the most, about 25.5 KB.
+	  link. The Wi-Fi boots need the most: wifi and phy, about 33.4 KB. coex
+	  also loads sdr (43 KB in all), which goes into dump bank 2 (BANK2,
+	  doc/apps/multiapp-internals.md).
 
 config MULTIAPP_MODULE_HIGH_HEAP_SIZE
 	int "Bytes of the high region for a module's bss"
@@ -46,6 +48,22 @@ config MULTIAPP_STACK_SIZE
 # A default, not an assignment: the wifi module's Kconfig pass turns on what this depends on being off.
 config ESP_SDR_PHY_ONLY
 	default y
+
+config MULTIAPP_UNLOAD
+	bool "Switch apps in place, unloading the running one"
+	default y if SOC_SERIES_ESP32S3
+	select THREAD_MONITOR
+	select SYS_HEAP_RUNTIME_STATS
+	help
+	  "multiapp run" stops the running app, unloads it and the modules the next one does not
+	  need (the Wi-Fi driver, the SDR) and loads the next, when the two boots are compatible
+	  (same USB profile, no console app). Otherwise, and when anything refuses to stop, it
+	  reboots into the next app. Only the ESP32-S3 is exercised on hardware.
+
+config MULTIAPP_STOP_TIMEOUT_MS
+	int "How long an app's main() may take to end before the switch gives up"
+	default 5000
+	depends on MULTIAPP_UNLOAD
 
 config MULTIAPP_WIFI
 	bool "The stock Wi-Fi driver as a module"

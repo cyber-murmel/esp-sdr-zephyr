@@ -40,8 +40,10 @@ Status:
   written, because its sections do not join the host's: `SHELL_CMD_REGISTER`,
   `USBD_DEFINE_CLASS`, `SYS_INIT`, `LOG_MODULE_REGISTER`, `K_THREAD_STACK_DEFINE`, static memory
   slabs, `NET_BUF_POOL_DEFINE`.
-- **Exit is a reboot.** The Wi-Fi PHY, ring and DAC state cannot be torn down cleanly. `multiapp
-  run` with an app loaded leaves the name in RTC memory and resets.
+- **Exit is an unload, or a reboot.** `multiapp run` stops the loaded app, unloads it and the
+  modules the next app does not take over, and loads the rest, when the two boots are compatible
+  ([Unloading](#unloading)). A different USB profile, a console app, anything that refuses to stop
+  or an error half way leaves the name in RTC memory and resets, as before.
 
 ## How it works
 
@@ -147,13 +149,24 @@ Loading it:
 
 | Module | Holds |
 | --- | --- |
-| `phy` | `libphy`, `librftest`, the HAL's PHY glue |
+| `phy` | `libphy`, `librftest`, the HAL's PHY glue, the radio arbiter (`esp_sdr_arb.c`, S3) |
 | `sdr` | `lib/esp_sdr`, brought up by `multiapp_module_up()` in `ext/sdr_up.c` |
 | `ieee154` | `lib/ieee802154` |
+| `wifi` | the Wi-Fi driver and its blobs, REQUIRES `phy` ([the driver](#the-stock-wi-fi-driver-as-a-module)) |
+| `espnow` | `espnow.o` of `libespnow.a`, a Zephyr-side API and the `espnow` shell, REQUIRES `wifi`, all in PSRAM ([ESP-NOW](#esp-now-as-a-module)) |
 
 - The host has none of them and no Wi-Fi driver (`CONFIG_ESP_SDR_PHY_ONLY`,
   `CONFIG_ESP_SDR_AS_EXTENSION`).
 - A boot loads what its app names, and a boot without an app brings no radio up.
+- On the S3 the arbiter (`CONFIG_ESP_SDR_ARB=y` in `socs/esp32s3_procpu.conf`) sits in `phy`,
+  so one copy serves `sdr` and `wifi`, whichever loads. `phy` links with `--wrap` of
+  `esp_phy_enable()` and `esp_phy_disable()`, so the arbiter's `__real_` calls are `phy`'s own;
+  `wifi` links with the same wraps, and its calls reach `phy`'s exported `__wrap_` pair.
+- The library does not call `phy`'s code the other way: `phy` loads first and cannot import from
+  `sdr` or `wifi`. The SDR registers its side of a claim and a release
+  (`esp_sdr_arb_set_ops()`, from `esp_sdr_init()`), and `wifi` its channel
+  (`esp_sdr_arb_wifi_attach()`, from its `multiapp_module_up()`).
+- The arbiter is S3 only; on the S31 `phy` and `sdr` are one module with its own wrap list.
 - The sources come from each library's `sources.cmake`, so standalone apps and modules build the
   same files.
 
@@ -181,7 +194,11 @@ sections, so:
   make the data region enclose it: `ext/module_blobs.ld` moves it behind `.got`.
 - The archives also hold test code calling functions the host does not have. A version script names
   the exports and `--gc-sections` drops the rest.
-- `ext/phy.ver` leaves 36 KB of code against 84 KB, and 132 bytes of bss against 42 KB.
+- `ext/phy.ver` leaves 36 KB of code against 84 KB, and 132 bytes of bss against 42 KB. With
+  `wifi` sharing the module it also exports the blobs' set, 17 names more (`phy_change_channel`,
+  `noise_check_loop`, `register_chipv7_phy_init_param`, `esp_phy_modem_init` and others), the
+  wrapped pair and the arbiter's API. A name missing there fails the host's link (`exports.py`
+  exports an import no module defines), and `tests/host/test_exports.py` checks the list.
 
 ### USB profiles
 
@@ -219,7 +236,173 @@ never runs the ring, so bank 0 is free in its boots.
   (`AREA` in `multiapp_extension()`).
 - osmosdr takes 23 KB; the 802.15.4 driver gets the area in the other boots
   (`CONFIG_ESP_SDR_IEEE802154_HIGH_RAM_APP`).
+- The area has one owner per boot: an `AREA` app, `ieee154`, or the `wifi` module (its private heap
+  is the whole area, so `wifi` is declared `AREA`). The objects of every extension start at the
+  area's beginning, so two owners would overlay each other.
+- The rule is checked three times. `exports.py` fails the build when an extension that does not
+  own the area has buffers in it (`--area-owner`). The loader refuses a second owner
+  (`area_claim()`, `-EBUSY`) and an extension with a region inside the area (`area_check()`,
+  `-EFAULT`); `ieee154` gets no area when anything owns it. `tests/host/test_exports.py` covers
+  the first.
+- What went wrong in `coex`: `ESP_SDR_STACK_DEFINE()` follows `ESP_SDR_PLACE_STACK`, the high
+  region on the S3, which in an extension is `ESP_SDR_HIGH_STACK_DEFINE()`: a host object in the
+  area at offset 0. `coex`'s worker stack (3 KB, painted 0xaa when the thread started) overlaid
+  the wifi module's heap. It is pinned to PSRAM now (`place.h`). `wifitest` has no such object.
 - `multiapp run` reboots when the USB profile or the area's owner changes.
+
+### Unloading
+
+Replacing the running app without a reboot (`CONFIG_MULTIAPP_UNLOAD`, on by default on the ESP32-S3
+only; the S31 boots as before). The code is in `src/apps.c`; on the board it is untested but for the
+build (the soak is `tmp/coex/t6soak.py`, see the end of this section).
+
+#### When it applies
+
+`multiapp_request()` switches in place when all hold, and reboots otherwise:
+
+- the next app has the same USB profile as the boot (the classes the host registered at boot stay);
+- neither the running app nor the next one is a `console` app (the shell gave up the port for good);
+- with an app loaded, the profile is not the MSC drive (the PC may hold it);
+- the app stops (below) and every step of the unload succeeds. An error after the app ended leaves
+  what was loaded and reboots into the next app; the boot then has no state to clean.
+
+The area has one owner per boot, and the owner leaves with its extension (`area_owner`, `area_app`
+follow the loaded app: osmosdr's buffers and the Wi-Fi heap take turns). Bank 2 as a second module
+heap (`BANK2`, `coex`) changes what the SDR module learns when it loads, so a switch that adds or
+drops `BANK2` unloads every module and re-initializes the heap first (it logs what a leak left in
+it). Still a reboot: console apps (`micropython`), a changed USB profile (osmosdr with its vendor
+class, stream with NCM, against the rest), the S31, and any app whose `main()` does not return and
+that has no stop hook (`capture` loops for good: `rfprobe` is the app of the soak).
+
+#### The order
+
+1. **The app.** Its optional `multiapp_app_stop()` (found by name, as `app_usb_dfu_prepare()`; the
+   `wifitest` and `coex` apps have one: net_mgmt callback, the `coex` run's thread) asks `main()` and
+   the app's threads to end. The host joins `app_thread` for `CONFIG_MULTIAPP_STOP_TIMEOUT_MS`; an app
+   still running then keeps running and the request reboots. `multiapp_app_stop()` returning an error
+   does the same.
+2. **The app's extension** (`ext_unload()`): use count checked first (`llext_unload()` counts down
+   even when it returns early, so a module that is still imported from must not reach it),
+   `llext_teardown()` (the destructors, below), a sweep of threads that live in its regions (the
+   thread, its stack or its entry in a region: aborted, logged as a warning, since such a thread may
+   hold a host lock), its shell roots, then `llext_unload()` (which flushes the deferred log first).
+   The USB message hook the app set is dropped, and the loaded app, its info and its devices are
+   forgotten.
+3. **The modules**, newest first, as far as the next boot's order differs. The next boot's list is
+   what `load_modules()` would load (each module after those it requires). The loaded modules are
+   a stack: those of the common prefix stay, everything after the first difference goes. So `coex`
+   (phy, wifi, sdr, espnow) to `wifitest` (phy, wifi) drops espnow and sdr; `wifitest` to `rfprobe` (phy,
+   sdr) drops wifi and keeps phy; `rfprobe` to `wpan` keeps phy and sdr. The prefix rule also makes
+   the SDR reload after Wi-Fi attaches or detaches, which it needs: an SDR that initialized without
+   Wi-Fi holds the radio for good, one that initialized beside it claims per window. Per module,
+   `multiapp_module_down()` runs first (below), then `ext_unload()`, then the area owner is cleared,
+   and its entry leaves the table (the devices it defined are forgotten there:
+   `multiapp_device_get_binding()` no longer finds them).
+4. **The next app** loads as at boot (`multiapp_start()`): the missing modules, then the app, its
+   constructors and `main()` in `app_thread`. The RTC request record names it, so `multiapp crash`
+   and a crash loop see what died.
+
+#### Destructors
+
+`include/multiapp/ext.h` and `ext/wifi_prelude.h` turn registrations into constructors; each has its
+destructor in the same macro, which `llext_teardown()` runs (the extension's `.fini_array`):
+
+| Constructor | Destructor |
+| --- | --- |
+| `SHELL_CMD_REGISTER` root | `multiapp_shell_unregister()` |
+| `SETTINGS_STATIC_HANDLER_DEFINE` | `settings_deregister()` (new in the fork) |
+| `K_THREAD_DEFINE` | join for 100 ms, then abort |
+| `NET_MGMT_REGISTER_EVENT_HANDLER` (wifi) | `net_mgmt_del_event_callback()` |
+| `SYS_INIT`, slabs | none: no inverse, the module's down hook is it |
+
+`tests/host/test_multiapp_unload.py` fails a constructor macro without a destructor or a
+`no destructor:` reason.
+
+#### What `multiapp_module_down()` does
+
+Symmetric to `multiapp_module_up()`, exported by name. A nonzero return keeps the module loaded
+(the request then reboots).
+
+- **wifi** (`ext/wifi_glue.c`): `esp32_wifi_shutdown()` of the driver ([Zephyr changes](#zephyr-changes))
+  disconnects, cancels the driver's work, takes the interface down, `esp_wifi_stop()` and waits for
+  the stopped event, `esp_wifi_deinit()` (which deinitializes the supplicant, coexistence and ends
+  the blob's tasks), removes the driver's `net_mgmt` callback and ends the event thread cleanly
+  (sentinel, `k_thread_join()`; never aborted, it may hold net locks). Then a flush of the system
+  work queue (the blob's task cleanup is a work item of the module), the hal's
+  `esp_wifi_adapter_release_isrs()`, `multiapp_wifi_unbind()` (interface down, IPv4 addresses and
+  gateway removed, the host's idle device back, `NO_AUTO_START`), `esp_sdr_arb_wifi_detach()`. It
+  prints what the private heap still holds (a leak) and any clock reference left.
+- **sdr** (`ext/sdr_up.c`): `esp_sdr_release_radio()` stops a ring run (`esp_sdr_ring_stop()`, waits)
+  and a burst, ends the DAC's player and filler threads (`esp_sdr_tx_dac_release()`: quit flag,
+  semaphores, `k_thread_join()`), releases the arbiter's claim (standing or window: the PHY powers
+  down unless Wi-Fi holds it) and clears the arbiter's hooks into the library (`set_ops(NULL)`,
+  stop hook).
+- **espnow** (`ext/espnow.c`): callbacks off, `esp_now_deinit()`, the receive queue and callback
+  forgotten.
+- **phy** (`ext/phy_down.c`): `esp_sdr_arb_shutdown()`: refuses (`-EBUSY`) if a client holds the PHY,
+  else powers it down and drops the hooks. The PHY's PLL timer goes with the last `esp_phy_disable()`.
+  It unloads only when no module of the next boot needs it; it reloads with the stored calibration.
+
+#### Interrupts of the blob (hal fork)
+
+The S3 adapter records what the blob installs: `set_intr_wrapper()` the (CPU, source, line) routes,
+`set_isr_wrapper()` the line and the CPU that enabled it. `esp_wifi_adapter_release_isrs()` routes
+every recorded source to the invalid line (6) on both CPUs, disables each line on the CPU that
+enabled it (a thread pinned to the other CPU does it when that is not the caller's: the enable bits
+are per CPU) and connects the spurious handler back. `clear_intr_wrapper()`, empty in the vendor's
+adapter, does the same for one source. Wi-Fi is on core 0 in a multiapp boot (`ext/wifi.conf`), but
+nothing here assumes it. The soak reads the matrix rows of the Wi-Fi sources (`0x600C2000 + 4 *
+source` for core 0, `0x600C2800` for core 1) and the FROM_CPU rows, which must not change.
+
+#### Memory and the heaps
+
+- `module_heap`, `module_high_heap` and the bank-2 heap are `k_heap`s that llext's region heaps free
+  into. The modules unload newest first so that the first-fit free list merges back; `multiapp info`
+  prints, per heap, free, **largest free block**, used and peak (`heap NAME: free F largest L used U
+  peak P`, found by trying allocations since a heap's statistics have no such number): module_heap,
+  module_high_heap, bank2_heap in a `BANK2` boot, `psram_code`, `psram_data`, `kernel`. Fragmentation
+  shows in `largest` first. It also prints `uptime` and the area's owner.
+- The Wi-Fi heap is the area, one `k_heap` the module initializes at load: a leak is invisible after a
+  reload, so module_down prints what is still allocated.
+- Blob buffers in PSRAM come from the shared heap (`CONFIG_ESP_WIFI_HEAP_SPIRAM`) today, wrapped to
+  the private heap in the Wi-Fi module; the soak's `psram_*` and kernel lines show if any leaks into
+  the host's.
+
+#### The per-extension API, and the kernel swap
+
+`src/apps.h` exposes `multiapp_module_load(name)` (a module with the modules it `REQUIRES`, its
+constructors, its devices and `multiapp_module_up()`) and `multiapp_module_unload(name)` (its down
+hook, use count, destructors, thread sweep, shell roots, regions; `-EBUSY` while another extension
+imports from it). They work on any module, not only the newest. A later feature, one small
+kernel as an llext swapped into a running app for one DSP stage, plugs in here without a
+reboot or a stop of the app:
+
+1. The kernel is a module (`multiapp_module()`, no `main()`) that exports one function, built by
+   the same CMake function as the others; its file is on the volume and built in.
+2. The app (or a host helper) calls `multiapp_module_load("kernel_b")`, reads the function with
+   `llext_find_sym()`, waits for a quiescent point of its stage (the ring's unit boundary, a frame
+   gap), stores the new function pointer, and calls `multiapp_module_unload("kernel_a")`.
+3. The unload then does what it does for any module: use count (the app does not import the kernel
+   by symbol, so the count is 1: it holds only a pointer, which is why the swap must have stored the
+   new pointer first), destructors, the thread sweep (a kernel with a thread is a bug and is logged),
+   regions back to their heap. The only thing the pointer swap must guarantee is that no thread is
+   inside the old code: a spinlock-free handoff at the stage boundary, and a wait of one more unit.
+4. Both versions are in the code heap at once for that moment: the PSRAM code heap has to hold two
+   kernels (`psram_code` free in `multiapp info`).
+
+#### The soak
+
+`tmp/coex/t6soak.py` (scratch) drives the CDC-ACM shell: N cycles of `multiapp run wifitest`,
+join, `multiapp run rfprobe`, `probe rx 1024`, the matrix and `multiapp info`. A reboot shows as
+the uptime going down. It prints the cycles that passed, reboots and the drift of each heap's free
+and largest block.
+
+Run on the DevKitC (2026-11-24, 100 cycles): 100 of 100 passed, no reboot, every join on the first
+try, about 6 s a cycle. Every heap (kernel, `module_heap`, the high region, PSRAM code and data)
+ended at the same free and largest block it had after the first cycle. The MAC row sat on core 0
+line 0 while Wi-Fi ran, and the Wi-Fi sources were parked after each unload. Switches into and out
+of `coex` (a `BANK2` flip) also stay in place, the bank-2 heap is back to the same use, and a ring
+right after the switch had its windows (91 % of the time, no failure).
 
 ### Apps as files
 
@@ -276,8 +459,67 @@ changes.
 - What a build with `CONFIG_WIFI_ESP32` adds to one without: the driver, the hal's glue, 108
   supplicant files and the blobs.
 - The supplicant uses its internal crypto, so there is no mbedTLS (`ext/wifi_shim`).
-- It has its own copy of the PHY's blob and glue, compiled for Wi-Fi, and such a boot loads
-  neither `phy` nor `sdr`.
+- The PHY is the `phy` module's (`REQUIRES phy`), shared with the SDR. The module has no `libphy`
+  or `phy_init.c` of its own; `phy.ver` exports what it imports, and `esp_phy_enable()` and
+  `esp_phy_disable()` go to the arbiter (`WRAP`). Its `multiapp_module_up()` tells the arbiter
+  that Wi-Fi is in this boot (`esp_sdr_arb_wifi_attach()`).
+- A Wi-Fi boot therefore loads `phy` first, and `sdr` too when its app asks. `wifi` also cannot
+  load with an `AREA` app or `ieee154`: its heap is the area (a CMake error).
+
+#### The PHY, the arbiter and PLL tracking
+
+- The arbiter owns the real PHY power calls. Wi-Fi's enable and disable are two clients of it
+  beside the SDR's claim ([Coexistence](../radio/coexistence.md)).
+- The hal's PLL tracking (`phy_common.c`, a timer every second and a call at each enable) is on
+  only where `CONFIG_ESP_WIFI_ENABLED` is set. Wi-Fi had it in its private copy of the file; the
+  shared `phy` is compiled with it too, which would also track while the SDR holds the PHY (its
+  windows, its standing claim) and open gaps in the ring.
+- So `phy` links with `--wrap=phy_param_track_tot` and the arbiter lets that call through only
+  while Wi-Fi holds the PHY and the SDR does not (`win.wifi_on && !win.claimed`, read without a
+  lock because the timer holds the PHY lock the arbiter's real calls take). The timer runs as it
+  did before; its callback does nothing in boots without Wi-Fi and under an SDR claim.
+- The SDR alone: `esp_sdr_init()` finds no Wi-Fi attached and takes a standing claim with no
+  deadline, so `osmosdr`, `wpan`, `capture` and the others need no claims. With Wi-Fi attached it
+  takes none and an app claims per window (`coex`). A standing claim held when Wi-Fi attaches
+  (`sdr` loaded first) is released; an app that needs both should require `wifi` before `sdr`.
+
+#### ESP-NOW as a module
+
+- `libespnow.a` has two objects. `manatick.o` (the `mt_` layer, `g_mt`, `mt_get_peer_info`,
+  `g_espnow_user_oui`) is read by `libnet80211`, so it stays in `wifi`; `espnow.o` (the `esp_now_`
+  API) is the `espnow` module's, which loads after `wifi` and cannot be imported from. `multiapp_blob()`
+  makes both copies with `ar d` (`NAME`, `DROP`): `wifi` without `espnow.o`, `espnow` without
+  `manatick.o`. `manatick.o` needs nothing from `espnow.o`.
+- `espnow.o` imports 9 functions, 2 objects (`g_wifi_menuconfig`, `g_wifi_nvs`) and the 20 `mt_`
+  functions from `wifi`, and `g_osi_funcs_p` and `memcpy` from the host. `wifi.ver` exports them,
+  and `esp_wifi_get_mode()`, `esp_wifi_set_mode()`, `esp_wifi_get_mac()` and
+  `esp_wifi_connectionless_module_set_wake_interval()` for the module's own code
+  (`tests/host/test_exports.py`).
+- `ext/espnow.c` is the module's code: `include/esp_sdr/espnow.h` (init in station mode if the
+  driver left none, peers, `esp_sdr_espnow_send()` with a counted send status, receive into a
+  `k_msgq` or a callback, wake window, statistics) and the `espnow` shell (`init`, `peer`, `send`,
+  `stats`, `window`, `rx`), the commands of `coexbench`. `espnow.ver` exports that API and
+  `esp_now_*`; a root command needs a `PROXY(espnow)` in `src/apps.c`.
+- Nothing is in internal RAM (not `INTERNAL`, no `IRAM` sections in `espnow.o`): 6806 bytes of code,
+  1261 of blob data and 2380 of bss, a 19 KB file, so `coex`'s boot, whose `module_heap` the `phy` and
+  `wifi` modules fill and whose bank 2 holds `sdr`, takes it without the internal RAM changing.
+  The file has no built-in copy (`FILE_ONLY`).
+- The apps: `coex` requires it, and `espnowtest` (`ext/espnowtest.c`, no code of its own) boots
+  `phy`, `wifi` and `espnow` without joining an access point.
+- `wifi` itself grew: it exports what `espnow.o` calls, so the linker keeps more of `manatick.o` and
+  `net80211` (code 256669 to 268465 bytes, read-only 43746 to 46578, all PSRAM), and its internal
+  bytes by 116 (data 3592 to 3596, bss 15432 to 15544; code 2529 as before). Its internal total is
+  22.8 KB, `phy` 10.7 KB, so `wifi` and `phy` still take 33.6 of `module_heap`'s 35.8 KB.
+
+#### The coex app
+
+- `ext/coex.c` and `ext/wifitest.c` (the `wifi` commands, the AP password only from the shell) on
+  `REQUIRES wifi sdr espnow`, no `AREA`: ESP-NOW under the ring windows.
+- `coex sdr`, `coex arb`, `coex ps` are `coexbench`'s on CPU 1 with ring windows
+  (`ESP_SDR_RING_WINDOW` ends, sink gaps counted), plus `coex listen` and `coex chan`. The driver
+  calls it makes (`esp_wifi_set_ps()` and a few more) are exported by `wifi.ver`. The PHY event
+  log stays in `coexbench`.
+- Its ring sink runs from PSRAM (`place.h`), as osmosdr's.
 
 #### Its Kconfig
 
@@ -313,8 +555,14 @@ changes.
 
 #### Its core
 
-The blob wants its task and interrupt on one core. A host without the driver reserves that
-interrupt on core 1 (`esp_cpu_intr.c`), so the module pins its task there.
+The blob wants its task and interrupt on one core, and core 1 is the SDR's in a `coex` boot (its
+worker and the ring): a Wi-Fi task pinned there starved with a blob lock held, and `coex sdr`
+hung. So the module pins its task to core 0 (`ext/wifi.conf`) as a standalone image does, with USB.
+A host without the driver reserves the WMAC interrupt on core 1 (`esp_cpu_intr.c` tests
+`CONFIG_ESP32_WIFI_TASK_PINNED_TO_CORE_0`), so the host defines that name for the build
+(`zephyr_compile_definitions()` in `CMakeLists.txt`; nothing else in the tree reads it but the
+driver) and interrupt 0 is reserved on core 0 in every boot, not on core 1. The S31 does not use
+this.
 
 #### No built-in copy
 
@@ -427,10 +675,12 @@ The stack stays in internal RAM, in the area, because Python writes the flash: `
 
 #### Internal RAM
 
-- The host's image ends 12120 bytes below bank 0 (0x3fcb0000) on the devkit.
-- On the XIAO it ends 10096 bytes below: its host also carries a second LUN, exFAT and a larger
+- The host's image (`_end`) ends 5248 bytes below bank 0 (0x3fcb0000) on the devkit.
+- On the XIAO it ends 3800 bytes below: its host also carries a second LUN, exFAT and a larger
   drive thread.
-- The image holds `module_heap` (31744 bytes), the volume, the drive (2.2 KB) and what
+- Before the shared `phy` (`module_heap` 31744) the gaps were 12120 and 10096 bytes (2026-10);
+  the build of 2026-11-08 had 10144 on the XIAO.
+- The image holds `module_heap` (35840 bytes), the volume, the drive (2.2 KB) and what
   MicroPython's `/FLASH:` needs from the host (5.5 KB: the flash disk's cache, a FATFS object and
   the extra file slots).
 - The signed image is 880 KB, against 1096 KB with the radio in the host.
@@ -462,14 +712,18 @@ against 5126144 standalone, the same with a display. On the XIAO the app takes 1
 
 #### Module sizes
 
-In bytes:
+In bytes, from the section sizes of the 2026-11-24 build (the `ieee154` row is from 2026-11-08, its
+file is 28304 bytes now). Before the shared `phy` the rows were `phy` 55892 and `wifi` 539948 as
+files, `wifi` 8477 internal code, 5460 data and 15580 bss with its own libphy:
 
 | Module | Code in PSRAM | Code internal | Data | Bss | Read-only in PSRAM | File |
 | --- | --- | --- | --- | --- | --- | --- |
-| `phy` | 31721 | 5931 | 3948 | 120 | 1616 | 55892 |
-| `sdr` | 22750 | 7110 | 328 | 14384 (high region) | 824 | 50860 |
+| `phy` | 38641 | 6025 | 4339 | 364 | 1992 | 68736 |
+| `sdr` | 24678 | 8963 | 604 | 14384 (high region) | 864 | 55040 |
 | `ieee154` | 16024 | 722 | 768 | 1216 | 452 | 27224 |
-| `wifi` | 324221 | 8477 | 5460 | 15580 | 62134 | 539948 |
+| `wifi` | 290816 | 2529 | 4758 | 15432 | 57074 | 485376 |
+| `wifi` (`espnow.o` split off, 2026-11-24) | 302612 | 2529 | 4762 | 15544 | 60506 | 509956 |
+| `espnow` | 6806 | 0 | 0 | 2380 (PSRAM) | 1261 (data) | 19080 |
 
 The `micropython` app, in PSRAM:
 
@@ -483,12 +737,49 @@ host and the modules.
 
 #### module_heap and the high region
 
-- `module_heap` holds 29532 of 31640 bytes in a Wi-Fi boot and 20168 in a `wpan` boot
-  (`multiapp info`), and is empty in a drive boot.
+- `module_heap` held 29532 of 31640 bytes in a Wi-Fi boot and 20168 in a `wpan` boot
+  (`multiapp info`, 2026-11-08), and is empty in a drive boot. It is 35840 bytes now.
+- The sum of a module's internal code, data and bss (all but `sdr`'s high-region bss) matches
+  `multiapp info` (29528 against 29532 for the old `wifi`). From the 2026-11-24 build: `phy` 10.7
+  KB, `sdr` 9.6 KB, `wifi` 22.7 KB, so a Wi-Fi boot (`wifi`, `phy`) needs 33.4 KB and `coex`
+  (`wifi`, `phy`, `sdr`) 43.0 KB. That is 7.2 KB more than `module_heap` (35840) has, and the gap
+  below bank 0 does not leave it (at 38400 bytes the XIAO's was 1240 bytes and the devkit's 2688).
+- So an app can take dump bank 2 as a second heap (`BANK2` in `multiapp_extension()`, set for
+  `coex`; [Bank 2 as a module heap](#bank-2-as-a-module-heap)).
 - The high region is full: the area (24128 bytes, of which osmosdr takes 24064) and
   `module_high_mem` (14528, of which `sdr` takes 14372).
 - micropython takes 24064 of the area too.
 - The log queue holds 256 messages; link's shell stack is 3072 bytes.
+
+#### Bank 2 as a module heap
+
+- `BANK2` (an app flag next to `AREA` and `CONSOLE`, in the app table) gives the boot dump bank 2,
+  64 KiB at 0x3fcd0000 (`__esp_sdr_bank_start`, the capture bank; the ring's banks 0 and 1 are
+  below it). `heaps_init()` makes it a `k_heap` only in such a boot; other boots are as before.
+- Loading a module, llext first takes its regions from `module_heap`. On `-ENOMEM` (llext frees
+  what it took) the module loads again, as a whole, with the bank-2 heap in `module_heap`'s place
+  (`region_heaps_bank2`, the same per-region mechanism; its bss stays in the high region where it
+  was). Whole modules, not regions, so a module's code and data stay together. In `coex`
+  `phy` and `wifi` (33.4 KB) fill `module_heap` and `sdr` (9.6 KB) goes to bank 2, which has room
+  for all three (65536 bytes).
+- The SDR then stays off the bank. `ext/sdr_up.c` calls `esp_sdr_bank2_reserve()` when the host
+  says so (`multiapp_bank2_reserved()`), and the library:
+  - runs every ring on banks 0 and 1 (`spare_bank_app`, unit 0 becomes 2048 pairs; a longer unit
+    is `-EINVAL`), whatever the caller's configuration;
+  - gives no burst buffer (`esp_sdr_ring_burst_buf()`), and `burst_arm()` refuses already;
+  - makes `esp_sdr_bank_usage()` fail with `-EBUSY`, which every user of the bank checks first:
+    `esp_sdr_rx_capture()`, `_capture_with()` and the other captures into it, transmit
+    (`esp_sdr_tx.c`, DAC), the trigger snapshot and replay (not built here). `esp_sdr_init()`
+    does not need the check.
+  - Not touched: the bank-1 capture (`esp_sdr_rx_capture_bank()`), which runs outside a ring.
+  - The ring stage and chancap, which use bank 2 with `spare_bank_app`, are not built into
+    multiapp; `esp_sdr_stage_init()` has no refusal and must not be enabled with `BANK2`.
+- Nothing else is in the bank: MCUboot's segments load at 0x3fcb6900 and 0x3fce4f08, outside it
+  and only at boot. The heap is not zeroed (llext zeroes its bss).
+- `multiapp run` reboots into an app with `BANK2` unless the boot already is one, as for the area.
+- `coex` therefore has the ring only (`coex sdr ... burst` is refused).
+- Run on the DevKitC: `sdr` lands in the bank (data 0x3fcd0060, fast code at its instruction
+  alias 0x403c027c) and its ring windows run beside Wi-Fi.
 
 #### Stacks
 
@@ -1277,6 +1568,19 @@ candidates for upstream Zephyr:
 - `CONFIG_ESP32_WIFI_NET_ALLOC_SPIRAM` moves to `soc/espressif/common/Kconfig.spiram`, because it
   also serves the network stack without Wi-Fi.
 
+### For unloading
+
+- `drivers/wifi/esp32`: `esp32_wifi_shutdown()` (public header `zephyr/drivers/wifi/esp_wifi/esp_wifi.h`),
+  the driver's stop path: disconnect, work cancelled, interface down, `esp_wifi_stop()` and a wait for
+  the stopped event, `esp_wifi_deinit()`, a shutdown flag after which `esp_event_post()` fails, a
+  sentinel to the event queue and `k_thread_join()` of the event task. The driver's IPv4 `net_mgmt`
+  callback is added at init and removed there, not a static handler. The vendor's driver had no
+  stop path; the function is upstreamable as it stands (a driver that cannot start again, which is
+  the point of a loadable extension).
+- `settings_deregister()`, the inverse of `settings_register()`.
+- On the hal fork, the S3 adapter's interrupt bookkeeping and release
+  ([Interrupts of the blob](#interrupts-of-the-blob-hal-fork)).
+
 ### For the display
 
 - `arch/xtensa/core/elf.c` takes a pointer one past the end of a section
@@ -1301,7 +1605,10 @@ Two more, both in the pinned `zsdr` with the S31's support itself:
 
 - Extension code cannot run while flash is written (cache off): interrupt handlers and code that
   runs then stay in the host.
-- No clean unload: exit is a reboot.
+- Unloading passed the 100-cycle soak ([The soak](#the-soak)), but: a thread of an app that no
+  hook ended is aborted, which can leave a host lock held; a module whose down hook refuses
+  reboots; the blobs' PSRAM buffers are not in a private arena, so a leak there shows only as the
+  shared heap shrinking.
 - The local Zephyr commits above, until upstream.
 - link throughput between two boards is untested.
 - A hal update can change what the Wi-Fi driver needs. A renamed source fails the build and a

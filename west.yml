@@ -40,7 +40,7 @@ manifest:
     # the RP2040 (branch zsdr).
     - name: zephyr
       remote: cyber-murmel
-      revision: cb19e8426d8a6a81b69542f1f2e93b1017aa2734 # zsdr
+      revision: a97085ae95af517b132bbca89493df99679f6c57 # zsdr
       path: modules/zephyr
       import:
         name-allowlist:
@@ -61,7 +61,7 @@ manifest:
     # overrides the revision Zephyr's own manifest pins.
     - name: hal_espressif
       remote: cyber-murmel
-      revision: 5adb2b0dc8349ecbb4d081f3d3a5646536746188 # zsdr branch
+      revision: 6a6c905c7a5caee7f8a9356846fdb066553fa3bd # zsdr branch
       path: modules/hal/espressif
       groups:
         - hal

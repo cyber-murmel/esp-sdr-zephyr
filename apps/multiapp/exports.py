@@ -63,6 +63,26 @@ def defines(path):
         }
 
 
+def weak_relocations(path):
+    """Weak symbols an extension's relocations name, by symbol: llext's Xtensa loader writes a
+    JMP_SLOT slot only for a STB_GLOBAL symbol, so a weak one keeps the linker's PLT
+    address (unmapped at run time) and the call faults."""
+    with open(path, "rb") as f:
+        elf = ELFFile(f)
+        found = set()
+        for section in elf.iter_sections():
+            if section.name not in (".rela.plt", ".rel.plt"):
+                continue
+            table = elf.get_section(section["sh_link"])
+            for rel in section.iter_relocations():
+                if rel["r_info_sym"] == 0:
+                    continue
+                sym = table.get_symbol(rel["r_info_sym"])
+                if sym["st_info"]["bind"] == "STB_WEAK":
+                    found.add(sym.name)
+        return found
+
+
 def host_objects(path):
     with open(path, "rb") as f:
         section = ELFFile(f).get_section_by_name(".multiapp_host")
@@ -81,6 +101,9 @@ def main():
                         help="bytes in the area the apps share (multiapp_area)")
     parser.add_argument("--module", action="append", default=[], metavar="NAME",
                         help="an extension that is a module: others import from it")
+    parser.add_argument("--area-owner", action="append", default=[], metavar="NAME",
+                        help="an extension that may have buffers in the area (an AREA app, wifi): "
+                        "the area has one owner per boot, so any other extension's are an error")
     parser.add_argument("--psram-section", metavar="NAME",
                         help="the section that puts a host object in PSRAM, where "
                         "EXT_RAM_BSS_ATTR does not")
@@ -94,6 +117,12 @@ def main():
     objects = {}
     areas = {}
     for lib in args.libs:
+        weak = weak_relocations(lib)
+        if weak:
+            sys.exit(f"exports.py: {lib} relocates weak symbols ({', '.join(sorted(weak))}). "
+                     "llext does not relocate PLT/GOT slots of weak symbols, so the call would "
+                     "jump to the linker's unmapped PLT stub. Use a strong function or a "
+                     "function pointer set at run time (see wifitest_stop_hook in ext/wifitest.c)")
         names |= imports(lib)
         app = LIB_NAME.search(lib).group(1)
         if app in args.module:
@@ -102,6 +131,15 @@ def main():
             if kind == HOST_AREA:
                 areas.setdefault(app, []).append((name, arg[0], arg[1]))
             objects[name] = (kind, arg)
+    # Every app's objects start at the area's beginning, so a boot's extensions overlap each
+    # other there: only the extensions that own the area (never two in one boot) may have any.
+    for app, objs in sorted(areas.items()):
+        if app not in args.area_owner:
+            sys.exit(f"exports.py: {app} has buffers in the area ({', '.join(o[0] for o in objs)}) "
+                     f"but does not own it (multiapp_extension(AREA); owners: "
+                     f"{', '.join(args.area_owner) or 'none'}). A stack or buffer placed in the "
+                     "high region (ESP_SDR_PLACE_STACK, ESP_SDR_HIGH_BUF_DEFINE) lands there: pin "
+                     "it with ESP_SDR_PIN_DATA_<app>_<name> (apps/multiapp/place.h)")
     # The objects are exported where they are defined.
     names = sorted(names - set(objects) - from_modules)
     modules = sorted({m.group(1) for m in map(LOG_DATA.match, names) if m})

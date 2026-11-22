@@ -23,3 +23,9 @@
 
 /* As before: the app's stack in PSRAM like its data, internal RAM kept for the dump banks. */
 #define ESP_SDR_PIN_DATA_multiapp_app_stack ESP_SDR_PSRAM
+
+/* coex's ring sink runs on the ring's CPU from PSRAM, as osmosdr's. */
+#define ESP_SDR_PIN_CODE_coex_ring_sink ESP_SDR_FLASH
+
+/* A non-AREA extension must not use the area (exports.py): its stack in PSRAM. */
+#define ESP_SDR_PIN_DATA_coex_sdr_stack ESP_SDR_PSRAM

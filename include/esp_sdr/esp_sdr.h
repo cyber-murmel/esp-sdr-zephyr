@@ -125,6 +125,19 @@ struct esp_sdr_iq16 {
 int esp_sdr_init(void);
 
 /**
+ * @brief Give the radio back so that the library can unload (apps/multiapp).
+ *
+ * Stops a ring run and a burst, ends the DAC's threads, releases the arbiter's claim (the PHY goes
+ * down unless Wi-Fi holds it) and takes the library's hooks out of the arbiter. The library is not
+ * usable afterwards: esp_sdr_init() runs again with a fresh copy. The caller has stopped the app that
+ * calls the library, so nothing is inside it.
+ *
+ * @retval 0 on success.
+ * @retval -EBUSY if a ring run or the DAC did not stop in time; the library stays as it was.
+ */
+int esp_sdr_release_radio(void);
+
+/**
  * @brief Tune the LO, shared by receive and transmit.
  *
  * Below 2210 MHz the PLL runs at 6/5 of @p mhz behind the 5/6 LO divider.
@@ -291,5 +304,21 @@ int esp_sdr_set_turnaround(uint32_t settle_us, bool retune);
 
 #include <esp_sdr/esp_sdr_rx.h>
 #include <esp_sdr/esp_sdr_tx.h>
+
+#if defined(CONFIG_SOC_SERIES_ESP32S3) || defined(__DOXYGEN__)
+/**
+ * @brief Keep the SDR off SRAM bank 2 (the capture bank) for the rest of the boot.
+ *
+ * For an app that uses the bank for something else (apps/multiapp: module code and data). Call
+ * before esp_sdr_init(). Then:
+ * - esp_sdr_rx_capture() and the other captures into the bank, transmit through it and the
+ *   triggered and replay paths fail (esp_sdr_bank_usage() refuses them);
+ * - esp_sdr_ring_run() runs on banks 0 and 1 only, as with esp_sdr_ring_cfg::spare_bank_app
+ *   (a unit of 0 pairs becomes 2048; -EINVAL if the unit is too long for two banks), whatever the
+ *   configuration asks;
+ * - esp_sdr_ring_burst_buf() gives no buffer, and esp_sdr_stage_init() must not be used.
+ */
+void esp_sdr_bank2_reserve(void);
+#endif
 
 #endif /* ESP_SDR_ESP_SDR_H_ */

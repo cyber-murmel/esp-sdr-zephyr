@@ -7,17 +7,22 @@
  * no other boot's module uses in a Wi-Fi boot.
  */
 
+#include <errno.h>
 #include <string.h>
 
 #include <zephyr/device.h>
+#include <zephyr/drivers/wifi/esp_wifi/esp_wifi.h>
 #include <zephyr/kernel.h>
+#include <zephyr/sys/sys_heap.h>
 #include <zephyr/sys/math_extras.h>
 #include <zephyr/sys/printk.h>
 
 #include <esp_private/periph_ctrl.h>
+#include <esp_private/wifi.h>
 #include <esp_timer.h>
 #include <hal/clk_gate_ll.h>
 
+#include <esp_sdr/esp_sdr_arb.h>
 #include <esp_sdr/esp_sdr_place.h>
 #include <multiapp/multiapp.h>
 
@@ -109,8 +114,60 @@ void wifi_module_disable(void)
 	periph_rcc_exit();
 }
 
-/* Its device is up (the host's init table walk): the host's interface takes it over. */
+/*
+ * Its device is up (the host's init table walk): the host's interface takes it over, and the
+ * radio arbiter learns that the SDR has to share the PHY from here on.
+ */
 int multiapp_module_up(void)
 {
+	esp_sdr_arb_wifi_attach();
 	return multiapp_wifi_bind(DEVICE_DT_GET(DT_NODELABEL(wifi)));
+}
+
+static void flush_done(struct k_work *work)
+{
+	ARG_UNUSED(work);
+}
+
+/*
+ * The inverse of multiapp_module_up(), called by the host before it unloads the module: the
+ * driver's stop path (which leaves the blob, its tasks and the supplicant deinitialized), the
+ * interrupts the blob installed, the host's interface, the arbiter's attach. -EBUSY and the like
+ * leave the module loaded.
+ */
+int multiapp_module_down(void)
+{
+	const struct device *dev = DEVICE_DT_GET(DT_NODELABEL(wifi));
+	static struct k_work flush;
+	struct k_work_sync sync;
+	struct sys_memory_stats heap_stats;
+	int ret;
+
+	ret = esp32_wifi_shutdown(dev);
+	if (ret != 0 && ret != -EALREADY) {
+		return ret;
+	}
+	/* The blob's tasks end through a work item of this module on the system queue. */
+	k_work_init(&flush, flush_done);
+	(void)k_work_submit(&flush);
+	(void)k_work_flush(&flush, &sync);
+
+	esp_wifi_adapter_release_isrs();
+	(void)multiapp_wifi_unbind(dev);
+	esp_sdr_arb_wifi_detach();
+
+	periph_rcc_enter();
+	if (wifi_clock_refs != 0) {
+		printk("wifi: %d clock references left, dropped\n", wifi_clock_refs);
+		wifi_clock_refs = 0;
+		periph_ll_wifi_module_disable_clk_set_rst();
+	}
+	periph_rcc_exit();
+
+	/* What is still allocated from the private heap is a leak: the next load zeroes the heap. */
+	if (sys_heap_runtime_stats_get(&wifi_heap.heap, &heap_stats) == 0 &&
+	    heap_stats.allocated_bytes != 0) {
+		printk("wifi: %zu bytes of the module heap not freed\n", heap_stats.allocated_bytes);
+	}
+	return 0;
 }

@@ -24,15 +24,17 @@
 
 #include <esp_phy_init.h>
 #include <esp_timer.h>
-#include <esp_wifi.h>
 
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_arb.h>
 #include <esp_sdr/esp_sdr_place.h>
-#include <esp_sdr/esp_sdr_rx.h>
 
 #include "esp_sdr_arb_pred.h"
-#include "esp_sdr_priv.h"
+
+/* Wi-Fi's wifi_second_chan_t, which the phy module cannot include (the driver is another module). */
+#define SECOND_NONE  0
+#define SECOND_ABOVE 1
+#define SECOND_BELOW 2
 
 #define CLIENT_WIFI BIT(0)
 #define CLIENT_SDR  BIT(1)
@@ -48,6 +50,12 @@ struct arb_win {
 
 /* In the high region, which boot does not zero: arb_init() does. */
 static struct arb_win win ESP_SDR_DATA_F2(STATE, win, NOINIT, ATOMIC);
+
+/*
+ * Where the last claim or release got to, for a debugger after a hang: 1 claim entered, 2 PHY
+ * powered, 3 before the SDR's prepare, 4 after it, 5 before the restore, 6 after it, 7 released.
+ */
+volatile uint32_t esp_sdr_arb_step;
 
 static K_MUTEX_DEFINE(arb_lock);
 static K_CONDVAR_DEFINE(arb_cv);
@@ -66,6 +74,12 @@ static void (*stop_hook)(void *user);
 static void *stop_user;
 /* Wi-Fi's channel as the last claim saw it (MHz of its centre, 0 unknown). */
 static uint32_t wifi_mhz, wifi_cbw;
+/* The SDR's side of a claim and a release (esp_sdr_arb_set_ops()). */
+static struct esp_sdr_arb_ops sdr_ops;
+static volatile bool wifi_attached;
+/* The claim esp_sdr_init() keeps when no Wi-Fi is attached. */
+static bool standing;
+
 
 __weak void esp_sdr_arb_trace(enum esp_sdr_arb_event ev, int64_t t_us, uint32_t arg)
 {
@@ -264,24 +278,26 @@ void __wrap_esp_phy_disable(esp_phy_modem_t modem)
 	wifi_disable(modem);
 }
 
-/* Wi-Fi's channel centre, from the driver's view; kept when it cannot say (not started). */
-static void wifi_channel_refresh(void)
+/* Wi-Fi's channel as the application read it from the driver (esp_sdr_arb.h): no blob call here. */
+void esp_sdr_arb_wifi_set_channel(uint8_t primary, int second)
 {
-	uint8_t primary = 0;
-	wifi_second_chan_t second = WIFI_SECOND_CHAN_NONE;
+	uint32_t mhz, cbw = 0U;
 
-	if (esp_wifi_get_channel(&primary, &second) != ESP_OK || primary == 0U || primary > 14U) {
+	if (primary == 0U || primary > 14U) {
 		return;
 	}
-	wifi_mhz = primary == 14U ? 2484U : 2407U + 5U * primary;
-	wifi_cbw = 0U;
-	if (second == WIFI_SECOND_CHAN_ABOVE) {
-		wifi_mhz += 10U;
-		wifi_cbw = 1U;
-	} else if (second == WIFI_SECOND_CHAN_BELOW) {
-		wifi_mhz -= 10U;
-		wifi_cbw = 1U;
+	mhz = primary == 14U ? 2484U : 2407U + 5U * primary;
+	if (second == SECOND_ABOVE) {
+		mhz += 10U;
+		cbw = 1U;
+	} else if (second == SECOND_BELOW) {
+		mhz -= 10U;
+		cbw = 1U;
 	}
+	k_mutex_lock(&arb_lock, K_FOREVER);
+	wifi_mhz = mhz;
+	wifi_cbw = cbw;
+	k_mutex_unlock(&arb_lock);
 }
 
 /* Whether a window can start now, arb_lock held; *deadline gets its end. */
@@ -312,9 +328,7 @@ int esp_sdr_arb_claim(k_timeout_t wait, int64_t *deadline_us)
 	if (win.claimed) {
 		return -EALREADY;
 	}
-	/* Task context, before the window: Wi-Fi may sleep any time, the API may take a moment. */
-	wifi_channel_refresh();
-
+	esp_sdr_arb_step = 1U;
 	k_mutex_lock(&arb_lock, K_FOREVER);
 	for (;;) {
 		now = esp_sdr_arb_now_us();
@@ -338,6 +352,7 @@ int esp_sdr_arb_claim(k_timeout_t wait, int64_t *deadline_us)
 		real_up(true);
 		stats.powerup_us += (uint64_t)(esp_sdr_arb_now_us() - now);
 	}
+	esp_sdr_arb_step = 2U;
 	t_up = esp_sdr_arb_now_us();
 	clients |= CLIENT_SDR;
 	win.preempt = false;
@@ -345,17 +360,18 @@ int esp_sdr_arb_claim(k_timeout_t wait, int64_t *deadline_us)
 	win.deadline_us = deadline;
 	__atomic_thread_fence(__ATOMIC_SEQ_CST);
 	win.claimed = true;
+	standing = deadline == ESP_SDR_ARB_NO_DEADLINE && !wifi_attached;
 	claim_t_us = t_up;
 	claim_deadline_us = deadline;
 	k_sem_reset(&released);
 	k_mutex_unlock(&arb_lock);
 
 	/* The PHY may have been down: the SDR's frequency, front end, gain and filter again. */
-	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
-	if (esp_sdr_ready && !win.preempt) {
-		esp_sdr_rx_prepare();
+	esp_sdr_arb_step = 3U;
+	if (sdr_ops.prepare != NULL && !win.preempt) {
+		sdr_ops.prepare();
 	}
-	k_mutex_unlock(&esp_sdr_lock);
+	esp_sdr_arb_step = 4U;
 
 	k_mutex_lock(&arb_lock, K_FOREVER);
 	stats.windows++;
@@ -383,9 +399,11 @@ void esp_sdr_arb_release(void)
 		return;
 	}
 	/* Wi-Fi's state back, while the PHY is powered. */
-	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
-	esp_sdr_rx_arb_restore(wifi_mhz, wifi_cbw);
-	k_mutex_unlock(&esp_sdr_lock);
+	esp_sdr_arb_step = 5U;
+	if (sdr_ops.restore != NULL) {
+		sdr_ops.restore(wifi_mhz, wifi_cbw);
+	}
+	esp_sdr_arb_step = 6U;
 
 	k_mutex_lock(&arb_lock, K_FOREVER);
 	t = esp_sdr_arb_now_us();
@@ -411,6 +429,7 @@ void esp_sdr_arb_release(void)
 	}
 	win.claimed = false;
 	win.preempt = false;
+	standing = false;
 	clients &= ~CLIENT_SDR;
 	stop_hook = NULL;
 	if (!wifi && real_on) {
@@ -420,7 +439,93 @@ void esp_sdr_arb_release(void)
 	k_condvar_broadcast(&arb_cv);
 	k_mutex_unlock(&arb_lock);
 	esp_sdr_arb_trace(ESP_SDR_ARB_SDR_RELEASE, t, (uint32_t)(t - claim_t_us));
+	esp_sdr_arb_step = 7U;
 }
+
+void esp_sdr_arb_set_ops(const struct esp_sdr_arb_ops *ops)
+{
+	k_mutex_lock(&arb_lock, K_FOREVER);
+	if (ops != NULL) {
+		sdr_ops = *ops;
+	} else {
+		memset(&sdr_ops, 0, sizeof(sdr_ops));
+	}
+	k_mutex_unlock(&arb_lock);
+}
+
+void esp_sdr_arb_wifi_attach(void)
+{
+	bool drop;
+
+	k_mutex_lock(&arb_lock, K_FOREVER);
+	wifi_attached = true;
+	drop = standing;
+	k_mutex_unlock(&arb_lock);
+	if (drop) {
+		/* The SDR loaded first and took the radio for good: from now on it takes windows. */
+		esp_sdr_arb_release();
+	}
+}
+
+bool esp_sdr_arb_wifi_attached(void)
+{
+	return wifi_attached;
+}
+
+void esp_sdr_arb_wifi_detach(void)
+{
+	k_mutex_lock(&arb_lock, K_FOREVER);
+	wifi_attached = false;
+	/* The driver's deinit gave its holds back; a hold that is left would keep the PHY up. */
+	win.wifi_on = false;
+	clients &= ~CLIENT_WIFI;
+	pending = false;
+	arb_pred_reset(&pred);
+	if (clients == 0U && real_on) {
+		real_down(true);
+	}
+	k_condvar_broadcast(&arb_cv);
+	k_mutex_unlock(&arb_lock);
+}
+
+int esp_sdr_arb_shutdown(void)
+{
+	int ret = 0;
+
+	k_mutex_lock(&arb_lock, K_FOREVER);
+	if (clients != 0U || win.claimed) {
+		/* A client is left: the PHY stays up and the module with it. */
+		ret = -EBUSY;
+	} else if (real_on) {
+		real_down(true);
+	}
+	if (ret == 0) {
+		wifi_attached = false;
+		stop_hook = NULL;
+		memset(&sdr_ops, 0, sizeof(sdr_ops));
+	}
+	k_mutex_unlock(&arb_lock);
+	return ret;
+}
+
+#if defined(CONFIG_ESP_SDR_AS_EXTENSION)
+/*
+ * The phy module's tracking timer (phy_common.c, built here with CONFIG_ESP_WIFI_ENABLED) asks to
+ * track the PLL whenever the PHY's Wi-Fi flag is set, which the SDR's windows and its standing
+ * claim set too. Only Wi-Fi's own hold gets it: the PHY is not touched behind a ring.
+ */
+void __real_phy_param_track_tot(bool en_wifi, bool en_ble_154);
+
+void __wrap_phy_param_track_tot(bool en_wifi, bool en_ble_154)
+{
+	if (en_wifi && !(win.wifi_on && !win.claimed)) {
+		en_wifi = false;
+	}
+	if (en_wifi || en_ble_154) {
+		__real_phy_param_track_tot(en_wifi, en_ble_154);
+	}
+}
+#endif
 
 void esp_sdr_arb_get_stats(struct esp_sdr_arb_stats *out)
 {

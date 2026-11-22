@@ -19,6 +19,11 @@
  *   comes from the host's area).
  * - ESP_SDR_PSRAM_BUF_DEFINE(): the same for a buffer in PSRAM, whichever heap
  *   holds the module's bss.
+ * - Every constructor below has its destructor, which llext_teardown() runs when the host unloads
+ *   the extension (doc/apps/multiapp-internals.md, "Unloading"): the shell root, the settings handler
+ *   and the thread are given back. SYS_INIT() and the slabs have nothing to give back that the
+ *   extension's own multiapp_module_down() or multiapp_app_stop() does not; tests/host/
+ *   test_multiapp_unload.py checks that each constructor here has a destructor or a marked reason.
  * - app_usb_init() does nothing: the host starts USB, and the app's PSRAM
  *   stack must not run the watchdog's flash access.
  * - device_get_binding() also finds the devices of loaded modules, which are in
@@ -46,6 +51,10 @@
 	static void __attribute__((constructor)) UTIL_CAT(multiapp_shell_, syntax)(void)          \
 	{                                                                                          \
 		multiapp_shell_register(&UTIL_CAT(_shell_, syntax));                               \
+	}                                                                                          \
+	static void __attribute__((destructor)) UTIL_CAT(multiapp_shell_off_, syntax)(void)       \
+	{                                                                                          \
+		multiapp_shell_unregister(&UTIL_CAT(_shell_, syntax));                             \
 	}
 
 /* The shell tells these apart by their address in a host section. */
@@ -61,7 +70,8 @@
 	static void __attribute__((constructor)) UTIL_CAT(multiapp_init_, name)(void)             \
 	{                                                                                          \
 		(void)init_fn();                                                                   \
-	}
+	}                                                                                          \
+	/* no destructor: an init function has no inverse, the module's down hook is it */
 
 #undef LOG_MODULE_REGISTER
 #define LOG_MODULE_REGISTER(...) LOG_MODULE_DECLARE(__VA_ARGS__)
@@ -104,7 +114,8 @@
 	static void __attribute__((constructor)) UTIL_CAT(multiapp_slab_, name)(void)             \
 	{                                                                                          \
 		(void)k_mem_slab_init(&name, _k_mem_slab_buf_##name, WB_UP(size), num);            \
-	}
+	}                                                                                          \
+	/* no destructor: a slab is plain memory of the extension, nothing registers it */
 
 #undef K_MEM_SLAB_DEFINE_IN_SECT
 #define K_MEM_SLAB_DEFINE_IN_SECT(name, in_section, slab_block_size, slab_num_blocks, slab_align)  \
@@ -150,6 +161,10 @@
 			(void)settings_register_with_cprio(&UTIL_CAT(multiapp_settings_, _hname),  \
 							   _cprio);                                \
 		}                                                                                  \
+	}                                                                                          \
+	static void __attribute__((destructor)) UTIL_CAT(multiapp_settings_off_, _hname)(void)    \
+	{                                                                                          \
+		(void)settings_deregister(&UTIL_CAT(multiapp_settings_, _hname));                  \
 	}
 #endif
 
@@ -166,6 +181,13 @@
 				(k_thread_entry_t)entry, (void *)(p1), (void *)(p2), (void *)(p3), \
 				prio, options, K_MSEC(delay));                                      \
 		k_thread_name_set(&UTIL_CAT(multiapp_thread_, name), STRINGIFY(name));             \
+	}                                                                                          \
+	/* A thread that has not ended by now is aborted: its owner had its say in down/stop. */ \
+	static void __attribute__((destructor)) UTIL_CAT(multiapp_end_, name)(void)               \
+	{                                                                                          \
+		if (k_thread_join(&UTIL_CAT(multiapp_thread_, name), K_MSEC(100)) != 0) {          \
+			k_thread_abort(&UTIL_CAT(multiapp_thread_, name));                         \
+		}                                                                                  \
 	}
 
 const struct device *multiapp_device_get_binding(const char *name);

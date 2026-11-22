@@ -29,6 +29,9 @@
 #include <zephyr/sys/util.h>
 
 #include <esp_attr.h>
+#include <soc/interrupt_core0_reg.h>
+#include <soc/interrupt_core1_reg.h>
+#include <soc/soc.h>
 
 #include <esp_sdr/esp_sdr.h>
 #include <esp_sdr/esp_sdr_arb.h>
@@ -571,19 +574,32 @@ static ALWAYS_INLINE bool irq_window(uint32_t *lines)
  * abandoned until the run failed. The line stays disabled on this CPU for
  * the run and the interrupt is served when it ends, as before the windows
  * existed (the MAC does not need serving while the ring owns the radio).
- * With SMP the MAC is CPU 0's and the ring's CPU 1 has the scheduler IPI on
- * line 0 instead (2026-11-15, wpan with the driver): held the same way, at no
- * cost to the ring's cooperative thread.
+ *
+ * Only on the CPU the matrix routes the MAC source to that line: another
+ * CPU's line 0 may be something else. With the driver's interrupt on core 0
+ * (apps/multiapp) the ring's CPU 1 has the scheduler's cross-CPU interrupt on
+ * line 0, and the other CPU waits for it with interrupts off (flash
+ * operations, scheduling): holding it hung the chip (2026-11-24). An unrouted
+ * MAC source reads the matrix default (16), so a boot without Wi-Fi holds
+ * nothing.
  */
 static bool wmac_was_enabled;
 
+static ALWAYS_INLINE uint32_t wmac_line_mask(void)
+{
+	uint32_t map = arch_curr_cpu()->id == 0 ? REG_READ(INTERRUPT_CORE0_MAC_INTR_MAP_REG)
+						: REG_READ(INTERRUPT_CORE1_MAC_INTR_MAP_REG);
+
+	return (map & INTERRUPT_CORE0_MAC_INTR_MAP) == ETS_WMAC_INUM ? BIT(ETS_WMAC_INUM) : 0U;
+}
+
 static ALWAYS_INLINE void wmac_irq_hold(void)
 {
-	uint32_t en;
+	uint32_t en, line = wmac_line_mask();
 
 	__asm__ volatile("rsr.intenable %0" : "=r"(en));
-	wmac_was_enabled = (en & BIT(ETS_WMAC_INUM)) != 0U;
-	en &= ~BIT(ETS_WMAC_INUM);
+	wmac_was_enabled = (en & line) != 0U;
+	en &= ~line;
 	__asm__ volatile("wsr.intenable %0\n\trsync" : : "r"(en) : "memory");
 }
 
@@ -602,12 +618,12 @@ static ALWAYS_INLINE void wmac_irq_release(void)
 bool esp_sdr_ring_wmac_hold(void)
 {
 	unsigned int key = arch_irq_lock();
-	uint32_t en;
+	uint32_t en, line = wmac_line_mask();
 	bool was;
 
 	__asm__ volatile("rsr.intenable %0" : "=r"(en));
-	was = (en & BIT(ETS_WMAC_INUM)) != 0U;
-	en &= ~BIT(ETS_WMAC_INUM);
+	was = (en & line) != 0U;
+	en &= ~line;
 	__asm__ volatile("wsr.intenable %0\n\trsync" : : "r"(en) : "memory");
 	arch_irq_unlock(key);
 	return was;
@@ -1195,8 +1211,15 @@ static struct {
 } burst ESP_SDR_DATA_F(STATE, burst, NOINIT);
 static struct esp_sdr_ring_burst_stats bst ESP_SDR_DATA_F(STATE, bst, NOINIT);
 
+/* For a debugger after a hang: 1 run starts, 2 engine started, 3 first unit, 4 window ended, 5 loop left. */
+volatile uint32_t esp_sdr_ring_step;
+
 uint32_t *esp_sdr_ring_burst_buf(size_t *words)
 {
+	if (esp_sdr_bank2_reserved) {
+		*words = 0;
+		return NULL;
+	}
 	*words = ESP_SDR_SAMPLES_MAX;
 	return bank_ptr(BURST_BANK);
 }
@@ -1414,6 +1437,7 @@ static void ring_loop(void)
 
 	t_start = k_cycle_get_64();
 	engine_start(ctrl, saved, &epoch, &w0);
+	esp_sdr_ring_step = 2U;
 	/* Unit 0 starts near w0; its exact start is found after the switch. */
 	expected = (w0 - 256U) & RING_MASK;
 
@@ -1459,6 +1483,7 @@ static void ring_loop(void)
 				if (!stop && esp_sdr_arb_window_over()) {
 					stop = true;
 					win_end = true;
+					esp_sdr_ring_step = 4U;
 				}
 #endif
 				continue;
@@ -1555,6 +1580,9 @@ static void ring_loop(void)
 			break;
 		}
 		unit_accept(b, first, count, index);
+		if (st->units == 0U) {
+			esp_sdr_ring_step = 3U;
+		}
 		st->units++;
 		rs.decay_pairs += count;
 		if (rs.decay_pairs >= ESP_SDR_RING_UNIT_DEFAULT) {
@@ -1628,8 +1656,20 @@ static void ring_loop(void)
 int esp_sdr_ring_run(const struct esp_sdr_ring_cfg *cfg, struct esp_sdr_ring_stats *stats)
 {
 	struct geom g_check;
+	struct esp_sdr_ring_cfg own;
 	unsigned int d = cfg->decim, l = 0, key;
 	int ret = 0;
+
+	if (esp_sdr_bank2_reserved) {
+		/* Bank 2 is the application's: banks 0 and 1 only, whatever the caller asked. */
+		own = *cfg;
+		own.spare_bank = false;
+		own.spare_bank_app = true;
+		if (own.unit_pairs == 0U) {
+			own.unit_pairs = 2048U;
+		}
+		cfg = &own;
+	}
 
 	while ((1U << l) < d) {
 		l++;
@@ -1682,7 +1722,9 @@ int esp_sdr_ring_run(const struct esp_sdr_ring_cfg *cfg, struct esp_sdr_ring_sta
 	key = arch_irq_lock();
 	rs.irq_key = key;
 	wmac_irq_hold();
+	esp_sdr_ring_step = 1U;
 	ring_loop();
+	esp_sdr_ring_step = 5U;
 	wmac_irq_release();
 	arch_irq_unlock(key);
 

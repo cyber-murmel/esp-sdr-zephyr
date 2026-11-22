@@ -186,3 +186,19 @@ int main(void)
 	net_mgmt_add_event_callback(&wifi_cb);
 	return 0;
 }
+
+/*
+ * The coex app's own stop (ext/coex.c sets it); the wifitest app has none. A pointer, not a weak
+ * function: llext leaves the PLT slot of a weak symbol unrelocated (multiapp_check_ext.py).
+ */
+void (*wifitest_stop_hook)(void);
+
+/* Before the host unloads the app: the callback is in this extension's memory. */
+int multiapp_app_stop(void)
+{
+	if (wifitest_stop_hook != NULL) {
+		wifitest_stop_hook();
+	}
+	net_mgmt_del_event_callback(&wifi_cb);
+	return 0;
+}
