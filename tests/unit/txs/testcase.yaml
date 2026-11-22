@@ -1,0 +1,17 @@
+common:
+  tags:
+    - esp-sdr
+    - txs
+  platform_allow:
+    - native_sim
+    - native_sim/native/64
+  integration_platforms:
+    - native_sim
+
+tests:
+  unit.esp_sdr.txs: {}
+  # The same under the address sanitizer: the exact-size array tests of the expansion kernels and
+  # the parser can fail there.
+  unit.esp_sdr.txs.asan:
+    extra_configs:
+      - CONFIG_ASAN=y

@@ -118,6 +118,26 @@ share two cores, the consumer pinned to CPU 1. ``onecore.conf`` (``EXTRA_CONF_FI
 for one core: ``CONFIG_SMP=n``, the pin is guarded by ``CONFIG_SMP && CONFIG_SCHED_CPU_MASK``.
 That build compiles; it has not been run on the board.
 
+Transmit memory layout
+======================
+
+``txmem.conf`` (``-DEXTRA_CONF_FILE=txmem.conf``) builds the bench in the layout of an S31 transmit
+image (``CONFIG_ESP_SDR_S31_TXMEM``, lib/esp_sdr/esp_sdr_txmem_s31.ld): TCM groups 1 and 2
+(0x2F020000 to 0x2F060000) are left to the DAC banks, text, data, bss and the libc heap are in
+group 0 (below 0x2F020000), everything ``.noinit`` (the 34 receive buffers of 1664 bytes, stacks,
+kernel heaps, the MAC's descriptors) in group 3 from 0x2F060000 up to the ROM boot stack at
+0x2F07AFB0. The linker asserts all three; ``scripts/tcm_groups.py <build dir> --tx`` lists the
+sections per group and fails if one lies in groups 1 or 2. Nothing is dropped from ``prj.conf``.
+
+The 34 buffers are the MAC's 15 (16 descriptors), the app's ring (16) and 3 for the stack
+(``CONFIG_APP_RXB_STACK_HEADROOM=2`` is what the build's conservative sum needs). With a shallower
+ring: ``CONFIG_APP_RXB_RING=8``, ``CONFIG_APP_RXB_STACK_HEADROOM=10``.
+
+``canary fill [seed]`` writes a pattern over groups 1 and 2 (256 KiB), ``canary check`` counts the
+words that differ: run ``canary fill``, ``rxb start``, the stream, ``rxb stop``, ``canary check``;
+it must print ``PASS`` (0 words changed). The command exists only in this layout, because in the
+normal one the image lives in those groups.
+
 Safety on the LAN
 =================
 

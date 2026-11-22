@@ -49,7 +49,8 @@ loader's sections.
 | `ESP_SDR_HIGH` | `ESP_SDR_HIGH_RAM` (`.esp_sdr_high`, one per file), its buffer and stack forms | S3 internal RAM above the banks ([SRAM bank ownership](../samples/index.md#sram-bank-ownership)), C6 block 3, C5 and ESP32 DRAM; an extension's host area |
 | `ESP_SDR_PSRAM` | `EXT_RAM_BSS_ATTR` | S3 and ESP32 PSRAM; nothing on the others, whose HAL leaves it empty |
 | `ESP_SDR_PSRAM_FILE` | `.ext_ram.bss`, one per file | PSRAM on the P4 and the S31 |
-| `ESP_SDR_NOINIT`, `ESP_SDR_PSRAM_NOINIT` | `__noinit`, `EXT_RAM_NOINIT_ATTR` (on the S31, whose `EXT_RAM_NOINIT_ATTR` is internal RAM, `.ext_ram_noinit`) | Not zeroed at boot |
+| `ESP_SDR_NOINIT`, `ESP_SDR_PSRAM_NOINIT` | `__noinit`, `.ext_ram_noinit.<n>` on the S31 (its `EXT_RAM_NOINIT_ATTR` is internal RAM; `ESP_SDR_PSRAM_NOINIT_ATTR`, also for `ESP_SDR_BUF_DEFINE()` and `ESP_SDR_STACK_DEFINE()`) | Not zeroed at boot |
+| `ESP_SDR_LPRAM` | `.rtc_noinit.<n>` (`ESP_SDR_LPRAM_ATTR`) | The S31's LP RAM, 0x2E000000, about 30 KB the image does not use: small cold data. Not zeroed, no DMA, no atomics (the flags `DMA` and `ATOMIC` stop the build), slower than TCM from the HP core (not measured). `apps/txstream_eth` keeps its control thread's state there |
 
 `IRAM_ATTR` has no `noinline`: a tagged function the compiler inlines runs where its caller does.
 [The report](#the-report) lists the tags that left no symbol.

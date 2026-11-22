@@ -89,7 +89,9 @@ static bool gain_saved;
 static bool gain_agc = true;
 static unsigned int gain_code;
 
-static uint32_t gain_words[GAIN_WORDS][3];
+/* Read only where gain_valid says it was written: an app may put it in a region that is not zeroed at boot
+ * (apps/txstream_eth/place.h puts it in group 3, group 0 is full there). */
+static uint32_t gain_words[GAIN_WORDS][3] ESP_SDR_DATA_F(STATE, gain_words, NOINIT);
 static bool gain_valid[GAIN_WORDS];
 static int gain_mirrored = -1;
 /* The low-table index a DC correction overwrote. */
@@ -456,12 +458,19 @@ static ALWAYS_INLINE void group_give(unsigned int key)
  * The engine's clocks and lanes, once. Nothing here may touch ROM data, the PHY or the scheduler:
  * their memory is the engine's meanwhile.
  */
+#if defined(CONFIG_ESP_SDR_S31_TXMEM)
+/* Group 3 is the CPU's (stacks, buffer pools, MAC descriptors): the setup takes group 2. */
+#define SETUP_USAGE DUMP_USAGE_DAC
+#else
+#define SETUP_USAGE DUMP_USAGE_OWN
+#endif
+
 ESP_SDR_CODE(NOCACHE, dump_setup)
 static __noinline void dump_setup(void)
 {
 	unsigned int key = group_take();
 
-	REG_WRITE(DUMP_USAGE_REG, DUMP_USAGE_OWN);
+	REG_WRITE(DUMP_USAGE_REG, SETUP_USAGE);
 	__asm__ volatile("fence" ::: "memory");
 	dump_regs();
 	REG_WRITE(DUMP_CTRL_REG,
@@ -657,6 +666,10 @@ int esp_sdr_s31_capture(enum esp_sdr_rate rate, size_t count, void (*hook)(void 
 	if ((unsigned int)rate >= ARRAY_SIZE(rate_field)) {
 		return -EINVAL;
 	}
+#if defined(CONFIG_ESP_SDR_S31_TXMEM)
+	/* A burst would land in group 2, the DAC bank. */
+	return -ENOTSUP;
+#endif
 	if (dac_on || ring_on) {
 		return -EBUSY;
 	}
@@ -703,6 +716,14 @@ bool esp_sdr_s31_dac_busy(void)
 {
 	return dac_on;
 }
+
+#if defined(CONFIG_ESP_SDR_S31_TXMEM)
+/* Whether the first tune has run the engine's one-time setup (apps/txstream_eth's boot report). */
+bool esp_sdr_s31_dump_ready(void)
+{
+	return dump_ready;
+}
+#endif
 
 int esp_sdr_s31_dac_start(unsigned int rate_code, uint32_t ctrl, uint32_t *t0)
 {

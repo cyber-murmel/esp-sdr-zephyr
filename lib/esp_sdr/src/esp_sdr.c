@@ -321,6 +321,10 @@ void esp_sdr_tune(void)
 #if defined(CONFIG_SOC_SERIES_ESP32S31)
 int esp_sdr_bank_usage(uint32_t *usage)
 {
+	if (IS_ENABLED(CONFIG_ESP_SDR_S31_TXMEM)) {
+		/* No capture bank: group 3 is the image's. */
+		return -ENOTSUP;
+	}
 	if ((uintptr_t)__esp_sdr_bank_start != DUMP_BANK0_ADDR) {
 		return -ENOMEM;
 	}
@@ -481,7 +485,8 @@ int esp_sdr_init(void)
 		return -ENODEV;
 	}
 #endif
-	if (esp_sdr_bank_usage(&usage) != 0 && !esp_sdr_bank2_reserved) {
+	if (!IS_ENABLED(CONFIG_ESP_SDR_S31_TXMEM) && esp_sdr_bank_usage(&usage) != 0 &&
+	    !esp_sdr_bank2_reserved) {
 		LOG_ERR("capture bank %p is not a dump bank", (void *)__esp_sdr_bank_start);
 		return -ENOMEM;
 	}

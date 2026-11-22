@@ -46,7 +46,8 @@
  * ESP_SDR_PLACE_FILE (`ESP_SDR_PIN_CODE_<file>_<fn>`; static names repeat across files). Lookup
  * order: file pin, scope pin, pin, scope rule, rule.
  * Regions: ESP_SDR_IRAM, ESP_SDR_HOTBLOCK, ESP_SDR_FLASH for code; ESP_SDR_DRAM, ESP_SDR_DEFAULT,
- * ESP_SDR_HIGH, ESP_SDR_PSRAM, ESP_SDR_PSRAM_FILE, ESP_SDR_NOINIT, ESP_SDR_PSRAM_NOINIT for data;
+ * ESP_SDR_HIGH, ESP_SDR_PSRAM, ESP_SDR_PSRAM_FILE, ESP_SDR_NOINIT, ESP_SDR_PSRAM_NOINIT,
+ * ESP_SDR_LPRAM (the S31's LP RAM, cold small data: slow, no DMA, no atomics, not zeroed) for data;
  * a pin of ESP_SDR_RULE stands for no pin. Builds for other targets (native_sim) place nothing.
  */
 
@@ -107,6 +108,7 @@
 #define Z_PL_IS_ESP_SDR_PSRAM_FILE       ~, ESP_SDR_PSRAM_FILE
 #define Z_PL_IS_ESP_SDR_NOINIT           ~, ESP_SDR_NOINIT
 #define Z_PL_IS_ESP_SDR_PSRAM_NOINIT     ~, ESP_SDR_PSRAM_NOINIT
+#define Z_PL_IS_ESP_SDR_LPRAM            ~, ESP_SDR_LPRAM
 
 /*
  * The region of a function or object, the first of: its pin qualified by the file
@@ -180,6 +182,7 @@
 #define Z_PL_CA_ESP_SDR_PSRAM_FILE   Z_PL_ERR(Z_PL_KIND_MSG)
 #define Z_PL_CA_ESP_SDR_NOINIT       Z_PL_ERR(Z_PL_KIND_MSG)
 #define Z_PL_CA_ESP_SDR_PSRAM_NOINIT Z_PL_ERR(Z_PL_KIND_MSG)
+#define Z_PL_CA_ESP_SDR_LPRAM        Z_PL_ERR(Z_PL_KIND_MSG)
 
 /* Data: the region's attribute after the flags' checks. */
 #define ESP_SDR_DATA(cat, nm)                                                                      \
@@ -205,6 +208,7 @@
 #define Z_PL_DA_ESP_SDR_PSRAM_FILE   ESP_SDR_PSRAM_FILE_ATTR
 #define Z_PL_DA_ESP_SDR_NOINIT       __noinit
 #define Z_PL_DA_ESP_SDR_PSRAM_NOINIT ESP_SDR_PSRAM_NOINIT_ATTR
+#define Z_PL_DA_ESP_SDR_LPRAM        ESP_SDR_LPRAM_ATTR
 
 /*
  * The PSRAM sections by name, where the HAL's attributes place nothing in PSRAM. The S31's linker
@@ -221,6 +225,10 @@
 #define ESP_SDR_PSRAM_NOINIT_ATTR EXT_RAM_NOINIT_ATTR
 #endif
 #endif
+/* The S31's LP RAM (0x2E000000, 30 KB): the linker script's .rtc_noinit, which is not zeroed at boot. */
+#ifndef ESP_SDR_LPRAM_ATTR
+#define ESP_SDR_LPRAM_ATTR _SECTION_ATTR_IMPL(".rtc_noinit", __COUNTER__)
+#endif
 #define Z_PL_DA_Z_PL_NORULE
 #define Z_PL_DA_ESP_SDR_IRAM
 #define Z_PL_DA_ESP_SDR_HOTBLOCK
@@ -230,6 +238,7 @@
 #define Z_PL_DMA_MSG      "esp_sdr_place: DMA data outside internal RAM"
 #define Z_PL_ATOMIC_MSG   "esp_sdr_place: ATOMIC data in PSRAM"
 #define Z_PL_NOINIT_MSG   "esp_sdr_place: data in a region not zeroed at boot needs NOINIT"
+#define Z_PL_LPRAM_MSG    "esp_sdr_place: DMA or atomic data in LP RAM"
 #define Z_PL_CK_Z_PL_NORULE__NONE               Z_PL_ERR(Z_PL_NORULE_MSG)
 #define Z_PL_CK_Z_PL_NORULE__DMA                Z_PL_ERR(Z_PL_NORULE_MSG)
 #define Z_PL_CK_Z_PL_NORULE__ATOMIC             Z_PL_ERR(Z_PL_NORULE_MSG)
@@ -274,6 +283,10 @@
 #define Z_PL_CK_ESP_SDR_PSRAM_NOINIT__DMA       Z_PL_ERR(Z_PL_DMA_MSG)
 #define Z_PL_CK_ESP_SDR_PSRAM_NOINIT__ATOMIC    Z_PL_ERR(Z_PL_ATOMIC_MSG)
 #define Z_PL_CK_ESP_SDR_PSRAM_NOINIT__NOINIT
+#define Z_PL_CK_ESP_SDR_LPRAM__NONE             Z_PL_ERR(Z_PL_NOINIT_MSG)
+#define Z_PL_CK_ESP_SDR_LPRAM__DMA              Z_PL_ERR(Z_PL_LPRAM_MSG)
+#define Z_PL_CK_ESP_SDR_LPRAM__ATOMIC           Z_PL_ERR(Z_PL_LPRAM_MSG)
+#define Z_PL_CK_ESP_SDR_LPRAM__NOINIT
 
 /* A second flag: checked as the first, without asking for NOINIT again. */
 #define Z_PL_CK2_ESP_SDR_DRAM__DMA
@@ -297,6 +310,9 @@
 #define Z_PL_CK2_ESP_SDR_PSRAM_NOINIT__DMA      Z_PL_ERR(Z_PL_DMA_MSG)
 #define Z_PL_CK2_ESP_SDR_PSRAM_NOINIT__ATOMIC   Z_PL_ERR(Z_PL_ATOMIC_MSG)
 #define Z_PL_CK2_ESP_SDR_PSRAM_NOINIT__NOINIT
+#define Z_PL_CK2_ESP_SDR_LPRAM__DMA             Z_PL_ERR(Z_PL_LPRAM_MSG)
+#define Z_PL_CK2_ESP_SDR_LPRAM__ATOMIC          Z_PL_ERR(Z_PL_LPRAM_MSG)
+#define Z_PL_CK2_ESP_SDR_LPRAM__NOINIT
 
 /* `static type name dims __aligned(align)` in its category's region (ESP_SDR_*_BUF_DEFINE). */
 #define ESP_SDR_BUF_DEFINE(cat, type, nm, dims, align, f)                                          \
@@ -315,7 +331,9 @@
 	static type nm dims __aligned(align) Z_PL_DA_ESP_SDR_PSRAM_FILE
 #define Z_PL_BUF_ESP_SDR_NOINIT(type, nm, dims, align) static type nm dims __aligned(align) __noinit
 #define Z_PL_BUF_ESP_SDR_PSRAM_NOINIT(type, nm, dims, align)                                       \
-	static type nm dims __aligned(align) EXT_RAM_NOINIT_ATTR
+	static type nm dims __aligned(align) ESP_SDR_PSRAM_NOINIT_ATTR
+#define Z_PL_BUF_ESP_SDR_LPRAM(type, nm, dims, align)                                              \
+	static type nm dims __aligned(align) ESP_SDR_LPRAM_ATTR
 
 /* A kernel thread stack, `static` like ESP_SDR_HIGH_STACK_DEFINE(). */
 #define ESP_SDR_STACK_DEFINE(nm, size)                                                             \
@@ -330,6 +348,8 @@
 	static Z_KERNEL_STACK_DEFINE_IN(nm, size, EXT_RAM_BSS_ATTR)
 #define Z_PL_STACK_ESP_SDR_PSRAM_FILE(nm, size)                                                    \
 	static Z_KERNEL_STACK_DEFINE_IN(nm, size, Z_PL_DA_ESP_SDR_PSRAM_FILE)
+#define Z_PL_STACK_ESP_SDR_PSRAM_NOINIT(nm, size)                                                  \
+	static Z_KERNEL_STACK_DEFINE_IN(nm, size, ESP_SDR_PSRAM_NOINIT_ATTR)
 #define Z_PL_STACK_Z_PL_NORULE(nm, size) Z_PL_ERR(Z_PL_NORULE_MSG)
 
 #else /* __ASSEMBLER__ */

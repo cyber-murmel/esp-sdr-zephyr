@@ -94,7 +94,8 @@ uint32_t *esp_sdr_replay_buf(size_t *words);
 /**
  * @brief Turn the transmit chain on and start the engine.
  *
- * Holds the radio until esp_sdr_replay_stop(), at the frequency set with
+ * Holds the radio (esp_sdr_lock, a mutex: esp_sdr_replay_stop() must run on the thread that
+ * started) until esp_sdr_replay_stop(), at the frequency set with
  * esp_sdr_set_freq().
  *
  * @return 0, -EINVAL for a bad setting, -EAGAIN before esp_sdr_init() (on the

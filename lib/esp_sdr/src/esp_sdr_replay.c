@@ -8,6 +8,7 @@
 #include <errno.h>
 
 #include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
 #include <zephyr/sys/sys_io.h>
 #include <zephyr/sys/util.h>
 
@@ -15,6 +16,8 @@
 #include <esp_sdr/esp_sdr_replay.h>
 
 #include "esp_sdr_priv.h"
+
+LOG_MODULE_DECLARE(esp_sdr, CONFIG_ESP_SDR_LOG_LEVEL);
 
 #if defined(CONFIG_SOC_SERIES_ESP32S31)
 #include <esp_cpu.h>
@@ -71,6 +74,19 @@ static inline uint32_t cycles(void)
 /* The power step's range, as esp_sdr_tx_paced_start(). */
 #define POWER_MAX 15U
 
+/* A mutex belongs to the thread that took it: the replay holds esp_sdr_lock from esp_sdr_replay_start()
+ * to esp_sdr_replay_stop(), so both must run on one thread. From another thread the unlock fails
+ * (-EPERM) and the lock stays with the starter for good: say so.
+ */
+static void replay_unlock(void)
+{
+	const int ret = k_mutex_unlock(&esp_sdr_lock);
+
+	if (ret != 0) {
+		LOG_ERR("replay: esp_sdr_lock not released (%d): start and stop must run on one thread", ret);
+	}
+}
+
 static struct {
 	bool on;
 	bool endless;
@@ -111,12 +127,12 @@ int esp_sdr_replay_start(const struct esp_sdr_replay_cfg *cfg)
 	}
 	k_mutex_lock(&esp_sdr_lock, K_FOREVER);
 	if (rp.on) {
-		k_mutex_unlock(&esp_sdr_lock);
+		replay_unlock();
 		return -EBUSY;
 	}
 	ret = esp_sdr_tx_chain_on(cfg->power);
 	if (ret != 0) {
-		k_mutex_unlock(&esp_sdr_lock);
+		replay_unlock();
 		return ret;
 	}
 	scale = cfg->scale != 0U ? cfg->scale : SCALE_DEFAULT;
@@ -136,7 +152,7 @@ int esp_sdr_replay_start(const struct esp_sdr_replay_cfg *cfg)
 	if (ret != 0) {
 		sys_write32(rp.saved_scale, DAC_SCALE_REG);
 		esp_sdr_tx_chain_off();
-		k_mutex_unlock(&esp_sdr_lock);
+		replay_unlock();
 		return ret;
 	}
 #else
@@ -213,5 +229,5 @@ void esp_sdr_replay_stop(void)
 	sys_write32(rp.saved_scale, DAC_SCALE_REG);
 	esp_sdr_tx_chain_off();
 	rp.on = false;
-	k_mutex_unlock(&esp_sdr_lock);
+	replay_unlock();
 }

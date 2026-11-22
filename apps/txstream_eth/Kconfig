@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+mainmenu "ESP-SDR transmit stream over Ethernet"
+
+config APP_TXS_INJECT
+	bool "The injector: sample packets made on the board (tx tone, tx inject)"
+	help
+	  A thread on CPU 0 that makes the packets the sender would, for tests without a host. It costs
+	  about 2.4 KB of group 3 (its stack, thread and ring) and a few hundred bytes of group 0, which
+	  the network side leaves no room for: injector.conf builds it with two receive buffers less. With
+	  it off (the default), the network is the only source and `tx tone` and `tx inject` answer "not
+	  supported".
+
+source "Kconfig.zephyr"

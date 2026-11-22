@@ -17,6 +17,66 @@ config ESP_SDR_AS_EXTENSION
 	  application builds the library, the 802.15.4 driver and the PHY's
 	  blobs as loadable modules (apps/multiapp, sources.cmake).
 
+config ESP_SDR_S31_GROUP1
+	bool "Image entirely in TCM group 0 (group 1 left to the engine)"
+	depends on SOC_SERIES_ESP32S31
+	select ESP_SDR_S31_GROUP2 if ESP_SDR
+	help
+	  The image and its libc heap end below 0x2F020000 (the linker asserts it, with or without
+	  CONFIG_ESP_SDR: esp_sdr_bank_s31.ld, esp_sdr_group1_s31.ld), so that TCM group 1 (0x2F020000,
+	  128 KiB, ownership bits 15:8) is free for the DAC reader or the dump engine as group 2 is.
+	  Where the image's .noinit data (stacks, buffer pools) goes is left to the SoC's script: it
+	  follows the rest of the image, so only a small image fits. ESP_SDR_S31_TXMEM puts it in
+	  group 3.
+
+config ESP_SDR_S31_TXMEM
+	bool "Transmit memory layout: group 0 the image, group 3 the buffers"
+	depends on SOC_SERIES_ESP32S31 && ESP_SIMPLE_BOOT
+	depends on !ESP_SDR_DUMPRING && !ESP_SDR_DIAG16 && \
+		   !ESP_SDR_AS_EXTENSION
+	depends on !USERSPACE && !LLEXT && !ESP32_WIFI_NET_ALLOC_SPIRAM
+	select ESP_SDR_S31_GROUP1
+	help
+	  TCM groups 1 and 2 (0x2F020000 to 0x2F060000) are left entirely to the DAC banks. Text,
+	  data, bss and the libc heap stay in group 0 (128 KiB); everything .noinit (network buffer
+	  pools, thread and interrupt stacks, kernel heaps, ESP_SDR_NOINIT buffers) goes to group 3
+	  from 0x2F060000 up to the ROM boot stack at 0x2F07AFB0 (110 KiB), so group 3 stays the
+	  CPU's: nothing may hand it to the dump engine.
+	  With CONFIG_ESP_SDR the capture bank is off: esp_sdr_bank_usage() refuses, so the esp_sdr_rx
+	  captures return an error, and so does esp_sdr_s31_capture() (its bursts would land in the
+	  DAC bank, group 2). The dump engine's one-time setup in the first tune takes group 2
+	  instead of group 3. Features that give group 3 to the engine or build on the bank
+	  (DUMPRING and with it RING_STAGE, DIAG16, extensions) are excluded. Without
+	  CONFIG_ESP_SDR it works as well (apps/rxbench txmem.conf). The linker asserts that group 0
+	  ends below group 1 and group 3 below the ROM stack.
+
+config ESP_SDR_S31_TXMEM_PSRAM
+	bool "Transmit layout: the stacks of the threads with slack in PSRAM"
+	depends on ESP_SDR_S31_TXMEM && ESP_SPIRAM
+	default y
+	help
+	  The stacks Zephyr defines for the threads that run network management, the shell, the log,
+	  the work queue and the main thread (esp_sdr_txmem_s31.ld names them by their input sections:
+	  .noinit.<file>.<n>) go to PSRAM, and so do the network management event queue's ring, which
+	  frees group 3 for receive buffers. Nothing that a kernel init hook sets up before PRE_KERNEL_1
+	  priority 40 (PSRAM becomes accessible there) may go: k_heap and k_mem_slab backing stores, so
+	  the shell's history heap stays internal. Never moved: the interrupt and idle stacks, the
+	  receive buffers and descriptors, the system heap (the interrupt allocator's vector descriptors
+	  are read in interrupts), the flip thread's stack and whatever CPU 1 runs on. An app's own
+	  stacks and cold data use ESP_SDR_STACK_DEFINE() and its category rules (apps/txstream_eth/place.h).
+	  scripts/tcm_groups.py --tx checks, after the link, that each stack is where it should be (the
+	  counter in the section name changes with the configuration).
+
+config ESP_SDR_S31_TXMEM_NETTX_PSRAM
+	bool "Transmit layout: the network stack's transmit buffers in PSRAM (not verified on the board)"
+	depends on ESP_SDR_S31_TXMEM_PSRAM
+	help
+	  The 4 transmit data buffers (and their net_buf records) of the network stack. The net_pkt slab stays
+	  internal: slab free lists are built before PSRAM is accessible. The
+	  DWC MAC's driver writes them back before it hands them to the DMA (sys_cache_data_flush_range()
+	  in eth_dwc_ether_1000_core.c), but that the EMAC's DMA reaches PSRAM on the S31 is not
+	  checked: leave it off until a board shows it (ping, DHCP and ND must still work).
+
 config ESP_SDR
 	bool "ESP-SDR raw I/Q receiver"
 	# Its radio comes up through esp_phy_rftest_config(), which lives in that library.
@@ -346,6 +406,15 @@ config ESP_SDR_S31_GROUP2
 	help
 	  TCM group 2 (0x2F040000, 128 KiB) reserved for the engine: the image
 	  ends below it.
+
+config ESP_SDR_TXS_PIE
+	bool "PIE kernel of the transmit stream (8+8 bit to DAC words, CPU 1 only)"
+	depends on SOC_SERIES_ESP32S31 && SMP
+	help
+	  txs_kern_pie (lib/esp_sdr/src/txs/txs_pie.S): the expansion of the 8+8 bit payload with the
+	  S31's PIE vector unit, about 2 cycles a sample. Espressif's assembler (riscv32-esp-elf-as)
+	  builds the one file; the PIE state is not saved by the context switch, so the kernel may
+	  run in the one thread pinned to CPU 1 only.
 
 config ESP_SDR_DMA
 	bool "Memory-to-memory GDMA gathers (esp_sdr_dma.h)"

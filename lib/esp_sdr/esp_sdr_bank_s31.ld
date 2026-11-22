@@ -10,12 +10,18 @@
 __esp_sdr_bank_org = 0x2F060000;
 __esp_sdr_bank_len = 0x1A010;
 
+#if defined(CONFIG_ESP_SDR_S31_TXMEM)
+/* Transmit layout: group 3 is the image's (esp_sdr_txmem_s31.ld), the capture bank is off. */
+__esp_sdr_bank_start = __esp_sdr_bank_org;
+__esp_sdr_bank_end = __esp_sdr_bank_org;
+#else
 .esp_sdr_bank __esp_sdr_bank_org (NOLOAD) :
 {
 	__esp_sdr_bank_start = .;
 	. += __esp_sdr_bank_len;
 	__esp_sdr_bank_end = .;
 }
+#endif
 
 #if defined(CONFIG_ESP_SDR_DIAG16)
 /* The gapless ring (esp_sdr_diag16.c) below the bank, not zeroed at boot. */
@@ -33,7 +39,7 @@ __esp_sdr_bank_len = 0x1A010;
  * (esp_sdr_dumpring.c), each while the engine owns it and the CPU runs on, so no part of the
  * image may be there. The DIAG16 ring, where there is one, shares it: they exclude each other.
  */
-#if defined(CONFIG_ESP_SDR_DIAG16)
+#if defined(CONFIG_ESP_SDR_DIAG16) || defined(CONFIG_ESP_SDR_S31_TXMEM)
 __esp_sdr_group2_start = 0x2F040000;
 #else
 .esp_sdr_group2 0x2F040000 (NOLOAD) :
@@ -44,7 +50,9 @@ __esp_sdr_group2_start = 0x2F040000;
 #endif
 #endif
 
-#if defined(CONFIG_ESP_SDR_DIAG16) && defined(CONFIG_ESP_SDR_S31_GROUP2)
+#if defined(CONFIG_ESP_SDR_S31_GROUP1)
+__esp_sdr_image_end_max = 0x2F020000;
+#elif defined(CONFIG_ESP_SDR_DIAG16) && defined(CONFIG_ESP_SDR_S31_GROUP2)
 __esp_sdr_image_end_max = MIN(__esp_sdr_ring_start, 0x2F040000);
 #elif defined(CONFIG_ESP_SDR_DIAG16)
 __esp_sdr_image_end_max = __esp_sdr_ring_start;

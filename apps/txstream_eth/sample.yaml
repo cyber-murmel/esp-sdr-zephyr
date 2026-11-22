@@ -1,0 +1,17 @@
+sample:
+  name: ESP-SDR transmit stream over Ethernet
+  description: >-
+    The S31 DAC streamed by whole-group ownership flips on CPU 1, fed over UDP (control 4992, samples
+    4994; vrt_tx), in the transmit memory layout, with the gigabit Ethernet up
+common:
+  tags: esp-sdr
+  platform_allow:
+    - esp32s31_function_coreboard/esp32s31/hpcore
+  integration_platforms:
+    - esp32s31_function_coreboard/esp32s31/hpcore
+tests:
+  sample.esp_sdr.txstream_eth:
+    build_only: true
+  sample.esp_sdr.txstream_eth.injector:
+    build_only: true
+    extra_args: EXTRA_CONF_FILE=injector.conf
