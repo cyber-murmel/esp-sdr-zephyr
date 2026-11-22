@@ -39,6 +39,31 @@ tests:
       - CONFIG_HEAP_MEM_POOL_SIZE=15360
     build_only: true
 
+  # The ESP32-S3-DevKitC (N16R8) in place of the XIAO S3; apps/wpan/boards/ gives it its PSRAM.
+  regression.esp_sdr.ieee802154_link.s3_devkit:
+    tags:
+      - esp-sdr
+      - hardware
+      - regression
+    platform_allow:
+      - esp32s3_devkitc/esp32s3/procpu
+    sysbuild: true
+    build_only: true
+
+  # The XIAO C6 on its chip antenna: with the board's U.FL switch unpowered the radio is nearly
+  # deaf, so apps/wpan drives the switch itself (WPAN_C6_CHIP_ANTENNA). For desks without coax.
+  regression.esp_sdr.ieee802154_link.c6_chip:
+    tags:
+      - esp-sdr
+      - hardware
+      - regression
+    platform_allow:
+      - xiao_esp32c6/esp32c6/hpcore
+    extra_configs:
+      - CONFIG_XIAO_ESP32C6_EXT_ANTENNA=n
+      - CONFIG_WPAN_C6_CHIP_ANTENNA=y
+    build_only: true
+
   regression.esp_sdr.ieee802154_link:
     tags:
       - esp-sdr
@@ -53,6 +78,7 @@ tests:
     harness_config:
       pytest_root:
         - "pytest/test_interop.py"
+        - "pytest/test_sniffer.py"
       # Flash and connect once for all tests; the module-scoped radios_on fixture
       # needs the shells to live as long.
       pytest_dut_scope: module
@@ -62,3 +88,26 @@ tests:
     build: false
     required_applications:
       - application: regression.esp_sdr.ieee802154_link.c6
+
+  # The same two tests on the desk with the DevKitC and the C6 on its chip antenna.
+  # Run only this one: scripts/run-regression-tests.sh -O <dir> -s regression.esp_sdr.ieee802154_link.devkit
+  regression.esp_sdr.ieee802154_link.devkit:
+    tags:
+      - esp-sdr
+      - hardware
+      - regression
+    platform_allow:
+      - xiao_esp32c6/esp32c6/hpcore
+    harness: pytest
+    timeout: 900
+    harness_config:
+      pytest_root:
+        - "pytest/test_interop.py"
+        - "pytest/test_sniffer.py"
+      pytest_dut_scope: module
+      required_devices:
+        - platform: esp32s3_devkitc/esp32s3/procpu
+          application: regression.esp_sdr.ieee802154_link.s3_devkit
+    build: false
+    required_applications:
+      - application: regression.esp_sdr.ieee802154_link.c6_chip

@@ -50,3 +50,14 @@
   connected: true
   flash_before: true
   flash_timeout: 300
+
+# The ESP32-S3-DevKitC (N16R8) running apps/wpan, id as the S3's: the USB serial number of the
+# esp-sdr firmware on its OTG port. For the ieee802154_link .devkit scenario.
+- id: 90DA724F975C
+  platform: esp32s3_devkitc/esp32s3/procpu
+  product: ESP-SDR
+  runner: esp32
+  serial: /tmp/esp-sdr-tty/90DA724F975C
+  connected: true
+  flash_before: true
+  flash_timeout: 300

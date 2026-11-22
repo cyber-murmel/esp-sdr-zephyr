@@ -620,6 +620,42 @@ for all tests, and the flashing counts against the timeout.
   go unanswered.
 - When a check fails, the message carries `wpan status` of both boards.
 
+#### Other desks: DevKitC and chip antenna
+
+- `regression.esp_sdr.ieee802154_link.devkit` runs the same tests with an ESP32-S3-DevKitC
+  (N16R8) in place of the XIAO S3 (`.s3_devkit` builds its image, `apps/wpan/boards/` gives it
+  the 8 MB PSRAM overlay) and the C6 on its chip antenna (`.c6_chip`).
+- The XIAO C6's RF switch is driven only by the board's `board.c` with
+  `CONFIG_XIAO_ESP32C6_EXT_ANTENNA`; without it the radio is nearly deaf (LQI 5-7). `.c6_chip` sets
+  `CONFIG_XIAO_ESP32C6_EXT_ANTENNA=n` and `CONFIG_WPAN_C6_CHIP_ANTENNA=y`, so that `apps/wpan`
+  powers the switch and selects the chip antenna itself.
+- First run, 2026-11-23, the two boards side by side on the desk: the sniffer cases, the ACK case
+  and every C6 to devkit direction passed; devkit to C6 lost 7, 1, 0 and 2 of 100 frames on
+  channels 11, 15, 20 and 25 (RSSI -67 to -78 dBm). By hand, 7 to 12 % of the 111-byte frames
+  and about 3 % of 31-byte ones, at 5 or 10 ms spacing, with the sniffer built in or out. So it
+  is this desk's radio link, which `test_frames_both_ways_no_loss` allows nothing for: its
+  limits come from the XIAO S3 desk with coax.
+- The devkit has its own entry in `hardware-map.yaml`. To run only this scenario:
+
+```
+esp-sdr-zephyr/scripts/run-regression-tests.sh -O <output dir> \
+    -s regression.esp_sdr.ieee802154_link.devkit
+```
+
+#### Sniffer case
+
+`pytest/test_sniffer.py` runs in both pytest scenarios, in either order relative to `test_interop.py`.
+
+- On channel 15 one board sniffs (`sniffer start`) while the other sends 100 frames of 20 bytes,
+  10 ms apart; then the roles swap.
+- Every capture line must parse with the Wireshark extcap's own code
+  (`apps/wpan/tools/wpan_sniffer.py`), which also builds a pcap in pytest's tmp dir; with `tshark`
+  installed every frame's FCS must be ok.
+- The capture holds every test frame the sniffer's `wpan status` counted, and `sniffer stats` has
+  `drop=0` and `enq` equal to the frames captured.
+- The transmitter may fail 3 frames, as above.
+- Afterwards both radios are back to `wpan on`, promiscuous mode off and their addresses.
+
 #### Bugs it guards against
 
 The test guards against the two bugs that only ever showed as lost frames between real boards,

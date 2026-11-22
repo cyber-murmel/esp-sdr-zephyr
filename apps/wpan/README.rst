@@ -101,6 +101,8 @@ conventions").
    * - ``wpan bench [units] [subsample]|phy|ack``
      - ring decimation by 4 and PHY cost on synthetic data, or the ACK waveform build and front end
        switch times (S3, radio off after one ``wpan on``)
+   * - ``sniffer start|stop|channel|speed|stats|stats_reset``
+     - capture every frame as a text line for Wireshark (`Sniffer`_)
 
 Settings
 --------
@@ -160,6 +162,100 @@ The C6 sends, the S3 receives on channel 15:
    c6:~$ wpan set chan 15
    c6:~$ wpan tx 1000 5 16
    s3:~$ wpan status
+
+Sniffer
+=======
+
+The ``sniffer`` commands make any of the boards a one-channel 802.15.4 sniffer for Wireshark.
+The firmware commands, their replies and the capture lines match Zephyr's
+``samples/net/ieee802154/sniffer`` (Zephyr ``cf45cd71868``), so that sample's extcap also works with
+these boards.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Command
+     - Effect
+     - Reply
+   * - ``sniffer start``
+     - promiscuous mode, radio on, capture lines on
+     - ``started``, ``already started``
+   * - ``sniffer stop``
+     - capture lines off, radio off (``wpan on`` turns it back on)
+     - ``stopped``, ``already stopped``
+   * - ``sniffer channel [<n>]``
+     - the channel, or a new one (11..26) while stopped
+     - ``<n>``, ``channel <n>``
+   * - ``sniffer speed [<baud>]``
+     - nothing: both ports are USB, where the rate has no effect; kept for upstream's extcap
+     - ``speed <baud>``
+   * - ``sniffer stats``
+     - frames queued, dropped (queue full), printed, bytes printed, queue high-water mark and use
+     - ``enq=.. drop=.. tx_rec=.. tx_bytes=.. q_hwm=.. q_used=../..``
+   * - ``sniffer stats_reset``
+     - zero those counters
+     - ``stats reset``
+
+Capture is off at boot. Each frame then comes out on the shell's port as one line:
+
+.. code-block:: none
+
+   psdu: <hex> power: <rssi dBm> lqi: <lqi> time: <us since boot>
+
+- ``psdu`` is the frame without its FCS (the radios check it and drop bad frames); the host tool
+  appends a recomputed one.
+- ``power`` is ``-32768`` when the radio has no RSSI: always on the S3's software radio.
+- ``time`` is the C6 driver's receive timestamp. The S3's software radio has none, so its frames
+  carry the time they reached the app, a few hundred microseconds after the frame ended.
+- The lines go through the shell, so a prompt or terminal codes can precede ``psdu:``; the host
+  tool searches for the pattern and ignores everything else.
+- While capturing, ``wpan set print`` lines are left out; the ``wpan status`` counters keep
+  counting.
+- Frames the port cannot keep up with are dropped at the queue and counted as ``drop`` in
+  ``sniffer stats``; compare ``enq`` with ``wpan status``'s received frames.
+
+Measured on an ESP32-S3-DevKitC (N16R8) and a XIAO ESP32C6, each sending ``wpan tx`` test frames
+to the other on channel 15 (2026-11-23):
+
+- S3 sniffing: 200 of 200 frames of 31 bytes at 100 frames/s in the pcap. With 111-byte frames
+  every 5 ms, a nearly full channel, the radio took all 400 but the CDC-ACM port printed 211: some
+  25 KB/s of lines, about 100 longest frames a second, with the PHY busy on the same CPU.
+- C6 sniffing: every frame the radio took reached the pcap (queue high-water mark 0 to 1), RSSI
+  included.
+- The shell's TX ring is 1024 bytes (``prj.conf``): with Zephyr's default 8 the S3 printed only
+  161 of 199 frames at 100 frames/s.
+
+Wireshark
+---------
+
+``tools/wpan_sniffer.py`` is the extcap: it sends the ``sniffer`` commands, reads the lines and
+writes pcap with the 802.15.4 TAP link type (283), carrying channel, RSSI and LQI. It is Zephyr's
+``scripts/ieee802154_sniffer.py`` with these changes:
+
+- On Linux it opens the port raw, without touching DTR and RTS: pySerial's open resets a C6 on
+  USB-Serial-JTAG.
+- It lists only these boards: ``wpan sniffer, ESP32-S3 software radio`` for the S3's CDC-ACM port,
+  ``wpan sniffer, USB-Serial-JTAG`` for a C6, whose port has the same USB IDs as any Espressif
+  chip's USB-Serial-JTAG. The WHY2025 badge's C6 appears there once the P4 has handed J8 to it
+  (``esdr.usb_to_c6()``).
+- The capture baud rate defaults to 0 (unchanged) and the channel to 11.
+
+Install it into Wireshark's personal extcap folder (Help > About Wireshark > Folders):
+
+.. code-block:: console
+
+   ln -s $PWD/esp-sdr-zephyr/apps/wpan/tools/wpan_sniffer.py ~/.local/lib/wireshark/extcap/
+
+It needs Python 3.10 and pySerial. Standalone, for example on channel 15 into a file:
+
+.. code-block:: console
+
+   esp-sdr-zephyr/apps/wpan/tools/wpan_sniffer.py --capture \
+       --extcap-interface /dev/serial/by-id/usb-Zephyr_Project_ESP-SDR_802.15.4_<serial>-if00 \
+       --channel 15 --log-file sniffer.log --fifo capture.pcap
+
+``src/sniffer.c``, ``src/sniffer_line.c`` and ``tools/wpan_sniffer.py`` come from that Zephyr
+sample and keep its Apache-2.0 licence.
 
 Output format
 *************

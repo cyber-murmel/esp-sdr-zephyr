@@ -13,6 +13,7 @@
 
 #include <zephyr/app_version.h>
 #include <zephyr/device.h>
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/hwinfo.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -25,6 +26,10 @@
 #include <zephyr/sys/util.h>
 
 #include "app_shell.h"
+#include "wpan.h"
+#if defined(CONFIG_WPAN_SNIFFER)
+#include "sniffer.h"
+#endif
 #if defined(CONFIG_USB_DEVICE_STACK_NEXT)
 #include "app_cpu.h"
 #include "app_crash.h"
@@ -126,6 +131,8 @@ static void rx_frame(struct net_pkt *pkt)
 	size_t len = MIN(net_pkt_get_len(pkt), sizeof(buf));
 	int lqi = net_pkt_ieee802154_lqi(pkt);
 	int rssi = net_pkt_ieee802154_rssi_dbm(pkt);
+	uint64_t time_us = 0U;
+	bool capturing = false;
 	uint16_t src = 0U;
 	int64_t counter;
 	k_spinlock_key_t key;
@@ -135,11 +142,28 @@ static void rx_frame(struct net_pkt *pkt)
 		net_pkt_unref(pkt);
 		return;
 	}
+#if defined(CONFIG_WPAN_SNIFFER)
+	/* The radio's receive time when it has one, else when the frame reached the app. */
+	if (IS_ENABLED(CONFIG_NET_PKT_TIMESTAMP)) {
+		time_us = net_pkt_timestamp_ns(pkt) / 1000U;
+	}
+	if (time_us == 0U) {
+		time_us = IS_ENABLED(CONFIG_TIMER_HAS_64BIT_CYCLE_COUNTER)
+				  ? k_cyc_to_us_floor64(k_cycle_get_64())
+				  : k_ticks_to_us_floor64(k_uptime_ticks());
+	}
+#endif
 	net_pkt_unref(pkt);
 	/* Raw mode can hand over the FCS too (on the ESP32 overwritten with RSSI and LQI). */
 	if (IS_ENABLED(CONFIG_IEEE802154_L2_PKT_INCL_FCS) && len >= FCS_LEN) {
 		len -= FCS_LEN;
 	}
+#if defined(CONFIG_WPAN_SNIFFER)
+	sniffer_frame(buf, len, (uint8_t)lqi, (int16_t)rssi, time_us);
+	capturing = sniffer_capturing();
+#endif
+	ARG_UNUSED(time_us);
+	ARG_UNUSED(capturing);
 
 	counter = check_test(buf, len);
 	if (len >= HDR_LEN) {
@@ -175,7 +199,12 @@ static void rx_frame(struct net_pkt *pkt)
 	}
 	k_spin_unlock(&rx_lock, key);
 
-	/* Deferred log: under a flood it drops lines instead of holding up the radio thread. */
+	/* Deferred log: under a flood it drops lines instead of holding up the radio thread.
+	 * Not while capturing: the port carries the capture lines.
+	 */
+	if (capturing) {
+		return;
+	}
 	if (atomic_get(&rx_verbose) >= 1) {
 		LOG_INF("rx len %u lqi %d rssi %d seq %u src %04x %s%d", (unsigned int)len, lqi, rssi,
 			len > 2U ? buf[2] : 0U, src,
@@ -333,23 +362,82 @@ static bool promiscuous;
 static bool rx_invert, tx_invert, lo_above;
 #endif
 
-static int set_chan(const struct shell *sh, const char *value)
+/* Radio control shared with the sniffer (wpan.h); the shell commands wrap these. */
+int wpan_radio_on(void)
 {
-	long ch;
 	int ret;
 
-	if (app_shell_long(sh, value, 11, 26, &ch) != 0) {
-		return -EINVAL;
+	if (api == NULL || radio == NULL) {
+		return -ENODEV;
 	}
-	ret = api->set_channel(radio, (uint16_t)ch);
+	ret = api->start(radio);
+	radio_on = ret == 0;
+	return ret;
+}
+
+int wpan_radio_off(void)
+{
+	int ret;
+
+	if (api == NULL || radio == NULL) {
+		return -ENODEV;
+	}
+	ret = api->stop(radio);
+	radio_on = false;
+	return ret;
+}
+
+bool wpan_radio_is_on(void)
+{
+	return radio_on;
+}
+
+int wpan_set_channel(uint16_t ch)
+{
+	int ret;
+
+	if (api == NULL || radio == NULL) {
+		return -ENODEV;
+	}
+	ret = api->set_channel(radio, ch);
 	if (ret == 0) {
-		channel = (uint16_t)ch;
+		channel = ch;
 		/* The ESP32 radio applies a new channel when it (re)enters receive. */
 		if (radio_on) {
 			ret = api->start(radio);
 		}
 	}
 	return ret;
+}
+
+uint16_t wpan_get_channel(void)
+{
+	return channel;
+}
+
+int wpan_set_promisc(bool on)
+{
+	struct ieee802154_config cfg = {.promiscuous = on};
+	int ret;
+
+	if (api == NULL || radio == NULL) {
+		return -ENODEV;
+	}
+	ret = api->configure(radio, IEEE802154_CONFIG_PROMISCUOUS, &cfg);
+	if (ret == 0) {
+		promiscuous = on;
+	}
+	return ret;
+}
+
+static int set_chan(const struct shell *sh, const char *value)
+{
+	long ch;
+
+	if (app_shell_long(sh, value, 11, 26, &ch) != 0) {
+		return -EINVAL;
+	}
+	return wpan_set_channel((uint16_t)ch);
 }
 
 static int set_txpower(const struct shell *sh, const char *value)
@@ -369,19 +457,12 @@ static int set_txpower(const struct shell *sh, const char *value)
 
 static int set_promisc(const struct shell *sh, const char *value)
 {
-	struct ieee802154_config cfg;
 	long on;
-	int ret;
 
 	if (app_shell_long(sh, value, 0, 1, &on) != 0) {
 		return -EINVAL;
 	}
-	cfg.promiscuous = on != 0;
-	ret = api->configure(radio, IEEE802154_CONFIG_PROMISCUOUS, &cfg);
-	if (ret == 0) {
-		promiscuous = cfg.promiscuous;
-	}
-	return ret;
+	return wpan_set_promisc(on != 0);
 }
 
 /* PAN ID and short address go to the radio's filter together (what auto-ACK answers). */
@@ -607,11 +688,10 @@ static int cmd_on(const struct shell *sh, size_t argc, char **argv)
 	if (!radio_ok(sh)) {
 		return -ENODEV;
 	}
-	int ret = api->start(radio);
+	int ret = wpan_radio_on();
 
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
-	radio_on = ret == 0;
 	shell_print(sh, "radio on: %d", ret);
 	return ret;
 }
@@ -621,11 +701,10 @@ static int cmd_off(const struct shell *sh, size_t argc, char **argv)
 	if (!radio_ok(sh)) {
 		return -ENODEV;
 	}
-	int ret = api->stop(radio);
+	int ret = wpan_radio_off();
 
 	ARG_UNUSED(argc);
 	ARG_UNUSED(argv);
-	radio_on = false;
 	shell_print(sh, "radio off: %d", ret);
 	return ret;
 }
@@ -1009,6 +1088,26 @@ int main(void)
 	int ret;
 
 	printk("wpan %s\n", APP_VERSION_STRING);
+#if defined(CONFIG_WPAN_C6_CHIP_ANTENNA)
+	{
+		/* board.c drives the switch only with XIAO_ESP32C6_EXT_ANTENNA: power it and
+		 * select the chip antenna here.
+		 */
+		const struct gpio_dt_spec rf_en =
+			GPIO_DT_SPEC_GET(DT_NODELABEL(rf_switch), enable_gpios);
+		const struct gpio_dt_spec rf_sel =
+			GPIO_DT_SPEC_GET(DT_NODELABEL(rf_switch), select_gpios);
+		int err = -ENODEV;
+
+		if (gpio_is_ready_dt(&rf_en) && gpio_is_ready_dt(&rf_sel)) {
+			err = gpio_pin_configure_dt(&rf_en, GPIO_OUTPUT_ACTIVE);
+			if (err == 0) {
+				err = gpio_pin_configure_dt(&rf_sel, GPIO_OUTPUT_INACTIVE);
+			}
+		}
+		printk("wpan: RF switch on, chip antenna: %d\n", err);
+	}
+#endif
 #if defined(CONFIG_USB_DEVICE_STACK_NEXT)
 	/* Before USB starts: its controller interrupt lands on the CPU that allocates it. */
 	app_cpu_pin_system_threads(0);
@@ -1030,6 +1129,9 @@ int main(void)
 	k_thread_create(&tx_thread, tx_stack, K_KERNEL_STACK_SIZEOF(tx_stack), tx_thread_fn, NULL,
 			NULL, NULL, 7, 0, K_NO_WAIT);
 	k_thread_name_set(&tx_thread, "wpan_tx");
+#if defined(CONFIG_WPAN_SNIFFER)
+	sniffer_init();
+#endif
 
 	f.pan_id = pan_id;
 	(void)api->filter(radio, true, IEEE802154_FILTER_TYPE_PAN_ID, &f);

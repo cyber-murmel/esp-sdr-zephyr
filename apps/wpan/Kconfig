@@ -2,6 +2,30 @@
 
 mainmenu "wpan: IEEE 802.15.4 test shell"
 
+config WPAN_SNIFFER
+	bool "Sniffer mode: the Zephyr sample's line format and `sniffer` shell commands"
+	default y
+	help
+	  Streams every received frame as `psdu: <hex> power: <dBm> lqi: <n> time: <us>` on the
+	  shell that ran `sniffer start`, so the sample's Wireshark extcap works against wpan.
+
+config WPAN_SNIFFER_QUEUE
+	int "Frames the sniffer queues between the radio thread and the shell"
+	default 16
+	range 2 64
+	depends on WPAN_SNIFFER
+	help
+	  Each entry takes 144 bytes.
+
+config WPAN_C6_CHIP_ANTENNA
+	bool "XIAO ESP32C6: power the RF switch and select the chip antenna"
+	depends on BOARD_XIAO_ESP32C6_ESP32C6_HPCORE && !XIAO_ESP32C6_EXT_ANTENNA
+	help
+	  The XIAO C6's RF switch (DT node rf_switch) is only driven by the board's board.c, which
+	  is built only with XIAO_ESP32C6_EXT_ANTENNA. Without it the switch stays unpowered and
+	  the radio leaks out weakly (LQI 5-7, about -90 dBm at desk distance). main() then powers
+	  the switch and selects the chip antenna itself.
+
 # ESP32-S3 builds: USB shell and DFU (common/), as the other apps.
 rsource "../common/Kconfig"
 source "samples/subsys/usb/common/Kconfig.sample_usbd"

@@ -26,4 +26,6 @@ if(CONFIG_USB_DEVICE_STACK_NEXT)
 endif()
 
 target_sources(app PRIVATE ${WPAN_DIR}/src/main.c)
+target_sources_ifdef(CONFIG_WPAN_SNIFFER app PRIVATE ${WPAN_DIR}/src/sniffer.c
+                     ${WPAN_DIR}/src/sniffer_line.c)
 target_include_directories(app PRIVATE ${WPAN_DIR}/../common/include)

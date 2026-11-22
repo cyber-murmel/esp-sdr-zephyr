@@ -11,5 +11,6 @@ if(CONFIG_USB_DEVICE_STACK_NEXT)
 endif()
 
 target_sources(app PRIVATE src/main.c)
+target_sources_ifdef(CONFIG_WPAN_SNIFFER app PRIVATE src/sniffer.c src/sniffer_line.c)
 # Header-only helpers (app_shell.h) on every board.
 target_include_directories(app PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../common/include)

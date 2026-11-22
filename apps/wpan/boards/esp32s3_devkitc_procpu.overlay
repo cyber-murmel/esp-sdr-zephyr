@@ -1,0 +1,10 @@
+/*
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * For the ESP32-S3-DevKitC with an N16R8 module (8 MB octal PSRAM). The S3 software radio
+ * needs PSRAM and the board's devicetree declares none.
+ */
+
+&psram0 {
+	size = <DT_SIZE_M(8)>;
+};
