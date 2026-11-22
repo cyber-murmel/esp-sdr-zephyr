@@ -225,7 +225,8 @@ Measured on the badge on 2026-10-26, from the P4's MicroPython:
   reused, about 4000 samples (the per-unit cap).
 - So a burst arrives whole up to some 50 us, 100 us when it straddles a switch. The survey's
   records were at most 91 to 104 us long, their median 26 to 32 us.
-- The staging ring (64 KiB of raw words, 205 us at 80 MS/s) did not limit a single burst.
+- The staging ring (64 KiB of raw words, 205 us at 80 MS/s, as built then) did not limit a single
+  burst. Today `CONFIG_ESP_SDR_GAPLESS_STAGE_KB` defaults to 48 KiB (154 us).
 - So only short packets arrived whole: a Bluetooth LE packet of up to some 25 bytes on air, no
   802.15.4 frame (an ACK lasts 352 us).
 - In the office, with Wi-Fi, the survey decoded no Bluetooth LE packet at all; its bursts were
@@ -238,7 +239,8 @@ On 2026-10-27 the question was how to raise the maximum burst length.
 #### Spare staging
 
 - The ring uses the lower 64 KiB of SRAM blocks 1 and 2. Their upper halves are two more staging
-  stores, 196 KB in all with the staging ring in block 3.
+  stores: with the staging ring in block 3 that is 176 KiB in all at the default 48 KiB ring
+  (45056 samples, 563 us), 192 KiB with a 64 KiB ring.
 - Canary words guard both ends of each half; a half is in service only after both blocks came back
   intact.
 - A kept window goes to block 3 first, else to the upper half of its own unit's block, which the

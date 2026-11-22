@@ -1,7 +1,7 @@
 # ZigBit reference
 
 <!-- nav-start -->
-Previous: [Testing](testing.md) · Up: [Reference](index.md) · Next: [ESP32-S3 registers](registers-esp32s3.md)
+Previous: [Testing](testing.md) · Up: [Reference](index.md) · Next: [DMA chains for I/Q](dma-chains.md)
 <!-- nav-end -->
 
 A plan, nothing built yet. The ATZB-X-233-XPRO (ZigBit ATxmega256A3U + AT86RF233) becomes a second
@@ -239,5 +239,5 @@ badge, not an S3 app.
   and the `shell.nix` change: decided when code is written.
 
 <!-- nav-start -->
-Previous: [Testing](testing.md) · Up: [Reference](index.md) · Next: [ESP32-S3 registers](registers-esp32s3.md)
+Previous: [Testing](testing.md) · Up: [Reference](index.md) · Next: [DMA chains for I/Q](dma-chains.md)
 <!-- nav-end -->

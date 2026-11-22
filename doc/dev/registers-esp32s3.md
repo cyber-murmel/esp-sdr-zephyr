@@ -1,7 +1,7 @@
 # ESP32-S3 registers
 
 <!-- nav-start -->
-Previous: [ZigBit reference](zigbit.md) · Up: [Reference](index.md) · Next: [ESP32-C6 registers](registers-esp32c6.md)
+Previous: [Ideas from elsewhere](ideas-from-elsewhere.md) · Up: [Reference](index.md) · Next: [ESP32-C6 registers](registers-esp32c6.md)
 <!-- nav-end -->
 
 This page records what this project knows about the ESP32-S3 registers that `lib/esp_sdr` relies
@@ -1647,5 +1647,5 @@ Evidence:
 <!-- svd:end -->
 
 <!-- nav-start -->
-Previous: [ZigBit reference](zigbit.md) · Up: [Reference](index.md) · Next: [ESP32-C6 registers](registers-esp32c6.md)
+Previous: [Ideas from elsewhere](ideas-from-elsewhere.md) · Up: [Reference](index.md) · Next: [ESP32-C6 registers](registers-esp32c6.md)
 <!-- nav-end -->

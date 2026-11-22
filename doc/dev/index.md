@@ -7,7 +7,7 @@ Previous: [MCH2022 badge](../apps/mch2022.md) · Up: [esp-sdr-zephyr](../index.r
 This is the fifth and last part of the docs. The first four parts teach the radio, its sample
 paths, the modems and the apps in reading order. This part holds what you look up while working
 on them: chip and board quirks, where code and data are placed, how the tree is tested, a plan
-for a reference radio, and the register pages.
+for a reference radio, three roadmap pages and the register pages.
 
 Each page stands on its own. The guides of Parts 1 to 4 link here for the details.
 
@@ -28,9 +28,15 @@ explained in [ESP32-S3 registers](registers-esp32s3.md#how-to-read-this-page);
    hooks.
 4. [ZigBit reference](zigbit.md): a plan for an RF233 reference radio to check the software
    802.15.4 radio against.
-5. [ESP32-S3 registers](registers-esp32s3.md): the undocumented S3 radio registers the library
+5. [DMA chains](dma-chains.md): a roadmap for moving I/Q with descriptor lists: how each chip does
+   it today, four levers, a common layer and the experiments.
+6. [Hot loops](hot-loops.md): where retro and demoscene tricks could still speed up a hot loop,
+   ranked, with locations and status.
+7. [Ideas from elsewhere](ideas-from-elsewhere.md): what was taken or left from six outside
+   projects (cnlohr, bitluni, WCH).
+8. [ESP32-S3 registers](registers-esp32s3.md): the undocumented S3 radio registers the library
    relies on, with fields and evidence.
-6. [ESP32-C6 registers](registers-esp32c6.md): the same for the ESP32-C6.
+9. [ESP32-C6 registers](registers-esp32c6.md): the same for the ESP32-C6.
 
 <!-- nav-start -->
 Previous: [MCH2022 badge](../apps/mch2022.md) · Up: [esp-sdr-zephyr](../index.rst) · Next: [Chip notes](chips.md)
