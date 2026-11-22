@@ -53,6 +53,12 @@ configdefault NET_BUF_TX_COUNT
 configdefault NET_RX_STACK_SIZE
 	default 1024
 
+# The C5-Zero's image fills sram0 to the last bytes (16 B left on 2026-11-03, over by 112 B once
+# Zephyr's esp32_wifi_shutdown() added 28 B). The driver here only brings the radio up and never
+# scans or connects, so its heap gives 1 KiB of the 51200 that cover the default buffer numbers.
+configdefault HEAP_MEM_POOL_ADD_SIZE_ESP_WIFI
+	default 50176 if BOARD_WAVESHARE_ESP32C5_ZERO && ESP_WIFI_HEAP_SYSTEM
+
 # Block 3 holds the staging ring and the stream's blocks (40 KiB with the bounce buffers).
 configdefault ESP_SDR_GAPLESS_STAGE_KB
 	default 64
