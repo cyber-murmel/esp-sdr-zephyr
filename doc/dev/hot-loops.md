@@ -9,7 +9,7 @@ hot loop of the library or the apps: replay instead of compute, precomputed poin
 bands sized to the measured timing, a deeper unroll. It gives each item's location in the tree,
 what it costs today, the trick, the expected gain, the risk and the plan.
 
-Nothing here is built or measured. Repo figures cite a file and line or a doc page. Everything
+Most items are still plans; the ones marked done in the table are built and measured. Repo figures cite a file and line or a doc page. Everything
 else is marked **(estimate)** or **(check)**. The locations were checked against the tree at the
 time of writing.
 
@@ -30,7 +30,8 @@ time of writing.
      chips, a next-template offset table and 128-bit copies: about 85 down to 20 to 25 cycles a
      slot **(estimate)**.
   3. **Guard bands sized to measured lateness.** The sentinel windows allow 2000 (S3) or 400 (C6)
-     samples of switch lateness. Measured lateness is 60 to 137 (S3) and about 30 (C6).
+     samples of switch lateness. Measured lateness is 60 to 137 (S3) and about 30 (C6); later runs saw
+     up to 439 on the S3 and no gain from smaller guards, see item 5.
 - **One more on the S31:** compute paced TX words a block ahead and leave only the store in the
   timed loop.
 - **Not worth it:** self-modifying code, executable packers, boot-time generation for flash size,
@@ -45,14 +46,14 @@ time of writing.
 | 2 | GFSK modulator (Ubertooth TX, BLE advertising) | `emit_symbol()` (`apps/ubertooth/src/gfsk_mod.c:317`), `gen_steady()` (`gfsk_mod.c:344`) | 6.7 cycles a sample, a static count; 40 MS/s needs 267 MHz (`gfsk_mod.h:45`) | whole-symbol rows: 8 histories x 4 start phases x 40 words (h = 0.5), copied | 4 to 6x; first block in about 0.1 ms instead of 0.46 | low to medium: 5 KB of RAM per deviation, tight on the S3 | done: 7.9 to 1.5 cycles a sample |
 | 3 | C6 gapless markers | `fill_marks()` (`esp_sdr_gapless.c:357`), `prepare()` (`:400`), guards (`:47` to `:49`) | 1536 words a unit, about 2000 cycles, 9 % of the CPU ([Rings](../samples/rings.md)) | size `LATE_LIMIT` and the guards to the measured lateness (about 30 in IRAM) | about 1300 cycles a unit; per-unit cap about +15 to 20 % | low to medium: a late switch becomes a ring error and a restart | deferred: needs the C6 badge |
 | 4 | C6 gapless copy into staging | `copy_words()` (`esp_sdr_gapless.c:1039`) | 2.5 cycles a word (3.6 on the badge), unrolled by 8 | unroll by 32, or a computed entry into one unrolled block | 2.5 down to about 2.15 cycles a word, cap +10 to 15 % | low: about 300 B more IRAM | deferred: needs the C6 badge |
-| 5 | S3 ring sentinels | `geom_init()` (`esp_sdr_ring.c:74`) | `late` 896 (1024-pair units) up to 2000; 2944 to 7168 sentinel words a unit; measured worst 60 to 137 pairs late | `late` near 256 | about 0.3 to 0.6 cycles a pair of the 15 | low to medium: same failure mode as 3 | built, value to be measured (S3) |
-| 6 | S31 paced TX | `esp_sdr_tx_paced_poll()` (`esp_sdr_paced.c:434`) | about 220 cycles a write at x8; DAC writes capped at 1 MHz ([Paced](../samples/paced.md)) | interpolate a block ahead into TCM so the timed loop only stores | DAC rate toward the 2 MS/s store-only ceiling; 250 kS/s x 8 becomes possible | medium: one block of latency; needs a fill-in schedule | built, unit tested; board measurement pending |
+| 5 | S3 ring sentinels | `geom_init()` (`esp_sdr_ring.c:74`) | `late` 896 (1024-pair units) up to 2000; 2944 to 7168 sentinel words a unit; measured worst 60 to 137 pairs late | `late` near 256 | about 0.3 to 0.6 cycles a pair of the 15 | low to medium: same failure mode as 3 | measured (S3): no gain, default kept |
+| 6 | S31 paced TX | `esp_sdr_tx_paced_poll()` (`esp_sdr_paced.c:434`) | about 220 cycles a write at x8; DAC writes capped at 1 MHz ([Paced](../samples/paced.md)) | interpolate a block ahead into TCM so the timed loop only stores | DAC rate toward the 2 MS/s store-only ceiling; 250 kS/s x 8 becomes possible | medium: one block of latency; needs a fill-in schedule | done: measured on the S31 CoreBoard, see below |
 | 7 | C6 packer, shift 0 and 1 | `pack_run()` (`esp_sdr_gapless.c:571`), `sat_lut` (`:532`) | 9 to 13 cycles a sample, a 2 KB table in block 0 | branchless SWAR clamp instead of the table | same speed; frees 2 KB of block 0 | low | deferred: needs the C6 badge |
 | 8 | Ubertooth GFSK demodulator | `apps/ubertooth/src/gfsk_groups.S`, `gfsk_slice.S` | 53 of 60 cycles a sample open ([GFSK](../modem/gfsk.md)) | per-mode kernel variants (static, not self-modifying) | 1 to 2 cycles a sample | costs IRAM the S3 does not have (1.4 KB left); skip | deferred: skip for now, with the board |
 | 9 | Paced RX fill (C6, C5) | `esp_sdr_rx_paced_fill_iq8()` (`esp_sdr_paced.c:214`) | 59 of 80 cycles a sample at 2 MS/s, three register reads a sample | read Q once and fix the I/Q skew on the host with a fractional delay | maybe 59 to about 45, so 2.5 to 3+ MS/s | high: the skew must be constant and corrected exactly, or the image rises | deferred: needs the C6 or C5 |
 
-Items 1, 2 and 5 of this table are planned next, on the S3 boards on the desk. Items 3, 4, 6, 7, 8
-and 9 are deferred with the board they need.
+Items 1, 2, 5 and 6 are done (see the status of each section below). Items 3, 4, 7, 8 and 9 are
+deferred with the board they need.
 
 ## 1. ACK and burst slots on the S3 ring CPU
 
@@ -100,7 +101,7 @@ frames and chunkings.
 - Read the cycles with `wpan bench ack` (`from slot 416 as the ring builds it`) and the longest
   400-word slice with `wpan status` (`longest waveform slice`). Procedure and numbers:
   [802.15.4](../modem/ieee802154.md#ack-waveform).
-- The estimate's target is about 6 to 8k cycles for the variable part, not yet measured.
+- The estimate's target was about 6 to 8k cycles for the variable part; the measured result is 11.9k (see the table and [802.15.4](../modem/ieee802154.md#ack-waveform)).
 
 The GDMA gather of this tail was measured on the DevKitC (`wpan bench dma ack`,
 [DMA chains](dma-chains.md#measured-numbers)): bit-exact, but the DMA takes 389 us (469 us without
@@ -271,12 +272,12 @@ help because both ends can regenerate them, not because they are fast.
 
 ## Suggested order
 
-1. Item 1 (slot assembly), with the golden-word test.
-2. Item 5 on the S3, measured with the ring stats.
-3. Item 2 when a GFSK burst source needs real-time speed.
+1. Item 1 (slot assembly), with the golden-word test (done).
+2. Item 5 on the S3, measured with the ring stats (done, no gain).
+3. Item 2 when a GFSK burst source needs real-time speed (done, 7.9 to 1.5 cycles a sample on the XIAO).
 4. Items 3 and 4 together on the C6 with the badge: log the lateness histogram, shrink the guards,
    unroll the copy, re-run the badge survey to measure the cap.
-5. Item 6 only when someone needs faster S31 TX.
+5. Item 6 only when someone needs faster S31 TX (done).
 
 <!-- nav-start -->
 Previous: [DMA chains for I/Q](dma-chains.md) · Up: [Reference](index.md) · Next: [Ideas from elsewhere](ideas-from-elsewhere.md)

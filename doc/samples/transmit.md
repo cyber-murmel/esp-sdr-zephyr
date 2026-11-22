@@ -194,6 +194,12 @@ MicroPython's `esdr.tx_start(..., repeat=True)` loops a buffer through this engi
 - `tx_scale()` refills it, a pause of some milliseconds.
 - The app's one LVGL draw buffer keeps the image below that group.
 
+#### Streaming over Ethernet
+
+[txstream_eth](../../apps/txstream_eth/README.rst) streams the S31's DAC from the network: CPU 1
+flips whole TCM groups between the engine and the filler, 20 or 40 MS/s, with the library of
+[Transmit stream library](../dev/txs.md).
+
 ## Turnaround
 
 Receive and transmit share one physical RF front end and antenna pin.

@@ -62,6 +62,7 @@ These headers belong to no group; each has a file page only.
 | --- | --- |
 | `esp_sdr_xtensa.h` | ESP32-S3 CPU helpers: the cycle counter and the vector unit (PIE) |
 | `esp_sdr_ring_stage.h` | The receiver's output staged in internal RAM for a consumer on the other CPU |
+| `esdr_dma_ring.h` | The bookkeeping of a DMA receive ring whose memory can be handed away in slabs |
 | `esdr_link.h` | The framed serial link between a host and `apps/osmosdr_serial` |
 | `esdr_fpga.h` | The esp-sdr gateware on the MCH2022 badge's iCE40UP5K |
 | `mch2022_coproc.h` | What `apps/mch2022_coproc` adds to the stock firmware of the MCH2022 badge's RP2040 |

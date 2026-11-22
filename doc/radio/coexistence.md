@@ -365,11 +365,11 @@ bursts. See [multiapp internals](../apps/multiapp-internals.md), "Bank 2 as a mo
    SDR claim and preempt API; scheduled windows with the `_phy_enable` backstop. T5 done: Wi-Fi
    unharmed, 88 % to the SDR with no traffic. Open: a UDP rate test, and the cause of the spurious
    wake after a release.
-3. **Shared `phy` on the S3** (built, not yet run on the board): `wifi` has no libphy and requires
+3. **Shared `phy` on the S3** (done, run on the DevKitC 2026-11-24: `wifitest` pings 300 of 300, coex ring duty 87 % idle, pings 150 of 150 during windows): `wifi` has no libphy and requires
    `phy`; `phy.ver` is widened; the arbiter is in `phy`; PLL tracking is filtered to Wi-Fi's own
    holds; `module_heap` is 35840 bytes. `wifi` and `phy` fill it, `sdr` loads into dump bank 2
    ([RAM pressure](#ram-pressure-on-the-s3)). The `coex` app is the bench (ring windows only).
-4. **`espnow` module** (built, not yet run on the board): `espnow.o` of libespnow, a Zephyr-side API
+4. **`espnow` module** (done, run on the DevKitC and the XIAO 2026-11-24: coex 408 of 500 ACKed, `espnowtest` 300 of 300 each way): `espnow.o` of libespnow, a Zephyr-side API
    and the `espnow` shell, in PSRAM; `manatick.o` stays in `wifi` because net80211 reads it. `coex`
    requires it, and `espnowtest` boots ESP-NOW without an access point. Not done: the split of
    `wifi_core` and `wifi_net`.

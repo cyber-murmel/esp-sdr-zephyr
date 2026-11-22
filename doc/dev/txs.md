@@ -4,9 +4,9 @@
 Previous: [S31 to host at 80 MS/s through a Colorlight 5A-75B](s31-fpga-bridge.md) · Up: [Reference](index.md) · Next: [Network services on the S31 multiapp host](network-services.md)
 <!-- nav-end -->
 
-Stage 1 of the continuous I/Q transmit stream (design: the S31 transmit stream plan): the parts that
-need no hardware. Plain C, no Zephyr kernel calls, tested on native_sim (`tests/unit/txs`). Stage 3
-(`esp_sdr_dacstream`, a CPU1 thread and the ownership writes) calls into it.
+The library of the continuous I/Q transmit stream (design: the S31 transmit stream plan): the parts
+that need no hardware. Plain C, no Zephyr kernel calls, tested on native_sim (`tests/unit/txs`). The
+CPU1 thread and the ownership writes are in `apps/txstream_eth` (`src/tx_stream.c`), which calls into it.
 
 | Header | Contents |
 |---|---|
@@ -15,7 +15,7 @@ need no hardware. Plain C, no Zephyr kernel calls, tested on native_sim (`tests/
 | `txs_jit.h` | Jitter cursor: packets by absolute index into the free window, gap zeroing, holes refilled by reordered packets, duplicates, late, waiting, far; close at the point of no return (underrun); restart index. |
 | `txs_credit.h` | Credit limit and the 64 byte status record. |
 | `txs_wire.h` | VITA 49.2 signal data, TSI none, TSF sample count, 16 byte header; parser and header writer. |
-| `txs_expand.h` | Kernel table (`ref`, `fast`, later `pie`): 8+8 to DAC words, ready words, zero fill. |
+| `txs_expand.h` | Kernel table (`ref`, `fast`, `pie`): 8+8 to DAC words, ready words, zero fill. |
 
 Loop of the CPU1 thread, as the end to end test (`tests/unit/txs/src/test_sim.c`) drives it:
 
@@ -135,9 +135,9 @@ results to those of the 64 bit code. `tests/unit/txs/src/test_sim.c` also has th
 the real configuration (`test_real_config_*`): a sender in step with the clock needs 3000 words
 (150 us) beyond a group of lead, the credit depth is the stall it rides out (12 buffers of 702 words:
 300 us, 19: 500 us, 34: 1100 us), and a status every 175 us (depth / rate / 2) costs the sender
-nothing, one every 351 us blocks it on the credit hundreds of times as often. Proposal for stage 3:
-a `TXS_CHUNK` and a `TXS_SAMPLE` category in `esp_sdr_place.h` and the chip headers (IRAM for the
-CPU1 thread, no flash fetch in the window). The kernel tables (const, read once per packet) stay in
+nothing, one every 351 us blocks it on the credit hundreds of times as often. The placement of the
+CPU1 thread (IRAM, no flash fetch in the window) is done by per-function rules in
+`apps/txstream_eth/place.h`, not by new categories. The kernel tables (const, read once per packet) stay in
 flash.
 
 ## Board findings and what the app does about them (txstream_eth)

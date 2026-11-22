@@ -5,7 +5,9 @@ Previous: [Transmit stream library (lib/esp_sdr/src/txs)](txs.md) · Up: [Refere
 <!-- nav-end -->
 
 The ESP32-S31 CoreBoard's multiapp host is a network host: Ethernet, addresses and a name, as the
-base for SSH, MCUmgr and file transfer. This page records the choices of each phase.
+base for SSH, MCUmgr and file transfer. This page records the choices of each phase, as they stand now. Phases
+1 to 4 are built and run on the CoreBoard (the HIL suite `apps/multiapp/pytest/test_multiapp_s31.py`, 41 tests); phase 5 (SFTP)
+was dropped and phase 6 (the Ethernet streamers as extensions) decided against ([Phases 5 and 6](#phases-5-and-6-decided-against-2026-11-27)).
 
 ## Phase 1: network host
 
@@ -17,7 +19,7 @@ Built and run on the CoreBoard (cb1, cb2). Shared fragments in `apps/common/net/
 - `net.conf`: DHCPv4 and IPv6 (link-local, SLAAC, ND), UDP and TCP, the net shell, no static
   address, hostname `esdr` with the whole MAC appended in hex (`esdr0123456789ab`), the mDNS responder. Buffers
   for a control plane: 6 RX and 4 TX packets, 7 RX and 3 TX buffers of 1536 bytes (64 byte
-  aligned for the MAC's DMA), 4 RX and 4 TX descriptors, 4 contexts, 3 connections (phase 2 raises them to 8 and 10, below). The network
+  aligned for the MAC's DMA), 4 RX and 4 TX descriptors, 4 contexts, 3 connections (phase 2 raises them to 8 contexts and 10 connections, phase 3 to 10 and 12, below). The network
   threads and the TCP worker run preemptible at priority 10 and the MAC's refill thread at 9:
   below the radio, the app (0) and the USB threads (8) that run osmosdr_hs's stream. The system
   work queue stays cooperative (-1): it feeds the liveness watchdog and runs osmosdr_hs's link and
@@ -46,7 +48,7 @@ Built and run on the CoreBoard (cb1, cb2). Shared fragments in `apps/common/net/
   [Code placement](code-placement.md).
 - Internal RAM is therefore short: the host's stacks and plain buffers go to the LP RAM, below.
 
-### Fit with the LP RAM (module heap 118784, TX and RX buffers internal)
+### Fit with the LP RAM (TX and RX buffers internal)
 
 `apps/multiapp/multiapp_lpram_s31.ld` puts into `lp_ram_seg` (from 0x2E0000B0) the COLD things only:
 the stacks of main, the shell and the system work queue, the system heap (one
@@ -58,8 +60,8 @@ with the app's stack, the USB device thread and the UDC thread there lost sample
 bounds the section, and ASSERTs check the main stack and the heap are in it. The "no atomics in LP
 RAM" rule of `esp_sdr_place.h` is an assumption of that header (commit 716790e), not a measurement;
 nothing placed here has an atomic.
-The module heap is 117760 B: osmosdr_hs's measured use (116292 B of the former 122880) plus a
-1.4 KB margin. The image ends 512 B below the ring.
+In this first fit the module heap was 117760 B (osmosdr_hs's measured use, 116292 B, plus a 1.4 KB margin) and the image
+ended 512 B below the ring. Phase 2 moved osmosdr_hs out of it: the module heap is 16384 B now ([Memory: the group 3 heap](#memory-the-group-3-heap)).
 
 ### Board numbers and what they set (cb2, s31-qol-uart)
 
@@ -109,7 +111,7 @@ The module heap is 117760 B: osmosdr_hs's measured use (116292 B of the former 1
 ## Phase 2: own signing key and MCUmgr over UDP
 
 Status (2026-11-27): run on the boards (cb1, cb2): MCUboot with the own key, the gate, uploads and files, signed
-extensions, the stream rules; see "Board results" and "Not checked" below. The internal RAM comes from the group 3
+extensions, the stream rules; see "Board results" and "What ran and what did not" below. The internal RAM comes from the group 3
 heap below.
 
 ### The signing key
@@ -239,8 +241,8 @@ without an app that has the drive on the bus the claim is only the lock.
 
 Why reads too: on the board (cb1, 20 MS/s) a file read of 3 KB during a stream cost about 2 gaps: flash reads
 stall the cache as writes do. Only the os group (echo, parameters, info) runs from RAM and stays open. This is a
-rule for every network way into the flash while an app streams, SFTP and SSH file access of phases 3 and 5 included:
-refuse them with the same "streaming" error, and take the check from `stream_busy()` (`netsvc.c`).
+rule for every network way into the flash while an app streams, the SSH key file access of phase 3 included (SFTP, once
+planned as phase 5, was not built): refuse them with the same "streaming" error, and take the check from `stream_busy()` (`netsvc.c`).
 
 ### `west mcumgr`
 
@@ -323,7 +325,7 @@ kernel objects stay out of LP RAM), so the room comes from where osmosdr_hs's 10
   about 107 KB. USB DMA or another bus master reading group 3 in that microsecond would see the engine's data:
   not measured (board test: a stream with many restarts).
 
-Numbers of the build `s31-qol-multiapp` (the product): end of image 0x2F02EE80 (after the rebase on the hotswap work and the drive's thread, cache and FATFS object going internal; 0x2F029980 before), so 70016 bytes of group 0
+Numbers of the phase 2 build `s31-qol-multiapp` (the product; SSH, MicroPython and FPU sharing came later and took most of the arena, below): end of image 0x2F02EE80 (after the rebase on the hotswap work and the drive's thread, cache and FATFS object going internal; 0x2F029980 before), so 70016 bytes of group 0
 (the libc arena up to the ring at 0x2F040000) are free where 512 were; LP RAM 20388 of 32768 used (MCUmgr's part:
 stack 3072 and two 1444 byte buffers, 6336 bytes with alignment); MCUboot 55856 of 57344.
 
@@ -332,7 +334,7 @@ stack 3072 and two 1444 byte buffers, 6336 bytes with alignment); MCUboot 55856 
 | osmosdr_hs | 70016 B above the image, about 7 KB in `module_heap` | about 2.4 KB in `bank2_heap` (107 of 109.5 KB) |
 | rfprobe, capture | 70016 B above the image, about 7 KB in `module_heap` less rfprobe's kernels | 0: the capture bank (106512 bytes) and 4000 bytes of tail nobody uses |
 
-SSH (phase 3) takes 38 KB of the 70 KB in group 0 (below), leaving 29440 B.
+SSH (phase 3) takes 40.6 KB of the 70 KB in group 0 (below), leaving 29440 B; MicroPython's imports and FPU sharing (phase 4) leave the arena at 23808 B (product) and 25984 B (UART variant) in the current build.
 
 #### App switches and group 3
 
@@ -346,7 +348,8 @@ capture) lack, so `profile_of()` differs and the switch reboots (`reboot_s31.c` 
 it so if another app gets `BANK2` with the same classes, `switch_ok()` refuses an in-place switch on the S31 whenever
 the new app's `bank2` differs from the boot's: group 3 changes hands only through a reboot. Switches that keep the
 flag (rfprobe and capture, osmosdr_hs to itself) stay in place; the heap and the reservation then do not change.
-Not run on a board.
+The in-place switches ran on the CoreBoard in the hot-swap round (before the network host); the `BANK2` flip path itself is never taken
+on the S31 and has not run.
 
 ### Board results (cb2, UART variant, 2026-11-26)
 
@@ -430,21 +433,23 @@ which takes the global `irq_lock()` under SMP.
 take 9792 of the 16384 bytes of `module_heap`, 6592 free (the check fails below 1536). Only `sdr` loads there in
 the rfprobe and capture boots; osmosdr_hs lives in group 3.
 
-### Not checked
+### What ran and what did not
 
 Run on the boards (cb1, cb2): the gate, upload, swap and revert, the dev-key refusal, the trial window (120 s),
 the stream refusals, the signature check and its time, a tampered file refused, file put, get and crc in every
-order. osmosdr_hs at 20 MS/s for 300 s with the network up, twice: 11 and 13 gaps, in bursts (events on the LAN
-that the single core takes, accepted), 0 gaps with the interface down; ring 0 errors. Not run: a network update
-of a build with a changed bootloader.
+order. osmosdr_hs at 20 MS/s for 300 s with the network up: the first runs of the phase 2 image had 11 and 13 gaps, in bursts
+(traffic on the LAN that the single core takes), 0 gaps with the interface down; ring 0 errors. Later runs of the current image
+with no traffic, and with an idle SSH session open, had 0 gaps (with and without FPU sharing); what traffic costs is in
+"Single core: SSH and the stream" below. Not run: a network update of a build with a changed bootloader.
 
 ## Phase 3: SSH server
 
 `apps/common/net/ssh.conf` (added after `mcumgr.conf` by `sysbuild.cmake`, S31 CoreBoard only; it needs MCUmgr, whose
 `netsvc.c` holds the stream rule): the Zephyr SSH server (`subsys/net/lib/ssh`, experimental) on TCP port 22, IPv4 and IPv6
 (the server's socket takes both; `NET_IPV4_MAPPING_TO_IPV6` is selected by it, MCUmgr's sockets keep their own port space),
-public key login only, the Zephyr shell on the session. Run on the boards (cb1 and cb2) in the version before the RSA removal below; the numbers of the link are of the current build; the HIL tests are
-in `apps/multiapp/pytest/test_multiapp_s31.py` ("SSH").
+public key login only, the Zephyr shell on the session. Run on the boards (cb1 and cb2); the HIL tests are
+in `apps/multiapp/pytest/test_multiapp_s31.py` ("SSH"). The sections below mix the board findings of the first versions (an RSA
+host key, since removed) with the current rules; where a number is old, the text says so.
 
 Is SSH always on? Yes: the server starts at boot, once there is a host key, and needs no `arm` of its own. A key that is
 not in the key table cannot log in, and an empty table (no `authorized_keys`, a fresh board) means nobody can: the
@@ -457,7 +462,7 @@ session like from the CDC-ACM or UART shell, so the session is the authenticated
 The ECDSA host key is made in well under a second and replaced the stored RSA key (cb2 had finished its RSA key after about 40 minutes); the
 fingerprint is the same after resets, and OpenSSH's `known_hosts` matches `ssh hostkey`. ed25519 and ECDSA logins work, an unknown key is
 refused, password login is not offered (`Permission denied (publickey)`), exec output and status come back (0, and 8 for an unknown command),
-`mcumgr arm 1` works over SSH. A connection takes about 0.6 s. Stacks: `sshd_work` had 1472 of 6144 bytes unused after boot, the server thread
+`mcumgr arm 1` works over SSH. A connection takes about 0.6 s (the key exchange). Stacks: `sshd_work` had 1472 of 6144 bytes unused after boot, the server thread
 3872 of 6144 after sessions. What the boards found, and what changed after it:
 
 - **A crash with sessions back to back** (`ssh key remove`, `ssh key add`, a login with that key, as separate exec sessions): `fatal error 0:
@@ -466,11 +471,12 @@ refused, password login is not offered (`Permission denied (publickey)`), exec o
   callback (where `console_mux.c` marked the shell free) and only then aborts itself (`shell.c`, `kill_handler()`). The server thread has the higher
   priority, so a new session ran in between and `shell_init()` made the thread again while the old one was still alive. Now a new session
   waits for the callback (`sh_gone_sem`) and then `k_thread_join()`s the old thread before it starts the shell; Zephyr's own SSH shell backend
-  has the same window. HIL test `test_ssh_fast_exec_cycles_do_not_crash` (20 rounds of remove, add, login, command; then `multiapp crash`).
+  has the same window. HIL test `test_ssh_fast_exec_cycles_all_succeed` (20 rounds of remove, add, login, command; then `multiapp crash`).
 - **Over-long exec commands** (more than 255 characters) and a busy shell no longer drop the connection: the request is accepted, the answer is
   a line on stderr and the exit status is 1.
 - **The first connection after a boot** (39.6 s once, `Connection closed` once): the server now starts after the key file was read (a few tries,
-  then it starts anyway and the work thread keeps trying), so an early login does not meet an empty key table. Not a proven cause: on this PC
+  then it starts anyway and the work thread keeps trying), so an early login does not meet an empty key table. The cause of the slow first
+  connection is not proven: on the test PC
   two interfaces share the subnet and the first IPv4 packet to a freshly booted board is often lost until ARP settles (the same as for
   MCUmgr, `west mcumgr` notes); `ssh -o ConnectTimeout` retries cover that.
 
@@ -545,7 +551,7 @@ before trusting the first connection; clients that pin the key (`StrictHostKeyCh
 
 `/FLASH:/ssh/authorized_keys` on the FAT volume (the drive the PC sees, so a PC can edit it directly, and `west mcumgr fs put
 authorized_keys /FLASH:/ssh/authorized_keys` writes it over the network), OpenSSH lines: `ssh-ed25519 <base64> [comment]`,
-`ecdsa-sha2-nistp256 ...`. Other types (`ssh-rsa`, `ecdsa-sha2-nistp384`/`521`, `sk-*`, `ssh-dss`) are listed with
+`ecdsa-sha2-nistp256 ...`. Other types (`ssh-rsa`: there is no RSA in this build, `ecdsa-sha2-nistp384`/`521`, `sk-*`, `ssh-dss`) are listed with
 their fingerprint and `NOT USED`. Blank lines and `#` lines are skipped; a line with key options (`command=`, `from=`,
 `restrict`, ...) is refused as a whole, because none of them would be honoured. Loaded at boot (when no stream runs and the PC
 is not using the drive: some tries), by `ssh keys reload` and after every `ssh key add` / `ssh key remove`. Six keys fit
@@ -578,7 +584,7 @@ instance (`ssh_sh`: transport over `ssh_channel_read`/`_write`, prompt `esdr:~$ 
 | `ssh <host> shell` | exec "shell" | the interactive Zephyr shell, also when a console is registered |
 | `ssh <host> '<command>'` | exec | the command in the Zephyr shell (`shell_execute_cmd()`, on the `sshd_work` thread: the server thread has to move the output): its output, then the exit status (`exit-status`, EOF, close). The command is at most 255 characters: a longer one, or a busy shell, is answered on stderr with status 1. No echo, no prompt, no colours. The shell's negative errno becomes its absolute value as status (a missing command: 8). Input of the client is ignored |
 | `pty-req`, `env`, `window-change` | | accepted and ignored (the client's terminal does the editing) |
-| `ssh -s <host> sftp` | subsystem | refused, the channel is closed (phase 5) |
+| `ssh -s <host> sftp` | subsystem | refused, the channel is closed (SFTP was not built, [Phases 5 and 6](#phases-5-and-6-decided-against-2026-11-27)) |
 
 `multiapp_console_register(const struct multiapp_console *)` is the hook phase 4 uses ([Phase 4](#phase-4-the-micropython-repl-over-ssh)): the MicroPython REPL registers
 `open()` (a new session: the console takes over `io->read` and `io->write`, and does its work in a thread of its own),
@@ -643,16 +649,16 @@ perfectly at the same time:
 | an idle SSH session open (300 s run) | 0 |
 | 10 exec logins, one every 5 s | 30 |
 | 10 commands in one open interactive session, one every 5 s | 61 |
-| 11 pings, one every 5 s (phase 3 image) | 15 |
-| the same pings with the phase 2 image (main, no SSH) | 28 |
+| 11 pings, one every 5 s | 15 |
+| the same pings with the phase 2 image (before SSH existed) | 28 |
 
 The per-packet work of the network stack on the one core costs gaps, and that came before SSH. Use SSH and MCUmgr when no stream runs; an open
-idle session costs nothing. A login costs about 0.5 s of CPU at priority 10. `ssh key list` works during a stream (it prints the table in RAM, with
+idle session costs nothing (300 s at 20 MS/s: 0 gaps, with and without FPU sharing, once the keep-alive is paused during a stream). A login costs about 0.5 s of CPU at priority 10. `ssh key list` works during a stream (it prints the table in RAM, with
 a note that the file is not read then); `ssh keys reload`, `ssh key add` and `ssh key remove` are refused (below).
 
-**Keep-alive and the stream.** The TCP keep-alive probes of an idle session (`ssh.conf`: one a minute at 30 s idle with the probe count and interval
-of the table above) cost the stream a gap each on this core (cb1, 300 s at 20 MS/s with an idle session open: 4 gaps, one a minute; none
-without the keep-alive). `a system work queue item looks once a second whether a stream runs and pauses them then (`ssh_server_set_tcp_keepalive(false)` sets a flag that
+**Keep-alive and the stream.** The TCP keep-alive probes of an idle session (`ssh.conf`: 30 s idle, 3 probes 10 s apart) cost the stream a gap each
+on this core (cb1, 300 s at 20 MS/s with an idle session open and the keep-alive always on: 4 gaps, one a minute; none
+without the keep-alive). So a system work queue item looks once a second whether a stream runs and pauses them then (`ssh_server_set_tcp_keepalive(false)` sets a flag that
 the server thread, which owns the sockets, applies within a second to the open connections and to new ones (`SO_KEEPALIVE` cleared); Zephyr's TCP stops probing at once, its timer fires once more without
 sending), and starts them again when the stream ends. A client that vanished during a stream is found after it ends; the login grace time
 still protects the slot from clients that never log in. (Zephyr's `keep_alive_timer_stop()` cancels the wrong timer, `fin_timer`, so a pause
@@ -721,8 +727,8 @@ than the ring's first sighting as a new first sighting. A run counter in `lib/es
 | mbedTLS heap (`_mbedtls_heap`, `MBEDTLS_HEAP_CUSTOM_SECTION`, `net_psram_s31.ld`) | PSRAM | 65536 B (was 131072 for RSA key generation; the key exchange of a login is the largest user now; the peak is not measured) |
 | code (mbedTLS and PSA ECDSA and curve25519, the SSH library) | flash | about 70 KB more |
 
-Group 0 free above the image (the libc arena) is 29440 B (UART variant 32000), from 70016 before SSH: 40.6 KB, 17 KB of it the server's object (the 6 KB
-stack included). LP RAM used: 30116 of 32768 B (about 830 B left), from 20388. Dropping RSA (the ECDSA build before it had 31744 B and the same LP RAM) saved
+Group 0 free above the image (the libc arena) was 29440 B with SSH (UART variant 32000), from 70016 before SSH: 40.6 KB, 17 KB of it the server's object (the 6 KB
+stack included). With MicroPython's imports and FPU sharing (phase 4) it is 23808 B (UART variant 25984) now. LP RAM used: 30116 of 32768 B (about 830 B left), from 20388. Dropping RSA (the ECDSA build before it had 31744 B and the same LP RAM) saved
 about 20 KB of instruction flash (`irom0` 455168 to 434688 B) and 1 KB of data flash, 512 B of internal RAM, nothing in LP RAM or PSRAM; the signed image
 file shrank by 1.1 KB only, its segments being 64 KB pages. The checks that hold the rules
 (`scripts/tcm_groups.py --multiapp`: `ssh_sh_stack` and `sshd_work_stack` in the LP RAM and never PSRAM, `_mbedtls_heap` in PSRAM,
@@ -730,13 +736,13 @@ file shrank by 1.1 KB only, its segments being 64 KB pages. The checks that hold
 `POST_KERNEL`, after PSRAM works (PRE_KERNEL_1 priority 40; the other placements in `net_psram_s31.ld` are stacks and data pools);
 k_heap and slab storage never go there. The SSH server thread runs at 10 like the network threads and `sshd_work` at 14 (the shell's), all
 below the app (0, 1) and the USB threads (8); a login's signature check runs on the extension-signature worker at 10 for the
-Ed25519 case. The server thread's stack was not measured: the unused bytes after the last session are in `ssh status`
+Ed25519 case. The server thread's unused stack after the sessions was 3872 of 6144 B on the board (above); the current figure is in `ssh status`
 (`CONFIG_INIT_STACKS`), and `sshd_work`'s are logged once the keys are loaded.
 
 ### Tests
 
 Host (`tests/host/test_sshkeys.py`, in `scripts/run-host-tests.sh`): `authkeys.c` and `console_mux_core.c` built for the PC;
-SHA-256 against `hashlib` for the block edges; fingerprints of RSA (listed), ed25519 and ECDSA keys against `ssh-keygen -lf`;
+SHA-256 against `hashlib` for the block edges; fingerprints of RSA (listed, never used), ed25519 and ECDSA keys against `ssh-keygen -lf`;
 authorized_keys lines (CRLF, comments, options, ed25519, ECDSA P-256 and other curves, broken base64, a wrong type name, too long, even
 modulus); the raw key data, the SPKI DER against OpenSSL's, the wire blob from PKCS#1 and from a point against OpenSSH's; the
 console registry (default shell, register, `-EBUSY`, exec never gets a console, unregister tells the glue under the lock).
@@ -746,10 +752,10 @@ Board (`apps/multiapp/pytest/test_multiapp_s31.py`, with the OpenSSH client of t
 an ed25519 and an ECDSA key made in a temp dir and added with `ssh key add`; `ssh <host> 'kernel version'` and
 `'multiapp list'` over exec with their output and status, an unknown command's status; `ssh <host> 'mcumgr arm 1'` and an MCUmgr
 echo after it; the interactive shell by `ssh <host> shell` and by a plain `ssh -T <host>`; an unknown key of each type refused (RSA included), an RSA line refused by `ssh key add`, an over-long command answered on stderr, 20 rounds of fast
-exec sessions with key add and remove in which every command must succeed, followed by `multiapp crash`; three concurrent clients that must all be served;
+exec sessions with key add and remove in which every command must succeed, followed by `multiapp crash`; three concurrent clients that must all be served; killed clients and an idle connection that must not wedge the shell
+or a login; the stream rule over SSH (it starts `esdr_usb` and skips without that tool);
 password login not offered; a subsystem refused; `ssh status` and an option line refused by `ssh key add`; the host key's
-fingerprint the same after `kernel reboot cold` over SSH (last). The keys are removed at the end (`ssh key remove <comment>`). Not
-tested: the stream rule over SSH (no stream in the suite); the REPL path has its own tests ([Phase 4](#phase-4-the-micropython-repl-over-ssh)).
+fingerprint the same after `kernel reboot cold` over SSH (last). The keys are removed at the end (`ssh key remove <comment>`). The REPL path has its own tests ([Phase 4](#phase-4-the-micropython-repl-over-ssh)).
 
 ### Setup
 
@@ -764,16 +770,16 @@ ssh -i ~/.ssh/id_esdr -o IdentitiesOnly=yes esdr0123456789ab.local            # 
 ssh -i ~/.ssh/id_esdr esdr0123456789ab.local 'mcumgr arm 10'                   # one command
 ```
 
-Not checked on a board: the generation time of the ECDSA key (a moment, not measured), the stack headroom of the server
-thread, `sshd_work` and the session shell, a login from a current OpenSSH client against this server with each key type, an
-exec command's output and status through OpenSSH, a stream running during a login, the mbedTLS heap's peak, a warm reboot that keeps
-the host key.
+Not measured: the generation time of the ECDSA key ("well under a second"), the stack headroom of the session shell, the mbedTLS
+heap's peak. Logins with each key type from OpenSSH, exec
+output and status, and a cold reboot (`kernel reboot cold`) that keeps the host key are tests of the suite; a warm reboot is not.
 
 ## Phase 4: the MicroPython REPL over SSH
 
 MicroPython is an app of the S31 multiapp host (`apps/multiapp/micropython.cmake`, the same sources as the S3's), and a plain
-`ssh <host>` reaches its REPL while it runs. State: it builds (product and UART variant); nothing of it has run on a board
-yet ([Not checked on a board](#not-checked-on-a-board-phase-4)).
+`ssh <host>` reaches its REPL while it runs. State: it builds (product and UART variant) and runs on the CoreBoard; the REPL, `esdr.shell()`,
+the flash worker and the stack sizes below are measured there and covered by the HIL suite (marker `switches_app`). What is not
+checked is listed in [Not checked on a board](#not-checked-on-a-board-phase-4).
 
 ### What runs
 
@@ -802,17 +808,18 @@ local path needs `CONFIG_ESP_SDR_DUMPRING` and two CPUs, `esdr_local.c`: this ho
 in the same `sdr` module, but MicroPython's `esdr` does not use it), the Pcap engine (needs the ring stage), the PIE FFT and frame
 passes (the portable code runs instead and is slower; the S31's PIE could do them, `lib/esp_sdr` has no such kernel for them yet), and
 the display apps. What is there: bursts through the library, transmit bursts (`CONFIG_ESP_SDR_REPLAY` is on in the host), the packet
-modem, `esdr.shell()`. None of it has run on this host: `esdr_local.c` ran standalone on the VIEWE board only.
+modem, `esdr.shell()`. Of the radio parts only the crystal calibration requests run in the HIL suite on this host; `esdr_local.c`'s bursts
+ran standalone on the VIEWE board only.
 
 ### Memory
 
 - **GC heap in PSRAM**: `multiapp_psram_spare()`, the PSRAM above what the linker placed and the file buffer, as on the S3 (`mp_glue.c`
-  adds it with `gc_add()`; the 16 KiB token heap of `esdr_radio.c` is the extension's bss). 13,207,488 bytes of the 16 MiB in this
-  build (16 MiB less the image's 3,569,728 B: the host's llext heaps, the network stacks and its own bss). No `k_heap` or `k_mem_slab` is
+  adds it with `gc_add()`; the 16 KiB token heap of `esdr_radio.c` is the extension's bss). 13.99 MB read with `gc.mem_free()` on the board (the first
+  build-time computation, 13,207,488 B, was 16 MiB less the image's 3,569,728 B: the host's llext heaps, the network stacks and its own bss). No `k_heap` or `k_mem_slab` is
   in PSRAM (`tcm_groups.py --multiapp`, unchanged); the PSRAM is `gc_add()` memory only.
 - **The thread's stack is in PSRAM** (32 KB, `CONFIG_MULTIAPP_MICROPYTHON_STACK`, the extension's bss). An 8 KB internal stack from the arena
-  gave a Python recursion depth of 11 on the board (`micropython.mem_info()`: "stack: 1044 out of 7168"), and the arena (23936 B with
-  `FPU_SHARING`, from 28544 B) cannot spare more. The price: a thread whose stack is in PSRAM must never touch the flash itself (the
+  gave a Python recursion depth of 11 on the board (`micropython.mem_info()`: "stack: 1044 out of 7168"), and the arena (23808 B in the product
+  build, 25984 B in the UART variant, with `FPU_SHARING`; 28544 B before it) cannot spare more. The price: a thread whose stack is in PSRAM must never touch the flash itself (the
   flash driver turns the cache off, and its own stack goes with it). So:
   - everything MicroPython calls that can reach the flash runs on a worker, `mp_flash` (`ext/mp/mp_repl_s31.c`: a work queue, priority 13
     like MicroPython, an internal stack from the libc arena allocated at the first call, `CONFIG_MULTIAPP_MICROPYTHON_WORKER_STACK`, 2144 B);
@@ -853,16 +860,16 @@ modem, `esdr.shell()`. None of it has run on this host: `esdr_local.c` ran stand
   from the arena with no guard. The test (`test_mp_esdr_shell_plain_and_at_the_recursion_limit`) runs the read-only set plus `multiapp crash`, `ssh key add`, `key list`, `key remove` and `keys reload` of a throwaway key, `mcumgr arm` and `disarm`, `fs ls` and `fs statvfs` of `/FLASH:` and `settings list`, and asserts the 90 % rule over them. Measured on the board with a 4096 B stack, that set peaked at 1916 B (with the 1920 B size tried before, 4 bytes were left): 1916 / 0.9 = **2144 B**. The failure message prints the peaks. A job that takes the worker past 90 % logs `the flash worker's stack peaked at ...`
   once. **Measuring the rest of the arena:** after the HIL run, `esdr.stacks()[5]` is the arena's allocated bytes; less the worker's stack
   (2144 B, once started) is what the rest of the host takes after MicroPython started: set `CONFIG_MULTIAPP_MICROPYTHON_ARENA_USE` from it
-  (the build assumes 8192 B, "assumed, not measured" in its message, until then; one board reading after the HIL set gave 4 B besides the worker's stack, so 8192 B is a reserve). `tcm_groups.py --mp-ext` fails the build when the arena is
+  (it is 0 today, so the build assumes 8192 B and says "assumed, not measured" in its message; one board reading after the HIL set gave 4 B besides the worker's stack, so 8192 B is a reserve). `tcm_groups.py --mp-ext` fails the build when the arena is
   smaller than the worker's stack plus `CONFIG_MULTIAPP_MICROPYTHON_ARENA_USE`.
 - **FPU:** `CONFIG_FPU_SHARING=y` in `socs/esp32s31_hpcore.conf` (measured on cb1, 300 s at 20 MS/s: 0 gaps both ways, 40153.2 kB/s with, 40150.5
   without). On RISC-V Zephyr saves the FP state lazily at the first FP instruction of a thread (`arch/riscv/core/fpu.c` sets `K_FP_REGS`
   itself): no thread has to be created with `K_FP_REGS`; the flag the MicroPython thread passes is harmless. The cost is internal RAM:
-  the arena 28544 B to 23936 B (the save area in every thread).
+  the arena fell by 4.6 KB, 28544 B to 23936 B at the time (the save area in every thread); 23808 B in the product build now.
 - **Extension**: `.text` 307 KB, `.rodata` 185 KB, `.bss` 317 KB (the esdr buffers, the FFT and burst arrays), all in the
   extension heap in PSRAM; 1.0 MB file; `.module_fast` is 1.4 KB (the burst decoders), which a non-INTERNAL extension runs from PSRAM.
 - **The host grew by 0.9 KB of internal RAM** (the symbols the extension imports: 256 B of IRAM, 640 B of bss, 40 B of data):
-  libc arena 29440 B to 28544 B (UART variant 32000 to 30720), LP RAM unchanged (30116 of 32768 B, about 830 B left: nothing of
+  libc arena 29440 B to 28544 B (UART variant 32000 to 30720; before FPU sharing), LP RAM unchanged (30116 of 32768 B, about 830 B left: nothing of
   MicroPython is there), module heap 6592 B free after `sdr` (the radio module is the only one MicroPython needs; MicroPython has no
   INTERNAL parts).
 - **Threads**: MicroPython's own at 13, esdr's radio worker and Scan worker at 12 (`mp_prelude.h`: `ESDR_WORKER_PRIO`,
@@ -877,7 +884,8 @@ modem, `esdr.shell()`. None of it has run on this host: `esdr_local.c` ran stand
   `esdr.stacks()[1] - (32768 - margin)` after a deep recursion, over 0.9.
 - **The exec stall** (`multiapp info` over SSH stopped mid-output in the first minute of a MicroPython boot, intermittent, CPU idle):
   gone after MicroPython's input wait stopped waking every millisecond (`uart_core.c`: 1000 ms timeout and an event from every input byte);
-  35 early execs and 4 switch cycles ran at about 540 ms on the board. The cause is **not proven**: the 1 ms wake-ups are the likely one. The exec
+  35 early execs and 4 switch cycles ran at about 540 ms on the board. The cause is **not proven**: the 1 ms wake-ups are the likely one.
+  A 25 ms periodic "poke" of an earlier version is gone too (it alone cost 632 gaps in a stream run). The exec
   path logs `tx: N of M bytes taken` and `tx_ready` with the log's timestamps, to show where an output waits if it comes back.
 
 - **Piped and pasted input.** `echo 'print(6*7)' | ssh <host>` ends its input at once: for a registered console the mux no longer closes the
@@ -887,9 +895,10 @@ modem, `esdr.shell()`. None of it has run on this host: `esdr_local.c` ran stand
   for a chunk, so what is left stays in the channel and SSH's flow control holds the client's rest back; the REPL's thread pulls it as it
   empties the ring (`test_mp_a_long_paste_arrives_whole`, 2 KB in one line; `test_mp_repl.py`). A Ctrl-C behind more than a ring's worth of
   unread input is seen only when the REPL has read up to it.
-- **Standalone MicroPython on the CoreBoard.** `_boot.py` mounts neither `/FLASH:` nor `/SD:` when the board's name is
-  `esp32s31_function_coreboard`, whichever build it is in: a standalone `apps/micropython` build for that board (none exists today) would have no
-  volume either.
+- **No `/FLASH:` in MicroPython on the CoreBoard.** The host owns the FAT volume (the PC, SSH and MCUmgr share it by claims), so MicroPython has no
+  file system of its own there: `_boot.py` mounts neither `/FLASH:` nor `/SD:` when the board's name is
+  `esp32s31_function_coreboard`, whichever build it is in (a standalone `apps/micropython` build for that board, none exists today, would have no
+  volume either). Files are reached through `esdr.shell()` (host commands) or MCUmgr.
 
 ### Switching from and to osmosdr_hs
 
@@ -936,17 +945,21 @@ app switch reboots the board): `multiapp run micropython` over an SSH exec; `mul
 `ssh -tt` reaches `>>>` and `print(1+1)` gives 2; Ctrl-C ends `while True: pass` with `KeyboardInterrupt`; Ctrl-D prints `soft reboot`
 and the session goes on with fresh state; `ssh <host> shell` is the Zephyr shell; the CDC-ACM port answers `print(3*11)` when no
 session is open and again after a session ended; then `multiapp run osmosdr_hs` (a reset if that does not bring it back).
+The same marker covers `esdr.shell()` for plain commands and at the recursion limit (with the 90 % rule for the worker's stack),
+flash access from Python being an error and not a hang, a calibration request on the worker, piped input and a long paste.
 
 ### Not checked on a board (phase 4)
 
-Everything that needs the board: the boot of `micropython.llext` (its size and the 307 KB of code in the extension heap, the
-constructors, `_boot.py` and `launcher` in the headless manifest on this host), whether the arena has 12 KB left after the network and
-the server (`ssh status`, the log line `MicroPython stack: ...`), the REPL on CDC-ACM and over SSH, Ctrl-C and Ctrl-D, the PSRAM heap's
-actual size (`gc.mem_free()`), `import esdr` and what of it works with the `sdr` module's radio, the stack's headroom
-(`micropython.stack_use()`), output throughput over the channel, the soft reset with a session open, two clients in a row, the UART
-variant's log switch-off, a stream-less boot's CPU use of the REPL's polling (`mp_event_wait_ms(1)`).
+The boot of `micropython.llext` (1.0 MB in the extension heap), the REPL on CDC-ACM and over SSH, Ctrl-C and Ctrl-D, the stack sizes, `esdr.shell()`
+and the flash guard are run and measured (above) or tests of the suite. Not checked: `import esdr` beyond the calibration requests (bursts,
+the packet modem), the output throughput over the channel, two clients in a row beyond the suite's alternation of SSH and the local port,
+the CPU use of the REPL's wait with no stream running, and the UART variant's log switch-off on a board.
 
 ## Design: attaching the DWMAC fast receive hook at run time
+
+Status: a design only, not built (`src/netrx.c` does not exist). Its purpose was phase 6, `stream_eth` as an extension, which
+was decided against ([Phases 5 and 6](#phases-5-and-6-decided-against-2026-11-27)). It is kept for the case that a second
+user of the receive hook (PTP next to a streamer) comes to the host.
 
 ### How the hook is bound today
 
@@ -1020,8 +1033,8 @@ Not changed in the driver: its single hook slot stays the interface to the multi
     far larger pools: `stream_eth` 64 TX descriptors against the host's 4, and 12/8 RX/TX buffers against 7/3. Only
     `dwmac_rx_hook_set()` is switchable at run time.
   - Both rely on two cores. `stream_eth` pins its sender on CPU1 and was a factor 20 better with SMP than on one
-    core; `txstream_eth` pins `tx_flip` on CPU1. The host on SMP cost osmosdr_hs gaps (69 against 4 per 300 s,
-    "SMP experiment" above), and a single-core 40 MS/s Ethernet stream was never shown.
+    core; `txstream_eth` pins `tx_flip` on CPU1. The host on SMP cost osmosdr_hs gaps (69 against 4 per 300 s; the 60 s runs of the
+    "SMP experiment" above show the same direction), and a single-core 40 MS/s Ethernet stream was never shown.
   - Memory: `stream_eth`'s 54 KB of cells and headers would have to go to the group 3 heap, leaving the arena at
     6 to 14 KB for SSH and MicroPython. `txstream_eth` with the host is 40 to 50 KB over groups 0 and 3.
   - The gain over a standalone image is switching apps without a reflash. A switch is a reboot anyway.

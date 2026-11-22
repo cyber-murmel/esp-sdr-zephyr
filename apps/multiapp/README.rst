@@ -61,9 +61,11 @@ ESP32-S31
 - On the ESP32-S31-Function-CoreBoard-1 the host boots into ``osmosdr_hs``, the SDR on the
   board's USB 2.0 HS port J4 (``CONFIG_MULTIAPP_AUTOSTART`` in the board's configuration file).
 - ``hello``, ``capture``, ``rfprobe`` and ``micropython`` are the other apps, and the radio is one module, ``sdr``
-  (`Modules`_). ``multiapp run`` switches among them in place; to and from ``osmosdr_hs``, whose
-  USB profile differs, it reboots.
-  Built, not yet run on a board.
+  (`Modules`_). ``multiapp run`` switches among ``hello``, ``capture`` and ``rfprobe`` in place; to and from
+  ``osmosdr_hs``, whose USB profile differs, and to and from ``micropython``, a console app, it reboots. The in-place switches
+  ran on the CoreBoard in the hot-swap round (100 cycles rfprobe and hello without a reboot, ``capture`` in place, 20 in-place
+  restarts of ``osmosdr_hs``) and were not run again after the network host came; the reboots to and from ``micropython`` run in
+  the HIL suite ``pytest/test_multiapp_s31.py``.
 - J4's VBUS is the board's own: connect it with VBUS cut, as
   `osmosdr_hs <../osmosdr_hs/README.rst>`__ explains.
 - The shell is on a CDC-ACM port of J4; the console and the log stay on the UART port.
@@ -73,15 +75,16 @@ ESP32-S31
 - The extensions are RISC-V relocatable objects and their code runs where llext writes it, in
   PSRAM; ``osmosdr_hs`` keeps its USB batches in internal RAM
   (`multiapp internals <../../doc/apps/multiapp-internals.md>`__).
-- The CoreBoard is a network host (Ethernet, mDNS) and answers MCUmgr (Simple Management Protocol) over UDP on port 4996 after
-  ``mcumgr arm <minutes>`` on its shell: ``west mcumgr`` uploads signed images and files. The images are signed
+- The CoreBoard is a network host (Ethernet, mDNS) and answers MCUmgr over UDP on port 4996 after
+  ``mcumgr arm <minutes>`` on its shell (or an SSH session): ``west mcumgr`` uploads signed images and files. The images are signed
   with the project's own key, not MCUboot's: `doc/dev/network-services.md <../../doc/dev/network-services.md>`__.
-- It also runs an SSH server (port 22, public key login with ed25519 or ECDSA keys, the Zephyr shell on the session, ``ssh <host> '<command>'``): ``ssh hostkey`` prints
-  the host key's fingerprint, ``ssh key add "<authorized_keys line>"`` lets a key in, and ``mcumgr arm`` works from the session
+- It also runs an SSH server (port 22, public key login only with ssh-ed25519 or ecdsa-sha2-nistp256 keys, no RSA at all; one client at a time,
+  the next ones wait; the Zephyr shell on the session, ``ssh <host> '<command>'``): ``ssh hostkey`` prints
+  the ECDSA host key's fingerprint, ``ssh key add "<authorized_keys line>"`` (or ``/FLASH:/ssh/authorized_keys``) lets a key in, and ``mcumgr arm`` works from the session
   (`phase 3 <../../doc/dev/network-services.md>`__).
 - ``multiapp run micropython`` reboots into MicroPython (a file of the volume, 1 MB; the REPL on the CDC-ACM port, and a plain
   ``ssh <host>`` lands in the REPL while ``ssh <host> shell`` stays the Zephyr shell): see `MicroPython on the S31`_ and
-  `phase 4 <../../doc/dev/network-services.md>`__. Built, not yet run on a board.
+  `phase 4 <../../doc/dev/network-services.md>`__.
 - Host tools and the SoapySDR module find its stream as they find the standalone app's
   (``esdr_usb -s <serial> info``).
 
@@ -290,12 +293,13 @@ MicroPython on the S31
 ----------------------
 
 - On the ESP32-S31-Function-CoreBoard-1 the same sources build as a RISC-V extension (no display, no USB disks of its
-  own, no Xtensa assembly), with the host's drive and the radio module ``sdr``. Its thread has a 32 KB stack in PSRAM (its flash accesses run on a worker), the Python heap is the 13 MB of PSRAM the boot leaves free.
+  own, no Xtensa assembly), with the host's drive and the radio module ``sdr``. Its thread has a 32 KB stack in PSRAM (its flash accesses run on a worker), the Python heap is about 14 MB of PSRAM the boot leaves free.
+  The host owns the FAT volume, so MicroPython mounts no ``/FLASH:`` there; ``esdr.shell()`` runs the host's shell commands.
 - ``multiapp run micropython`` gives the REPL to the CDC-ACM port. With an SSH key added (``ssh key add``), a plain
   ``ssh <host>`` is the REPL (Ctrl-C and Ctrl-D work), ``ssh <host> shell`` is the Zephyr shell, and when the session ends the REPL is
   on the port again.
-- ``import esdr`` is built (bursts through the radio module; no ring stream, no Pcap engine, no PIE FFT). Neither it nor
-  the REPL has run on a board yet.
+- ``import esdr`` is built (bursts through the radio module; no ring stream, no Pcap engine, no PIE FFT). The REPL, ``esdr.shell()`` and
+  the calibration requests run on a board (HIL suite); the radio bursts of ``esdr`` have not run on this host.
 
 Boards
 ------

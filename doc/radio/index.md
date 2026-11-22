@@ -66,7 +66,7 @@ The library runs on five chips. Their sample paths (bursts, rings, paced streams
 | ESP32-S3 | XIAO ESP32S3, Hackaday Communicator badge | SMP or single core | 40 MHz crystal on the XIAO |
 | ESP32-C6 | XIAO ESP32C6, the WHY2025 badge's radio co-processor | | 40 MHz crystal on the XIAO |
 | ESP32-C5 | Waveshare ESP32-C5-Zero | | ESP32-C5HF4 rev v1.0, 48 MHz crystal, 4 MB flash, no PSRAM |
-| ESP32-S31 | ESP32-S31-Function-CoreBoard-1 | single core (below) | ESP32-S31 rev v0.0, 40 MHz crystal, 16 MB flash, 16 MB octal PSRAM, PCB antenna |
+| ESP32-S31 | ESP32-S31-Function-CoreBoard-1 | SMP or single core (below) | ESP32-S31 rev v0.0, 40 MHz crystal, 16 MB flash, 16 MB octal PSRAM, PCB antenna |
 | ESP32-S31 | VIEWE 4.3 inch touch display board | | [Chip notes](../dev/chips.md) |
 | ESP32 (classic) | MCH2022 badge | | |
 

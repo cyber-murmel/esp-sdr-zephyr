@@ -191,6 +191,8 @@ The die temperature leads the crystal's (self heating), so the model is per boar
   `/FLASH:/settings`, the FAT volume name the MicroPython platforms use.
 - `apps/common/calstore.overlay` puts that volume on the storage partition for apps that have none
   (automounted, formatted on first mount).
+- The S31 multiapp host keeps it in a partition of its own, `calibration` (16 KiB), on ZMS settings
+  (`apps/multiapp/boards/partitions_s31.dtsi`), not on the FAT volume.
 - `esp_sdr_init()` applies the stored record before it first tunes.
   `esp_sdr_get_freq_corr_model()` is the record in force.
 

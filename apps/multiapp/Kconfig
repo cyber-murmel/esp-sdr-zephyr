@@ -66,8 +66,9 @@ config MULTIAPP_UNLOAD
 	  "multiapp run" stops the running app, unloads it and the modules the next one does not
 	  need (the Wi-Fi driver, the SDR) and loads the next, when the two boots are compatible
 	  (same USB profile, no console app). Otherwise, and when anything refuses to stop, it
-	  reboots into the next app. Exercised on hardware on the ESP32-S3; the ESP32-S31 builds
-	  with it, its radio module's down path is not yet tried on a board.
+	  reboots into the next app. Exercised on hardware on the ESP32-S3; on the ESP32-S31
+	  the in-place switches ran on the CoreBoard in the hot-swap round (100 cycles rfprobe and
+	  hello, capture, 20 restarts of osmosdr_hs), not again since the network host.
 
 config MULTIAPP_STOP_TIMEOUT_MS
 	int "How long an app's main() may take to end before the switch gives up"
@@ -131,9 +132,11 @@ config MULTIAPP_MICROPYTHON
 	help
 	  The port, its C modules and frozen Python are one extension,
 	  micropython.llext on the volume (micropython.cmake). The host keeps
-	  what they need from the kernel, /FLASH: and the USB device; "multiapp
-	  run micropython" reboots into its REPL on the CDC-ACM port. On the
-	  ESP32-S31 the REPL is also what a plain "ssh <host>" gets
+	  what they need from the kernel and the USB device; "multiapp run
+	  micropython" reboots into its REPL on the CDC-ACM port. On the
+	  ESP32-S3 the host also keeps /FLASH: for it. On the ESP32-S31 the host
+	  owns the FAT volume and MicroPython mounts none (esdr.shell() runs the
+	  host's commands), and the REPL is also what a plain "ssh <host>" gets
 	  (doc/dev/network-services.md, "Phase 4").
 
 config MULTIAPP_MICROPYTHON_STACK

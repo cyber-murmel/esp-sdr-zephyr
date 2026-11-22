@@ -11,7 +11,7 @@ implementation.
 
 The ZigBit is a radio coprocessor (RCP) behind a generic Zephyr board, at first a second XIAO
 ESP32S3, over UART or SPI. On the Zephyr side it is one more `ieee802154_radio_api` driver in
-`lib/ieee802154/`, next to the software radio. So `apps/wpan`, `tools/interop.py` and later the
+`lib/ieee802154/`, next to the software radio. So `apps/wpan`, `apps/wpan/tools/interop.py` and later the
 Zephyr L2 run on it unchanged.
 
 ## What the RF233 answers

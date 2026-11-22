@@ -89,7 +89,7 @@ Host to S31 ends in PARLIO RX: 16 lanes x 40 MHz = 640 Mbit/s, so 40 MS/s at 8+8
 DAC replay engine plays 80 MS/s, but from RAM. Options to investigate:
 
 1. **No compression, 40 MS/s 8+8**: works with the PARLIO limit; the CoreBoard's own gigabit port
-   (`apps/txstream_eth`) is planned for the same rate, so the FPGA adds little here.
+   (`apps/txstream_eth`, UDP: 20 MS/s clean, 40 MS/s with rare underruns, 10 in 20 s, 0.04 % of the windows) already streams at that rate, so the FPGA adds little here.
 2. **Compressed over PARLIO, decompressed on the S31**: 80 MS/s 8+8 (1.28 Gbit/s) in 640 Mbit/s
    needs 2:1. The link has no slack and the DAC does not wait, so the scheme must be fixed-rate,
    which makes it lossy: lossless delta coding is variable-rate and does not reach 2:1 on

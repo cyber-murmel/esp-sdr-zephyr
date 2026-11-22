@@ -26,7 +26,7 @@ there is.
 | fix32_fft | in-repo Q31 FFT for LTE calibration | C6, C5 | deferred: needs the C6 |
 | esp32s2-cookbook | 1: I2S bit clock divider of 1, inverted pin pair | S3 first | done: 80 Mb/s, complementary pair |
 | esp32s2-cookbook | 2: APLL clock on a pin | P4, S31 | deferred: needs the P4 or S31 |
-| esp32s2-cookbook | 3: hot reload of one kernel | S3, S31 | later work, by decision |
+| esp32s2-cookbook | 3: hot reload of one kernel | S3, S31 | done: `multiapp stage`, run on the S31 |
 | lolra | hard-limited phase bitstream, chirp-table LoRa | S3, C5, C6 | deferred: waits for the divider result and a 1-bit DMA path; source scripts missing |
 | CH570Composite | noise-shaped PWM bitstream | any with I2S | deferred: waits for the same path; simulation script missing |
 | CH570 radio | companion node, test source | CH570 | deferred: no board |
@@ -110,7 +110,7 @@ Zephyr already builds with `-fno-strict-aliasing`, so the page's type-punning ad
 The remaining optimizer trap is undefined behaviour in fixed-point code: left shifts of negative
 values, `int32` products that overflow before a `>> 15`, shifts by 32. The repo forces
 `optimize("O3")` on many hot functions. Zephyr has `CONFIG_UBSAN` for native_sim. Only `esdr_seg`
-runs a sanitizer today (ASan, `tests/unit/esdr_seg/testcase.yaml`).
+ran a sanitizer before the item below (ASan, `tests/unit/esdr_seg/testcase.yaml`).
 
 **Item:** a twister variant with `CONFIG_UBSAN=y` (and ASan where it works) for the plain-C DSP
 suites (`gapless_sort`, `pcap_generic`, `ieee154_dsp`, `chancap_dsp`, `esdr_pfbq`,
@@ -121,7 +121,7 @@ suites (`gapless_sort`, `pcap_generic`, `ieee154_dsp`, `chancap_dsp`, `esdr_pfbq
 reruns all unit suites with `CONFIG_UBSAN=y` and `-fno-sanitize-recover=undefined`, so a finding
 fails the test ([testing](testing.md#ubsan)). It found only two cases, both in tests, not in the
 fixed-point code: `memcpy(dst, NULL, 0)` in `tests/unit/zigbee_znp` and `zigbee_stack` helpers
-(fixed with a length guard). All 37 suites are clean.
+(fixed with a length guard). All 37 suites were clean on 2026-11-24.
 
 ### 3 and 4. Burst centre, Goertzel
 
@@ -259,12 +259,13 @@ it (the P4 has `clk_ll_apll_*` in the hal; the S31 per an earlier note not in th
 ### 3. Hot reload without a reboot
 
 `idf_sandbox` writes code into an IRAM scratch buffer over USB HID and calls it, about 200 ms from
-save to run. `multiapp` already loads llext apps, but switching apps reboots because of the USB
+save to run. `multiapp` already loads llext apps, but switching apps rebooted at the time because of the USB
 classes and the shared RAM. What carries over: a shell or USB command that loads one small llext
 into the running app and swaps a function pointer for one DSP stage (a FIR, the GFSK slicer, the
 ACK slot builder). It works for kernels that touch neither USB nor the ring's RAM, on the S3 and
 S31. It is a tuning-speed gain for the loops in [Hot loops](hot-loops.md), not a feature.
-**Status:** later work, by decision of the maintainer.
+**Status:** done: `multiapp stage` hot-swaps one DSP stage of a running app, see
+[Hot-swapping a stage](../apps/multiapp-internals.md#hot-swapping-a-stage).
 
 ### Small uses and the rest
 

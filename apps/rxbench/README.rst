@@ -13,7 +13,8 @@ discovery, ICMP, DHCP, other ports) takes the stack's usual path: the board keep
 IPv4/IPv6 stack beside the hook.
 
 The purpose is feeding I/Q samples from a PC to the S31 for transmission (8+8 bit at 20 MS/s is
-320 Mb/s, at 40 MS/s 640 Mb/s). The zperf receive through the whole stack peaks at 244 Mb/s.
+320 Mb/s, at 40 MS/s 640 Mb/s). The zperf receive through the whole stack peaks at 244 Mb/s. The transmit
+stream built on this hook is ``apps/txstream_eth``.
 
 Payload
 =======

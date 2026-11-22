@@ -19,6 +19,7 @@ carries and which chip uses which. It builds on the paths of [Samples in and out
 | SDIO | WHY2025 badge, C6 to P4 | [osmosdr_serial](../../apps/osmosdr_serial/README.rst) | about 13 MB/s within a transfer | 11.6 MB/s raw; 2 MS/s paced receive |
 | USB high speed, vendor bulk | ESP32-S31 | [osmosdr_hs](../../apps/osmosdr_hs/README.rst) | 40.157 MB/s with a 256-word TX FIFO | 20 MS/s ([osmosdr_hs](../../apps/osmosdr_hs/README.rst)) |
 | Gigabit Ethernet, VITA 49.2 over UDP | ESP32-S31 CoreBoard | [stream_eth](../../apps/stream_eth/README.rst) | 1 Gb/s link, 40 MS/s of 8-bit I/Q is 640 Mb/s of samples in 55.6k packets/s | 20 MS/s clean, 40 MS/s IPv4 within 0.01 % loss on one core; see [stream_eth](../../apps/stream_eth/README.rst) |
+| Gigabit Ethernet, VITA 49.2 over UDP, transmit | ESP32-S31 CoreBoard | [txstream_eth](../../apps/txstream_eth/README.rst) | as above, from the host to the DAC with credits from the board | 20 MS/s clean, 40 MS/s with rare underruns (see [Transmit stream library](../dev/txs.md)) |
 | USB high speed, bridge | WHY2025 badge, P4 for the C6 | [osmosdr_bridge](../../apps/osmosdr_bridge/README.rst), [pcap](../../apps/pcap/README.rst) | SDIO to the C6 (above) | 2 MS/s receive, gapless in 5 s runs ([osmosdr_bridge](../../apps/osmosdr_bridge/README.rst)) |
 | RP2040 links | MCH2022 badge, classic ESP32 | [osmosdr_serial](../../apps/osmosdr_serial/README.rst), [mch2022_coproc](../../apps/mch2022_coproc/README.rst) | UART up to 5 Mbaud; FPGA fast line 15 Mbaud; USB alone 928 kB/s | 450 kS/s at 2 MS/s through the FPGA, some 900 kB/s ([MCH2022 badge](../apps/mch2022.md)) |
 
@@ -106,6 +107,10 @@ The ESP32-S31-Function-CoreBoard's YT8531 links at 1 Gb/s. [stream_eth](../../ap
 the diag16 ring as VITA 49.2 signal data in unicast UDP: packets that fill the MTU, headers made
 from a template, the frames handed to the MAC in batches without the IP stack. Nothing is sent
 until a host subscribes (a cookie handshake, LAN only, no authentication).
+
+The other direction is [txstream_eth](../../apps/txstream_eth/README.rst): UDP from the host into the
+DAC's memory, paced by credits the board sends back, with the library of
+[Transmit stream library](../dev/txs.md).
 
 ## USB high speed
 

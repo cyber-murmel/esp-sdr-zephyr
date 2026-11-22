@@ -39,7 +39,9 @@ Status:
 - **Constructs that register through linker iterable sections** do not work in an extension as
   written, because its sections do not join the host's: `SHELL_CMD_REGISTER`,
   `USBD_DEFINE_CLASS`, `SYS_INIT`, `LOG_MODULE_REGISTER`, `K_THREAD_STACK_DEFINE`, static memory
-  slabs, `NET_BUF_POOL_DEFINE`.
+  slabs, `NET_BUF_POOL_DEFINE`. On the S31 `exports.py` fails the build for the ones that need the host's boot-time
+  initialization (`k_heap`, `k_mem_slab`, `net_buf_pool`, `K_THREAD_DEFINE` data) and for an extension with more than
+  one NOBITS section.
 - **Exit is an unload, or a reboot.** `multiapp run` stops the loaded app, unloads it and the
   modules the next app does not take over, and loads the rest, when the two boots are compatible
   ([Unloading](#unloading)). A different USB profile, a console app, anything that refuses to stop
@@ -281,8 +283,9 @@ never runs the ring, so bank 0 is free in its boots.
 
 Replacing the running app without a reboot (`CONFIG_MULTIAPP_UNLOAD`, on by default on the
 ESP32-S3 and the ESP32-S31). The code is in `src/apps.c`. The S3's is soaked on the board
-(`tmp/coex/t6soak.py`, see the end of this section); the S31's builds and its host tests pass, and
-no board has run it yet ([The ESP32-S31, in place](#the-esp32-s31-in-place)).
+(`tmp/coex/t6soak.py`, see the end of this section); the S31's in-place switches ran on the CoreBoard in the hot-swap round (2026-11-26: 100 cycles rfprobe and hello, `capture`,
+20 restarts of `osmosdr_hs`, no reboot, flat heaps) and were not run again after the network host
+([The ESP32-S31, in place](#the-esp32-s31-in-place)).
 
 #### When it applies
 
@@ -401,7 +404,7 @@ source` for core 0, `0x600C2800` for core 1) and the FROM_CPU rows, which must n
 
 #### The ESP32-S31, in place
 
-The same code, with these differences (nothing of it has run on a board yet):
+The same code, with these differences (run on the CoreBoard in the hot-swap round, 2026-11-26, not again since the network host):
 
 - **USB profiles.** `hello`, `capture` and `rfprobe` have no class of their own besides the drive
   (profile 0x4) and switch among themselves in place; `capture` ends through its `multiapp_app_stop()` (a flag looked
@@ -1007,8 +1010,9 @@ module's own build does not run.
 
 #### esdr.shell()
 
-- Zephyr's `shell_dummy.c` is built into the extension, its stack and buffers in PSRAM, so every
-  other boot pays nothing.
+- On the S3, Zephyr's `shell_dummy.c` is built into the extension, its stack and buffers in PSRAM, so every
+  other boot pays nothing. (The S31's extension has none: `esdr.shell()` calls the host's `multiapp_shell_exec()`,
+  [MicroPython on the S31](#micropython-on-the-s31).)
 - `west dfu` drives the host's commands through it, as standalone.
 - It must not become a log backend (`CONFIG_SHELL_DUMMY_INIT_LOG_LEVEL_NONE`), since the host's list
   of those cannot take one.
@@ -1314,13 +1318,17 @@ Built from `micropython.cmake` as on the S3 (`CONFIG_SOC_SERIES_ESP32S31` picks 
 
 - `micropython.llext`, a RISC-V relocatable object of 1.0 MB, file only, in the extension heap in PSRAM; the host exports what it imports
   (0.9 KB of internal RAM), and `micropython_placement` (`scripts/tcm_groups.py --mp-ext`) checks after the link that it holds no thread
-  stack in PSRAM but the two that never touch the flash, and that the libc arena holds the REPL thread's stack.
+  stack in PSRAM but the two that never touch the flash (the REPL thread's and the radio worker's), and that the libc arena holds the flash
+  worker's stack.
 - A console app on a USB profile of its own (0x4): `multiapp run micropython` is a reboot from every app, osmosdr_hs included (its
   `BANK2` flag, TCM group 3, would force one as well: MicroPython's boot keeps the group as the dump engine's capture bank).
 - The thread (`ext/mp/mp_repl_s31.c`) has priority 13 and its stack in PSRAM (32 KB, the extension's bss; its flash accesses run on a worker with an internal stack, `src/flashguard.c` refuses a flash operation from a PSRAM stack: [Phase 4](../dev/network-services.md#phase-4-the-micropython-repl-over-ssh)). The port's stack check starts at that stack (`multiapp_mp_cstack_init()`).
 - The port's `uart_core.c` has a hook (`CONFIG_MICROPY_STDIO_HOOK`, `ports/zephyr/stdio_hook.h`, in the fork); `mp_repl_s31.c` registers
   the REPL with `multiapp_console_register()` and sets the hook while an SSH session is the REPL's.
 - The host shell's log backend on UART0 is switched off when MicroPython takes a console that is on that UART (the UART variant).
+- The host owns the FAT volume, so MicroPython mounts no `/FLASH:` there; `esdr.shell()` runs the host's commands on the flash worker.
+  The REPL, `esdr.shell()`, the stack sizes (32 KB Python stack, 2144 B worker) and the flash guard are measured on the CoreBoard and
+  covered by the HIL suite (`pytest/test_multiapp_s31.py`).
 
 ### MicroPython on the devkit
 
@@ -1681,8 +1689,9 @@ The SDR had to move from the ROM's simple boot to MCUboot, and its capture was m
 ### ESP32-S31: RISC-V extensions
 
 On the ESP32-S31-Function-CoreBoard-1 the host has one core, 16 MB of octal PSRAM and the USB 2.0
-HS port J4 for the shell, the drive, DFU and osmosdr_hs's stream. It boots into `osmosdr_hs`, and
-`hello`, `capture` and `rfprobe` are the other apps. Where it differs from the S3:
+HS port J4 for the shell, the drive, DFU and osmosdr_hs's stream, and gigabit Ethernet for MCUmgr, SSH and MicroPython's
+REPL ([Network services](../dev/network-services.md)). It boots into `osmosdr_hs`, and
+`hello`, `capture`, `rfprobe` and `micropython` are the other apps. Where it differs from the S3:
 
 #### Relocatable objects
 
@@ -1744,7 +1753,8 @@ The libc uses thread-local storage, and llext relocates no TLS access:
 The module heap is 16 KB (`CONFIG_MULTIAPP_MODULE_HEAP_SIZE`): the radio module's 9.2 KB of internal RAM
 and about 7 KB for an app's fast kernels; osmosdr_hs's 107 KB are in group 3 instead (above). With the
 network host (Ethernet, MCUmgr over UDP, `apps/common/net`), the image ends at 0x2F02EE80 (UART variant
-0x2F02E500), which leaves 70 KB of the libc arena below the receive ring at 0x2F040000; the network threads'
+0x2F02E500), which left 70 KB of the libc arena below the receive ring at 0x2F040000 (SSH, MicroPython's imports and FPU sharing
+took most of it later: 23808 B in the product build and 25984 B in the UART variant); the network threads'
 stacks are in PSRAM, cold stacks and the system heap in LP RAM, nothing the USB drive touches while a stream runs
 (`doc/dev/network-services.md`, "Fit with the LP RAM"). Without the network, with the module heap of 120 KB that held
 osmosdr_hs, `_end` was 0x2f03d180, 11904 bytes below the ring (the stage hot-swap, the drive's proxy and the

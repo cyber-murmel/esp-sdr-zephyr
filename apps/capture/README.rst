@@ -63,6 +63,9 @@ Attach an antenna to see more than the receiver noise floor. The survey adapts t
    * - ``mch2022/esp32/procpu``
      - ESP32 (the MCH2022 badge)
      - console through its RP2040
+   * - ``communicator_badge/esp32s3/procpu``, ``why2025_badge/esp32c6/hpcore``
+     - ESP32-S3 (Hackaday Communicator), ESP32-C6 (the WHY2025 badge's)
+     - as the XIAO ESP32S3 and the XIAO ESP32C6 above
 
 `Filters <../../doc/radio/filters.md>`__ has the low-pass ranges of each chip.
 

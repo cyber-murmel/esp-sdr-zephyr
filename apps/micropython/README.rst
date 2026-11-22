@@ -1184,6 +1184,12 @@ On the VIEWE PLCM-UES31S043H800V480C-U (``ues31s043h800v480c_u/esp32s31/hpcore``
 - a 8 MiB Python heap in PSRAM, ``/FLASH:`` in the upper 8 MB of the flash;
 - the REPL on the console UART, the board's USB-C socket (a CH340, which also flashes it).
 
+This is the standalone image. On the ESP32-S31-Function-CoreBoard MicroPython runs as an app of
+`multiapp <../multiapp/README.rst>`__ (``multiapp run micropython``), with no display, no ``/FLASH:``
+of its own (the host owns the volume) and its REPL on the CDC-ACM port or over SSH: see
+`MicroPython on the S31 <../multiapp/README.rst>`__ and
+`Network services <../../doc/dev/network-services.md>`__, "Phase 4".
+
 The launcher's list and the GUI's rows are tall enough for a finger, and a slider follows it. A
 frequency's slider covers what the radio tunes at every rate (2205 to 2900 MHz), with buttons
 beside it for one step. Holding the screen's top left corner or the BOOT button for 1.5 s goes

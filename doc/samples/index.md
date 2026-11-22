@@ -274,9 +274,11 @@ rates and tuning ranges chip by chip.
 | Playback and loop | `esp_sdr_tx.h` | `CONFIG_ESP_SDR`; two-bank loops with `CONFIG_ESP_SDR_BANK1` | S3 | [Transmit](transmit.md) |
 | Gapless transmit stream | `esp_sdr_tx.h` | `CONFIG_ESP_SDR_TX` (needs PSRAM and `librftest.a`) | S3 | [Transmit](transmit.md) |
 | Replay | `esp_sdr_replay.h` | `CONFIG_ESP_SDR_REPLAY` | C5, S31 | [Transmit](transmit.md) |
+| Transmit stream from the network | `lib/esp_sdr/src/txs` (no public header) | `CONFIG_ESP_SDR_S31_TXMEM`, `CONFIG_ESP_SDR_TXS_PIE` | S31 | [Transmit stream library](../dev/txs.md) |
 | Carrier | `esp_sdr_tx.h` (`esp_sdr_tx_tone_start()`) | | S31 | [Transmit](transmit.md) |
 | Paced receive | `esp_sdr_paced.h` | `CONFIG_ESP_SDR_PACED` | C6, C5 | [Paced streams](paced.md) |
 | Paced transmit | `esp_sdr_paced.h` | `CONFIG_ESP_SDR_PACED` | C6, C5, S31 | [Paced streams](paced.md) |
+| Memory to memory DMA | `esp_sdr_dma.h` | `CONFIG_ESP_SDR_DMA` | S3 | [DMA chains for I/Q](../dev/dma-chains.md) |
 
 ### Rates per chip
 

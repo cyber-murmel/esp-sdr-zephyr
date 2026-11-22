@@ -436,9 +436,12 @@ The categories reach an extension's sections through `multiapp/ext.h`. How the l
 them is in [multiapp internals](../apps/multiapp-internals.md#modules).
 
 An extension's data and bss are in PSRAM, so a thread of an extension whose stack is a static object there must never touch the
-flash. MicroPython on the S31 touches it (`/FLASH:`): its thread's stack is allocated from the libc arena (internal RAM) when it
-starts, and `scripts/tcm_groups.py --mp-ext` fails the build if the extension defines any other thread stack than the two that do
-not (the radio worker and the dummy shell's; [phase 4](network-services.md#phase-4-the-micropython-repl-over-ssh)).
+flash. MicroPython on the S31 reaches it only through `esdr.shell()` and the calibration requests, which run on a worker (`mp_flash`) with an
+internal stack allocated from the libc arena; the Python thread's own 32 KB stack is in the extension's bss (PSRAM), and `src/flashguard.c`
+refuses a flash call from any thread with a PSRAM stack. `scripts/tcm_groups.py --mp-ext` fails the build if the extension defines any other
+thread stack than that one and the radio worker's, which never touch the flash
+([phase 4](network-services.md#phase-4-the-micropython-repl-over-ssh)). A static `k_heap`, `k_mem_slab`, `net_buf_pool` or `K_THREAD_DEFINE`
+in an extension fails the build too (`exports.py`): the kernel initializes those only for the host's own objects.
 
 | Region | In an extension |
 |---|---|

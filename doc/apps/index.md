@@ -30,6 +30,9 @@ One line per app, in the reading order of this part.
 | --- | --- |
 | [capture](../../apps/capture/README.rst) | Capture survey on the console |
 | [rfprobe](../../apps/rfprobe/README.rst) | Bench probe: tuning, tones, registers |
+| [coexbench](../../apps/coexbench/README.rst) | The ESP32-S3's Wi-Fi driver, ESP-NOW and the radio library on one radio: what burst captures cost a Wi-Fi link; results in [Coexistence](../radio/coexistence.md) |
+| [rxbench](../../apps/rxbench/README.rst) | How fast UDP reaches the ESP32-S31 CoreBoard's gigabit Ethernet through the MAC driver's receive hook, past the network stack |
+| [ptp_chain](../../apps/ptp_chain/README.rst) | The offset between the IEEE 1588 hardware clocks of two ESP32-S31 CoreBoards on a direct gigabit link, from MAC timestamps |
 
 ### Streaming
 
@@ -41,6 +44,7 @@ One line per app, in the reading order of this part.
 | [osmosdr_bridge](../../apps/osmosdr_bridge/README.rst) | The WHY2025 badge's P4 as a USB high-speed osmosdr device, its C6 running `osmosdr_serial` behind it |
 | [osmosdr_hs](../../apps/osmosdr_hs/README.rst) | The ESP32-S31 as a USB high-speed osmosdr device, its own radio up to 20 MS/s |
 | [stream_eth](../../apps/stream_eth/README.rst) | The ESP32-S31 CoreBoard's gapless receive as VITA 49.2 signal data over UDP on gigabit Ethernet, 20 to 40 MS/s, unicast to whoever subscribes |
+| [txstream_eth](../../apps/txstream_eth/README.rst) | The ESP32-S31 DAC streamed over gigabit Ethernet: samples arrive over UDP (`vrt_tx`) and are played by whole-bank flips on CPU 1; protocol in [Transmit stream](../dev/txs.md) |
 | [chancap](../../apps/chancap/README.rst) | One capture per packet per channel of a grid, as VITA 49.2 over USB |
 
 ### Protocols

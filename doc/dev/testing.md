@@ -877,10 +877,20 @@ booting into `osmosdr_hs` (`pytest/test_multiapp_s31.py`). It checks that:
 - every file on the volume equals its built-in copy;
 - the boot ran `osmosdr_hs` from its file with the vendor class;
 - the radio module's IRAM_ATTR code is in internal RAM and the rest in PSRAM;
-- the last reset was clean.
+- the last reset was clean;
+- the network host works: DHCP gives an address, MCUmgr over UDP refuses while the gate is closed, answers after
+  `mcumgr arm`, moves files of three sizes and refuses a path outside `/FLASH:/`;
+- the SSH server works (needs an OpenSSH client): the host key's fingerprint is the one clients see, logins with an
+  ed25519 and an ECDSA P-256 key, exec output and status, the interactive shell, unknown and RSA keys and passwords refused,
+  fast session cycles, concurrent, killed and idle clients, the key file refused to change while `esdr_usb` streams (skipped
+  without that tool), and the host key surviving a reboot;
+- MicroPython runs (marker `switches_app`, after all other tests, as the switch reboots the board): the REPL over SSH
+  and on the CDC-ACM port, Ctrl-C and Ctrl-D, `esdr.shell()` and the stack rule, flash access from Python refused, a
+  calibration request, piped and pasted input; then the board returns to `osmosdr_hs`.
 
-It needs the board's USB HS port J4 on the PC through a cable with VBUS cut, and its hardware map
-entry (id `1C2904D19880`, the board on this desk). The same command with
+The whole file is 41 tests, all passing on the CoreBoard (2026-11-27). It needs the board's USB HS port J4 on the PC through a cable
+with VBUS cut, the Ethernet port on a LAN with DHCP and the PC on that LAN, and its hardware map
+entry (id `<USB serial>`, the board on this desk). The same command with
 `-s sample.esp_sdr.multiapp.s31.hil` runs it; it leaves the board as it should be.
 
 ## Continuous integration

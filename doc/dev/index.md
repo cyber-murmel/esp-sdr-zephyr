@@ -42,7 +42,8 @@ explained in [ESP32-S3 registers](registers-esp32s3.md#how-to-read-this-page);
 10. [Transmit stream](txs.md): the S31 streaming DAC transmit (txs): position model, flips,
    credits and the network feed.
 11. [Network services](network-services.md): the S31 multiapp host on Ethernet: buffers and
-   memory placement, the board findings, MCUmgr over UDP, the SSH server, later SFTP.
+   memory placement, the board findings, MCUmgr over UDP, the SSH server, MicroPython's REPL over SSH, and why SFTP
+   and the Ethernet streamers as extensions were left out.
 12. [ESP32-S3 registers](registers-esp32s3.md): the undocumented S3 radio registers the library
    relies on, with fields and evidence.
 13. [ESP32-C6 registers](registers-esp32c6.md): the same for the ESP32-C6.
