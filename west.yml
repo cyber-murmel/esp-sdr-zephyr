@@ -36,11 +36,13 @@ manifest:
     # effect wait and ESP32 SPI reads without a write phase (the MCH2022
     # FPGA), on the RP2040 double buffered bulk IN, clearing an IN
     # endpoint's halt and I2C target transactions kept apart when served
-    # late, and the MCH2022 FPGA as a lattice,ice40-fpga device, its lines on
-    # the RP2040 (branch zsdr).
+    # late, the MCH2022 FPGA as a lattice,ice40-fpga device, its lines on
+    # the RP2040, and the ESP32-S31 CoreBoard's RGMII Ethernet (YT8531) with
+    # prepared-frame transmit and receive paths and PTP timestamps
+    # (apps/txstream_eth, apps/ptp_chain) (branch zsdr).
     - name: zephyr
       remote: cyber-murmel
-      revision: a97085ae95af517b132bbca89493df99679f6c57 # zsdr
+      revision: 083f30697b047a07d132ffab5b80fe9141cbd4a8 # zsdr
       path: modules/zephyr
       import:
         name-allowlist:
@@ -57,11 +59,12 @@ manifest:
     # The HAL companion of the SMP ports, with the ESP32-P4 flash erase fix
     # (the line levels kept when SPI1's control register is cleared), the
     # P4 rev v0.0 clock (from the ROM's CPLL) and the ESP32-S31 (its Zephyr
-    # port, the PHY blob and the LCD HAL's include paths); listed here so it
+    # port, the PHY blob and the LCD HAL's include paths, the EMAC PTP clock
+    # from PLL_F80M); listed here so it
     # overrides the revision Zephyr's own manifest pins.
     - name: hal_espressif
       remote: cyber-murmel
-      revision: 1943516575873c835ce61679dc6f29b9d3cb2c09 # zsdr branch
+      revision: bc20b3f8bfb02b9d2f010a38e9c4cb36559ab024 # zsdr branch
       path: modules/hal/espressif
       groups:
         - hal
