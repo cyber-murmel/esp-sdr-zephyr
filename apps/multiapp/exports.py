@@ -8,6 +8,11 @@ no header has to declare them), the log modules the extensions declare, and
 the objects they describe in .multiapp_host (struct multiapp_host_object). A
 symbol the host lacks fails the host's link. What a module defines comes from
 that module (llext finds it among the loaded extensions), not from the host.
+
+"exports.py check-kernel" checks a hot-swap kernel (multiapp_kernel() in CMakeLists.txt) against
+that table, which it does not join: a kernel imports only what the host exports for the apps
+already, or what the app it is for defines, so that the host's build id and every file stay valid
+when a kernel changes.
 """
 
 import argparse
@@ -92,11 +97,63 @@ def host_objects(path):
         yield name.split(b"\0", 1)[0].decode(), kind, arg
 
 
+def check_kernel(kernel, host_names, app_symbols, kernel_name="the kernel", app_name="the app"):
+    """The problems of a kernel's library: what it imports that nothing provides, a weak
+    relocation, host objects of its own, no descriptor. A list of messages, empty when it is fine."""
+    problems = []
+    weak = weak_relocations(kernel)
+    if weak:
+        problems.append(f"{kernel_name} relocates weak symbols ({', '.join(sorted(weak))}): "
+                        "llext does not relocate their PLT/GOT slots; use strong symbols")
+    objects = [name for name, _, _ in host_objects(kernel)]
+    if objects:
+        problems.append(f"{kernel_name} defines host objects ({', '.join(objects)}): a kernel "
+                        "cannot have buffers or pools the host defines for it; use static data")
+    if "multiapp_kernel" not in defines(kernel):
+        problems.append(f"{kernel_name} does not define multiapp_kernel: use "
+                        "MULTIAPP_KERNEL_DEFINE() (include/multiapp/stage.h)")
+    missing = sorted(imports(kernel) - set(host_names) - set(app_symbols))
+    if missing:
+        problems.append(
+            f"{kernel_name} imports {', '.join(missing)}, which the host does not export and "
+            f"{app_name} does not define. A kernel may use only what the host already "
+            "exports (the union of what the apps import: the host's build id stays valid only if "
+            "kernels do not add to it) and the global symbols of its app (not static, not in a "
+            "module). Make the symbol global in the app, or keep the kernel self-contained")
+    return problems
+
+
+def check_kernel_main(argv):
+    parser = argparse.ArgumentParser(prog="exports.py check-kernel",
+                                     description=check_kernel.__doc__.splitlines()[0])
+    parser.add_argument("--kernel", required=True, help="the kernel's shared library or object")
+    parser.add_argument("--app", required=True, help="the library or object of the app it is for")
+    parser.add_argument("--names", required=True, help="the host's export list (exports.py --names)")
+    parser.add_argument("--kernel-name", default="the kernel")
+    parser.add_argument("--app-name", default="the app")
+    parser.add_argument("--stamp", help="a file to write when the check passes")
+    args = parser.parse_args(argv)
+    with open(args.names) as f:
+        host_names = {line.strip() for line in f if line.strip()}
+    problems = check_kernel(args.kernel, host_names, defines(args.app), args.kernel_name,
+                            args.app_name)
+    if problems:
+        sys.exit("exports.py: kernel check failed:\n  " + "\n  ".join(problems))
+    if args.stamp:
+        with open(args.stamp, "w") as f:
+            f.write("ok\n")
+    return 0
+
+
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "check-kernel":
+        return check_kernel_main(sys.argv[2:])
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--exports", required=True, help="C file of exports to write")
     parser.add_argument("--logs", required=True, help="C file of log modules to write")
     parser.add_argument("--objects", required=True, help="C file of host objects to write")
+    parser.add_argument("--names", help="a list of every name the host exports, one per line, for "
+                        "the kernel check")
     parser.add_argument("--area-size", type=int, required=True,
                         help="bytes in the area the apps share (multiapp_area)")
     parser.add_argument("--module", action="append", default=[], metavar="NAME",
@@ -142,6 +199,9 @@ def main():
                      "it with ESP_SDR_PIN_DATA_<app>_<name> (apps/multiapp/place.h)")
     # The objects are exported where they are defined.
     names = sorted(names - set(objects) - from_modules)
+    if args.names:
+        with open(args.names, "w") as out:
+            out.write("".join(f"{n}\n" for n in sorted(set(names) | set(objects))))
     modules = sorted({m.group(1) for m in map(LOG_DATA.match, names) if m})
 
     with open(args.exports, "w") as out:

@@ -18,6 +18,9 @@
 /* One heap for both where code runs at the address it is written at (ESP32-S31). */
 #define ESP_SDR_PIN_DATA_multiapp_ext_heap   ESP_SDR_PSRAM_NOINIT
 
+/* The hot-swap kernel's file as it arrives (src/stage_shell.c): PSRAM, llext copies from it. */
+#define ESP_SDR_PIN_DATA_multiapp_kernel_buf ESP_SDR_PSRAM_NOINIT
+
 /* As before: the standalone modules' heap in the DRAM image. */
 #define ESP_SDR_PIN_DATA_multiapp_module_heap_mem ESP_SDR_NOINIT
 

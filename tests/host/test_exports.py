@@ -290,3 +290,108 @@ def test_no_weak_functions_in_extension_sources():
     ext = Path(__file__).resolve().parents[2] / "apps/multiapp/ext"
     for path in ext.rglob("*.[ch]"):
         assert not re.search(r"__weak\b|attribute__\s*\(\(\s*weak", path.read_text()), path.name
+
+
+# ---- the kernel check: what a hot-swap kernel may import ----
+
+KERNEL_SRC = """
+extern int k_yield_host(void);          /* the host exports it (an app imports it already) */
+extern int app_helper(int);             /* defined by the app the kernel is for */
+%s
+static int scan(int v) { return app_helper(v) + k_yield_host()%s; }
+struct multiapp_kernel_desc { unsigned int magic; const char *stage, *sig_text; void *fn; };
+const struct multiapp_kernel_desc multiapp_kernel = {1, "demo", "int (*)(int)", (void *)scan};
+"""
+APP_SRC = "int app_helper(int v) { return v + 1; } static int hidden(void) { return 0; }"
+
+
+def build_pair(tmp_path, relocatable, extra_decl="", extra_use=""):
+    cc = shutil.which("cc") or shutil.which("gcc")
+    if cc is None:
+        pytest.skip("no host C compiler")
+    built = []
+    for name, code in (("app", APP_SRC), ("kern", KERNEL_SRC % (extra_decl, extra_use))):
+        src = tmp_path / f"{name}.c"
+        src.write_text(code)
+        if relocatable:
+            obj = tmp_path / f"{name}.o"
+            subprocess.run([cc, "-c", "-o", obj, src], check=True)
+            out = tmp_path / f"{name}_ext_llext_lib.obj"
+            subprocess.run([cc, "-r", "-nostdlib", "-o", out, obj], check=True)
+        else:
+            out = tmp_path / f"lib{name}_ext_llext_lib.so"
+            subprocess.run([cc, "-shared", "-fPIC", "-o", out, src], check=True)
+        built.append(out)
+    return built
+
+
+def names_file(tmp_path, *names):
+    path = tmp_path / "names.txt"
+    path.write_text("".join(f"{n}\n" for n in names))
+    return path
+
+
+@pytest.mark.parametrize("relocatable", [False, True], ids=["shared object", "relocatable"])
+def test_kernel_may_import_host_exports_and_app_symbols(tmp_path, run_main, relocatable):
+    app, kern = build_pair(tmp_path, relocatable)
+    names = names_file(tmp_path, "k_yield_host", "memcpy")
+    stamp = tmp_path / "stamp"
+    assert run_main(exports, "check-kernel", "--kernel", kern, "--app", app, "--names", names,
+                    "--stamp", stamp) == 0
+    assert stamp.read_text() == "ok\n"
+
+
+@pytest.mark.parametrize("relocatable", [False, True], ids=["shared object", "relocatable"])
+def test_kernel_importing_what_nobody_exports_fails(tmp_path, run_main, capsys, relocatable):
+    app, kern = build_pair(tmp_path, relocatable, "extern int not_exported(void);",
+                           " + not_exported()")
+    names = names_file(tmp_path, "k_yield_host")
+    with pytest.raises(SystemExit) as err:
+        run_main(exports, "check-kernel", "--kernel", kern, "--app", app, "--names", names,
+                 "--kernel-name", "demo_kernel", "--app-name", "app demo")
+    msg = str(err.value)
+    assert "demo_kernel imports not_exported" in msg
+    assert "app demo does not define" in msg
+    # What is fine is not named as a problem.
+    assert "app_helper" not in msg.split("imports")[1].split("which")[0]
+
+
+def test_kernel_cannot_import_a_static_of_the_app(tmp_path, run_main):
+    # The app's statics are not symbols the loader can find: only its globals count.
+    app, kern = build_pair(tmp_path, False, "extern int hidden(void);", " + hidden()")
+    names = names_file(tmp_path, "k_yield_host")
+    with pytest.raises(SystemExit) as err:
+        run_main(exports, "check-kernel", "--kernel", kern, "--app", app, "--names", names)
+    assert "imports hidden" in str(err.value)
+
+
+def test_kernel_without_descriptor_or_with_host_objects_fails(tmp_path, run_main, lib):
+    # The demo lib of the other tests: it defines host objects, no descriptor, imports k_sem_take.
+    app, _ = build_pair(tmp_path, False)
+    names = names_file(tmp_path, "k_sem_take", "log_const_demo", "demo_pool")
+    with pytest.raises(SystemExit) as err:
+        run_main(exports, "check-kernel", "--kernel", lib, "--app", app, "--names", names)
+    msg = str(err.value)
+    assert "defines host objects" in msg and "does not define multiapp_kernel" in msg
+
+
+def test_names_list_has_imports_and_objects_not_module_symbols(tmp_path, run_main, two_libs, lib):
+    # What the host exports: the imports and the objects it defines; not a module's symbols.
+    out = tmp_path / "names.txt"
+    files = {k: tmp_path / f"{k}.c" for k in ("exports", "logs", "objects")}
+    run_main(exports, "--exports", files["exports"], "--logs", files["logs"],
+             "--objects", files["objects"], "--area-size", 4096, "--names", out,
+             "--module", "mod", "--area-owner", "demo", *two_libs, lib)
+    names = set(out.read_text().split())
+    assert {"k_yield", "k_sleep", "k_sem_take", "demo_pool"} <= names
+    assert "mod_call" not in names
+
+
+def test_kernel_does_not_change_the_host_exports(tmp_path, run_main, two_libs):
+    # The point of the check: a kernel is not in exports.py's union, so exports.c (and with it the
+    # build id, every file) stays as it was whatever the kernel imports.
+    app, kern = build_pair(tmp_path, False)
+    before = generate(tmp_path, run_main, *two_libs)["exports"]
+    after = generate(tmp_path, run_main, *two_libs)["exports"]
+    assert before == after
+    assert "app_helper" not in after and "k_yield_host" not in after

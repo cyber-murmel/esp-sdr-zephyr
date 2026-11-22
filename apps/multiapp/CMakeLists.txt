@@ -11,7 +11,8 @@ project(esp_sdr_multiapp)
 include(${CMAKE_CURRENT_LIST_DIR}/../common/common.cmake)
 
 target_include_directories(app PRIVATE include src)
-target_sources(app PRIVATE src/main.c src/apps.c src/drive.c)
+target_sources(app PRIVATE src/main.c src/apps.c src/drive.c src/runguard.c)
+target_sources_ifdef(CONFIG_MULTIAPP_STAGES app PRIVATE src/stage.c src/stage_shell.c)
 # The host's placement rules and its apps' (place.h, esp_sdr_place.h); each extension's scope is
 # its name.
 target_compile_definitions(app PRIVATE ESP_SDR_PLACE_SCOPE=multiapp)
@@ -26,9 +27,108 @@ set(ext_names)
 set(ext_modules)
 set(ext_libs)
 set(ext_files)
+# The hot-swap kernels (multiapp_kernel()): files only, in none of the lists above that make the
+# host's exports, build id and embedded table.
+set(kernel_names)
+# What the host exports, one name per line (exports.py --names): the kernels' imports are checked
+# against it, and against their app's symbols.
+set(host_names ${ext_dir}/multiapp_exports.txt)
 # The build id every app file carries (buildid.py, generated below).
 set(build_id_bin ${ext_dir}/multiapp_build_id.bin)
 set(build_id_h ${ext_dir}/multiapp_build_id.h)
+
+# A kernel's file: checked against what the host exports and its app defines (exports.py
+# check-kernel), then the extension with its trailer (apptrail.py --kernel). A macro of
+# multiapp_extension(): it sees that function's variables and sets the parent scope's lists.
+macro(multiapp_kernel_file name file)
+  if(NOT TARGET ${EXT_KERNEL_APP}_ext_llext_lib)
+    message(FATAL_ERROR "multiapp: kernel ${name}: no app ${EXT_KERNEL_APP} (APP takes the name "
+                        "of a multiapp_extension(), declared before the kernel)")
+  endif()
+  if(EXT_INTERNAL)
+    set(kernel_place internal)
+  else()
+    set(kernel_place psram)
+  endif()
+  add_custom_command(
+    OUTPUT ${file}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${ext_dir}/files
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/exports.py check-kernel
+            --kernel $<TARGET_FILE:${name}_ext_llext_lib>
+            --app $<TARGET_FILE:${EXT_KERNEL_APP}_ext_llext_lib> --names ${host_names}
+            --kernel-name "kernel ${name}" --app-name "app ${EXT_KERNEL_APP}"
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/apptrail.py
+            --kernel ${kernel_place} --build-id ${build_id_bin} ${ext_dir}/${name}.llext ${file}
+    DEPENDS ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/apptrail.py
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/exports.py ${ext_dir}/${name}.llext
+            ${ext_dir}/${EXT_KERNEL_APP}.llext ${host_names} ${build_id_bin}
+    VERBATIM
+  )
+  add_custom_target(${name}_kernel ALL DEPENDS ${file})
+  set(kernel_names ${kernel_names} ${name} PARENT_SCOPE)
+  if(CONFIG_MULTIAPP_KERNELS_IN_VOLUME)
+    set(ext_files ${ext_files} ${file} PARENT_SCOPE)
+  endif()
+endmacro()
+
+# multiapp_kernel(<name> STAGE <stage> APP <app> SOURCES <files> [INTERNAL] [INCLUDES <dirs>]
+#                 [DEFINES <definitions>])
+#
+# A hot-swap kernel (include/multiapp/stage.h): one small extension that replaces the stage <stage>
+# of the running app <app> (the name of its multiapp_extension()), loaded into it by "multiapp stage"
+# without a reboot. Its source defines the stage's function and exports it with
+# MULTIAPP_KERNEL_DEFINE(). Output: llext/files/<name>.llext (build target <name>_kernel), with a
+# trailer that carries the host's build id and a CRC like an app's, and its placement. INTERNAL: its
+# IRAM-placed code, data and bss in the module region heap (internal RAM) as an INTERNAL module's,
+# the rest in PSRAM.
+#
+# A kernel is never embedded and joins no list the host's build id comes from: its imports are
+# checked at build time to be what the host exports already or what the app defines (exports.py
+# check-kernel), so that changing a kernel never invalidates a file. It is in the FAT volume image
+# only with CONFIG_MULTIAPP_KERNELS_IN_VOLUME.
+function(multiapp_kernel name)
+  cmake_parse_arguments(KERN "INTERNAL" "STAGE;APP" "SOURCES;INCLUDES;DEFINES" ${ARGN})
+  if(NOT KERN_STAGE OR NOT KERN_APP OR NOT KERN_SOURCES)
+    message(FATAL_ERROR "multiapp_kernel(${name}): STAGE, APP and SOURCES are needed")
+  endif()
+  if(NOT CONFIG_MULTIAPP_STAGES)
+    return()
+  endif()
+  if(NOT DEFINED stage_abi_${KERN_STAGE})
+    message(FATAL_ERROR "multiapp_kernel(${name}): multiapp_stage_abi(${KERN_STAGE} HEADERS ...) "
+                        "comes first, and the app is built with its hash too")
+  endif()
+  set(internal)
+  if(KERN_INTERNAL)
+    set(internal INTERNAL)
+  endif()
+  multiapp_extension(${name} KERNEL STAGE ${KERN_STAGE} KERNEL_APP ${KERN_APP} ${internal}
+                     INCLUDES ${KERN_INCLUDES}
+                     DEFINES ${KERN_DEFINES} MULTIAPP_STAGE_ABI_${KERN_STAGE}=${stage_abi_${KERN_STAGE}}
+                     SOURCES ${KERN_SOURCES})
+  set(kernel_names ${kernel_names} PARENT_SCOPE)
+  set(ext_files ${ext_files} PARENT_SCOPE)
+endfunction()
+
+# multiapp_stage_abi(<stage> HEADERS <files>)
+#
+# The ABI hash of a stage (include/multiapp/stage.h): what the app and its kernels share besides the
+# function's type, the headers that declare it (a state struct, a global). Defines
+# stage_abi_<stage>, the hash of the headers' contents, which goes into the app's build and the
+# kernels' as MULTIAPP_STAGE_ABI_<stage>, into the stage's object and the kernel's descriptor: the host
+# refuses a kernel whose hash is not the app's. The headers are configure dependencies.
+function(multiapp_stage_abi stage)
+  cmake_parse_arguments(ABI "" "" "HEADERS" ${ARGN})
+  set(text "${stage}")
+  foreach(header ${ABI_HEADERS})
+    file(SHA256 ${header} hash)
+    string(APPEND text ":${hash}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${header})
+  endforeach()
+  string(SHA256 text_hash "${text}")
+  string(SUBSTRING ${text_hash} 0 8 short)
+  set(stage_abi_${stage} 0x${short}U PARENT_SCOPE)
+endfunction()
 
 # multiapp_extension(<name> SOURCES <files> [APP <dir> [APP_CONF <fragment>]] [STACK <bytes>]
 #                    [USB <MULTIAPP_USB_* mask>] [AREA] [CONSOLE] [BANK2] [REQUIRES <modules>])
@@ -61,8 +161,8 @@ set(build_id_h ${ext_dir}/multiapp_build_id.h)
 # on top of the host's, whose differences it compiles with (extconfig.py); KCONFIG_AFTER
 # is a header right after those values.
 function(multiapp_extension name)
-  cmake_parse_arguments(EXT "AREA;MODULE;INTERNAL;HIGH_BSS;DEVICES;FILE_ONLY;CONSOLE;BANK2"
-                        "APP;APP_CONF;STACK;USB;VERSION_SCRIPT;PRELUDE;KCONFIG_AFTER;BLOBS_LD"
+  cmake_parse_arguments(EXT "AREA;MODULE;INTERNAL;HIGH_BSS;DEVICES;FILE_ONLY;CONSOLE;BANK2;KERNEL"
+                        "APP;APP_CONF;STACK;USB;VERSION_SCRIPT;PRELUDE;KCONFIG_AFTER;BLOBS_LD;STAGE;KERNEL_APP"
                         "SOURCES;REQUIRES;LIBS;INCLUDES;DEFINES;WRAP;KCONFIG;KCONFIG_OWN;KCONFIG_DROP"
                         ${ARGN})
   if(NOT EXT_STACK)
@@ -72,7 +172,7 @@ function(multiapp_extension name)
     set(EXT_USB 0)
   endif()
   set(info)
-  if(NOT EXT_MODULE)
+  if(NOT EXT_MODULE AND NOT EXT_KERNEL)
     set(info ${ext_dir}/${name}_info.c)
     file(WRITE ${info}.tmp
       "/* Generated by apps/multiapp/CMakeLists.txt. */\n"
@@ -124,7 +224,7 @@ function(multiapp_extension name)
       add_dependencies(${name}_ext_llext_lib ${name}_libs)
     endif()
   endif()
-  if(EXT_MODULE AND NOT CONFIG_RISCV)
+  if((EXT_MODULE OR EXT_KERNEL) AND NOT CONFIG_RISCV)
     # llext looks a global up in the host first: a module's own must stay its own.
     llext_link_options(${name}_ext -Wl,-Bsymbolic)
   endif()
@@ -261,6 +361,10 @@ function(multiapp_extension name)
   )
   # The file the host loads: the extension and its trailer (apptrail.py).
   set(file ${ext_dir}/files/${name}.llext)
+  if(EXT_KERNEL)
+    multiapp_kernel_file(${name} ${file})
+    return()
+  endif()
   add_custom_command(
     OUTPUT ${file}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${ext_dir}/files
@@ -359,6 +463,11 @@ function(multiapp_blob out archive)
   set(${out} ${copy} PARENT_SCOPE)
 endfunction()
 
+# The stages' ABI hashes: the headers an app shares with its kernels (include/multiapp/stage.h).
+multiapp_stage_abi(hello_op HEADERS ${CMAKE_CURRENT_LIST_DIR}/ext/hello_stage.h)
+multiapp_stage_abi(ring_sink HEADERS ${apps_dir}/rfprobe/src/ring_stage.h
+                   ${apps_dir}/../include/esp_sdr/esp_sdr_diag16.h)
+
 if(CONFIG_SOC_SERIES_ESP32S3)
 # The radio, as modules every app that uses it needs: the PHY's blobs and what the HAL builds
 # around them (the ROM calls some of it with the cache off), the library, and the 802.15.4 driver
@@ -398,7 +507,8 @@ if(CONFIG_MULTIAPP_MODULE_TESTS)
   list(APPEND hello_requires hellolib)
 endif()
 
-multiapp_extension(hello ${hello_requires} SOURCES ${CMAKE_CURRENT_LIST_DIR}/ext/hello.c)
+multiapp_extension(hello ${hello_requires} DEFINES MULTIAPP_STAGE_ABI_hello_op=${stage_abi_hello_op}
+  SOURCES ${CMAKE_CURRENT_LIST_DIR}/ext/hello.c)
 multiapp_extension(capture STACK 4096 REQUIRES sdr SOURCES ${apps_dir}/capture/src/main.c)
 # probe i2s (the S3's I2S bit clock bench) is in its own source.
 multiapp_extension(rfprobe STACK 2048 REQUIRES sdr
@@ -451,9 +561,12 @@ multiapp_module(sdr INTERNAL
 zephyr_link_libraries(
   -T${ZEPHYR_HAL_ESPRESSIF_MODULE_DIR}/components/esp_rom/${CONFIG_SOC_SERIES}/ld/${CONFIG_SOC_SERIES}.rom.phy.ld)
 
-multiapp_extension(hello REQUIRES sdr SOURCES ${CMAKE_CURRENT_LIST_DIR}/ext/hello.c)
+multiapp_extension(hello REQUIRES sdr DEFINES MULTIAPP_STAGE_ABI_hello_op=${stage_abi_hello_op}
+  SOURCES ${CMAKE_CURRENT_LIST_DIR}/ext/hello.c)
 multiapp_extension(capture STACK 4096 REQUIRES sdr SOURCES ${apps_dir}/capture/src/main.c)
-multiapp_extension(rfprobe STACK 2048 REQUIRES sdr SOURCES ${apps_dir}/rfprobe/src/main.c)
+multiapp_extension(rfprobe STACK 2048 REQUIRES sdr
+  DEFINES MULTIAPP_STAGE_ABI_ring_sink=${stage_abi_ring_sink}
+  SOURCES ${apps_dir}/rfprobe/src/main.c)
 
 # osmosdr_hs: its vendor USB class, osmosdr's, is in the host (src/osmosdr.c), and the host's USB
 # device stands in for the one it brings up standalone (ext/usbd_prelude.h). Internal RAM for its
@@ -470,6 +583,19 @@ multiapp_extension(osmosdr_hs APP ${apps_dir}/osmosdr_hs ${hs_conf} STACK 4096 U
   PRELUDE ${CMAKE_CURRENT_LIST_DIR}/ext/usbd_prelude.h
   INCLUDES ${osmosdr} ${apps_dir}/common/include ${ZEPHYR_BASE}/samples/subsys/usb/common
   SOURCES ${apps_dir}/osmosdr_hs/src/main.c ${apps_dir}/common/src/esdr_cal.c)
+endif()
+
+# Hot-swap kernels (include/multiapp/stage.h, "Hot-swapping a stage" in doc/apps/multiapp-internals.md):
+# hello's stage on both chips, one in PSRAM and one INTERNAL, and rfprobe's ring sink where it has
+# the diagnostic-bus ring.
+multiapp_kernel(hello_x2 STAGE hello_op APP hello INCLUDES ${CMAKE_CURRENT_LIST_DIR}/ext
+  SOURCES ${CMAKE_CURRENT_LIST_DIR}/kernels/hello_x2.c)
+multiapp_kernel(hello_x4 STAGE hello_op APP hello INTERNAL INCLUDES ${CMAKE_CURRENT_LIST_DIR}/ext
+  SOURCES ${CMAKE_CURRENT_LIST_DIR}/kernels/hello_x4.c)
+if(CONFIG_SOC_SERIES_ESP32S31)
+  multiapp_kernel(sink_scan16 STAGE ring_sink APP rfprobe INTERNAL
+    INCLUDES ${apps_dir}/rfprobe/src
+    SOURCES ${apps_dir}/rfprobe/kernels/sink_scan16.c)
 endif()
 
 # The stock Wi-Fi driver, and a small app to try it. The boot's interface is the host's.
@@ -592,9 +718,9 @@ if(CONFIG_SOC_SERIES_ESP32S31)
   list(APPEND module_args --psram-section .ext_ram.bss)
 endif()
 add_custom_command(
-  OUTPUT ${exports} ${logs} ${objects}
+  OUTPUT ${exports} ${logs} ${objects} ${host_names}
   COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/exports.py
-          --exports ${exports} --logs ${logs} --objects ${objects}
+          --exports ${exports} --logs ${logs} --objects ${objects} --names ${host_names}
           --area-size ${CONFIG_MULTIAPP_AREA_SIZE} ${module_args} ${ext_libs}
   DEPENDS ${CMAKE_CURRENT_LIST_DIR}/exports.py ${ext_libs}
   COMMENT "Exporting what the multiapp extensions import"

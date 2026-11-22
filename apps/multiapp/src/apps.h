@@ -68,6 +68,103 @@ int multiapp_start(const char *name);
 int multiapp_module_load(const char *name);
 int multiapp_module_unload(const char *name);
 
+#if defined(CONFIG_MULTIAPP_STAGES)
+/*
+ * Hot-swapping a stage (doc/apps/multiapp-internals.md): src/stage.c keeps the stages the running
+ * app registered and decides, this file loads and unloads the kernel's extension.
+ */
+struct llext;
+struct multiapp_kernel_desc;
+
+/* A kernel loaded into the running app. */
+struct multiapp_kernel {
+	/* The extension; NULL when none is loaded. */
+	struct llext *ext;
+	/* Its llext name, one per load: "ksw<n>". */
+	char name[16];
+	const struct multiapp_kernel_desc *desc;
+	/* The function, where it runs. */
+	void *fn;
+	enum multiapp_place place;
+	/* "upload" or "file". */
+	const char *source;
+	size_t file_size;
+	/* Where its regions execute or live, and how big they are. */
+	void *text, *fast, *data, *bss;
+	size_t text_size, fast_size, data_size, bss_size, rodata_size, alloc_size;
+	/* Its constructors have run. */
+	bool up;
+};
+
+/*
+ * Load a kernel file (the ELF and its trailer) into the running app, check its trailer, build id
+ * and dependencies and find its descriptor. 0 or -errno; the shell's thread only.
+ */
+int multiapp_kernel_load(const uint8_t *file, size_t len, const char *source,
+			 struct multiapp_kernel *k);
+/* Unload it: -EBUSY if something imports from it. */
+int multiapp_kernel_unload(struct multiapp_kernel *k);
+
+/* Back to the defaults and unload every kernel (the app has ended and is about to unload). */
+int multiapp_stage_drop_kernels(void);
+/* Whether any stage has a kernel loaded. */
+bool multiapp_stage_has_kernels(void);
+/* Forget the stages whose object @p in says is inside the extension that unloads. */
+void multiapp_stage_forget(bool (*in)(const void *obj, void *ctx), void *ctx);
+
+/* The result of a swap, for the shell to print. */
+struct multiapp_stage_result {
+	/* Request to installation, in us, and whether the stage was idle (installed at once). */
+	uint32_t latency_us;
+	bool immediate;
+	/* The kernel now installed (ext NULL after a revert), and the one it replaced. */
+	struct multiapp_kernel kernel;
+	bool replaced;
+	bool reverted;
+	/* What unloading the kernel that was replaced or reverted returned (0, or it stays loaded). */
+	int old_ret;
+	/* The stage's name, copied. */
+	char stage[24];
+};
+
+/* The stages: a snapshot of one for "multiapp stage list". */
+struct multiapp_stage_view {
+	char name[24];
+	const char *sig_text;
+	uint32_t sig;
+	void *dflt, *cur;
+	uint32_t abi;
+	bool idle;
+	bool shared;
+	bool pending;
+	uint32_t swaps;
+	bool has_kernel;
+	struct multiapp_kernel kernel;
+};
+size_t multiapp_stage_count(void);
+bool multiapp_stage_view(size_t i, struct multiapp_stage_view *v);
+
+/*
+ * Load @p file as a kernel for @p stage and swap it in: wait @p timeout_ms for the app's sync point
+ * and unload the kernel it replaces. -ENOENT (no such stage), -ENOEXEC (not for this stage), -ETIMEDOUT
+ * (the app never reached its sync point: nothing changed), or what the loader says.
+ */
+int multiapp_stage_install(const char *stage, const uint8_t *file, size_t len, const char *source,
+			   uint32_t timeout_ms, struct multiapp_stage_result *res);
+/* Swap back to the app's own function and unload the kernel. */
+int multiapp_stage_revert(const char *stage, uint32_t timeout_ms, struct multiapp_stage_result *res);
+#else
+static inline int multiapp_stage_drop_kernels(void)
+{
+	return 0;
+}
+
+static inline bool multiapp_stage_has_kernels(void)
+{
+	return false;
+}
+#endif /* CONFIG_MULTIAPP_STAGES */
+
 /* USB has started: the main() of an app that wanted that runs now. */
 void multiapp_usb_up(void);
 
@@ -124,5 +221,12 @@ int multiapp_drive_mount_rw(void);
 void multiapp_drive_app_disks(void);
 /* Read @p name's file into @p buf: its size, or -errno. */
 ssize_t multiapp_drive_read(const char *name, uint8_t *buf, size_t max);
+/*
+ * Read the file @p file of the volume's root (a hot-swap kernel, src/stage.c): its size or -errno;
+ * -ENOTSUP on the ESP32-S3, whose FATFS object is in ring bank 0, which an app's ring overwrites,
+ * and -EBUSY while the PC holds the volume as a USB drive (multiapp_drive_write_begin()'s rule).
+ * The caller's thread must have its stack in internal RAM: the flash driver turns the cache off.
+ */
+ssize_t multiapp_drive_read_file(const char *file, uint8_t *buf, size_t max);
 
 #endif /* MULTIAPP_APPS_H_ */

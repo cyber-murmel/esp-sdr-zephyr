@@ -164,12 +164,43 @@ Commands
        bank2_heap in a BANK2 boot, psram_code and psram_data, or psram_ext on the S31, kernel):
        free, largest free block, used, peak. A soak watches these and the uptime, which only grows
        without a reboot
+   * - ``multiapp stage list|put|data|end|load|revert``
+     - hot-swaps a stage of the running app for a kernel (see below)
    * - ``multiapp crash``
      - what ended the previous boot (fatal error, watchdog, how far a boot into an app got) and
        the USB thread's stack use in the last DFU download
 
 - The app's root commands (``probe`` here) answer as in the standalone app.
 - ``CONFIG_MULTIAPP_AUTOSTART`` names an app to start at every boot.
+
+Hot-swapping a stage
+====================
+
+A development feature (``CONFIG_MULTIAPP_STAGES``): replace one DSP function of the app that is
+running with a small kernel, without a reboot. An app declares a stage
+(``include/multiapp/stage.h``: ``rfprobe``'s ``ring_sink`` on the ESP32-S31, ``hello``'s
+``hello_op`` on both chips), a kernel is built by ``multiapp_kernel()`` and loaded by the shell:
+
+.. code-block:: console
+
+   $ python3 apps/multiapp/scripts/kswap.py --port /dev/ttyACM0 --stage ring_sink \
+         --build build/<name> --target sink_scan16        # builds the kernel, pushes it, swaps
+   uart:~$ probe ring 20 1                                # runs the kernel's sink
+   uart:~$ multiapp stage list                            # which stage runs what, where
+   uart:~$ multiapp stage load ring_sink sink_scan16      # a file of the volume instead (S31)
+   uart:~$ multiapp stage revert ring_sink                # the app's own sink again
+
+- The swap happens at the app's quiescent point, or at once when the app is idle, and takes
+  microseconds; the shell prints the latency, the kernel's size and where it was loaded. If the
+  app never gets there in 2 s (``CONFIG_MULTIAPP_STAGE_TIMEOUT_MS``, or the last argument) the
+  kernel is unloaded and nothing changed.
+- A kernel imports only what the host exports already or the app defines: the build says
+  otherwise. Changing a kernel never changes the host's build id, so no file goes stale.
+- ``put``/``data``/``end`` upload the file as base64 lines over the shell (UART or CDC-ACM);
+  ``kswap.py`` paces them. ``load`` reads a file of the volume (not on the ESP32-S3 yet).
+- ``CONFIG_MULTIAPP_KERNELS_IN_VOLUME`` also puts the kernels in the FAT image.
+- Details, the protocol and what it guarantees:
+  `multiapp internals <../../doc/apps/multiapp-internals.md>`__.
 
 Apps as files
 =============
@@ -324,6 +355,19 @@ One line in ``CMakeLists.txt``:
 - ``USB`` names the classes it needs.
 - ``AREA`` puts its internal RAM buffers (``ESP_SDR_HIGH_BUF_DEFINE()``) in the area.
 - The host needs the app's other Kconfig options; a missing function fails the host's link.
+
+Kernels
+-------
+
+A replacement for one stage of an app, loaded into it while it runs (`Hot-swapping a stage`_):
+
+.. code-block:: cmake
+
+   multiapp_kernel(sink_scan16 STAGE ring_sink APP rfprobe INTERNAL
+     INCLUDES ${apps_dir}/rfprobe/src SOURCES ${apps_dir}/rfprobe/kernels/sink_scan16.c)
+
+- ``APP`` is the name of the ``multiapp_extension()``, ``INTERNAL`` puts its IRAM code in
+  ``module_heap``. The file is ``llext/files/<name>.llext``, build target ``<name>_kernel``.
 
 Modules
 -------

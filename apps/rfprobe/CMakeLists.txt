@@ -19,6 +19,9 @@ if(CONFIG_USB_DEVICE_STACK_NEXT)
   include(${CMAKE_CURRENT_LIST_DIR}/../common/common.cmake)
 endif()
 
+# multiapp's stage macros (include/multiapp/stage.h): plain calls in this standalone build.
+target_include_directories(app PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../multiapp/include)
+
 target_sources(app PRIVATE src/main.c)
 if(CONFIG_SOC_SERIES_ESP32S3)
   target_sources(app PRIVATE src/i2sbench.c)

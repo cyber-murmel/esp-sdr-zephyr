@@ -31,3 +31,27 @@ def test_build_id_length(tmp_path, run_main):
     bid.write_bytes(b"short")
     with pytest.raises(SystemExit):
         run_main(apptrail, "--stack", 1, "--build-id", bid, elf, tmp_path / "out")
+
+
+def test_kernel_trailer(tmp_path, run_main):
+    # A kernel: the same layout, "MKT1", and the placement where an app has its stack.
+    elf, bid = tmp_path / "k.llext", tmp_path / "id.bin"
+    elf.write_bytes(b"\x7fELF" + bytes(64))
+    bid.write_bytes(bytes(range(16)))
+    for placement, value in (("psram", 0), ("internal", 1)):
+        out = tmp_path / f"k.{placement}"
+        assert run_main(apptrail, "--kernel", placement, "--build-id", bid, elf, out) == 0
+        data = out.read_bytes()
+        magic, size, crc, place, build_id = struct.unpack("<4I16s", data[-32:])
+        assert magic.to_bytes(4, "little") == b"MKT1"
+        assert (size, crc, place, build_id) == (len(data) - 32, zlib.crc32(data[:-32]), value,
+                                                 bytes(range(16)))
+
+
+def test_app_or_kernel_not_both(tmp_path, run_main):
+    elf, bid = tmp_path / "x.llext", tmp_path / "id.bin"
+    elf.write_bytes(b"x")
+    bid.write_bytes(bytes(16))
+    for extra in ((), ("--stack", 1, "--kernel", "psram")):
+        with pytest.raises(SystemExit):
+            run_main(apptrail, *extra, "--build-id", bid, elf, tmp_path / "out")

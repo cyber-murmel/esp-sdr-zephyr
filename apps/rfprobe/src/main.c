@@ -30,6 +30,7 @@
 #include <esp_sdr/esp_sdr_rx.h>
 #if defined(CONFIG_ESP_SDR_DIAG16)
 #include <esp_sdr/esp_sdr_diag16.h>
+#include <multiapp/stage.h>
 #endif
 #include <esp_sdr/esp_sdr_tx.h>
 #if defined(CONFIG_SOC_SERIES_ESP32S3)
@@ -327,23 +328,14 @@ static int cmd_rx(const struct shell *sh, size_t argc, char **argv)
  * ring <rate MS/s> <seconds> [falling edge] [nodes] [pad] [pad] [dc]: the gapless ring, then its
  * numbers and a base64 dump of the nodes straight after the first 100 ms, whose samples are bytes, I then Q.
  */
-#define RING_DUMP_NODES 4U
+#include "ring_stage.h"
+
+#if defined(MULTIAPP_NAME)
+/* A global: the sink kernels (kernels/sink_scan16.c) fill it too. */
+uint8_t ring_dump[RING_DUMP_NODES * ESP_SDR_DIAG16_PAYLOAD];
+#else
 static uint8_t ring_dump[RING_DUMP_NODES * ESP_SDR_DIAG16_PAYLOAD];
-
-struct ring_check {
-	uint64_t expect;
-	uint64_t dump_from;
-	uint32_t gaps;
-	uint32_t dumped;
-	uint32_t nodes;
-	/* Nodes looked at, and large samples in them: on a quiet band at a mid gain, about none. */
-	uint32_t scanned;
-	uint32_t outliers;
-};
-
-/* One node in 64 of the run: enough to see a phase that goes bad, cheap at any rate. */
-#define RING_SCAN_MASK 63U
-#define RING_OUTLIER   32
+#endif
 
 static void ring_sink(void *user, uint8_t *node, uint64_t index)
 {
@@ -370,6 +362,12 @@ static void ring_sink(void *user, uint8_t *node, uint64_t index)
 	}
 }
 
+/*
+ * A hot-swappable stage when built as a multiapp extension (multiapp stage ...): the sink runs on
+ * the diag16 thread during a run, so the quiescent point is the shell's, around each run.
+ */
+MULTIAPP_STAGE_DEFINE(ring_sink, esp_sdr_diag16_sink_t, ring_sink);
+
 static int cmd_ring(const struct shell *sh, size_t argc, char **argv)
 {
 	uint32_t mhz = (uint32_t)arg(argv, argc, 1, 20);
@@ -390,7 +388,7 @@ static int cmd_ring(const struct shell *sh, size_t argc, char **argv)
 		.rate_hz = mhz * 1000000U,
 		.seconds = (uint32_t)arg(argv, argc, 2, 1),
 		.falling_edge = arg(argv, argc, 3, 0) != 0,
-		.sink = ring_sink,
+		.sink = ring_sink_stage_sync(),
 		.user = &c,
 		.dc_correct = arg(argv, argc, 7, 0) != 0,
 	};
@@ -399,9 +397,11 @@ static int cmd_ring(const struct shell *sh, size_t argc, char **argv)
 	int ret;
 
 	if (busy(sh)) {
+		ring_sink_stage_idle();
 		return -EBUSY;
 	}
 	ret = esp_sdr_diag16_run(&cfg, &s);
+	ring_sink_stage_idle();
 	shell_print(sh, "ring ret %d rate %u bytes %llu consumed %llu skips %u nodes %u gaps %u "
 		    "overrun %d ppm_x100 %d sink_x100 %u isrs %u raw %x phase %u bad %d scanned %u "
 		    "outliers %u", ret, cfg.rate_hz, s.bytes, s.consumed, s.skips, s.skipped_nodes,

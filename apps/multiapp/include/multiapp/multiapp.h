@@ -36,6 +36,13 @@ struct multiapp_trailer {
 #define MULTIAPP_TRAILER_MAGIC 0x3150414DU /* "MAP1" */
 
 /*
+ * A hot-swap kernel's file (multiapp_kernel(), include/multiapp/stage.h) has the same trailer with
+ * this magic, so that neither kind loads as the other; its stack_size is the placement, a value of
+ * enum multiapp_place (src/apps.h): the kernel's code and data in PSRAM or in internal RAM.
+ */
+#define MULTIAPP_KTRAILER_MAGIC 0x31544B4DU /* "MKT1" */
+
+/*
  * What an extension may define, found by name when the host unloads it (doc/apps/multiapp-internals.md):
  *
  * - int multiapp_module_up(void): a module, once its constructors have run.

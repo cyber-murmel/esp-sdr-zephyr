@@ -7,6 +7,7 @@
  */
 
 #include <stdlib.h>
+#include <string.h>
 
 #include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>
@@ -17,6 +18,10 @@
 #include <esp_sdr/esp_sdr.h>
 
 #include <esp_phy_init.h>
+
+#include <multiapp/stage.h>
+
+#include "hello_stage.h"
 
 #if defined(CONFIG_MULTIAPP_MODULE_TESTS)
 #include "hellomod.h"
@@ -119,6 +124,110 @@ static int cmd_mod(const struct shell *sh, size_t argc, char **argv)
 }
 #endif
 
+/*
+ * A stage for the hot-swap check (include/multiapp/stage.h): "hello stage" calls it once from the
+ * shell's thread, "hello stage run <ms>" from a thread of its own, on the other CPU where there is
+ * one, which syncs at the top of every pass. The kernels apps/multiapp/kernels/hello_x2.c (PSRAM)
+ * and hello_x4.c (INTERNAL) replace it: "multiapp stage load hello_op hello_x2".
+ */
+int hello_stage_bias = 100;
+
+static int hello_op_default(int v)
+{
+	return v + 1;
+}
+
+MULTIAPP_STAGE_DEFINE(hello_op, hello_op_t, hello_op_default);
+
+static K_THREAD_STACK_DEFINE(stage_stack, 1024);
+static struct k_thread stage_thread;
+static volatile bool stage_run, stage_quit;
+static volatile uint32_t stage_calls;
+static volatile int stage_last, stage_in_flight;
+
+static void stage_worker(void *p1, void *p2, void *p3)
+{
+	int64_t end = k_uptime_get() + (intptr_t)p1;
+	int v = 0;
+
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+	while (!stage_quit && k_uptime_get() < end) {
+		/* The quiescent point of this thread: a swap that is asked for lands here. */
+		hello_op_t op = hello_op_stage_sync();
+
+		stage_in_flight = 1;
+		stage_last = op(v++);
+		stage_in_flight = 0;
+		stage_calls++;
+		k_msleep(1);
+	}
+	hello_op_stage_idle();
+	stage_run = false;
+}
+
+static int cmd_stage(const struct shell *sh, size_t argc, char **argv)
+{
+	if (argc > 1 && strcmp(argv[1], "run") == 0) {
+		if (stage_run) {
+			shell_error(sh, "stage: a run is going");
+			return -EBUSY;
+		}
+		if (stage_thread.base.thread_state != 0) {
+			(void)k_thread_join(&stage_thread, K_SECONDS(1));
+		}
+		stage_calls = 0;
+		stage_quit = false;
+		stage_run = true;
+		k_thread_create(&stage_thread, stage_stack, K_THREAD_STACK_SIZEOF(stage_stack),
+				stage_worker, (void *)(intptr_t)(argc > 2 ? atoi(argv[2]) : 5000), NULL,
+				NULL, 5, 0, K_FOREVER);
+#if defined(CONFIG_SMP)
+		/* On the other CPU than the shell's: the swap is made across CPUs. */
+		k_thread_cpu_pin(&stage_thread, arch_curr_cpu()->id ^ 1);
+#endif
+		k_thread_start(&stage_thread);
+		shell_print(sh, "stage: running");
+	} else if (argc > 1 && strcmp(argv[1], "stop") == 0) {
+		stage_quit = true;
+		(void)k_thread_join(&stage_thread, K_SECONDS(1));
+		shell_print(sh, "stage: stopped after %u calls, last result %d", stage_calls,
+			    stage_last);
+	} else if (argc > 1 && strcmp(argv[1], "show") == 0) {
+		shell_print(sh, "stage: %s, %u calls, last result %d", stage_run ? "running" : "idle",
+			    stage_calls, stage_last);
+	} else {
+		int v = argc > 1 ? atoi(argv[1]) : 21;
+		hello_op_t op;
+		int r;
+
+		if (stage_run) {
+			shell_error(sh, "stage: a run is going (hello stage stop)");
+			return -EBUSY;
+		}
+		op = hello_op_stage_sync();
+		r = op(v);
+		hello_op_stage_idle();
+		shell_print(sh, "stage: op(%d) = %d, op at %p, bias %d", v, r, (void *)op,
+			    hello_stage_bias);
+	}
+	return 0;
+}
+
+/*
+ * The app ends: so does the stage thread (it may be inside a kernel's function). One that does not
+ * end in time (its op blocks) fails the stop: the host then reboots instead of unloading a kernel
+ * a thread still runs.
+ */
+int multiapp_app_stop(void)
+{
+	stage_quit = true;
+	if (stage_thread.base.thread_state != 0 && k_thread_join(&stage_thread, K_SECONDS(1)) != 0) {
+		return -EBUSY;
+	}
+	return 0;
+}
+
 /* A call into the PHY's blob, a module. */
 static int cmd_phy(const struct shell *sh, size_t argc, char **argv)
 {
@@ -137,6 +246,8 @@ SHELL_STATIC_SUBCMD_SET_CREATE(hello_cmds,
 	SHELL_CMD(mod, NULL, "calls across modules, PSRAM and internal RAM", cmd_mod),
 #endif
 	SHELL_CMD(phy, NULL, "a call into the PHY's blob as a module", cmd_phy),
+	SHELL_CMD_ARG(stage, NULL, "[n | run <ms> | stop | show]: call the hot-swap stage hello_op",
+		      cmd_stage, 1, 2),
 	SHELL_SUBCMD_SET_END);
 SHELL_CMD_ARG_REGISTER(hello, &hello_cmds, "[n]: the loader check", cmd_hello, 1, 1);
 

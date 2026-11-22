@@ -13,7 +13,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 MULTIAPP = REPO / "apps/multiapp"
-PRELUDES = [MULTIAPP / "include/multiapp/ext.h", MULTIAPP / "ext/wifi_prelude.h"]
+PRELUDES = [MULTIAPP / "include/multiapp/ext.h", MULTIAPP / "ext/wifi_prelude.h",
+            MULTIAPP / "include/multiapp/stage.h"]
 
 
 def macros(path):
@@ -32,8 +33,9 @@ def test_every_constructor_has_a_destructor_or_a_reason():
         for name, body in macros(header):
             found += 1
             assert "destructor" in body or "no destructor:" in body, f"{header.name}: {name}"
-    # SHELL_CMD_ARG_REGISTER, SYS_INIT_NAMED, slabs, settings, K_THREAD_DEFINE, net_mgmt
-    assert found >= 6
+    # SHELL_CMD_ARG_REGISTER, SYS_INIT_NAMED, slabs, settings, K_THREAD_DEFINE, net_mgmt, the
+    # stage of include/multiapp/stage.h
+    assert found >= 7
 
 
 def test_destructors_undo_what_the_constructors_register():
@@ -416,3 +418,95 @@ def test_the_calibration_store_writes_under_the_lock_in_the_multiapp_build_only(
     # Every settings write of the library is one of those two.
     writers = set(re.findall(r"\b(settings_(?:save_one|delete|save))\(", src))
     assert writers == {"settings_save_one", "settings_delete"}
+
+
+# ---- hot-swapping a stage (doc/apps/multiapp-internals.md): what the unload has to do for it ----
+
+def test_an_app_unload_drops_its_kernels_before_it_cuts_the_app_off():
+    # The kernels import from the app, so its use count blocks ext_unload() until they are gone.
+    apps = (MULTIAPP / "src/apps.c").read_text()
+    body = apps[apps.index("static int app_unload"):]
+    body = body[:body.index("\n}\n")]
+    # A thread of the app that may be inside a kernel is aborted before the kernel goes.
+    assert (body.index("app_stop()") < body.index("multiapp_stage_has_kernels()")
+            < body.index("threads_sweep(def->name, loaded)")
+            < body.index("multiapp_stage_drop_kernels()")
+            < body.index("app_cutoff(def)") < body.index("ext_unload("))
+
+
+def test_hellos_stop_hook_fails_when_its_thread_does_not_end():
+    # Otherwise a thread stuck in a kernel's op would run freed text after the unload.
+    hello = (MULTIAPP / "ext/hello.c").read_text()
+    body = hello[hello.index("int multiapp_app_stop(void)"):]
+    body = body[:body.index("\n}\n")]
+    assert "k_thread_join" in body and "return -EBUSY" in body
+
+
+def test_the_stage_abi_is_one_hash_for_the_app_and_its_kernels():
+    # multiapp_stage_abi() hashes the shared headers once; the app's extension and every kernel of
+    # the stage are built with it, and the host refuses a kernel whose hash is not the app's.
+    assert "function(multiapp_stage_abi" in CMAKE and "file(SHA256" in CMAKE
+    assert "MULTIAPP_STAGE_ABI_${KERN_STAGE}=${stage_abi_${KERN_STAGE}}" in CMAKE
+    assert "DEFINES MULTIAPP_STAGE_ABI_ring_sink=${stage_abi_ring_sink}" in CMAKE
+    assert "DEFINES MULTIAPP_STAGE_ABI_hello_op=${stage_abi_hello_op}" in CMAKE
+    assert "ring_stage.h" in CMAKE[CMAKE.index("multiapp_stage_abi(ring_sink"):][:200]
+    stage = (MULTIAPP / "src/stage.c").read_text()
+    assert "k->desc->abi != s->st->abi" in stage
+    header = (MULTIAPP / "include/multiapp/stage.h").read_text()
+    assert header.count("MULTIAPP_STAGE_ABI_##") == 2
+    # No accessor that reads the stage's function without a sync.
+    assert "_stage_fn" not in header
+
+
+def test_kernel_files_are_not_read_while_the_pc_holds_the_volume():
+    drive = (MULTIAPP / "src/drive.c").read_text()
+    body = drive[drive.index("ssize_t multiapp_drive_read_file"):]
+    body = body[:body.index("\n}\n")]
+    assert "atomic_get(&msc_exported)" in body and "-EBUSY" in body
+    # The upload is dropped under the command lock like the other commands.
+    shell = (MULTIAPP / "src/stage_shell.c").read_text()
+    abort = shell[shell.index("static int cmd_abort"):]
+    assert "lock(sh)" in abort[:abort.index("\n}\n")]
+
+
+def test_every_unload_forgets_the_stages_in_the_extension():
+    apps = (MULTIAPP / "src/apps.c").read_text()
+    body = apps[apps.index("static int ext_unload"):]
+    body = body[:body.index("\n}\n")]
+    assert body.index("roots_drop") < body.index("stages_drop") < body.index("llext_unload")
+
+
+def test_a_kernel_loads_only_with_the_kernel_trailer_and_only_from_the_app():
+    apps = (MULTIAPP / "src/apps.c").read_text()
+    body = apps[apps.index("int multiapp_kernel_load"):]
+    body = body[:body.index("\n}\n")]
+    assert "MULTIAPP_KTRAILER_MAGIC" in body and "kernel_check_deps" in body
+    # An app's file and a kernel's differ in the magic, so neither loads as the other.
+    assert apps.count("MULTIAPP_TRAILER_MAGIC") == 2
+    deps = apps[apps.index("static int kernel_check_deps"):]
+    deps = deps[:deps.index("\n}\n")]
+    assert "!= loaded" in deps and "LLEXT_MAX_DEPENDENCIES" in deps
+
+
+def test_the_kernel_recipe_leaves_the_hosts_lists_alone():
+    # A kernel is no embedded app, no input of exports.py and no part of the build id.
+    macro = CMAKE[CMAKE.index("macro(multiapp_kernel_file"):]
+    macro = macro[:macro.index("endmacro()")]
+    own = macro.replace("set(ext_files ${ext_files} ${file} PARENT_SCOPE)", "")
+    for name in ("ext_names", "ext_libs", "ext_files", "generate_inc_file_for_target"):
+        assert name not in own
+    assert "check-kernel" in macro and "--kernel ${kernel_place}" in macro
+    # ... and the volume only when asked.
+    assert "CONFIG_MULTIAPP_KERNELS_IN_VOLUME" in macro
+    # multiapp_extension() ends for a kernel right after its file, before it joins any list.
+    ext = CMAKE[CMAKE.index("  if(EXT_KERNEL)\n    multiapp_kernel_file"):]
+    assert ext[:ext.index("endif()")].count("return()") == 1
+
+
+def test_stages_need_the_unload_and_the_shell_has_the_subcommand():
+    kconfig = (MULTIAPP / "Kconfig").read_text()
+    stages = kconfig[kconfig.index("config MULTIAPP_STAGES"):]
+    stages = stages[:stages.index("\nconfig ", 10)]
+    assert "depends on MULTIAPP_UNLOAD" in stages
+    apps = (MULTIAPP / "src/apps.c").read_text()
+    assert "SHELL_CMD(stage, &multiapp_stage_cmds" in apps

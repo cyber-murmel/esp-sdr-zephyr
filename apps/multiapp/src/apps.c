@@ -37,12 +37,14 @@
 #endif
 
 #include <multiapp/multiapp.h>
+#include <multiapp/stage.h>
 
 #include "multiapp_build_id.h"
 
 #include "app_crash.h"
 #include "app_usb.h"
 #include "apps.h"
+#include "runguard.h"
 
 LOG_MODULE_REGISTER(multiapp, LOG_LEVEL_INF);
 
@@ -57,6 +59,13 @@ LOG_MODULE_REGISTER(multiapp, LOG_LEVEL_INF);
 #define MODULE_EXEC_OFFSET SOC_I_D_OFFSET
 #else
 #define MODULE_EXEC_OFFSET 0
+#endif
+
+/* Where a region's code runs. */
+#if defined(CONFIG_LLEXT_EXEC_ALIAS)
+#define EXEC_ADDR(ext, r) ((void *)((uintptr_t)(ext)->mem[r] + (ext)->mem_exec_offset[r]))
+#else
+#define EXEC_ADDR(ext, r) ((void *)(ext)->mem[r])
 #endif
 
 #define ROOTS_MAX       4
@@ -231,7 +240,7 @@ static int area_claim(const struct multiapp_embedded *def)
 }
 
 /* No region of a loaded extension may lie in the area, whoever owns it (a loader placement bug). */
-static int area_check(const struct multiapp_embedded *def, const struct llext *ext)
+static int area_check(const char *name, const struct llext *ext)
 {
 	uintptr_t lo = (uintptr_t)multiapp_area, hi = lo + sizeof(multiapp_area);
 
@@ -240,7 +249,7 @@ static int area_check(const struct multiapp_embedded *def, const struct llext *e
 
 		if (ext->mem[i] != NULL && ext->mem_size[i] != 0 && at < hi &&
 		    at + ext->mem_size[i] > lo) {
-			LOG_ERR("%s: region %d (%p, %zu bytes) is in the area", def->name, i,
+			LOG_ERR("%s: region %d (%p, %zu bytes) is in the area", name, i,
 				ext->mem[i], (size_t)ext->mem_size[i]);
 			return -EFAULT;
 		}
@@ -397,13 +406,18 @@ static void sync_text(const struct llext *ext)
 	uintptr_t text = (uintptr_t)ext->mem[LLEXT_MEM_TEXT];
 	size_t size = ext->mem_size[LLEXT_MEM_TEXT];
 
+	/* A kernel whose code is all IRAM_ATTR has no PSRAM text: no cache range to hand the ROM. */
 #if defined(CONFIG_SOC_SERIES_ESP32S3)
-	Cache_WriteBack_Addr(text, size);
-	Cache_Invalidate_Addr(text + IBUS_DBUS_OFFSET, size);
+	if (size != 0U) {
+		Cache_WriteBack_Addr(text, size);
+		Cache_Invalidate_Addr(text + IBUS_DBUS_OFFSET, size);
+	}
 #else
 	/* One data cache, an instruction cache per core; the fast code needs the fence alone. */
-	Cache_WriteBack_Addr(CACHE_MAP_L1_DCACHE, text, size);
-	Cache_Invalidate_Addr(CACHE_MAP_L1_ICACHE_MASK, text, size);
+	if (size != 0U) {
+		Cache_WriteBack_Addr(CACHE_MAP_L1_DCACHE, text, size);
+		Cache_Invalidate_Addr(CACHE_MAP_L1_ICACHE_MASK, text, size);
+	}
 	__asm__ volatile("fence.i" ::: "memory");
 #endif
 }
@@ -413,6 +427,37 @@ static void boot_step(enum boot_step step)
 {
 	if (request.magic == TRIED_MAGIC) {
 		request.step = step;
+	}
+}
+
+/*
+ * An app whose main() never returns is "running" once main() has run for
+ * CONFIG_MULTIAPP_RUNNING_AFTER_MS: the mark is made only if this app is still the one that started
+ * (nothing has unloaded it or started another since, which cancel or re-arm the guard) and the record
+ * is still at main.
+ */
+static struct runguard running_guard;
+
+static void running_mark(void)
+{
+	if (loaded != NULL && loaded_info != NULL && request.magic == TRIED_MAGIC &&
+	    request.step == STEP_MAIN) {
+		boot_step(STEP_RUNNING);
+	}
+}
+
+static int running_setup(void)
+{
+	runguard_init(&running_guard, running_mark);
+	return 0;
+}
+SYS_INIT(running_setup, APPLICATION, 1);
+
+/* main() has started: begin the wait. */
+static void running_arm(void)
+{
+	if (CONFIG_MULTIAPP_RUNNING_AFTER_MS > 0) {
+		runguard_arm(&running_guard, CONFIG_MULTIAPP_RUNNING_AFTER_MS);
 	}
 }
 
@@ -428,9 +473,12 @@ static void app_main(void *p1, void *p2, void *p3)
 	LOG_INF("%s: main returned %d", loaded_info->name, ret);
 }
 
-/* The ELF size and stack of an app file whose trailer holds (apptrail.py); else -errno. */
+/*
+ * The ELF size and stack of an app file whose trailer holds (apptrail.py); else -errno. @p magic
+ * tells an app's file from a kernel's, whose "stack" is its placement.
+ */
 static int check_trailer(const char *name, const char *source, const uint8_t *data, size_t len,
-			 size_t *elf_size, uint32_t *stack_need)
+			 uint32_t magic, size_t *elf_size, uint32_t *stack_need)
 {
 	struct multiapp_trailer t;
 
@@ -439,7 +487,7 @@ static int check_trailer(const char *name, const char *source, const uint8_t *da
 		return -ENOEXEC;
 	}
 	memcpy(&t, data + len - sizeof(t), sizeof(t));
-	if (t.magic != MULTIAPP_TRAILER_MAGIC || t.elf_size != len - sizeof(t)) {
+	if (t.magic != magic || t.elf_size != len - sizeof(t)) {
 		LOG_ERR("%s (%s): no trailer for %zu bytes", name, source, len);
 		return -ENOEXEC;
 	}
@@ -471,12 +519,13 @@ static int load_extension(const struct multiapp_embedded *app, struct llext **ex
 
 	n = multiapp_drive_status() == 0 ? multiapp_drive_read(app->name, FILE_BUF, FILE_BUF_SIZE)
 					 : multiapp_drive_status();
-	if (n >= 0 && check_trailer(app->name, "file", FILE_BUF, n, &elf_size, stack_need) == 0) {
+	if (n >= 0 && check_trailer(app->name, "file", FILE_BUF, n, MULTIAPP_TRAILER_MAGIC, &elf_size,
+			  stack_need) == 0) {
 		data = FILE_BUF;
 		*source = "file";
 	} else if (app->elf != NULL &&
-		   check_trailer(app->name, "built-in", app->elf, app->size, &elf_size,
-				 stack_need) == 0) {
+		   check_trailer(app->name, "built-in", app->elf, app->size,
+				 MULTIAPP_TRAILER_MAGIC, &elf_size, stack_need) == 0) {
 		if (n != -ENOENT && n != -ENODEV) {
 			LOG_WRN("%s: the file is not usable (%d), the built-in copy runs",
 				app->name, (int)n);
@@ -513,7 +562,7 @@ static int load_extension(const struct multiapp_embedded *app, struct llext **ex
 		*ext = NULL;
 		return ret;
 	}
-	ret = area_check(app, *ext);
+	ret = area_check(app->name, *ext);
 	if (ret != 0) {
 		llext_unload(ext);
 		*ext = NULL;
@@ -643,22 +692,22 @@ static void sweep_one(const struct k_thread *thread, void *data)
  * running: a thread in its regions is aborted. It is the last resort: such a thread may hold a lock
  * of the host's, so the extensions end theirs cleanly first and this logs what it finds.
  */
-static void threads_sweep(const struct multiapp_embedded *def, const struct llext *ext)
+static void threads_sweep(const char *name, const struct llext *ext)
 {
 	struct sweep sw = {.ext = ext};
 
 	k_thread_foreach_unlocked(sweep_one, &sw);
 	for (size_t i = 0; i < sw.count; i++) {
-		LOG_WRN("%s: thread %s still runs, aborted", def->name,
+		LOG_WRN("%s: thread %s still runs, aborted", name,
 			k_thread_name_get(sw.found[i]) != NULL ? k_thread_name_get(sw.found[i])
 							       : "(unnamed)");
 		k_thread_abort(sw.found[i]);
 	}
 }
 #else
-static void threads_sweep(const struct multiapp_embedded *def, const struct llext *ext)
+static void threads_sweep(const char *name, const struct llext *ext)
 {
-	ARG_UNUSED(def);
+	ARG_UNUSED(name);
 	ARG_UNUSED(ext);
 }
 #endif /* CONFIG_THREAD_MONITOR */
@@ -675,28 +724,177 @@ static void roots_drop(const struct llext *ext)
 	}
 }
 
+#if defined(CONFIG_MULTIAPP_STAGES)
+static bool stage_in_ext(const void *obj, void *ext)
+{
+	return ext_has(ext, (uintptr_t)obj);
+}
+
+/* Stages in @p ext's data: its destructors unregistered theirs, a failed start's did not. */
+static void stages_drop(const struct llext *ext)
+{
+	multiapp_stage_forget(stage_in_ext, (void *)ext);
+}
+#else
+static void stages_drop(const struct llext *ext)
+{
+	ARG_UNUSED(ext);
+}
+#endif
+
 /*
  * Unload one extension, an app or a module (the same steps for the one-kernel swap of
  * doc/apps/multiapp-internals.md): its destructors, what it left running, its shell roots, then
  * the regions. @p up: its constructors have run, so its destructors must. llext_unload() counts
  * down even when the extension is in use, so the count is checked first: -EBUSY if another
- * extension imports from this one. Whatever refers into it must be gone before this is called.
+ * extension imports from this one (an app with a kernel loaded: the kernel goes first, src/stage.c).
+ * Whatever refers into it must be gone before this is called.
  */
-static int ext_unload(const struct multiapp_embedded *def, struct llext **ext, bool up)
+static int ext_unload(const char *name, struct llext **ext, bool up)
 {
 	struct llext *e = *ext;
 
 	if (e->use_count != 1U) {
-		LOG_ERR("%s: %u users, not unloaded", def->name, e->use_count - 1U);
+		LOG_ERR("%s: %u users, not unloaded", name, e->use_count - 1U);
 		return -EBUSY;
 	}
 	if (up) {
 		(void)llext_teardown(e);
 	}
-	threads_sweep(def, e);
+	threads_sweep(name, e);
 	roots_drop(e);
+	stages_drop(e);
 	return llext_unload(ext);
 }
+
+#if defined(CONFIG_MULTIAPP_STAGES)
+/*
+ * A hot-swap kernel (include/multiapp/stage.h, src/stage.c): a small extension loaded into the
+ * running app from a file image, under a name of its own each time (llext knows an extension by
+ * name, and a second load of a name only counts a user). It may import from the host and the app,
+ * nothing else: a symbol found in another loaded extension would make a dependency whose use count
+ * guards the wrong thing (llext also drops the ones past LLEXT_MAX_DEPENDENCIES silently), so any
+ * dependency but the app's is refused.
+ */
+static unsigned int kernel_seq;
+
+static int kernel_check_deps(const struct multiapp_kernel *k)
+{
+	for (int i = 0; i < LLEXT_MAX_DEPENDENCIES && k->ext->dependency[i] != NULL; i++) {
+		if (k->ext->dependency[i] != loaded) {
+			LOG_ERR("%s: imports from extension %s: a kernel may import only from the "
+				"host and from the app (exports.py checks that at build time)",
+				k->name, k->ext->dependency[i]->name);
+			return -ENOEXEC;
+		}
+	}
+	return 0;
+}
+
+static void kernel_fill(struct multiapp_kernel *k)
+{
+	const struct llext *ext = k->ext;
+
+	k->text = EXEC_ADDR(ext, LLEXT_MEM_TEXT);
+	k->text_size = ext->mem_size[LLEXT_MEM_TEXT];
+	k->fast = EXEC_ADDR(ext, LLEXT_MEM_TEXT_ALT);
+	k->fast_size = ext->mem_size[LLEXT_MEM_TEXT_ALT];
+	k->data = ext->mem[LLEXT_MEM_DATA];
+	k->data_size = ext->mem_size[LLEXT_MEM_DATA];
+	k->bss = ext->mem[LLEXT_MEM_BSS];
+	k->bss_size = ext->mem_size[LLEXT_MEM_BSS];
+	k->rodata_size = ext->mem_size[LLEXT_MEM_RODATA];
+	k->alloc_size = ext->alloc_size;
+}
+
+int multiapp_kernel_load(const uint8_t *file, size_t len, const char *source,
+			 struct multiapp_kernel *k)
+{
+	struct llext_load_param param = LLEXT_LOAD_PARAM_DEFAULT;
+	const struct multiapp_kernel_desc *desc;
+	size_t elf_size;
+	uint32_t place;
+	int ret;
+
+	memset(k, 0, sizeof(*k));
+	if (loaded == NULL || loaded_info == NULL) {
+		LOG_ERR("kernel: no app is running to load it into");
+		return -ENODEV;
+	}
+	(void)snprintf(k->name, sizeof(k->name), "ksw%u", ++kernel_seq);
+	ret = check_trailer(k->name, source, file, len, MULTIAPP_KTRAILER_MAGIC, &elf_size, &place);
+	if (ret != 0) {
+		return ret;
+	}
+	if (place != MULTIAPP_PLACE_PSRAM && place != MULTIAPP_PLACE_INTERNAL) {
+		LOG_ERR("%s (%s): placement %u is not one a kernel has", k->name, source, place);
+		return -ENOEXEC;
+	}
+	if (place == MULTIAPP_PLACE_INTERNAL) {
+		param.region_heaps = region_heaps[MULTIAPP_PLACE_INTERNAL];
+		param.text_alt_section = ".module_fast";
+	}
+	loader = (struct llext_buf_loader)LLEXT_TEMPORARY_BUF_LOADER(file, elf_size);
+	ret = llext_load(&loader.loader, k->name, &k->ext, &param);
+	if (ret != 0) {
+		LOG_ERR("%s (%s): load failed (%d)%s", k->name, source, ret,
+			ret == -ENOMEM && place == MULTIAPP_PLACE_INTERNAL
+				? ": module_heap has no room for an INTERNAL kernel"
+				: "");
+		k->ext = NULL;
+		return ret < 0 ? ret : -EEXIST;
+	}
+	k->place = place;
+	k->source = source;
+	k->file_size = len;
+	ret = area_check(k->name, k->ext);
+	if (ret == 0) {
+		sync_text(k->ext);
+		ret = kernel_check_deps(k);
+	}
+	if (ret == 0) {
+		ret = llext_bringup(k->ext);
+		k->up = true;
+		if (ret != 0) {
+			LOG_ERR("%s: constructors failed (%d)", k->name, ret);
+		}
+	}
+	if (ret == 0) {
+		desc = llext_find_sym(&k->ext->exp_tab, "multiapp_kernel");
+		if (desc == NULL || !ext_has(k->ext, (uintptr_t)desc) ||
+		    desc->magic != MULTIAPP_KERNEL_MAGIC || desc->stage == NULL ||
+		    desc->sig_text == NULL || !ext_has(k->ext, (uintptr_t)desc->fn)) {
+			LOG_ERR("%s: no usable descriptor (multiapp_kernel, MULTIAPP_KERNEL_DEFINE())",
+				k->name);
+			ret = -ENOEXEC;
+		} else {
+			k->desc = desc;
+			k->fn = desc->fn;
+			kernel_fill(k);
+		}
+	}
+	if (ret != 0) {
+		(void)multiapp_kernel_unload(k);
+	}
+	return ret;
+}
+
+int multiapp_kernel_unload(struct multiapp_kernel *k)
+{
+	int ret;
+
+	if (k->ext == NULL) {
+		return 0;
+	}
+	ret = ext_unload(k->name, &k->ext, k->up);
+	if (ret == 0) {
+		k->ext = NULL;
+		k->desc = NULL;
+		k->fn = NULL;
+	}
+	return ret;
+}
+#endif /* CONFIG_MULTIAPP_STAGES */
 
 static int load_modules(const struct multiapp_embedded *app);
 
@@ -912,6 +1110,9 @@ int multiapp_start(const char *name)
 			CONFIG_MAIN_THREAD_PRIORITY, 0, app->console ? K_FOREVER : K_NO_WAIT);
 	k_thread_name_set(&app_thread, info->name);
 	main_held = app->console;
+	if (!app->console) {
+		running_arm();
+	}
 	return 0;
 
 unload:
@@ -923,7 +1124,7 @@ unload:
 		return -EBUSY;
 	}
 	loaded_def = NULL;
-	ext_unload(app, &loaded, up);
+	ext_unload(app->name, &loaded, up);
 	loaded = NULL;
 	return ret;
 }
@@ -991,8 +1192,25 @@ static int app_stop(void)
 static int app_unload(void)
 {
 	const struct multiapp_embedded *def = loaded_def;
-	int ret = app_stop();
+	int ret;
 
+	/* The next app is not this one: a mark that is due waits no longer. */
+	runguard_cancel(&running_guard);
+	ret = app_stop();
+
+	if (ret != 0) {
+		return ret;
+	}
+	/*
+	 * Its kernels import from it (use count): they go first, back to the app's own functions. A
+	 * thread of the app that its stop hook left running may be inside a kernel's function, and
+	 * the kernel's memory goes next: such a thread is aborted before, as the unload of the app
+	 * itself would after (a hook that cannot end its threads returns -EBUSY and the stop fails).
+	 */
+	if (multiapp_stage_has_kernels()) {
+		threads_sweep(def->name, loaded);
+	}
+	ret = multiapp_stage_drop_kernels();
 	if (ret != 0) {
 		return ret;
 	}
@@ -1006,7 +1224,7 @@ static int app_unload(void)
 		area_owner = NULL;
 	}
 	area_app = NULL;
-	ret = ext_unload(def, &loaded, true);
+	ret = ext_unload(def->name, &loaded, true);
 	loaded = NULL;
 	return ret;
 }
@@ -1029,7 +1247,7 @@ static int module_unload(size_t i)
 		LOG_ERR("%s: down failed (%d)", def->name, ret);
 		return ret;
 	}
-	ret = ext_unload(def, &modules[i].ext, modules[i].up);
+	ret = ext_unload(def->name, &modules[i].ext, modules[i].up);
 	if (ret != 0) {
 		return ret;
 	}
@@ -1281,6 +1499,7 @@ void multiapp_usb_up(void)
 	if (main_held) {
 		main_held = false;
 		k_thread_start(&app_thread);
+		running_arm();
 	}
 }
 
@@ -1455,13 +1674,6 @@ static int cmd_run(const struct shell *sh, size_t argc, char **argv)
 	return ret;
 }
 
-/* Where a region's code runs. */
-#if defined(CONFIG_LLEXT_EXEC_ALIAS)
-#define EXEC_ADDR(ext, r) ((void *)((uintptr_t)(ext)->mem[r] + (ext)->mem_exec_offset[r]))
-#else
-#define EXEC_ADDR(ext, r) ((void *)(ext)->mem[r])
-#endif
-
 #if defined(CONFIG_SYS_HEAP_RUNTIME_STATS)
 /* The largest block a heap could hand out now, by trying: a heap's statistics have no such number. */
 static size_t heap_largest(struct k_heap *heap, size_t free_bytes)
@@ -1599,11 +1811,19 @@ static int cmd_crash(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+#if defined(CONFIG_MULTIAPP_STAGES)
+/* src/stage_shell.c */
+extern const union shell_cmd_entry multiapp_stage_cmds;
+#endif
+
 SHELL_STATIC_SUBCMD_SET_CREATE(app_cmds,
 	SHELL_CMD(list, NULL, "The apps in this image", cmd_list),
 	SHELL_CMD_ARG(run, NULL, "<name>: start an app (replaces the running one, reboots if it cannot)",
 		      cmd_run, 2, 0),
 	SHELL_CMD(info, NULL, "The loaded app", cmd_info),
 	SHELL_CMD(crash, NULL, "What ended the previous boot", cmd_crash),
+#if defined(CONFIG_MULTIAPP_STAGES)
+	SHELL_CMD(stage, &multiapp_stage_cmds, "Hot-swap a stage of the running app", NULL),
+#endif
 	SHELL_SUBCMD_SET_END);
 SHELL_CMD_REGISTER(multiapp, &app_cmds, "Apps run as extensions", NULL);

@@ -66,6 +66,40 @@ config MULTIAPP_STOP_TIMEOUT_MS
 	default 5000
 	depends on MULTIAPP_UNLOAD
 
+config MULTIAPP_STAGES
+	bool "Hot-swap a DSP stage of the running app (development)"
+	default y if SOC_SERIES_ESP32S3 || SOC_SERIES_ESP32S31
+	depends on MULTIAPP_UNLOAD
+	help
+	  An app declares stages (include/multiapp/stage.h, MULTIAPP_STAGE_DEFINE()); "multiapp stage"
+	  loads a small kernel (multiapp_kernel() in CMakeLists.txt, a file uploaded over the shell
+	  or read from the volume) into the running app and swaps one stage to it at the app's
+	  quiescent point, then unloads the old kernel, all without a reboot
+	  (doc/apps/multiapp-internals.md, "Hot-swapping a stage"; apps/multiapp/scripts/kswap.py).
+	  A development feature: it runs code of your choosing, so it belongs off in a product.
+
+config MULTIAPP_STAGE_TIMEOUT_MS
+	int "How long a swap waits for the app's sync point, ms"
+	default 2000
+	depends on MULTIAPP_STAGES
+	help
+	  After it the request is taken back, the new kernel unloaded and the shell says that the app
+	  never got there. The shell commands take another value as a last argument.
+
+config MULTIAPP_KERNEL_MAX_KB
+	int "Largest kernel file, KiB"
+	default 16
+	depends on MULTIAPP_STAGES
+	help
+	  The PSRAM buffer an upload or a file is read into before llext copies it.
+
+config MULTIAPP_KERNELS_IN_VOLUME
+	bool "The kernels' files also go into the FAT volume image"
+	depends on MULTIAPP_STAGES
+	help
+	  For "multiapp stage load" without a copy first; the kernels are never in multiapp_embedded[]
+	  and never change the build id of the apps' files.
+
 config MULTIAPP_WIFI
 	bool "The stock Wi-Fi driver as a module"
 	depends on DT_HAS_ESPRESSIF_ESP32_WIFI_ENABLED
@@ -131,6 +165,17 @@ config MULTIAPP_AREA_SIZE
 	  ESP_SDR_HIGH_BUF_DEFINE() and ESP_SDR_HIGH_STACK_DEFINE() (osmosdr's
 	  USB blocks, ring and USB thread stacks), or in other boots the 802.15.4
 	  driver's buffers.
+
+config MULTIAPP_RUNNING_AFTER_MS
+	int "Mark an app as running once its main() has run this long, ms"
+	default 3000
+	help
+	  A boot that dies on the way to its app is skipped once, to end a crash loop: the record of how
+	  far it got (src/apps.c) says "running" when main() returns. An app whose main() never
+	  returns (osmosdr_hs) would stay "in main" for ever, and a warm reboot would skip its autostart
+	  once. This many milliseconds after main() starts, with the app still the one that started,
+	  the record says "running" too; an app that dies earlier stays a crash-loop suspect. 0:
+	  only when main() returns.
 
 config MULTIAPP_AUTOSTART
 	string "App to start at boot"

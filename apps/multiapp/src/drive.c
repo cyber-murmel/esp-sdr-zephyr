@@ -231,10 +231,10 @@ int multiapp_drive_export(void)
 	return disk_access_init("FLASH");
 }
 
-ssize_t multiapp_drive_read(const char *name, uint8_t *buf, size_t max)
+/* Read the file at @p path of the volume whole into @p buf; its size or -errno. */
+static ssize_t read_path(const char *path, uint8_t *buf, size_t max)
 {
 	struct fs_file_t f;
-	char path[48];
 	ssize_t ret;
 
 #if defined(CONFIG_SETTINGS_FILE)
@@ -251,7 +251,6 @@ ssize_t multiapp_drive_read(const char *name, uint8_t *buf, size_t max)
 	}
 #endif
 	fs_file_t_init(&f);
-	file_path(path, sizeof(path), name);
 	ret = fs_open(&f, path, FS_O_READ);
 	if (ret == 0) {
 		ret = read_file(&f, buf, max, NULL, NULL);
@@ -265,6 +264,45 @@ ssize_t multiapp_drive_read(const char *name, uint8_t *buf, size_t max)
 	(void)fs_unmount(&fat_mount);
 #endif
 	return ret;
+}
+
+ssize_t multiapp_drive_read(const char *name, uint8_t *buf, size_t max)
+{
+	char path[48];
+
+	file_path(path, sizeof(path), name);
+	return read_path(path, buf, max);
+}
+
+ssize_t multiapp_drive_read_file(const char *file, uint8_t *buf, size_t max)
+{
+#if defined(CONFIG_SOC_SERIES_ESP32S3)
+	/*
+	 * The FATFS object is in ring bank 0 (multiapp_bank0.ld), which a running app's ring
+	 * overwrites: not while an app runs, until the object moves out of the bank.
+	 */
+	ARG_UNUSED(file);
+	ARG_UNUSED(buf);
+	ARG_UNUSED(max);
+	return -ENOTSUP;
+#else
+	char path[48];
+	int n;
+
+	/* The PC has the volume as a drive: it may be writing it, and a read now could see half a file. */
+	if (atomic_get(&msc_exported) != 0) {
+		return -EBUSY;
+	}
+	/* A name in the volume's root: no path, no hidden file. */
+	if (file[0] == '\0' || file[0] == '.' || strpbrk(file, "/\\:") != NULL) {
+		return -EINVAL;
+	}
+	n = snprintf(path, sizeof(path), "%s/%s", MOUNT_POINT, file);
+	if (n < 0 || (size_t)n >= sizeof(path)) {
+		return -ENAMETOOLONG;
+	}
+	return read_path(path, buf, max);
+#endif
 }
 
 /*

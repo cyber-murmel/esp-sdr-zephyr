@@ -412,22 +412,10 @@ The same code, with these differences (nothing of it has run on a board yet):
 `src/apps.h` exposes `multiapp_module_load(name)` (a module with the modules it `REQUIRES`, its
 constructors, its devices and `multiapp_module_up()`) and `multiapp_module_unload(name)` (its down
 hook, use count, destructors, thread sweep, shell roots, regions; `-EBUSY` while another extension
-imports from it). They work on any module, not only the newest. A later feature, one small
-kernel as an llext swapped into a running app for one DSP stage, plugs in here without a
-reboot or a stop of the app:
-
-1. The kernel is a module (`multiapp_module()`, no `main()`) that exports one function, built by
-   the same CMake function as the others; its file is on the volume and built in.
-2. The app (or a host helper) calls `multiapp_module_load("kernel_b")`, reads the function with
-   `llext_find_sym()`, waits for a quiescent point of its stage (the ring's unit boundary, a frame
-   gap), stores the new function pointer, and calls `multiapp_module_unload("kernel_a")`.
-3. The unload then does what it does for any module: use count (the app does not import the kernel
-   by symbol, so the count is 1: it holds only a pointer, which is why the swap must have stored the
-   new pointer first), destructors, the thread sweep (a kernel with a thread is a bug and is logged),
-   regions back to their heap. The only thing the pointer swap must guarantee is that no thread is
-   inside the old code: a spinlock-free handoff at the stage boundary, and a wait of one more unit.
-4. Both versions are in the code heap at once for that moment: the PSRAM code heap has to hold two
-   kernels (`psram_code` free in `multiapp info`).
+imports from it). They work on any module, not only the newest. The one-kernel swap for a DSP stage (a function pointer replaced in a running app, no reboot) is
+built on this path: [Hot-swapping a stage](#hot-swapping-a-stage). A kernel is not a module (it has
+no place in `multiapp_embedded[]`, no name the build knows), but it loads and unloads through
+the same `ext_unload()` (use count, destructors, thread sweep, shell roots, regions).
 
 #### The soak
 
@@ -442,6 +430,183 @@ ended at the same free and largest block it had after the first cycle. The MAC r
 line 0 while Wi-Fi ran, and the Wi-Fi sources were parked after each unload. Switches into and out
 of `coex` (a `BANK2` flip) also stay in place, the bank-2 heap is back to the same use, and a ring
 right after the switch had its windows (91 % of the time, no failure).
+
+### Hot-swapping a stage
+
+A development feature (`CONFIG_MULTIAPP_STAGES`, on by default on the ESP32-S3 and ESP32-S31, off
+in a product): replace one DSP function of an app that is running with a small extension built
+apart from the host, without a reboot, and give the memory of the old one back. Trying another
+algorithm for a stage drops from a rebuild, a flash and a reboot to a build of one file of a
+kilobyte and a few seconds.
+
+#### The stage, in the app
+
+`include/multiapp/stage.h`. A stage is one function pointer behind a name and a type:
+
+```c
+MULTIAPP_STAGE_DEFINE(ring_sink, esp_sdr_diag16_sink_t, ring_sink);   /* name, type (a typedef), default */
+...
+cfg.sink = ring_sink_stage_sync();   /* the quiescent point: a pending swap lands here */
+run(&cfg);                           /* only that function is called, by any thread, until: */
+ring_sink_stage_idle();              /* nobody is inside the stage, nobody holds the pointer */
+```
+
+- `<name>_stage_sync()` and `<name>_stage_idle()` are the app's two calls. Sync is made by the thread
+  that runs the stage, at its quiescent point (the top of a loop, the start of a run); it returns
+  what the stage runs now and marks the stage busy. Idle says that nothing is inside the stage until
+  the next sync: the host may then swap at once, with no ack to wait for. (A stage that is only ever
+  synced and never idle is swapped at the next sync; one that is neither times out.)
+- The host swaps only when no thread can be inside the old function: while the stage is idle, or in
+  the app's own sync or idle call. So the old kernel is never mid-call on another CPU when it is
+  unloaded, and the app needs no lock of its own.
+- The contract the app keeps: between a sync and the next sync or idle it calls the pointer sync
+  returned and no other, from any thread, and no thread calls it after the idle. One thread is
+  inside the stage at a time: the thread whose sync found it idle owns it until its own idle. Another
+  thread's idle is ignored (it says nothing about the owner), and another thread's sync while the
+  owner is inside marks the stage "shared": the host cannot know when that thread leaves, so it
+  refuses every swap of the stage (`-EBUSY`, `multiapp stage list` says so) until the app is loaded
+  again. Threads that follow one another are fine. A thread that dies inside keeps the stage busy,
+  which a swap reports as a timeout.
+- Why idle exists: `probe ring` runs on the shell's thread, and a swap is asked for on the shell's
+  thread too. A stage that is quiescent only inside the app's own call could never ack a swap that the
+  shell is waiting for.
+- `ring_sink` of `apps/rfprobe` is the first stage, on the ESP32-S31: the sink runs on the diag16
+  thread during a `probe ring` run, and the quiescent points are the shell thread's, around the run
+  (sync before it starts, idle after it returns). `hello_op` of `hello` is the loader check on both
+  chips: `hello stage` calls it once from the shell, `hello stage run <ms>` from a thread on the
+  other CPU that syncs every pass (a busy swap across CPUs).
+- Built as a multiapp extension the macro makes a static object in the app's data, a constructor that
+  registers it with the host (`multiapp_stage_register()`, by name) and a destructor that reverts and
+  unregisters it as the app unloads. Standalone (no `MULTIAPP_NAME`, or the option off) it makes three
+  empty inline functions that return the default: the standalone image is the same bytes as before
+  the stage was declared (rfprobe's `zephyr.bin` sha256 is checked).
+- The host hashes the spelling of the type (`#_fn_type`, FNV-1a) and a kernel must carry the same
+  spelling: a kernel built for another type is refused at load, with both spellings in the log.
+
+#### The kernel
+
+`multiapp_kernel(<name> STAGE <stage> APP <app> SOURCES ... [INTERNAL] [INCLUDES ...])` in
+`CMakeLists.txt`, for both the RISC-V partial link (`ld -r`) and the Xtensa shared object. Its source
+defines the function and exports one descriptor:
+
+```c
+MULTIAPP_KERNEL_DEFINE(ring_sink, esp_sdr_diag16_sink_t, sink_scan16);
+```
+
+- The descriptor `multiapp_kernel` is `{magic, stage name, type spelling, ABI hash, function}`. The
+  host checks that the stage exists in the running app, that the spelling and the ABI hash match,
+  and that the function lies inside the kernel's own regions.
+- **The ABI hash:** the host's build id says nothing of what an app and its kernels share (the
+  `struct ring_check` of `apps/rfprobe/src/ring_stage.h`, a global like `hello_stage_bias`).
+  `multiapp_stage_abi(<stage> HEADERS ...)` hashes the contents of the headers that declare it
+  (SHA-256, 32 bits kept) once per configure, and the app's extension and every kernel of the stage
+  are compiled with `MULTIAPP_STAGE_ABI_<stage>`, which goes into the stage's object and the kernel's
+  descriptor. An app rebuilt after a header changed refuses a kernel built before it, with both
+  values in the log, and the other way round. The headers are configure dependencies, so both are
+  rebuilt together. List every header that declares what is shared (rfprobe's list has
+  `esp_sdr_diag16.h` for the payload size). Standalone builds take no part.
+- The file is `llext/files/<name>.llext` (build target `<name>_kernel`, part of `all`): the extension
+  and the usual 32-byte trailer, with the host's build id, the CRC-32 and, where an app has its
+  stack size, the placement. Its magic is `MKT1`, not `MAP1`, so that a kernel never loads as an app
+  nor an app as a kernel.
+- It is not in `multiapp_embedded[]`, not in the FAT image (unless
+  `CONFIG_MULTIAPP_KERNELS_IN_VOLUME`) and not in `exports.py`'s union of the extensions' imports:
+  **changing a kernel changes no build id and invalidates no file**.
+- What a kernel may import is checked when it is built (`exports.py check-kernel`, against the list
+  `exports.py --names` writes): a symbol the host already exports (what the apps import) or a global
+  symbol the target app defines. Anything else (a module's symbol, a static of the app, a libc
+  function no app uses) stops the build with a message that names the symbols. Weak relocations,
+  host objects (`ESP_SDR_HIGH_BUF_DEFINE()` and the like) and a missing descriptor stop it too. The
+  loader repeats the dependency half at run time: an extension other than the app in the kernel's
+  `dependency[]` is refused (llext resolves an import against every loaded extension, bumps its use
+  count, and keeps only `LLEXT_MAX_DEPENDENCIES` of them, silently).
+- `INTERNAL`: its `ESP_SDR_CODE()`-placed code (IRAM) and its data and bss go to `module_heap`, the
+  region heap of the INTERNAL modules (S3: IRAM through the exec alias; S31: internal SRAM), the rest
+  to PSRAM. Without it everything is in PSRAM. `sink_scan16` is INTERNAL (its sink runs at ring rate);
+  of the two `hello_op` kernels one is of each kind.
+- A kernel that needs something of the app makes it global there (`ring_dump` in rfprobe is global in
+  the multiapp build only, `static` standalone). Its own functions stay `static`: llext exports every
+  global of an extension to the ones loaded after it.
+- An llext is known by name and loading a name that exists only counts a user, so the host gives
+  each load a name of its own, `ksw<n>` (15 characters at most).
+
+#### The host
+
+`src/stage.c` (the registry and the protocol, testable on the host), `src/stage_shell.c` (the
+commands), `src/apps.c` (`multiapp_kernel_load()` and `_unload()`).
+
+- **Registry:** four stages, each with a spinlock and a semaphore in internal RAM (about 270 bytes
+  in all); the kernels' bookkeeping and the upload buffer (`CONFIG_MULTIAPP_KERNEL_MAX_KB`, 16 KiB)
+  are in PSRAM.
+- **Load:** the file image (the upload buffer, or a file the shell's thread read from the volume: the
+  flash driver turns the cache off, so that thread's stack must be internal RAM) goes to llext's
+  buffer loader. Before: the trailer (magic, CRC, build id, placement). After: the instruction cache
+  sync of the text (`sync_text()`, per SoC), the dependencies, the constructors (`llext_bringup()`)
+  and the descriptor.
+- **Swap:** `stage_request()` sets the new function. Idle: installed at once under the stage's
+  spinlock. Busy: left as `pending` for the app's next sync or idle call, which installs it under
+  the same lock and gives the ack; the shell waits for it `CONFIG_MULTIAPP_STAGE_TIMEOUT_MS` (2 s, or
+  the command's last argument). On a timeout the request is taken back under the lock, which tells
+  an install that just happened (then its ack is taken after all) from one that did not; the new
+  kernel is unloaded and the shell says that the app never reached its sync point. After the ack
+  the previous kernel is unloaded (its use count of 1 is checked first, as for any extension).
+- **Latency:** request to installation, from the cycle counter at both ends: a few microseconds when
+  idle, up to the app's pass when busy. It is printed with the kernel's regions and where it runs.
+- **Revert** swaps to the default the same way and unloads the kernel; with no kernel it is an
+  error that changes nothing.
+- **The app's unload** (`app_unload()`): after the app's `main()` has ended and before it is cut off,
+  every kernel is dropped (the default is back without a handshake, the kernel unloaded): a kernel
+  imports from the app, so the app's use count would block `ext_unload()`. Before that, a thread of
+  the app that its stop hook left running (it may be inside a kernel's function) is aborted, as the
+  unload of the app itself would do after; the app's `multiapp_app_stop()` should end its threads
+  and return `-EBUSY` when it cannot (hello's does), which makes the switch fall back to a reboot.
+  A thread of another extension that calls a kernel (the radio's ring thread running a sink) is not
+  found: the app's stop must stop the ring. A kernel that does not
+  unload fails the app's unload, and the caller reboots as for any failed unload. `ext_unload()` also
+  forgets the registry entries inside the extension it unloads, as for shell roots, so that a start
+  that failed half way leaves no stage behind.
+- One shell command at a time (a lock; a second shell gets "busy"); the shell's thread does all of it.
+
+#### Shell and tool
+
+```
+multiapp stage list
+multiapp stage put <stage> <size> <crc32> [timeout ms]    start an upload
+multiapp stage data <base64>                              each answered "ok <bytes so far>"
+multiapp stage end                                        load, swap, print
+multiapp stage abort
+multiapp stage load <stage> <file> [timeout ms]           a file of the volume ("sink_scan16")
+multiapp stage revert <stage> [timeout ms]
+```
+
+Every swap ends with `stage result: ok` or `stage result: error <errno> <why>` and prints the latency
+and the kernel's load address. `apps/multiapp/scripts/kswap.py` drives it, and builds the kernel's
+target first with `--build <dir> --target <name>`: 48 bytes (64 characters) a line, so that
+`multiapp stage data ` and the line fit the ESP32-S3's 96-character shell buffer (the S31's is 256),
+one line sent when the one before is answered (the shells' input rings are 64 bytes, on a UART or on
+CDC-ACM), the CRC-32 of the file announced in `put` and checked in `end`, the byte count the device
+answers checked against what was sent.
+
+- ESP32-S3: `load` from a file answers `-ENOTSUP` (the FATFS object is in ring bank 0, which a
+  running app's ring overwrites; a later phase moves it). The upload works. On both, `load` answers
+  `-EBUSY` while the PC has the volume as a USB drive.
+- `module_heap` has to hold an INTERNAL kernel, and two while one replaces the other. On the S31 it
+  has about 6 KB free under `osmosdr_hs`, about 113 KB under `rfprobe`; `multiapp info` shows it.
+- A function that never returns is not detected as such: the old function is never unloaded under a
+  running call, but the stage then never reaches its sync point and the next swap times out.
+
+#### Tests
+
+- `tests/host/test_multiapp_stage.py` compiles `stage.c` and the stage macro with threads for the
+  app's and the shell's side: idle and busy swaps, a long call (the unload waits for it), the
+  timeout and its late sync, the refusals (another stage, another type, another ABI), revert,
+  drop, unregister (which unloads the kernel), a second thread's idle while the owner is inside, a
+  second thread's sync (swaps refused), threads that follow one another, and 400 swaps against a
+  thread that calls as fast as it can: no call into a freed kernel and no unload with a call inside.
+- `tests/host/test_exports.py` (the kernel check: a host export and an app global pass, anything
+  else fails with the names, for both ELF kinds), `test_apptrail.py` (the kernel trailer),
+  `test_kswap.py` (framing, answers, a lost line, against a fake board), `test_multiapp_unload.py`
+  (the unload order, the recipe's lists).
 
 ### Apps as files
 
@@ -476,6 +641,14 @@ right after the switch had its windows (91 % of the time, no failure).
 - A boot that dies on the way to its app is skipped once, to end a crash loop.
 - A file refused cleanly is not: it is tried again at the next boot, so a correct volume takes
   effect at once.
+- "Died before running" means the boot record (`request.step`) is below "running" at the next boot.
+  It says "running" when `main()` returns, and, for an app whose `main()` never returns (osmosdr_hs,
+  the autostart of the S31), `CONFIG_MULTIAPP_RUNNING_AFTER_MS` (3000) after `main()` started
+  (`src/runguard.c`, a delayed work; for a console app, after USB is up). The mark is made only if the
+  app is still the one that started: unloading it cancels the work, starting the next re-arms it,
+  and the mark itself checks that an app is loaded and the record is still at "main". An app that
+  dies in its first seconds stays a suspect and its autostart is skipped once, as before. 0 turns
+  the timer off.
 
 #### The drive
 
