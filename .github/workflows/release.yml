@@ -4,9 +4,10 @@
 # default.nix builds (every app on every board it allows, see nix/release.py): per image one
 # esptool image to write at 0x0 (a .uf2 for the RP2040), per board a zip with the ELF files, the
 # USB DFU images and flash_args, and firmware.json, which lists them for the web flasher. Besides
-# them the SoapySDR module for osmosdr and Espressif's SVDs with this project's radio registers,
-# notes from release-notes.md. Then the documentation is deployed again, with the flasher
-# serving the new images.
+# them the SoapySDR module for osmosdr, Espressif's SVDs with this project's radio registers, the
+# host tools for a Linux PC without Nix and the MCH2022 badge's FPGA bitstreams (default.nix
+# releaseExtras), notes from release-notes.md. Then the documentation is deployed again, with
+# the flasher serving the new images.
 #
 # Run by hand (workflow_dispatch) it builds everything and keeps it as artifacts, without a
 # release: a dry run for a branch.
@@ -103,9 +104,55 @@ jobs:
           path: assets/
           if-no-files-found: error
 
+  # The host tools tarball and the gateware. default.nix names them for the tag VERSION says,
+  # which the check job compared with the tag.
+  extras:
+    name: Host tools and gateware
+    needs: check
+    runs-on: ubuntu-24.04
+    env:
+      TAG: ${{ needs.check.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@3dc140bfc76c49fbd4dd958429132e3746bcb086 # v31.11.5
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command
+
+      - name: Restore the Nix store
+        uses: nix-community/cache-nix-action/restore@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-ci-${{ hashFiles('default.nix', 'west2nix.toml', 'nix/**') }}
+          restore-prefixes-first-match: nix-ci-
+
+      - name: Build
+        run: nix-build -A releaseExtras -o extras-result
+
+      - name: Assets
+        run: |
+          mkdir extras
+          cp extras-result/* extras/
+          ls -l extras
+          for f in "esp-sdr-tools-$TAG-x86_64-linux.tar.gz" "esp-sdr-gateware-$TAG-mch2022-top.bin" \
+                   "esp-sdr-gateware-$TAG-mch2022-link.bin"; do
+            test -s "extras/$f"
+          done
+
+      - name: Upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: extras
+          path: extras/
+          if-no-files-found: error
+
   release:
     name: Release
-    needs: [check, firmware]
+    needs: [check, firmware, extras]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -150,6 +197,12 @@ jobs:
           path: assets
           merge-multiple: true
 
+      - name: Download the host tools and the gateware
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: extras
+          path: extras
+
       # The boards' lists in one file, for the web flasher (doc/_extra/flasher).
       - name: firmware.json
         run: |
@@ -169,7 +222,8 @@ jobs:
             echo
             jq -r '.images | group_by(.board)[] |
               "- `\(.[0].board)`: " + (sort_by(.chip, .rank, .name) |
-                map(.name + (if .rank < 2 then " (recommended)" else "" end)) | join(", "))' \
+                map(.name + (if .devKey then " (bench only: MCUboot development key)"
+                             elif .rank < 2 then " (recommended)" else "" end)) | join(", "))' \
               firmware.json
           } >> notes.md
           cat notes.md
@@ -184,6 +238,7 @@ jobs:
             firmware.json
             ${{ env.PLUGIN }}
             *-esp-sdr-*.svd
+            extras/*
 
       - name: Release
         if: github.ref_type == 'tag'
@@ -191,7 +246,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$TAG" assets/*.bin assets/*.uf2 assets/*.zip firmware.json \
-            "$PLUGIN" ./*-esp-sdr-"$TAG".svd \
+            "$PLUGIN" ./*-esp-sdr-"$TAG".svd extras/* \
             --repo "$GITHUB_REPOSITORY" \
             --title "$TAG" --notes-file notes.md --generate-notes --verify-tag
 
