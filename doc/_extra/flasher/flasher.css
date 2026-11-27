@@ -11,6 +11,7 @@
   --ok: #1b7f3b;
   --err: #b42318;
   --notice: #fff4d6;
+  --warn: #9a3412;
   color-scheme: light dark;
 }
 
@@ -26,6 +27,7 @@
     --ok: #5cc985;
     --err: #f2867a;
     --notice: #3a3216;
+    --warn: #f0a35c;
   }
 }
 
@@ -114,6 +116,9 @@ select, button {
   margin-left: 0.3rem;
   color: var(--muted);
 }
+
+.tag.warn { color: var(--warn); border-color: var(--warn); }
+.image .desc.warning, .notice.warning { color: var(--warn); font-weight: 600; }
 
 .options { display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; margin-bottom: 1rem; }
 .options label { display: flex; align-items: center; gap: 0.4rem; }

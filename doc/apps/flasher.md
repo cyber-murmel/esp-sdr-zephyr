@@ -14,9 +14,16 @@ a desktop; elsewhere, download the image and use esptool.
   `default.nix` builds them (`nix/release.py` turns them into release assets).
 - Per board, `multiapp` first, then the board's osmosdr image (`osmosdr`, `osmosdr_serial`,
   `osmosdr_hs` or `osmosdr_bridge`) unless that board's multiapp carries it already, then the
-  other apps.
+  other apps. A multiapp marked bench only (below) is one of the other apps and carries nothing
+  for this purpose.
 - A board with two chips (the WHY2025 badge, the ESP32-P4-Function-EV-Board) lists each chip's
   images apart.
+- An image signed with MCUboot's public development key is marked **bench only**, in the list and
+  again beside the flash button. That is the ESP32-S31 CoreBoard's `multiapp`: its sysbuild signs
+  with the project's own key (`apps/common/sysbuild/Kconfig.signing`), which stays with the
+  maintainer, so the release builds it with `ESDR_DEV_KEY=1`, and anybody can sign an image that
+  its MCUboot boots. Such an image is never recommended or preselected, and the apps it carries
+  are listed as images of their own. For a board that needs trust, build with your own key.
 - The MCH2022 badge's RP2040 image is a `.uf2`, download only.
 
 ## How it writes
@@ -42,7 +49,10 @@ the board there by itself, in this order:
    the ROM's download mode on the USB-Serial-JTAG
    ([Handing the port over](index.md#handing-the-port-over)), which comes up as a new port;
    firmware without the command gets `usj` instead. The page goes on with the new port when the
-   browser may use it already; the first time it asks for one more pick.
+   browser may use it already; the first time it asks for one more pick. Only the S3's apps do
+   this: for an image of another chip an esp-sdr app's port is refused with a note to use the
+   port the board's hint names (the ESP32-S31 flashes through its UART bridge, not through J4),
+   and so is an app that answers neither command or does not leave its port.
 2. One short attempt without a reset, for a bootloader that waits already (BOOT held while
    plugging in or while pressing reset).
 3. esptool's reset into download mode: the USB-Serial-JTAG's sequence on chips that have one,

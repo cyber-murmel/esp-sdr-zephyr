@@ -24,9 +24,10 @@ const CHIPS = {
   rp2040: "RP2040",
 };
 
-// How the page reaches the ROM bootloader, on its own: an esp-sdr app's port (USB vendor 2fe3)
+// How the page reaches the ROM bootloader, on its own: an S3 esp-sdr app's port (USB vendor 2fe3)
 // restarts into the ROM's download mode on the USB-Serial-JTAG (shell "download", or that through
-// esdr.shell() from MicroPython; "usj" on older firmware); any other port is first tried as it is,
+// esdr.shell() from MicroPython; "usj" on older firmware); the app ports of the other chips do not
+// flash, and the page says so; any other port is first tried as it is,
 // for a board already in download mode, then reset by esptool (RTS and DTR, or the USB-Serial-JTAG's own sequence). The hints say what
 // to do when none of that reaches the chip.
 const AUTO = "<p>Pick the board's port: the page finds out whether an esp-sdr app, MicroPython " +
@@ -77,7 +78,10 @@ const BOARDS = {
   },
   esp32s31_function_coreboard: {
     name: "ESP32-S31 Function CoreBoard",
-    hint: AUTO + "<p>Connect to the UART bridge's USB port.</p>" + BOOT_RST,
+    hint: AUTO + "<p>Pick the UART bridge's USB-C port (a CP2102N): its RTS and DTR reset the " +
+      "chip into download mode, as esptool expects. The apps' own USB port is the USB-A socket " +
+      "J4 (high speed): it does not flash, and neither does the RJ45 the Ethernet apps send " +
+      "samples over.</p>" + BOOT_RST,
   },
   ues31s043h800v480c_u: {
     name: "VIEWE UES31S043H800V480C-U (ESP32-S31, 4.3\" display)",
@@ -95,6 +99,12 @@ const BOARDS = {
       "<a href=\"../apps/mch2022_coproc.html\">mch2022_coproc</a>.</p>",
   },
 };
+
+// What an image signed with MCUboot's public development key (firmware.json "devKey", from
+// nix/images.py) means: the release has no private key for the images whose sysbuild signs with
+// the project's own.
+const DEV_KEY_WARNING = "Bench only: signed with MCUboot's public development key. Anybody can " +
+  "sign images this board's bootloader boots; do not use it where that matters.";
 
 const $ = (id) => document.getElementById(id);
 const state = { release: null, board: null, image: null, busy: false, wantUsj: false };
@@ -172,13 +182,15 @@ function imageRow(img) {
   const tags = [];
   if (img.rank < 2) tags.push(el("span", { class: "tag" }, "recommended"));
   if (img.inMultiapp) tags.push(el("span", { class: "tag" }, "also in multiapp"));
+  if (img.devKey) tags.push(el("span", { class: "tag warn" }, "bench only"));
   if (!flashable(img)) tags.push(el("span", { class: "tag" }, "download only"));
   const download = el("a", { href: `firmware/${img.file}`, download: img.file }, "download");
   return el("label", { class: "image" },
     input,
     el("span", { class: "name" }, img.name, ...tags),
     el("span", { class: "meta" }, `${size(img.size)} · `, download),
-    img.description ? el("span", { class: "desc" }, img.description) : null);
+    img.description ? el("span", { class: "desc" }, img.description) : null,
+    img.devKey ? el("span", { class: "desc warning" }, DEV_KEY_WARNING) : null);
 }
 
 function renderImages() {
@@ -197,7 +209,9 @@ function renderImages() {
       box.append(el("h3", {}, recommended.length ? "Other apps" : "Apps"), ...others.map(imageRow));
     }
   }
-  const first = images.filter(flashable).sort((a, b) => a.rank - b.rank)[0] ?? images[0];
+  // Not a bench only image, unless the board has nothing else.
+  const flashables = images.filter(flashable).sort((a, b) => a.rank - b.rank);
+  const first = flashables.find((i) => !i.devKey) ?? flashables[0] ?? images[0];
   const input = box.querySelector(`input[value="${CSS.escape(first.file)}"]`);
   input.checked = true;
   selectImage(first);
@@ -205,6 +219,11 @@ function renderImages() {
 
 function selectImage(img) {
   state.image = img;
+  state.wantUsj = false; // a pick for the S3's handover is for that image only
+  // Shown beside the flash button, where the user is about to write it.
+  const warning = $("devkey");
+  warning.textContent = img.devKey ? DEV_KEY_WARNING : "";
+  warning.hidden = !img.devKey;
   updateButton();
 }
 
@@ -258,7 +277,9 @@ async function readFor(port, ms) {
 // reset then brings the app back). Where MicroPython runs (multiapp's autostart on the XIAO and
 // the Communicator) the port is its REPL, whose esdr.shell() runs the shell's commands: as west
 // dfu does, Ctrl-C stops the running Python app and a ">>>" tells the REPL from the shell.
+// The apps of the other chips have neither command: false when the app answers "not found" to both.
 async function handOver(port) {
+  let known = true;
   await port.open({ baudRate: 115200 });
   try {
     await port.setSignals({ dataTerminalReady: true });
@@ -273,6 +294,8 @@ async function handOver(port) {
     if (/not found/i.test(reply)) {
       log("No download command (older firmware): usj");
       await command(repl, "usj");
+      // An S3 that takes it leaves the bus before it can answer.
+      if (/not found/i.test(await readFor(port, 800))) known = false;
     }
     writer.releaseLock();
     await sleep(500);
@@ -284,6 +307,7 @@ async function handOver(port) {
   } catch {
     // Already gone.
   }
+  return known;
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -295,7 +319,7 @@ const isUsj = (port) => {
 // The USB-Serial-JTAG that comes up after a handover, if the browser may use it already (it was
 // picked before); null when it needs the user's permission first.
 // "back" when the app's port leaves and comes again instead: the chip restarted into its app,
-// which takes the USB port back.
+// which takes the USB port back. "stayed" when it never leaves: the app did not act on the command.
 async function waitForUsj(before, ms) {
   let left = false;
   for (const end = Date.now() + ms; Date.now() < end;) {
@@ -307,7 +331,7 @@ async function waitForUsj(before, ms) {
     if (!app) left = true;
     else if (left) return "back";
   }
-  return null;
+  return left ? null : "stayed";
 }
 
 // esptool-js on the port in the ROM bootloader: first as it is, with one short attempt, for a
@@ -378,11 +402,31 @@ async function flash() {
   let transport;
   try {
     if (port.getInfo().usbVendorId === ESP_SDR_VID) {
+      // Only the S3 apps restart into download mode on the USB-Serial-JTAG ("download", "usj"). The
+      // other chips' app ports (the S31's osmosdr_hs on J4) do not flash: their boards have a UART
+      // bridge or a boot button, which the board's hint says.
+      if (img.chip !== "esp32s3") {
+        status(`This is an esp-sdr app's USB port, which does not flash the ${CHIPS[img.chip]}. ` +
+          "Pick the port the board's hint names.", "err");
+        log("An esp-sdr app's port: only the ESP32-S3's apps can restart into download mode.");
+        return;
+      }
       status("An esp-sdr app has the port: asking it to restart into download mode...");
       const before = (await navigator.serial.getPorts()).filter(isUsj);
-      await handOver(port);
+      if (!(await handOver(port))) {
+        status("This app has no download or usj command. Put the board into download mode by " +
+          "hand (the board's hint) and pick the port that appears.", "err");
+        log("The app answered \"not found\" to download and to usj.");
+        return;
+      }
       status("Waiting for the USB-Serial-JTAG...");
       port = await waitForUsj(before, 8000);
+      if (port === "stayed") {
+        status("The app did not restart into download mode. Put the board into download mode " +
+          "by hand (the board's hint) and pick the port that appears.", "err");
+        log("The app's port never left.");
+        return;
+      }
       if (port === "back") {
         status("The board restarted into its app, which took the USB port back. Press Connect " +
           "and flash to try again.", "err");
