@@ -346,8 +346,10 @@ let
         ./dts
         ./include
         ./lib
-        # lib/esp_sdr/place.cmake runs place_report.py after each link.
+        # lib/esp_sdr/place.cmake runs place_report.py after each link, and the S31 apps
+        # (multiapp, txstream_eth) check their memory layout with tcm_groups.py.
         ./scripts/place
+        ./scripts/tcm_groups.py
         ./scripts/west-commands.yml
         ./scripts/west_commands
         ./zephyr
