@@ -298,12 +298,14 @@ let
       "CONFIG_ESDR_FPGA_IMAGE=\"${gateware}/${fpgaImages.${img.app}}\"";
   excludedApps = map (app: lib.fileset.maybeMissing (./apps + "/${app}")) excludeApps;
 
-  # The images twister builds, from the sample.yaml files alone (nix/images.py).
+  # The images twister builds, from the sample.yaml files and the Kconfig files that say which
+  # of them sign with the project's own key (nix/images.py).
   imageList = builtins.fromJSON (builtins.readFile (pkgs.runCommand "esp-sdr-images.json" {
     nativeBuildInputs = [ yamlPython ];
     samples = lib.fileset.toSource {
       root = ./apps;
-      fileset = lib.fileset.fileFilter (f: f.name == "sample.yaml") ./apps;
+      fileset = lib.fileset.fileFilter
+        (f: lib.elem f.name [ "sample.yaml" "Kconfig.sysbuild" "Kconfig.signing" ]) ./apps;
     };
   } "python3 ${./nix/images.py} $samples ${lib.escapeShellArgs excludeApps} > $out"));
 
@@ -434,8 +436,13 @@ let
   '';
   lvglArg = img: lib.optionalString (usesMicropython img) "\"-DZEPHYR_MODULES=$modules\"";
 
+  # An image whose sysbuild signs with the project's own key (img.devKey) builds with MCUboot's
+  # public development key: the release has no private key. Anybody can sign what that bootloader
+  # boots, so release.py marks these for the bench only (apps/common/sysbuild/Kconfig.signing).
   mkImage = img: pkgs.stdenvNoCC.mkDerivation (env // lib.optionalAttrs (usesMicropython img) {
     MICROPY_MPYCROSS = "${mpy-cross}/bin/mpy-cross";
+  } // lib.optionalAttrs img.devKey {
+    ESDR_DEV_KEY = "1";
   } // {
     name = "esp-sdr-${img.board}-${img.name}-${version}";
     # A host compiler for MicroPython images: LVGL's gen_json.py preprocesses lvgl.h with gcc and

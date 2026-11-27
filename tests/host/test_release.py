@@ -4,9 +4,33 @@
 import json
 import zipfile
 
-from conftest import load
+import pytest
+
+from conftest import REPO, load
 
 release = load("nix/release.py")
+images = load("nix/images.py")
+
+# apps/common/sysbuild/Kconfig.signing as far as images.py reads it, and the Kconfig.sysbuild of
+# an app that opts into it.
+SIGNING = """# comment
+config ESDR_SIGNING
+\tbool "Sign with the project's own ED25519 key"
+\tdefault y if BOARD = "esp32s31_function_coreboard" || BOARD = "other_board"
+\thelp
+\t  default y if BOARD = "not_this_one": help text, which is not a default
+
+\tbool
+
+choice BOOT_SIGNATURE_TYPE
+\tdefault BOOT_SIGNATURE_TYPE_ED25519 if ESDR_SIGNING
+endchoice
+"""
+OPTS_IN = """# The own signing key defaults.
+rsource "../common/sysbuild/Kconfig.signing"
+
+source "share/sysbuild/Kconfig"
+"""
 
 SAMPLES = {
     "multiapp": """
@@ -15,7 +39,8 @@ sample: {name: multiapp, description: "Runs the
 common: {sysbuild: true}
 tests:
   sample.esp_sdr.multiapp:
-    platform_allow: [xiao_esp32s3/esp32s3/procpu, ues31s043h800v480c_u/esp32s31/hpcore]
+    platform_allow: [xiao_esp32s3/esp32s3/procpu, ues31s043h800v480c_u/esp32s31/hpcore,
+                     esp32s31_function_coreboard/esp32s31/hpcore]
 """,
     "osmosdr": """
 sample: {name: osmosdr, description: USB SDR}
@@ -27,10 +52,26 @@ tests:
 sample: {name: osmosdr_hs, description: High speed}
 tests:
   esp_sdr.osmosdr_hs:
-    platform_allow: [ues31s043h800v480c_u/esp32s31/hpcore]
+    platform_allow: [ues31s043h800v480c_u/esp32s31/hpcore,
+                     esp32s31_function_coreboard/esp32s31/hpcore]
   esp_sdr.osmosdr_hs.loadlog:
     platform_allow: [ues31s043h800v480c_u/esp32s31/hpcore]
     extra_args: EXTRA_CONF_FILE=loadlog.conf
+""",
+    "stream_eth": """
+sample: {name: stream_eth, description: VITA 49.2 over gigabit Ethernet}
+tests:
+  sample.esp_sdr.stream_eth:
+    platform_allow: [esp32s31_function_coreboard/esp32s31/hpcore]
+  sample.esp_sdr.stream_eth.onecore:
+    platform_allow: [esp32s31_function_coreboard/esp32s31/hpcore]
+    extra_args: EXTRA_CONF_FILE=onecore.conf
+""",
+    "txstream_eth": """
+sample: {name: txstream_eth, description: VITA 49.2 transmit over gigabit Ethernet}
+tests:
+  sample.esp_sdr.txstream_eth:
+    platform_allow: [esp32s31_function_coreboard/esp32s31/hpcore]
 """,
     "capture": """
 sample: {name: capture, description: Bursts}
@@ -65,6 +106,9 @@ def tree(tmp_path, built, llext):
     for app, text in SAMPLES.items():
         (apps / app).mkdir(parents=True)
         (apps / app / "sample.yaml").write_text(text)
+    (apps / "common/sysbuild").mkdir(parents=True)
+    (apps / "common/sysbuild/Kconfig.signing").write_text(SIGNING)
+    (apps / "multiapp/Kconfig.sysbuild").write_text(OPTS_IN)
     for board, names in built.items():
         for name in names:
             d = result / board / name
@@ -148,3 +192,106 @@ def test_an_image_without_a_test_stops(tmp_path, run_main):
         assert "stray" in str(e)
     else:
         raise AssertionError("no exit")
+
+
+def test_dev_key_multiapp_is_bench_only_and_never_recommended(tmp_path, run_main):
+    apps, result = tree(tmp_path, {
+        "esp32s31_function_coreboard": ["multiapp", "osmosdr_hs", "stream_eth",
+                                        "stream_eth-onecore", "txstream_eth"],
+        "xiao_esp32s3": ["multiapp", "osmosdr"]},
+        {"esp32s31_function_coreboard": ["osmosdr_hs"], "xiao_esp32s3": ["osmosdr"]})
+    out = tmp_path / "out"
+    run_main(release, result, apps, "v1.2.3", out)
+
+    got = entries(out, "esp32s31_function_coreboard")
+    assert {n: e["devKey"] for n, e in got.items()} == {
+        "multiapp": True, "osmosdr_hs": False, "stream_eth": False,
+        "stream_eth-onecore": False, "txstream_eth": False}
+    # The bench only multiapp is no recommendation, and what it carries stands on its own.
+    assert {n: (e["rank"], e["inMultiapp"]) for n, e in got.items()} == {
+        "multiapp": (2, False), "osmosdr_hs": (1, False), "stream_eth": (2, False),
+        "stream_eth-onecore": (2, False), "txstream_eth": (2, False)}
+    assert got["stream_eth"]["description"] == "VITA 49.2 over gigabit Ethernet"
+    assert got["stream_eth-onecore"]["file"] == (
+        "esp-sdr-stream_eth-onecore-v1.2.3-esp32s31_function_coreboard.bin")
+    listed = json.loads((out / "firmware-esp32s31_function_coreboard.json").read_text())
+    assert [e["name"] for e in listed][0] == "osmosdr_hs"
+
+    # The same app on a board whose sysbuild does not sign stays the board's first image.
+    xiao = entries(out, "xiao_esp32s3")
+    assert xiao["multiapp"]["devKey"] is False
+    assert (xiao["multiapp"]["rank"], xiao["osmosdr"]["inMultiapp"]) == (0, True)
+
+
+def kconfig_tree(tmp_path, signing, sysbuild_kconfig):
+    apps = tmp_path / "apps"
+    for app in ("multiapp", "osmosdr"):
+        (apps / app).mkdir(parents=True)
+        (apps / app / "sample.yaml").write_text(SAMPLES[app])
+    if signing is not None:
+        (apps / "common/sysbuild").mkdir(parents=True)
+        (apps / "common/sysbuild/Kconfig.signing").write_text(signing)
+    if sysbuild_kconfig is not None:
+        (apps / "multiapp/Kconfig.sysbuild").write_text(sysbuild_kconfig)
+    return apps
+
+
+def dev_keys(apps):
+    return {f"{i['board']}/{i['name']}" for i in images.list_images(apps) if i["devKey"]}
+
+
+def test_dev_key_follows_the_signing_kconfig(tmp_path):
+    apps = kconfig_tree(tmp_path / "a", SIGNING, OPTS_IN)
+    assert images.signing_boards(apps) == {"esp32s31_function_coreboard", "other_board"}
+    assert dev_keys(apps) == {"esp32s31_function_coreboard/multiapp"}
+    # The app has to opt in, as multiapp's Kconfig.sysbuild does.
+    assert dev_keys(kconfig_tree(tmp_path / "b", SIGNING, 'source "share/sysbuild/Kconfig"\n')) == set()
+    assert dev_keys(kconfig_tree(tmp_path / "c", SIGNING, None)) == set()
+    # Without the signing file no image signs.
+    assert dev_keys(kconfig_tree(tmp_path / "d", None, OPTS_IN)) == set()
+    # A default for every board.
+    everywhere = SIGNING.replace('default y if BOARD = "esp32s31_function_coreboard" || BOARD = '
+                                 '"other_board"', "default y")
+    apps = kconfig_tree(tmp_path / "e", everywhere, OPTS_IN)
+    assert images.signing_boards(apps) == {"*"}
+    assert dev_keys(apps) == {
+        "esp32s31_function_coreboard/multiapp", "ues31s043h800v480c_u/multiapp",
+        "xiao_esp32s3/multiapp"}
+
+
+def test_a_default_it_cannot_read_stops_the_image_list(tmp_path):
+    for k, bad in enumerate((
+            'default y if BOARD != "esp32s31_function_coreboard"',
+            'default y if !(BOARD = "esp32s31_function_coreboard")',
+            'default n if BOARD = "xiao_esp32s3"',
+            'default y if SOC_SERIES_ESP32S31',
+            'default y if BOARD = "a" && SOC_SERIES_ESP32S31',
+            'default y if y',
+    )):
+        text = SIGNING.replace(
+            'default y if BOARD = "esp32s31_function_coreboard" || BOARD = "other_board"', bad)
+        apps = kconfig_tree(tmp_path / str(k), text, OPTS_IN)
+        with pytest.raises(SystemExit) as stop:
+            images.list_images(apps)
+        assert bad in str(stop.value)
+        assert "Kconfig.signing:4:" in str(stop.value)
+    # A comment after the condition, and "default n", are read.
+    ok = SIGNING.replace('default y if BOARD = "esp32s31_function_coreboard" || BOARD = "other_board"',
+                         'default n\n\tdefault y if BOARD = "a"  # the bench board')
+    assert images.signing_boards(kconfig_tree(tmp_path / "ok", ok, OPTS_IN)) == {"a"}
+    # A file without the config is not one this script knows.
+    none = SIGNING.replace("config ESDR_SIGNING", "config OTHER")
+    with pytest.raises(SystemExit):
+        images.signing_boards(kconfig_tree(tmp_path / "none", none, OPTS_IN))
+
+
+def test_the_repository_signs_one_image_with_the_dev_key():
+    """The S31 CoreBoard's multiapp is the only image whose sysbuild signs with the own key:
+    another one needs a decision on how the release builds it."""
+    listed = images.list_images(REPO / "apps")
+    assert {f"{i['board']}/{i['name']}" for i in listed if i["devKey"]} == {
+        "esp32s31_function_coreboard/multiapp"}
+    names = {i["name"] for i in listed if i["board"] == "esp32s31_function_coreboard"}
+    assert {"multiapp", "stream_eth", "stream_eth-onecore", "stream_eth-product", "txstream_eth",
+            "txstream_eth-injector", "rxbench", "ptp_chain"} <= names
+    assert "coexbench" in {i["name"] for i in listed if i["board"] == "xiao_esp32s3"}

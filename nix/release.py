@@ -14,7 +14,9 @@ them, for one board (firmwareByBoard.<board>) or several. Per board, OUT_DIR get
 - firmware-<board>.json: one entry per image for the web flasher (doc/_extra/flasher), which
   lists a board's images per chip by rank: 0 multiapp, 1 the board's osmosdr image when its
   multiapp does not carry it already, 2 the rest. Which apps a multiapp image carries comes from
-  its llext files.
+  its llext files. "devKey" is set for an image signed with MCUboot's public development key
+  (nix/images.py): anybody can sign what its bootloader boots, so it is for the bench only. Such
+  an image is never recommended (rank 2), and the apps it carries still count as separate images.
 """
 
 import hashlib
@@ -38,6 +40,8 @@ def multiapp_apps(image_dir):
 
 def rank(img, carried):
     """The image's place in the flasher's list for its board and chip."""
+    if img["devKey"]:
+        return 2
     if img["name"] == "multiapp":
         return 0
     if img["name"] == img["app"] and img["app"] in OSMOSDR_APPS and img["app"] not in carried:
@@ -77,7 +81,7 @@ def release_board(board_dir, images, tag, out):
 
     carried = {}
     for name in built:
-        if name == "multiapp":
+        if name == "multiapp" and not by_name[name]["devKey"]:
             carried[by_name[name]["chip"]] = multiapp_apps(board_dir / name)
 
     entries = []
@@ -101,6 +105,7 @@ def release_board(board_dir, images, tag, out):
             "sha256": sha256(asset),
             "rank": rank(img, chip_carries),
             "inMultiapp": name == img["app"] and img["app"] in chip_carries,
+            "devKey": img["devKey"],
         })
     entries.sort(key=lambda e: (e["chip"], e["rank"], e["name"]))
 
