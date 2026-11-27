@@ -9,9 +9,10 @@
 # derivation: nix-build -A firmware.xiao_esp32s3.osmosdr builds just that one.
 #
 # Attributes: firmware, firmwareByBoard (one board's images in one result, as the release builds
-# them), gateware (the MCH2022 badge's FPGA bitstream), tools, soapy-esdr, soapysdr (with the esdr
-# module), westWorkspace, ciDeps (what every image build shares, for CI's cache), dev (the
-# packages shell.nix has) and shell.
+# them), gateware (the MCH2022 badge's FPGA bitstream), releaseExtras (the release's host tools
+# tarball for a Linux PC without Nix and the gateware's .bin files), tools, soapy-esdr, soapysdr
+# (with the esdr module), westWorkspace, ciDeps (what every image build shares, for CI's cache),
+# dev (the packages shell.nix has) and shell.
 
 let
   nixpkgs-ref = "c9bfd86ed684d27e63b0ff9ebb18699f84f27a3b"; # nixos-25.11-small
@@ -497,8 +498,14 @@ let
   # The C programs of the host tools: esdr_usb (osmosdr's USB link), the link simulators, and the
   # VITA 49.2 tools of the Ethernet apps: vrt_udp and vrt_fake (stream_eth, a stand-in board on
   # the loopback), vrt_tx and tx_fake (txstream_eth, built by its Makefile) and udp_tx (rxbench).
-  host-programs = pkgs.stdenv.mkDerivation {
-    pname = "esp-sdr-host-programs";
+  # `portable` makes the programs of the release's tools tarball, which runs on a Linux PC
+  # without Nix: libusb is linked in (without udev), the interpreter is the usual loader's and no
+  # store path is left. Their libc symbols stay within glibc portableGlibc: Ubuntu 24.04's is
+  # 2.39, and the programs' C23 strtol (glibc 2.38) is the newest they need.
+  portableGlibc = "2.38";
+  libusbStatic = pkgs.libusb1.override { withStatic = true; enableUdev = false; withDocs = false; };
+  mkHostPrograms = { usb, usbLink, portable ? false }: pkgs.stdenv.mkDerivation ({
+    pname = "esp-sdr-host-programs" + lib.optionalString portable "-portable";
     inherit version;
     src = lib.fileset.toSource {
       root = ./.;
@@ -512,11 +519,11 @@ let
           ./apps/rxbench/src/rxb_seq.h ] ++ toolDirs))
         (pycFiles ./apps);
     };
-    buildInputs = [ pkgs.libusb1 ];
+    buildInputs = [ usb ];
     buildPhase = ''
       runHook preBuild
-      cc -O2 -Wall -Iinclude -Iapps/osmosdr/src -I${lib.getDev pkgs.libusb1}/include/libusb-1.0 \
-        apps/osmosdr/tools/esdr_usb.c -lusb-1.0 -lm -o esdr_usb
+      cc -O2 -Wall -Iinclude -Iapps/osmosdr/src -I${lib.getDev usb}/include/libusb-1.0 \
+        apps/osmosdr/tools/esdr_usb.c ${usbLink} -lm -o esdr_usb
       (cd apps/link
        cc -O2 -Wall -Isrc -I../../include src/qam.c src/rs.c src/hamming.c tools/qam_sim.c \
          -lm -o ../../qam_sim
@@ -542,6 +549,31 @@ let
       install -Dm755 -t $out/bin ${lib.escapeShellArgs hostPrograms}
       runHook postInstall
     '';
+  } // lib.optionalAttrs portable {
+    nativeBuildInputs = [ pkgs.patchelf pkgs.removeReferencesTo ];
+    # Fixup would put the Nix loader and rpath back. Removing the rpath leaves its text in the
+    # file, which remove-references-to blanks (the reference scan would find it), and the build
+    # fails if any store path is left.
+    dontFixup = true;
+    allowedReferences = [ ];
+    postInstall = ''
+      for program in $out/bin/*; do
+        patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 --remove-rpath $program
+        remove-references-to -t ${pkgs.stdenv.cc.libc} -t ${pkgs.stdenv.cc.cc.lib} -t $out $program
+        newest=$(objdump -T $program | grep -o 'GLIBC_[0-9.]*' | sort -Vu | tail -1)
+        echo "$program: needs $newest"
+        if [ "$(printf '%s\n' $newest GLIBC_${portableGlibc} | sort -V | tail -1)" != GLIBC_${portableGlibc} ]; then
+          echo "$program needs $newest, newer than glibc ${portableGlibc}" >&2
+          exit 1
+        fi
+      done
+    '';
+  });
+  host-programs = mkHostPrograms { usb = pkgs.libusb1; usbLink = "-lusb-1.0"; };
+  host-programs-portable = mkHostPrograms {
+    usb = libusbStatic;
+    usbLink = "${libusbStatic}/lib/libusb-1.0.a -pthread";
+    portable = true;
   };
   hostPrograms = [ "esdr_usb" "qam_sim" "ofdm_sim" ]
     ++ lib.optionals (withApp "stream_eth") [ "vrt_udp" "vrt_fake" ]
@@ -574,6 +606,33 @@ let
     '';
   };
 
+  # What the release attaches besides the images and the SoapySDR module (release.yml, "extras"):
+  # the host tools for a Linux PC without Nix, and the MCH2022 badge's FPGA bitstreams. The files
+  # carry the release's tag, which release.yml checks against VERSION: v<major>.<minor>.<patch>.
+  #   esp-sdr-tools-<tag>-x86_64-linux.tar.gz: bin/ the C programs (host-programs-portable),
+  #     apps/<app>/tools/ the Python tools as plain files (host-tools' wrappers would pull GNU
+  #     Radio's closure into the build), README.txt (nix/tools-readme.txt)
+  #   esp-sdr-gateware-<tag>-mch2022-top.bin: the DSP chain's bitstream (micropython, fpga_demo)
+  #   esp-sdr-gateware-<tag>-mch2022-link.bin: the link bitstream (osmosdr_serial)
+  pythonTools = lib.fileset.toSource {
+    root = ./.;
+    fileset = lib.fileset.intersection (lib.fileset.fileFilter (f: f.hasExt "py") ./apps)
+      (lib.fileset.unions toolDirs);
+  };
+  releaseExtras = pkgs.runCommand "esp-sdr-release-extras-${version}" { } ''
+    root=$TMPDIR/esp-sdr-tools-v${version}-x86_64-linux
+    mkdir -p $root/bin $out
+    install -Dm755 -t $root/bin ${host-programs-portable}/bin/*
+    (cd ${pythonTools}; for tool in apps/*/tools/*.py; do install -Dm644 $tool $root/$tool; done)
+    sed s/@VERSION@/v${version}/ ${./nix/tools-readme.txt} > $root/README.txt
+    install -m644 ${./LICENSE} $root/LICENSE
+    # The same bytes for the same input.
+    tar --sort=name --mtime=@1 --owner=0 --group=0 --numeric-owner -C $TMPDIR \
+      -cf - esp-sdr-tools-v${version}-x86_64-linux | gzip -9n > $out/esp-sdr-tools-v${version}-x86_64-linux.tar.gz
+    install -m644 ${gateware}/top.bin $out/esp-sdr-gateware-v${version}-mch2022-top.bin
+    install -m644 ${gateware}/link.bin $out/esp-sdr-gateware-v${version}-mch2022-link.bin
+  '';
+
   tools = pkgs.symlinkJoin {
     name = "esp-sdr-tools-${version}";
     paths = [ host-tools soapysdr esptool pkgs.dfu-util ];
@@ -587,8 +646,8 @@ pkgs.symlinkJoin {
   name = "esp-sdr-zephyr-${version}";
   paths = lib.concatMap lib.attrValues (lib.attrValues firmware) ++ [ tools ];
   passthru = {
-    inherit pkgs dev shell firmware firmwareByBoard ciDeps gateware tools host-tools soapy-esdr
-      soapysdr westWorkspace riscv32-esp-binutils;
+    inherit pkgs dev shell firmware firmwareByBoard ciDeps gateware releaseExtras tools host-tools
+      host-programs-portable soapy-esdr soapysdr westWorkspace riscv32-esp-binutils;
     west2nix = west2nix-update;
   };
 }
