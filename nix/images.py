@@ -16,6 +16,7 @@ ESDR_DEV_KEY=1, MCUboot's public development key, so the images are for the benc
 
 import json
 import re
+import shlex
 import sys
 from pathlib import Path
 
@@ -25,7 +26,8 @@ import yaml
 def as_list(value):
     if value is None:
         return []
-    return value.split() if isinstance(value, str) else list(value)
+    # As a shell reads it: EXTRA_CONF_FILE="a.conf;b.conf" is one argument without the quotes.
+    return shlex.split(value) if isinstance(value, str) else list(value)
 
 
 SIGNING_KCONFIG = "common/sysbuild/Kconfig.signing"

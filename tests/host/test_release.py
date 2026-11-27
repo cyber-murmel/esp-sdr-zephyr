@@ -66,6 +66,9 @@ tests:
   sample.esp_sdr.stream_eth.onecore:
     platform_allow: [esp32s31_function_coreboard/esp32s31/hpcore]
     extra_args: EXTRA_CONF_FILE=onecore.conf
+  sample.esp_sdr.stream_eth.product:
+    platform_allow: [esp32s31_function_coreboard/esp32s31/hpcore]
+    extra_args: EXTRA_CONF_FILE="ramfunc.conf;product.conf" CONFIG_X=y
 """,
     "txstream_eth": """
 sample: {name: txstream_eth, description: VITA 49.2 transmit over gigabit Ethernet}
@@ -223,6 +226,16 @@ def test_dev_key_multiapp_is_bench_only_and_never_recommended(tmp_path, run_main
     assert (xiao["multiapp"]["rank"], xiao["osmosdr"]["inMultiapp"]) == (0, True)
 
 
+def test_extra_args_are_read_as_a_shell_does(tmp_path):
+    apps, _ = tree(tmp_path, {}, {})
+    got = {i["name"]: i["extraArgs"] for i in images.list_images(apps)
+           if i["board"] == "esp32s31_function_coreboard" and i["app"] == "stream_eth"}
+    assert got == {"stream_eth": [],
+                   "stream_eth-onecore": ["EXTRA_CONF_FILE=onecore.conf"],
+                   "stream_eth-product": ["EXTRA_CONF_FILE=ramfunc.conf;product.conf",
+                                          "CONFIG_X=y"]}
+
+
 def kconfig_tree(tmp_path, signing, sysbuild_kconfig):
     apps = tmp_path / "apps"
     for app in ("multiapp", "osmosdr"):
@@ -291,6 +304,8 @@ def test_the_repository_signs_one_image_with_the_dev_key():
     listed = images.list_images(REPO / "apps")
     assert {f"{i['board']}/{i['name']}" for i in listed if i["devKey"]} == {
         "esp32s31_function_coreboard/multiapp"}
+    product = next(i for i in listed if i["name"] == "stream_eth-product")
+    assert product["extraArgs"] == ["EXTRA_CONF_FILE=ramfunc.conf;coalesce.conf;product.conf"]
     names = {i["name"] for i in listed if i["board"] == "esp32s31_function_coreboard"}
     assert {"multiapp", "stream_eth", "stream_eth-onecore", "stream_eth-product", "txstream_eth",
             "txstream_eth-injector", "rxbench", "ptp_chain"} <= names
