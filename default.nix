@@ -489,20 +489,29 @@ let
     "--prefix" "QT_PLUGIN_PATH" ":" (lib.makeSearchPath qt.qtbase.qtPluginPrefix (map lib.getBin [ qt.qtbase qt.qtwayland ]))
   ];
 
-  # The apps' tools/*.py with GNU Radio's Python, esdr_usb and the link simulators. The tools
-  # keep the tree's layout (libexec/esp-sdr/apps/<app>/tools/), as some import their siblings
-  # and some another app's tools; modules named _*.py only serve the tools next to them.
-  host-tools = pkgs.stdenv.mkDerivation {
-    pname = "esp-sdr-host-tools";
+  withApp = app: !(lib.elem app excludeApps);
+
+  # libvrt, which the VITA 49.2 tools compile in (their headers give the same command).
+  libvrt = fetchProject (lib.findFirst (p: p.name == "libvrt") null lock.manifest.projects);
+
+  # The C programs of the host tools: esdr_usb (osmosdr's USB link), the link simulators, and the
+  # VITA 49.2 tools of the Ethernet apps: vrt_udp and vrt_fake (stream_eth, a stand-in board on
+  # the loopback), vrt_tx and tx_fake (txstream_eth, built by its Makefile) and udp_tx (rxbench).
+  host-programs = pkgs.stdenv.mkDerivation {
+    pname = "esp-sdr-host-programs";
     inherit version;
     src = lib.fileset.toSource {
       root = ./.;
       fileset = lib.fileset.difference
         (lib.fileset.unions ([ ./include ./apps/link/src ./apps/osmosdr/src/esdr_proto.h
-          ./apps/osmosdr/src/esdr_seg.h ] ++ toolDirs))
+          ./apps/osmosdr/src/esdr_seg.h
+          # The sources the transmit tools share with the board.
+          ./apps/txstream_eth/src/tx_hold.h ./apps/txstream_eth/src/tx_proto.h
+          ./apps/txstream_eth/src/tx_tone_gen.h ./lib/esp_sdr/src/txs/txs_wire.c
+          ./lib/esp_sdr/src/txs/txs_wire.h ./apps/rxbench/src/rxb_proto.h
+          ./apps/rxbench/src/rxb_seq.h ] ++ toolDirs))
         (pycFiles ./apps);
     };
-    nativeBuildInputs = [ pkgs.makeWrapper ];
     buildInputs = [ pkgs.libusb1 ];
     buildPhase = ''
       runHook preBuild
@@ -513,11 +522,47 @@ let
          -lm -o ../../qam_sim
        cc -O2 -Wall -Isrc -I../../include src/ofdm.c src/ofdm_frame.c src/qam.c src/rs.c \
          src/bch.c src/hamming.c tools/ofdm_sim.c -lm -o ../../ofdm_sim)
+      ${lib.optionalString (withApp "stream_eth") ''
+        for tool in vrt_udp vrt_fake; do
+          cc -O2 -Wall -pthread -I${libvrt}/include -I${libvrt}/src \
+            apps/stream_eth/tools/$tool.c ${libvrt}/src/vrt_*.c ${libvrt}/src/timestamp_to_calendar.c \
+            -lm -o $tool
+        done
+      ''}
+      ${lib.optionalString (withApp "txstream_eth") ''
+        make -C apps/txstream_eth/tools OUT=$PWD all
+      ''}
+      ${lib.optionalString (withApp "rxbench") ''
+        cc -O2 -Wall -Wextra -pthread apps/rxbench/tools/udp_tx.c -lm -o udp_tx
+      ''}
       runHook postBuild
     '';
     installPhase = ''
       runHook preInstall
-      install -Dm755 -t $out/bin esdr_usb qam_sim ofdm_sim
+      install -Dm755 -t $out/bin ${lib.escapeShellArgs hostPrograms}
+      runHook postInstall
+    '';
+  };
+  hostPrograms = [ "esdr_usb" "qam_sim" "ofdm_sim" ]
+    ++ lib.optionals (withApp "stream_eth") [ "vrt_udp" "vrt_fake" ]
+    ++ lib.optionals (withApp "txstream_eth") [ "vrt_tx" "tx_fake" ]
+    ++ lib.optional (withApp "rxbench") "udp_tx";
+
+  # The apps' tools/*.py with GNU Radio's Python, the C programs above. The tools keep the tree's
+  # layout (libexec/esp-sdr/apps/<app>/tools/), as some import their siblings and some another
+  # app's tools; modules named _*.py only serve the tools next to them.
+  host-tools = pkgs.stdenv.mkDerivation {
+    pname = "esp-sdr-host-tools";
+    inherit version;
+    src = lib.fileset.toSource {
+      root = ./.;
+      fileset = lib.fileset.difference (lib.fileset.unions toolDirs) (pycFiles ./apps);
+    };
+    nativeBuildInputs = [ pkgs.makeWrapper ];
+    dontBuild = true;
+    installPhase = ''
+      runHook preInstall
+      install -Dm755 -t $out/bin ${host-programs}/bin/*
       for tool in apps/*/tools/*.py; do
         name=$(basename $tool)
         install -Dm644 $tool $out/libexec/esp-sdr/$tool
