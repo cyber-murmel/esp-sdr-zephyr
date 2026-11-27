@@ -70,9 +70,10 @@ This puts multiapp on a XIAO ESP32S3. On its USB shell ``multiapp list`` shows t
 
 Each app also builds on its own. `Applications <doc/apps/index.md>`__ has the steps all apps share
 and how an app's configuration splits into SoC and board files. Releases carry every app for every
-board it runs on and the SoapySDR module for gqrx and GNU Radio; the `web flasher
-<https://software.defined.rodeo/flasher/>`__ writes them from the browser
-(`Web flasher <doc/apps/flasher.md>`__).
+board it runs on, the SoapySDR module for gqrx and GNU Radio, the host tools for a Linux PC and the
+MCH2022 badge's FPGA bitstreams; the `web flasher <https://software.defined.rodeo/flasher/>`__
+writes the images from the browser (`Web flasher <doc/apps/flasher.md>`__). The ESP32-S31
+CoreBoard's multiapp is signed with MCUboot's public development key there: bench only.
 
 The library
 ***********
@@ -278,7 +279,8 @@ Versioning
 - ``VERSION`` (Zephyr's format) versions the library and the apps; each app prints it at boot.
 - Major for breaking API changes, minor for compatible extensions, patch for fixes.
 - A tag ``v<VERSION>`` makes a GitHub release: every image ``default.nix`` builds, built with Nix
-  (``.github/workflows/release.yml``), and the web flasher serves them.
+  (``.github/workflows/release.yml``), the host tools and the gateware (``releaseExtras``), and
+  the web flasher serves the images.
 
 Dependencies
 ************
